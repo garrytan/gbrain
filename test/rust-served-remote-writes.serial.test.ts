@@ -151,6 +151,21 @@ describeAddon('remote writes over the served wire', () => {
     expect(await stampOf('notes/secret')).toBeNull();
   });
 
+  test('the retrieval stamp inside a transaction the caller holds: an id outside its read scope is refused there too, nothing stamped at commit', async () => {
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const secret = (await owner.getPage('notes/secret'))!.id as number;
+    expect(await stampOf('notes/secret')).toBeNull();
+    const ref = String(await conn.txn('begin', {}));
+    let inside = '';
+    try {
+      inside = await codeOf(worldOnly(() => conn.request('call', 'bumpPageRetrievals', [[secret]], { txn: ref })));
+    } finally {
+      await conn.txn('commit', { txn: ref }).catch(() => conn.txn('rollback', { txn: ref }).catch(() => undefined));
+    }
+    expect(inside).toBe('permission_denied');
+    expect(await stampOf('notes/secret')).toBeNull();
+  });
+
   test('the stamp is best-effort: a remote get_page answers the same with tracking on and off', async () => {
     const read = async () => {
       const out = await dispatchToolCall(client, 'get_page', { slug: 'notes/open' }, STDIO as never);
