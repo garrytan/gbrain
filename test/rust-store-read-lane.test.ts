@@ -124,19 +124,19 @@ for (const MULTIUSER of [false, true]) (HAVE_ADDON ? describe : describe.skip)(`
     expect(index).toBeLessThanOrEqual(4);
   });
 
-  test.if(MULTIUSER)('position and commit-log reads, and the follower log fetch, wait in the read lane', async () => {
+  test.if(MULTIUSER)('position and commit-log reads wait in the read lane; the follower log fetch does not', async () => {
     const store = engine.openStoreIfOpen('getPage') as RustStore;
     const seen = await readLaneMembers(async () => {
       await storePositionReader(engine)();
       await engine.readCommitLog(null, 10);
       await primaryRecordsFrame(store, null, 10, 1, 1);
     });
-    for (const member of ['lastCommitPosition', 'readCommitLog', 'readCommitLogRaw']) expect(seen.has(member)).toBe(true);
+    for (const member of ['lastCommitPosition', 'readCommitLog']) expect(seen.has(member)).toBe(true);
+    // The follower's raw log fetch stays in the general queue: in the read lane it slowed writes by about half while a
+    // follower ran (bench, Nov 28), and the follower still catches up within milliseconds of the last write.
+    expect(seen.has('readCommitLogRaw')).toBe(false);
     const position = await readIndexBehindWrites('p', () => storePositionReader(engine)());
     expect(position.index).toBeLessThanOrEqual(4);
-    const frame = await readIndexBehindWrites('f', () => primaryRecordsFrame(store, null, 10, 1, 1));
-    expect(frame.value).not.toBeNull();
-    expect(frame.index).toBeLessThanOrEqual(4);
   });
 
   test('writes finish while reads keep the read lane and every idle worker busy', async () => {
