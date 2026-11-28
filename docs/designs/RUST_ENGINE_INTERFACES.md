@@ -170,7 +170,7 @@ Rules:
   | 12 | `rust-engine/enforced-member-writes-rust` claims a provisional number (main's 11 plus one; the trunk renumbers at intake): the enforced member CLI's four reads in `store-members/page-mutation-reads.ts` |
   | 12 | `rust-engine/labelled-only-create-rust` claims a provisional number (main's 11 plus one, as the enforced-member branch's row above; the trunk renumbers both at intake): the writer's hidden-page read `readPageHiddenFromWriter` in `store-members/remote-links.ts` |
   | 14 | `rust-engine/owner-fact-reads` claims a provisional number (main's 13 plus one; the trunk renumbers at intake): the owner's lineage read flag `ownerLineage` that `storePrivacyPolicy` in `store-members/private-provenance.ts` sends |
-  | 15 | `rust-engine/lineage-fact-reads-rust` (row 32e-b-4: a member's fact reads under `access.members_read_lineage`, the provenance judgment in `store-members/private-provenance.ts`), merged with `rust-engine/owner-fact-reads` (14) and the sync 21 tip. Provisional: the trunk assigns the highest number in use plus one at intake |
+  | 15 | `rust-engine/lineage-fact-reads-rust` (row 32e-b-4: a member's fact reads under `access.members_read_lineage`, the provenance judgment in `store-members/private-provenance.ts`), merged with `rust-engine/owner-fact-reads` (14) and the sync 21 gate head 34636529a1, and the remote owner's read floor (the owner's `sources_not_readable` test) served as a caller record with `owner_only` off. Provisional: the trunk assigns the highest number in use plus one at intake |
 
 Reserved tags:
 

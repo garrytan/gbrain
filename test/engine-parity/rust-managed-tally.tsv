@@ -189,7 +189,7 @@ test/engine-parity/handover-reads.test.ts	2	1
 test/engine-parity/harness-consumer-stop.test.ts	2	0
 test/engine-parity/held-fact-folder-rule.test.ts	1	0
 test/engine-parity/held-fence-cells.test.ts	5	0
-test/engine-parity/hidden-exact-identity.test.ts	8	2
+test/engine-parity/hidden-exact-identity.test.ts	9	1
 test/engine-parity/hidden-refusals-2.test.ts	12	0
 test/engine-parity/hidden-refusals.test.ts	5	0
 test/engine-parity/holding-page-purges.test.ts	3	0
