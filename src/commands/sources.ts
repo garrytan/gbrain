@@ -24,8 +24,8 @@
  *   gbrain sources git-gap <id> — read-only census of the database against the commit at HEAD (sources-git-gap.ts)
  *   gbrain sources reindex <id> --from-git — a strict source's re-derive from Git, preview then apply (sources-reindex.ts)
  *   gbrain sources canonical <id> --to git|mixed — convert a source to git-canonical or back, preview then apply (sources-canonical.ts)
- *   gbrain sources push [<id>|--path <dir>] — scan-gated add→commit→pull→push
- *                               (agent-bootstrap; core in src/core/workspace-push.ts)
+ *   gbrain sources push [<id>|--path <dir>] — managed: scanned committed HEAD only;
+ *                               unmanaged: scan-gated add→commit→pull→push
  *
  * NOT in scope for Step 6 (deferred per plan):
  *   - import-from-github (needs SSRF + clone integration)
@@ -81,6 +81,7 @@ import { isSyncStrategy } from '../core/sync.ts';
 import { pullStrategyOf } from '../core/git-remote.ts';
 import { isValidSourceId } from '../core/source-id.ts';
 import { opError } from '../core/ops/contract.ts';
+import { runManagedSourcesPush } from './sources-push-managed.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -558,12 +559,9 @@ function deriveBrainId(created: OpsSourceRow, localPath: string): string {
 
 // ── Subcommand: push (agent-bootstrap D6/G6/G8/G14) ─────────
 //
-// `gbrain sources push [<id>|--path <dir>]` — scan-gated add→commit→pull→push
-// of a workspace repo. The heavy lifting (single-flight lock, deny-glob
-// backstop, secret scan, commit-first-then-pull ordering, remote-privacy
-// refusal, push-status.json) lives in src/core/workspace-push.ts; this
-// wrapper only parses args, resolves <id> → local_path, and maps statuses
-// to exit codes:
+// `gbrain sources push [<id>|--path <dir>]`: a managed checkout publishes
+// only its scanned committed HEAD under its owner's lock. An unmanaged workspace
+// keeps the legacy add→commit→pull→push route in src/core/workspace-push.ts.
 //   0  pushed / skipped (push already in flight — clean single-flight skip)
 //   5  blocked (secrets / tracked deny-glob / the commits it would push) or refused (unverified remote)
 //   1  pull conflict / push failure / other error
@@ -610,6 +608,10 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
     dir = src.local_path;
     pullStrategy = pullStrategyOf(parseConfig(src.config));
   }
+
+  // Check managed ownership before entering the legacy workspace writer.
+  if (await runManagedSourcesPush(engine, { id, dir: dir!, branch, message, allowUnverified, json,
+    ...(scanTimeout ? { scanTimeoutMs: Number(scanTimeout) * 1000 } : {}) })) return;
 
   const { workspacePush, formatBlockedSecrets } = await import('../core/workspace-push.ts');
   const { SCAN_ALLOW_FILENAME } = await import('../core/secret-scan.ts');

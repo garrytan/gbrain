@@ -863,7 +863,7 @@ to your files or database, unless the brain host turns on
 
 | Where | What happens | What to do |
 | --- | --- | --- |
-| `gbrain sources push` | Refused with `blocked_secrets`, exit code 5. Nothing is committed; the index is reset to `HEAD` and files on disk are untouched. | Remove a real credential and rotate it. Allowlist only a reviewed false positive (below). |
+| `gbrain sources push` | Exit code 5. On an unmanaged workspace, `blocked_secrets` leaves nothing committed, resets the index to `HEAD`, and leaves disk files untouched. On a managed checkout, unpublished committed history is refused without changing the index, worktree or commits (`blocked_secrets` or `publish_secret_found`). | Remove a real credential and rotate it. Allowlist only a reviewed false positive (below). |
 | `gbrain bootstrap verify`, `gbrain bootstrap repo` | The secret-scan check fails, or the first push stops before anything is committed or pushed. Each finding shows its file, line, pattern, fingerprint and the version that added the rule. | Same as push. |
 | Compiled context (`gbrain compile-context`) | The entry is left out. One line on stderr names the page, the pattern and the fingerprint, never the value. | Remove the value from the page, or allowlist a reviewed false positive. |
 | Memory relay at compaction | The receipt and relay are skipped for that compaction window only; the checkpoint is kept. A content-free line (`reason: secret_scan_refused`, pattern, fingerprint, hint) goes to `~/.gbrain/integrations/hooks/heartbeat.jsonl`. | Nothing to run; the next window is scanned again. Remove the value from the transcript source if it keeps recurring. |

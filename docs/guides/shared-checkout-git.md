@@ -133,8 +133,8 @@ logs the commit as local-only and tells you to install gbrain and run
 is reported as `commit_paths_skipped`, as `gbrain git commit-push` reports it;
 the helper then exits 1, or 4 when the commit is not on the remote.
 
-In a managed canonical worktree (`gbrain sources writer git-durability`) its
-persistence owner is the only Git publisher. Save pages with `put_page`,
+In a managed canonical worktree (`gbrain sources writer git-durability`) the
+persistence owner publishes page writes. Save pages with `put_page`,
 `edit_page`, `remember` or `capture`. For files written there outside gbrain
 (see [files that are not pages](../architecture/topologies.md#files-that-are-not-pages)),
 `gbrain git commit-push -m "<msg>" -- <paths>` commits only the named paths
@@ -159,12 +159,27 @@ set the branch upstream, then `gbrain git commit-push --push-only` publishes the
 local commits. A branch that names a remote which does not exist still refuses
 (`git_unavailable`).
 
-The one form a managed worktree accepts is `--push-only --keep-checkout`. It
+The `git commit-push` form a managed worktree accepts is `--push-only --keep-checkout`. It
 publishes the commits already on the branch, merging a moved remote in memory,
 but never moves the checkout and skips its pre-push hook, so
 `gbrain sources refresh` stays the only way remote files enter the checkout.
 The owner's Git effects use it on their own when another machine pushed first;
 you run it only to settle a [conflict](#conflicts) the owner reports.
+
+`gbrain sources push <source>` (or `--path <dir>`) is a stricter, explicit
+retry for an activated managed checkout on its owner host. It pushes only the
+exact committed HEAD to its configured tracking branch, after scanning every
+unpublished commit (including page-write commits), messages and changed blobs,
+including binary blobs, and refusing deny-listed paths. It never stages,
+commits, pulls, integrates or runs checkout hooks. Dirty and staged files stay
+local. A moved or divergent remote, missing ownership, unscannable history, or
+a busy lock prevents the push; use `sources refresh` for remote changes. It
+does not redact or rewrite history: the automatic publisher's redaction and
+in-memory integration behavior is unchanged. The local `.gbrain-scan-allow`
+applies to secrets, not deny-listed paths; changes to the allowlist or Git
+attributes in unpublished commits remain a scan refusal. `--scan-timeout`
+sets the scan budget. `--branch`, `--message`, and
+`--allow-unverified-remote` apply only to unmanaged workspace pushes.
 
 **Say to your agent:** *"My brain's Git backups stopped pushing. Find out why and get them moving again."*
 The agent reads `gbrain sync status --source <id> --json` (`git_push_holds`) or
