@@ -1538,7 +1538,7 @@
             "via": "unsafe"
           },
           {
-            "paramCount": 8,
+            "paramCount": 7,
             "unsafeOptions": {
               "prepare": false,
               "simple": false
@@ -1574,7 +1574,7 @@
             "via": "unsafe"
           },
           {
-            "paramCount": 10,
+            "paramCount": 9,
             "unsafeOptions": {
               "prepare": false,
               "simple": false
