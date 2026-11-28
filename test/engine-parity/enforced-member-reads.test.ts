@@ -193,6 +193,23 @@ describe('engine parity: the enforced member CLI reads', () => {
     return out;
   });
 
+  parityTest('the output guard hides the pages a labelled-only member does not name, as on the SQL engines', {
+    methods: ['putPage', 'softDeletePage', 'readHiddenPageSlugs'],
+  }, async (engine, backend) => {
+    await seed(engine, backend);
+    const hidden = (slugs: string[], sources: string[], record: Record<string, unknown> = {}) =>
+      withCallerAccess({ ...MEMBER_RECORD, labelledOnly: true, ...record }, () => engine.readHiddenPageSlugs(slugs, sources));
+    const out = {
+      all: await hidden(SLUGS, []), bySource: await hidden(['notes/open', 'notes/twin', 'notes/listed'], ['vault']), inGroup: await hidden(SLUGS, [], { satisfiedRuleIds: ['default:team-a'] }),
+      none: await hidden([], ['vault']),
+    };
+    // A slug is hidden when no row of it passes: the open page names nobody, so it hides; a page that names the member, a soft-deleted one too, shows.
+    expect(out.all).toEqual(['notes/open', 'notes/private', 'team-a/plan']);
+    expect(out.inGroup).toEqual(['notes/open', 'notes/private']);
+    expect(out.none).toEqual([]);
+    return out;
+  });
+
   parityTest('memberPageView judges a labelled-only member by the page it names, a soft-deleted page and a new slug under a rule that lists it', {
     methods: ['putPage', 'softDeletePage', 'readMemberPageReadable', 'readSlugFolderRules'],
   }, async (engine, backend) => {

@@ -128,10 +128,9 @@ const ENFORCED_SCRIPT: Step[] = [
 ];
 
 /**
- * A labelled-only member's put is a named stop on a Rust brain (row ec05-1): the store does not model the labelled-only
- * read of an existing page, so the put refuses with engine_capability_missing before it writes anything. Run after
- * ENFORCED_SCRIPT on the brain of every engine; only the Rust outcome is asserted here (the SQL engines answer it, and
- * the engine-parity case in test/engine-parity/enforced-member-reads.test.ts compares the read itself).
+ * A labelled-only member's put and read (row ec05-1): the member rewrites a page that names it, is refused a rewrite of one it
+ * is not named on and a create with no rule that lists it, and reads back only what names it. Run after ENFORCED_SCRIPT on the
+ * brain of every engine; each engine's output is compared with PGLite's below.
  */
 const LABELLED_SCRIPT: Step[] = [
   { args: ['access', 'member', 'add', 'lab-example', '--json'] },
@@ -145,7 +144,7 @@ const LABELLED_SCRIPT: Step[] = [
 
 /**
  * An enforced member's put and `remember` on a brain whose members read lineage (access.members_read_lineage). The output guard
- * judges pages by a record that reads through lineage, which a Rust brain does not serve yet (row ec05-1), so the guard
+ * judges pages by a record that reads through lineage, which a Rust brain does not serve yet (row ec05-1, the lineage part), so the guard
  * refuses engine_capability_missing. A write must not run before a guard that refuses: on Rust the remember writes
  * nothing (no fact in the page, no revision change, no new page) while PGLite and Postgres save the fact. Run last, on
  * the brain of every engine.
@@ -251,7 +250,7 @@ beforeAll(async () => {
     const revisions = new Map<string, string>();
     const byLabel = new Map<string, Run>();
     labelled.set(brain.engine, byLabel);
-    for (const step of [...ENFORCED_SCRIPT, ...(brain.engine === 'rust' ? LABELLED_SCRIPT : []), ...LINEAGE_SCRIPT]) {
+    for (const step of [...ENFORCED_SCRIPT, ...LABELLED_SCRIPT, ...LINEAGE_SCRIPT]) {
       const args = step.args.map((a) => a === '{rev}' ? revisions.get(step.rev ?? '') ?? '' : a);
       const run = await cli(brain, args, { member: step.member, stdin: step.stdin });
       out.push(run);
@@ -299,13 +298,22 @@ describe('a put on a brain of several members, plain and under GBRAIN_ENFORCED_M
     expect(codes).toEqual(ENFORCED_SCRIPT.map((s) => `${s.exit ?? 0} ${s.label ?? s.args[0]}`));
   });
 
-  test('a labelled-only member stops on a Rust brain before its put writes anything', () => {
-    const rust = enforcedRuns.get('rust');
-    if (!rust) return; // no Rust addon on this run
-    const [listed, rewrite, create, getPlan, getNew] = rust.slice(ENFORCED_SCRIPT.length + 2);
-    const stopped = (r: Run) => ({ exitCode: r.exitCode, code: /"code": "([a-z_]+)"/.exec(r.stdout + r.stderr)?.[1], nothing: /outcome=none written=nothing/.test(r.stdout + r.stderr) });
-    expect([listed.exitCode, stopped(rewrite), stopped(create)]).toEqual([0, { exitCode: 1, code: 'engine_capability_missing', nothing: true }, { exitCode: 1, code: 'engine_capability_missing', nothing: true }]);
-    expect([/Body one\./.test(getPlan.stdout), /Body two\./.test(getPlan.stdout), getNew.exitCode]).toEqual([true, false, 1]);
+  for (const engine of ['postgres', 'rust'] as const) {
+    test(`${engine} prints what PGLite prints for a labelled-only member's put and reads`, () => {
+      const theirs = enforcedRuns.get(engine);
+      if (!theirs) return; // that engine is not configured on this run
+      const ours = enforcedRuns.get('pglite')!;
+      const view = (r: Run[]) => r.slice(ENFORCED_SCRIPT.length, ENFORCED_SCRIPT.length + LABELLED_SCRIPT.length).map((run, i) => ({
+        command: LABELLED_SCRIPT[i].label ?? LABELLED_SCRIPT[i].args.join(' '), exitCode: run.exitCode, stdout: masked(run.stdout), stderr: withoutBackupNotice(masked(run.stderr)),
+      }));
+      expect(view(theirs)).toEqual(view(ours));
+    });
+  }
+
+  test('a labelled-only member rewrites a page that names it and is refused the rest, on PGLite', () => {
+    const [listed, rewrite, create, getPlan, getNew] = enforcedRuns.get('pglite')!.slice(ENFORCED_SCRIPT.length + 2);
+    const code = (r: Run) => /"code": "([a-z_]+)"/.exec(r.stdout + r.stderr)?.[1];
+    expect([listed.exitCode, rewrite.exitCode, code(create), /Body two\./.test(getPlan.stdout), getNew.exitCode]).toEqual([0, 0, 'enforced_member_refused', true, 1]);
   });
 
   test('an enforced remember on a brain whose members read lineage writes nothing when the output guard cannot run', () => {

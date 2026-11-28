@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  1. Protects: (a) readHiddenPageSlugs and readMemberPageReadable refuse a record whose policy the store does not model
  *     (lineage, an audience, an owner record, a labelled-only grant) with engine_capability_missing even when asked of no
- *     slugs (readMemberPageReadable serves a labelled-only grant: the store judges it), which is what lets a write ask the output guard first and refuse before it writes; an ordinary member record
+ *     slugs (readMemberPageReadable and readHiddenPageSlugs serve a labelled-only grant without lineage: the store judges it), which is what lets a write ask the output guard first and refuse before it writes; an ordinary member record
  *     answers an empty ask with no read. (b) withImplicitPlacement lets an engine's capability refusal out and keeps the
  *     put's result for any other error.
  *  2. Fails when: an unsupported record answers an empty ask (the write would then run before the guard refuses), or an
@@ -28,12 +28,21 @@ describe('the enforced member reads of a Rust brain refuse a record the store do
     expect(await withCallerAccess(MEMBER, () => readHiddenPageSlugs(brain, [], []))).toEqual([]);
   });
 
-  for (const [name, record] of [['lineage', { lineage: true }], ['an owner record', { owner: true }], ['a labelled-only grant', { labelledOnly: true }],
+  for (const [name, record] of [['lineage', { lineage: true }], ['an owner record', { owner: true }], ['a labelled-only grant with lineage', { labelledOnly: true, lineage: true }],
+    ['a labelled-only grant with an audience', { labelledOnly: true, audienceIdentities: [['member:tess-example'], ['member:bob-example']] }],
     ['an audience', { audienceIdentities: [['member:tess-example'], ['member:bob-example']] }]] as const) {
     test(`${name} refuses an empty ask`, async () => {
       expect(await code(() => withCallerAccess({ ...MEMBER, ...record }, () => readHiddenPageSlugs(brain, [], [])))).toBe('engine_capability_missing');
     });
   }
+
+  // The output guard serves a labelled-only member without lineage: the grant is in the record, so the text carries the conjunct, and
+  // the store is sent its terms. An empty ask answers with no read; a named one reaches the store.
+  test('a labelled-only record answers an empty ask with no read and reaches the store for a named slug', async () => {
+    const record = { ...MEMBER, labelledOnly: true };
+    expect(await withCallerAccess(record, () => readHiddenPageSlugs(brain, [], []))).toEqual([]);
+    expect(await code(() => withCallerAccess(record, () => readHiddenPageSlugs(brain, ['notes/a'], [])))).toContain('the store was called');
+  });
 
   test('an identity emptied by an invalid entry beside valid satisfied rules refuses; either set emptied alone answers', async () => {
     const asked = (identity: string[], satisfiedRuleIds: string[]) => code(() => withCallerAccess({ ...MEMBER, identity, satisfiedRuleIds }, () => readMemberPageReadable(brain, 'default', 'notes/a', identity, satisfiedRuleIds, false)));
