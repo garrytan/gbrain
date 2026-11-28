@@ -1326,3 +1326,53 @@ describe('An unreadable client journal during the orphan pass does not make the 
   });
 });
 
+describe('A child that writes its journal and exits while the orphan pass runs is not counted twice', () => {
+  // Protects: the swap write check's counts. The orphan pass reads the client journals once; if it judges the child dead only after that read, a child that journals its samples and exits in between is booked
+  // from its marker in full and its journal is folded as well (more counted than owed). Fails if `obligations()` reads the journals before it decides which children are gone. No production seam: the
+  // liveness probe (`process.kill(pid, 0)`) is observed through a spy, and the child's journal is written from inside the first probe of that child.
+  const SES = 'f1s';
+  test('the child journals all three samples and exits between the pass reading the journals and the pass judging the child: the count is 3 for 3 owed, the window once', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    const child = deadPid();
+    writeOwed(dir, { v: 2, session: SES, serving_pid: deadPid(), child_pid: child, owed: 3, closed: false, child_exited: false, open_until: 1 } as OwedRecord);
+    const client = new WriteTally(dir, () => null, () => true, process.pid, SES);
+    const realKill = process.kill.bind(process); let exited = false;
+    const spy = spyOn(process, 'kill').mockImplementation(((pid: number, sig?: string | number) => {
+      if (pid === child && sig === 0) {
+        if (!exited && (new Error().stack ?? '').includes('obligations')) { exited = true; client.missing(3, 0, 1); if (!client.flush()) throw new Error('flush failed'); } // the child journals its three samples, the window last, then exits
+        if (exited) throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
+        return true;
+      }
+      return realKill(pid, sig as never);
+    }) as never);
+    try {
+      const owner = new WriteTally(dir, () => epoch, () => true, process.pid);
+      owner.save(); owner.save(); owner.save();
+      expect(exited).toBe(true);
+      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
+      expect(readOwed(dir, SES)).toBeNull(); expect(stat(dir)).toMatchObject({ state: 'capability_missing', write_windows_lost: 1 });
+    } finally { spy.mockRestore(); }
+  });
+  test('control: a child that is still alive with the same three samples journalled is not settled from its marker: the fold counts its lines once and the marker stays', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    const child = deadPid();
+    writeOwed(dir, { v: 2, session: SES, serving_pid: deadPid(), child_pid: child, owed: 3, closed: false, child_exited: false, open_until: 1 } as OwedRecord);
+    const client = new WriteTally(dir, () => null, () => true, process.pid, SES); client.missing(3, 0, 1); expect(client.flush()).toBe(true);
+    const realKill = process.kill.bind(process);
+    const spy = spyOn(process, 'kill').mockImplementation(((pid: number, sig?: string | number) => (pid === child && sig === 0 ? true : realKill(pid, sig as never))) as never); // the child stays alive
+    try {
+      const owner = new WriteTally(dir, () => epoch, () => true, process.pid);
+      owner.save(); owner.save(); owner.save();
+      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
+      expect(readOwed(dir, SES)).not.toBeNull();
+    } finally { spy.mockRestore(); }
+  });
+  test('control: a child that journalled all three samples before the pass and is gone is counted 3 for 3 owed, the window once', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    writeOwed(dir, { v: 2, session: SES, serving_pid: deadPid(), child_pid: deadPid(), owed: 3, closed: false, child_exited: false, open_until: 1 } as OwedRecord);
+    const client = new WriteTally(dir, () => null, () => true, process.pid, SES); client.missing(3, 0, 1); expect(client.flush()).toBe(true);
+    ownerPass(dir, epoch); ownerPass(dir, epoch);
+    expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
+    expect(readOwed(dir, SES)).toBeNull();
+  });
+});
