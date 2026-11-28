@@ -26,10 +26,12 @@ export async function cmdConventions(args: string[]): Promise<void> {
   if (unknown) exitCliError(usageError(`unknown flag ${unknown} for gbrain skillpack conventions.`, USAGE, { code: 'unknown_flag' }), 'skillpack');
   if (dirs.length !== 1) exitCliError(usageError(`gbrain skillpack conventions <dir> takes one folder, got ${dirs.length}.`, `${USAGE} (the folder your skills sit in; conventions/ is written inside it)`), 'skillpack');
   const root = resolveAbs(dirs[0]!);
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- root is the operator's own folder argument on the local CLI
   const conventionsDir = join(root, 'conventions');
   const written: string[] = [], unchanged: string[] = [], kept: string[] = [];
   mkdirSync(conventionsDir, { recursive: true });
   for (const file of bundledConventionFiles(isThinClient(loadConfig()) ? 'downstream' : 'owner')) {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- file.path is a key of gbrain's embedded skills map, never input
     const target = join(root, file.path);
     if (!existsSync(target)) {
       writeFileSync(target, file.content);
