@@ -242,6 +242,16 @@ jobs:
           key: ${{ steps.cachename.outputs.value }}
           restore-keys: |
             rust-checks-${{ runner.os }}-${{ runner.arch }}-
+      # Free disk before the build. A pull request into rust-engine/main has its own Cargo.lock, so its cache key
+      # misses and the 8.5 GB master cache is restored under it; `cargo test` then ran out of space (run 46161809920).
+      # Removing preinstalled SDKs this job never uses gives the build room. The df lines record the free bytes.
+      - name: Free disk (remove SDKs this job does not use)
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -B1 /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/powershell /usr/local/julia*
+          df -B1 /
       - name: Format
         working-directory: rust
         run: cargo fmt --check
@@ -251,6 +261,12 @@ jobs:
       - name: Unit tests
         working-directory: rust
         run: cargo test --locked
+      - name: Disk after the unit tests
+        if: always()
+        shell: bash
+        run: |
+          df -B1 /
+          du -sb rust/target 2>/dev/null || true
       # A pinned prebuilt binary, checked against its SHA-256, so CI does not compile cargo-deny
       # and does not depend on a third-party action.
       - name: Install cargo-deny 0.21.0
