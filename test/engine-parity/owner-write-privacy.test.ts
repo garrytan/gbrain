@@ -178,9 +178,15 @@ describe('engine parity: the brain owner\'s own remote put_page', () => {
       await arm.engine.softDeletePage('notes/gone', { sourceId: SRC });
       const snapshot = async () => { const row = await arm.engine.getPage('notes/gone', { sourceId: SRC, includeDeleted: true }); return { live: await arm.engine.getPage('notes/gone', { sourceId: SRC }), row: row && [row.deleted_at !== null, row.compiled_truth], pages: await arm.engine.countSourcePages(SRC, { includeDeleted: true }), versions: (await arm.engine.getVersions('notes/gone', { sourceId: SRC })).length }; };
       const before = await snapshot();
-      const original = engine.readPageHiddenFromWriter!; let thrown = 0;
-      engine.readPageHiddenFromWriter = function () { thrown++; return Promise.reject(new Error('injected read failure')); };
-      const out = await ownerPut(arm.engine, 'notes/gone', '---\ntitle: gone\n---\nSecond.', undefined, 'bob-example').finally(() => { engine.readPageHiddenFromWriter = original; });
+      // On a served arm the owner's engine runs the read, so patch it as well as the client (as the typed-read case above does).
+      const targets = [engine, servedOwnerOf(arm.engine)].filter(Boolean) as unknown as Array<Record<string, (...args: unknown[]) => Promise<unknown>>>;
+      let thrown = 0;
+      const restore = targets.map((target) => {
+        const own = Object.getOwnPropertyDescriptor(target, 'readPageHiddenFromWriter');
+        target.readPageHiddenFromWriter = function () { thrown++; return Promise.reject(new Error('injected read failure')); };
+        return () => { if (own) Object.defineProperty(target, 'readPageHiddenFromWriter', own); else delete target.readPageHiddenFromWriter; };
+      });
+      const out = await ownerPut(arm.engine, 'notes/gone', '---\ntitle: gone\n---\nSecond.', undefined, 'bob-example').finally(() => { for (const undo of restore) undo(); });
       expect({ backend: arm.backend, fired: thrown > 0, failed: ['internal_error', 'storage_error'].includes(out), after: await snapshot() }).toEqual({ backend: arm.backend, fired: true, failed: true, after: before });
     }
     expect(arms().length).toBeGreaterThan(0);
