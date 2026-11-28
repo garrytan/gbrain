@@ -456,6 +456,16 @@ function attachServedSocket(socket: Socket, owner: {
   });
 }
 
+/**
+ * A v3 call runs in its served session's scope (served.wrapRun installs the remote mark). On protocol v2 a frame marked
+ * remote (only sent when the owner checks remote callers) runs as a remote caller, so the member guards of
+ * served/remote-member-policy.ts apply there too.
+ */
+function runInCallerScope<T>(served: ServedHooks | null | undefined, remote: unknown, scoped: () => Promise<T>): Promise<T> {
+  if (served) return served.wrapRun(scoped);
+  return remote === true ? withRemoteCaller(true, scoped) : scoped();
+}
+
 export async function serveOwnerEngine(
   engine: BrainEngine,
   legacySocketPath: string,
@@ -691,10 +701,7 @@ export async function serveOwnerEngine(
     // The call runs under the caller's access record (re-checked by withCallerAccess) or none, its claim (member-claim.ts, never inherited),
     // exempt from the owner's host-fence refusal (fence-dispatch.ts), and a v3 call inside its session's scope (served/session.ts).
     const scoped = () => withMemberClaim(parseMemberClaim(frame.claim), () => access ? withCallerAccess(access, invoke) : withoutCallerAccess(invoke));
-    // On protocol v2 a frame marked remote (only sent when the owner checks remote callers) runs as a remote caller, so the
-    // member guards of served/remote-member-policy.ts apply as on v3, where served.wrapRun installs the mark.
-    const v2Remote = !served && frame.remote === true;
-    call.run = () => withRequestSignal(controller.signal, () => served ? served.wrapRun(scoped) : v2Remote ? withRemoteCaller(true, scoped) : scoped());
+    call.run = () => withRequestSignal(controller.signal, () => runInCallerScope(served, frame.remote, scoped));
     if (deadlineAt !== undefined) {
       call.deadlineAt = deadlineAt;
       // A request that arrives after its deadline never starts: a fast write would otherwise commit before the timer.

@@ -412,7 +412,7 @@ src/core/facts/stub-guard-audit.ts	fs_import	1	W7: filesystem boundary moves to 
 src/core/facts/unfenced-facts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/facts/writeback-config.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/facts/writeback-settings.ts	module_collection	1	W6: per-engine state (a WeakMap keyed by engine, last-known-good memory.agent_writeback override; #7795 in the memory train #8481)
-src/core/feedback/record.ts	module_collection	3	W6: per-engine state, or mark as a constant table
+src/core/feedback/record.ts	module_collection	5	W6: per-engine state, or mark as a constant table; +2 multi-user L3 S4 (Q4): the lost-answer count per client and the bounded lost answer ids, process-local like the event queue they report on, so a client hears of an answer the queue lost
 src/core/fence-repair/census.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/fence-repair/census.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/fence-repair/model.ts	load_config	1	W6: settings plane out of the core
@@ -539,6 +539,7 @@ src/core/mcp-client.ts	module_collection	1	W6: per-engine state, or mark as a co
 src/core/mcp-client.ts	process_env	1	W6: settings plane out of the core
 src/core/meetings/source-add.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/meetings/source-add.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/member-claim.ts	als_store	1	Rust served feedback claim (multi-user L3 S4): the served session sets the calling client's claim for one call, so the answer id a remote answer records names that caller and never another; W2: engine scope (decision E) carries it
 src/core/memory-trace.ts	process_env	2	W6: settings plane out of the core
 src/core/mentions/pass.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/migrate.ts	process_env	2	W6: settings plane out of the core
@@ -646,6 +647,7 @@ src/core/rust-engine/served/follower-frames.ts	fs_import	1	Rust follower snapsho
 src/core/rust-engine/served/listener.ts	fs_import	1	Rust brain server listener (multi-user L3): reads the TLS certificate and key files; W7: filesystem boundary moves to the local app
 src/core/rust-engine/served/listener.ts	process_env	1	Rust brain server listener (multi-user L3): the TLS certificate and key paths come from GBRAIN_RUST_SERVER_TLS_CERT/_KEY when the caller passes no env; stays until serve settings carry them (W2)
 src/core/rust-engine/served/read-position.ts	als_store	1	Rust served read-your-writes (multi-user L3, C21): the read token a caller holds rides with every served read in its scope, so a token never leaks to another caller's reads; W2: engine scope (decision E) carries it
+src/core/rust-engine/served/retrieval-event-policy.ts	module_collection	1	Rust brain server (multi-user L3 S4, F5): the in-process lock keyed by answer id that orders two callers' writes of one answer; emptied when the write ends; W6: per-engine state
 src/core/rust-engine/served/serve-listen.ts	process_env	2	Rust brain server start (multi-user L3): GBRAIN_RUST_SERVER_LISTEN as the default listen address of gbrain serve, and the environment half of the switch for a store that gives no answer; stays until serve settings carry them (W2)
 src/core/rust-engine/served/session.ts	module_collection	1	Rust brain server (multi-user L3): a WeakMap from one owner's served options object to its request-id table, parser budget and pre-auth count, so every connection of that owner shares them and two owners never do; keyed by the options object, so no state crosses brains
 src/core/utils.ts	als_store	1	the one stored spelling a write on an existing page may keep (withStoredSlug): a scope per call, not a global; goes when persistence requests carry the key explicitly
