@@ -62,9 +62,14 @@ function verifyStep(id: string): { argv: string[]; mcp: McpCall } {
   return { argv: statusArgv(id), mcp: { tool: 'questions_status', arguments: { id } } };
 }
 
-function refreshAction(id: string, why: string, full = false): Action {
+function refreshAction(id: string, why: string, full = false, onHost = false): Action {
+  const argv = ['gbrain', 'questions', 'refresh', id, ...(full ? ['--full'] : [])];
+  if (onHost) {
+    return { argv, consent: [], actor: 'user', why: `${why} This connection cannot refresh pins, so the owner runs it on the brain host.`,
+      user_message: `Refresh the pinned question on the brain host: ${argv.join(' ')}`, verify: verifyStep(id), requires_exclusive: false };
+  }
   return {
-    argv: ['gbrain', 'questions', 'refresh', id, ...(full ? ['--full'] : [])],
+    argv,
     mcp: { tool: 'questions_refresh', arguments: { id, ...(full ? { full: true } : {}) } },
     consent: [], actor: 'agent', why, verify: verifyStep(id), requires_exclusive: false,
   };
@@ -75,7 +80,7 @@ function lastAttemptFailed(pin: PinRow, prefix: string): boolean {
   return !pin.last_refresh_at || pin.last_attempt_at.getTime() >= pin.last_refresh_at.getTime();
 }
 
-export function fixFor(pin: PinRow, blocked: BlockedReason | null, freshness: Freshness, remote: boolean): Action | null {
+export function fixFor(pin: PinRow, blocked: BlockedReason | null, freshness: Freshness, remote: boolean, refreshOnHost = false): Action | null {
   const id = pinId(pin);
   switch (blocked) {
     case 'awaiting_consent':
@@ -106,22 +111,23 @@ export function fixFor(pin: PinRow, blocked: BlockedReason | null, freshness: Fr
         verify: verifyStep(id), requires_exclusive: false,
       };
     case 'refresh_failed':
-      if (answerTooLongCap(pin.last_error) !== null) return refreshAction(id, `The last refresh hit the old output cap; ${MAX_OUTPUT_TOKENS_KEY} has been raised since, so the next scheduled run retries it, or refresh it now.`);
-      return refreshAction(id, `The last refresh failed (${pin.last_error}); the previous answer is kept with its stale flags. A full refresh recomputes it from current evidence.`, true);
+      if (answerTooLongCap(pin.last_error) !== null) return refreshAction(id, `The last refresh hit the old output cap; ${MAX_OUTPUT_TOKENS_KEY} has been raised since, so the next scheduled run retries it, or refresh it now.`, false, refreshOnHost);
+      return refreshAction(id, `The last refresh failed (${pin.last_error}); the previous answer is kept with its stale flags. A full refresh recomputes it from current evidence.`, true, refreshOnHost);
     case 'no_worker':
-      return refreshAction(id, 'Nothing runs scheduled refreshes on this brain (no standing_questions cycle phase in the last 2 days and no autopilot), so the answer stays as it is until something refreshes it. Refresh it now; a recurring cycle needs the owner to install autopilot (gbrain autopilot --install), which a pin never does.');
+      return refreshAction(id, 'Nothing runs scheduled refreshes on this brain (no standing_questions cycle phase in the last 2 days and no autopilot), so the answer stays as it is until something refreshes it. Refresh it now; a recurring cycle needs the owner to install autopilot (gbrain autopilot --install), which a pin never does.', false, refreshOnHost);
     default:
       if (freshness === 'stale' || freshness === 'awaiting_refresh') {
-        return refreshAction(id, 'The answer needs a refresh; the next standing_questions cycle phase does it, or refresh it now.');
+        return refreshAction(id, 'The answer needs a refresh; the next standing_questions cycle phase does it, or refresh it now.', false, refreshOnHost);
       }
       return null;
   }
 }
 
+/** `ownerRead`: the brain owner's remote read (questions/service.ts), whose answer leaves out stale sentences and whose fix refreshes on the brain host. */
 export async function buildReceipt(engine: BrainEngine, pin: PinRow, view: {
-  readableSources: string[] | null; includeAnswer: boolean; remote: boolean; refresh?: RefreshOutcome;
+  readableSources: string[] | null; includeAnswer: boolean; remote: boolean; refresh?: RefreshOutcome; ownerRead?: { takesHolders: string[] | undefined };
 }): Promise<QuestionReceipt> {
-  const evaluation = await evaluateAnswer(engine, pin, { readableSources: view.readableSources });
+  const evaluation = await evaluateAnswer(engine, pin, { readableSources: view.readableSources, ...(view.ownerRead ? { ownerRead: view.ownerRead } : {}) });
   const pageId = await engine.readLivePageIdBySlug(pin.slug, pin.source_id);
   const leaseLive = pin.lease_token !== null && pin.lease_expires_at !== null && pin.lease_expires_at.getTime() > Date.now();
   const freshness: Freshness = pin.state === 'archived' ? 'archived'
@@ -145,7 +151,7 @@ export async function buildReceipt(engine: BrainEngine, pin: PinRow, view: {
     inactive_reason: pin.inactive_reason, publish_mode: pin.publish_mode, origin: pin.origin, page_materialized: pageId !== null,
     freshness, answer_revision: pin.answer_revision,
     sentences: { total: pin.answer.length, fresh: evaluation.fresh, stale: evaluation.stale, withheld: evaluation.hidden },
-    ...(view.includeAnswer ? { answer: evaluation.sentences.filter(s => !s.hidden).map(s => ({ id: s.id, text: s.text, origin: s.origin, stale: s.stale, reasons: s.reasons })) } : {}),
+    ...(view.includeAnswer ? { answer: evaluation.sentences.filter(s => !s.hidden && !(view.ownerRead && s.stale)).map(s => ({ id: s.id, text: s.text, origin: s.origin, stale: s.stale, reasons: s.reasons })) } : {}),
     evidence_watermark: pin.watermark_generation === null ? null
       : { page_generation: pin.watermark_generation, fact_id: pin.watermark_fact_id, at: pin.watermark_at?.toISOString() ?? '' },
     new_evidence_since_watermark: newEvidence,
@@ -153,7 +159,7 @@ export async function buildReceipt(engine: BrainEngine, pin: PinRow, view: {
     last_attempt_at: pin.last_attempt_at?.toISOString() ?? null,
     last_error: pin.last_error,
     blocked_reason: blocked,
-    fix: fixFor(pin, blocked, freshness, view.remote),
+    fix: fixFor(pin, blocked, freshness, view.remote, !!view.ownerRead),
     verify: verifyStep(id),
     spend_usd: Number(pin.spend_usd.toFixed(6)),
     refresh_attempts: pin.refresh_attempts,

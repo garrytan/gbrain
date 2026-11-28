@@ -1,7 +1,7 @@
 //! Jobs slice 2: the multi-row writes: the delayed promotion, the cancel cascade, the two timeout
 //! kills and the prune.
 
-use super::reads::actor_matches;
+use super::reads::{JobOwner, owned_or_unfenced, owner_fence};
 use super::synthesis_completions;
 use super::*;
 
@@ -15,7 +15,10 @@ pub struct CancelOpts {
     /// A root must be in one of these statuses.
     #[serde(default)]
     pub root_statuses: Option<Vec<String>>,
-    /// The owner fence: `data->>'__owner_client_id'` and the actor must match.
+    /// GST-4010: a root must belong to this caller (`owned_by`).
+    #[serde(default)]
+    pub owner: Option<JobOwner>,
+    /// The older owner fence, as that OAuth client (`owner_fence`).
     #[serde(default)]
     pub owner_client_id: Option<String>,
     #[serde(default)]
@@ -99,7 +102,7 @@ impl Store {
         self.write(|tx| {
             let now = self.env.now_micros();
             let roots: BTreeSet<i64> = ids.iter().copied().collect();
-            let actor = opts.owner_actor.clone().unwrap_or_default();
+            let fence = owner_fence(&opts.owner, &opts.owner_client_id, &opts.owner_actor);
             let mut seen = BTreeSet::new();
             let mut frontier = Vec::new();
             for id in &roots {
@@ -108,14 +111,7 @@ impl Store {
                     .root_statuses
                     .as_ref()
                     .is_none_or(|s| s.contains(&row.status));
-                let owner_ok = opts.owner_client_id.as_ref().is_none_or(|c| {
-                    row.data
-                        .get("__owner_client_id")
-                        .and_then(jsonb_field_text)
-                        .as_ref()
-                        == Some(c)
-                        && actor_matches(&row, &actor)
-                });
+                let owner_ok = owned_or_unfenced(&row, fence.as_ref());
                 if status_ok && owner_ok && seen.insert(*id) {
                     frontier.push(*id);
                 }

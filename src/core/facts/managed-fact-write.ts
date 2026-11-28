@@ -22,10 +22,10 @@ export async function managedFactWritePreflight(engine: BrainEngine, sourceId: s
  * publish together, deduplicated and withdrawal-checked at publication. An
  * entity with no live page lands database-only, like the legacy stub guard.
  * The request identity derives from the write itself, so a retried job
- * replays its receipt. Returned ids follow input order.
+ * replays its receipt; `requestedAt` makes each call its own request. Returned ids follow input order.
  */
 export async function publishManagedEntityFacts(engine: BrainEngine, sourceId: string, entity: string | null,
-  facts: FenceInputFact[], options: { supersede?: boolean; attributeFallback?: boolean; derivation?: { trust: WriteTrust; inputs: readonly TaintInput[] } } = {}): Promise<{ inserted: number; duplicate: number; superseded: number; ids: number[] }> {
+  facts: FenceInputFact[], options: { supersede?: boolean; attributeFallback?: boolean; requestedAt?: Date; derivation?: { trust: WriteTrust; inputs: readonly TaintInput[] } } = {}): Promise<{ inserted: number; duplicate: number; superseded: number; ids: number[] }> {
   const out = { inserted: 0, duplicate: 0, superseded: 0, ids: new Array<number>(facts.length) };
   for (const visibility of ['private', 'world'] as const) {
     const positions = facts.flatMap((fact, i) => fact.visibility === visibility ? [i] : []);
@@ -33,6 +33,7 @@ export async function publishManagedEntityFacts(engine: BrainEngine, sourceId: s
     const group = positions.map(i => facts[i]);
     const ctx = factsContext(engine, sourceId, { writer: 'fence_write', entity, visibility, supersede: options.supersede === true,
       ...(options.attributeFallback ? { attribute_fallback: true } : {}),
+      ...(options.requestedAt ? { requested_at: options.requestedAt.toISOString() } : {}),
       facts: group.map(f => [f.fact, f.kind, f.source, f.notability, f.confidence ?? 1, f.validFrom?.toISOString() ?? null,
         f.validUntil?.toISOString() ?? null, f.sessionId, f.context ?? null]) }, group[0].sessionId);
     const session = (await prepareManagedFactsSession(ctx, { turnText: '' }, options.derivation))!;

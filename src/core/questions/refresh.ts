@@ -219,7 +219,7 @@ export async function retrieveEvidence(engine: BrainEngine, pin: PinRow): Promis
     const facts = await engine.listQuestionEvidenceFacts(pin.source_id, entitySlugs);
     for (const f of facts) {
       push({ kind: 'fact', source_id: pin.source_id, page_id: null, page_slug: f.entity_slug, page_generation: null, page_revision: null,
-        item_id: Number(f.id), content_hash: f.hash, text: `[fact about ${f.entity_slug ?? 'unknown'}, from ${String(f.valid_from).slice(0, 10)}] ${neutralizeForPrompt(f.fact).text}` });
+        item_id: Number(f.id), content_hash: f.hash, text: `[fact about ${f.entity_slug ?? 'unknown'}, from ${f.valid_from == null ? 'an unknown date' : String(f.valid_from).slice(0, 10)}] ${neutralizeForPrompt(f.fact).text}` });
     }
   }
   if (pageIds.length > 0) {

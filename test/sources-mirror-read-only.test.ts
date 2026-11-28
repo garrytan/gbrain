@@ -20,6 +20,8 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
+import { markGitDurable } from './helpers/git-fixture.ts';
+import { settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { claimNextWrite } from '../src/core/persistence/journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { preparePageMutation } from '../src/core/persistence/page-prepare.ts';
@@ -62,6 +64,8 @@ for (const backend of testBackends()) {
     async function mirror(readOnly: boolean) {
       const id = `mirror-${randomUUID().slice(0, 8)}`;
       const root = join(home, id); mkdirSync(root); git(root, 'init', '-q');
+      // GST-3743: write-back reaches a non-default checkout only when this host commits it (durable); a foreign one stays database-only.
+      markGitDurable(root);
       writeFileSync(join(root, 'TODOS.md'), TODOS);
       commit(root);
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
@@ -125,7 +129,10 @@ for (const backend of testBackends()) {
       const m = await mirror(false);
       await overlaySync(m);
       expect(readFileSync(join(m.root, 'TODOS.md'), 'utf8')).toContain('kept-in-brain');
-      expect(tracked(m.root)).toBe('M TODOS.md');
+      // The checkout is durable (GST-3743), so the written-back overlay is committed once its Git effect settles.
+      await settleManagedGitEffects(engine, m.id);
+      expect(tracked(m.root)).toBe('');
+      expect(git(m.root, 'show', 'HEAD:TODOS.md')).toContain('kept-in-brain');
     }), 120_000);
 
     test('a page write into a read-only mirror is stored database-only and says so; a writable source gets its file', () => withEnv({ GBRAIN_HOME: home }, async () => {

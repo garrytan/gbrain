@@ -3,9 +3,10 @@
  * job that is not running is not running (`blocked_by`), the lease liveness of an active job
  * (`heartbeat_age_ms`, `lock_expires_in_ms`, `stalled`) and what it spent (`spend`).
  *
- * Every time is measured on the database clock. An owner-fenced caller (an agent token without admin,
- * `ops/jobs.ts` agentOwnerFence) sees another principal only as its kind: a foreign submitter, parent,
- * queue-slot holder or lock holder is never named, and foreign children are left out of spend.
+ * Every time is measured on the database clock. An owner-fenced caller (every remote credential not bound to the
+ * brain owner, `ops/jobs.ts` agentOwnerFence) sees another principal only as its kind: a foreign submitter, parent,
+ * queue-slot holder or lock holder is never named, and foreign children are left out of spend. Ownership is decided
+ * in SQL by jobOwnedSql (engine-sql/jobs-queue.ts jobOwnedFragment), the predicate the fenced row reads use.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { SpendTreeRow } from '../engine-sql/jobs-spend.ts';
@@ -13,7 +14,7 @@ import { parseGlobalFlags } from '../cli-options.ts';
 import type { Action } from '../agent-output.ts';
 import { currentSubmissionAuthority } from './submission-authority.ts';
 import { currentChatPhase } from '../ai/chat-usage.ts';
-import type { MinionJob } from './types.ts';
+import type { JobOwner, MinionJob } from './types.ts';
 
 const HOLDER_ROW_QUEUE = 'gbrain-drain-lease';
 const LIST_CAP = 10;
@@ -93,11 +94,13 @@ export interface JobInsight {
   lock_expires_in_ms: number | null;
   stalled: boolean | null;
   spend: JobSpend;
+  /** Fenced callers: the job's parent belongs to another caller, so its parent_job_id is withheld (never serialized). */
+  parent_hidden?: true;
 }
 
 export interface InsightOpts {
-  /** Owner-fenced caller's client id (agentOwnerFence); null or absent = unfenced. */
-  owner?: string | null;
+  /** Owner-fenced caller (agentOwnerFence); null or absent = unfenced. */
+  owner?: JobOwner | null;
   /** Remote caller: lock holder host and pid are never shown. */
   remote?: boolean;
 }
@@ -134,7 +137,7 @@ function delayReason(job: MinionJob): { reason: DelayReason; detail?: string } {
   return { reason: 'scheduled', ...detail };
 }
 
-type LockRow = { holder_pid: number; holder_host: string | null; acquired_at: unknown; ttl_expires_at: unknown; beacon: Record<string, unknown> | null; holder_owner: string | null };
+type LockRow = { holder_pid: number; holder_host: string | null; acquired_at: unknown; ttl_expires_at: unknown; beacon: Record<string, unknown> | null; holder_owned: boolean };
 
 /** Insight for each job, keyed by id. Read-only. */
 export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts: InsightOpts = {}): Promise<Map<number, JobInsight>> {
@@ -142,7 +145,6 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
   if (jobs.length === 0) return out;
   const owner = opts.owner ?? null;
   const ids = jobs.map(j => j.id);
-  const owns = (o: unknown) => owner === null || o === owner;
 
   const now = new Date(await engine.readDatabaseClock()).getTime();
 
@@ -156,16 +158,16 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
 
   const meta = new Map(read.meta.map(r => [r.id, r]));
   const positions = new Map(read.ahead.map(r => [r.id, r.ahead]));
-  const holders = new Map<string, Array<{ id: number; name: string; owner: string | null }>>();
+  const holders = new Map<string, Array<{ id: number; name: string; owned: boolean }>>();
   for (const r of read.holders) {
     const list = holders.get(r.queue) ?? [];
-    list.push({ id: r.id, name: r.name, owner: r.owner });
+    list.push({ id: r.id, name: r.name, owned: r.owned });
     holders.set(r.queue, list);
   }
-  const children = new Map<number, Array<{ id: number; owner: string | null }>>();
+  const children = new Map<number, Array<{ id: number; owned: boolean }>>();
   for (const r of read.children) {
     const list = children.get(r.parent_job_id) ?? [];
-    list.push({ id: r.id, owner: r.owner });
+    list.push({ id: r.id, owned: r.owned });
     children.set(r.parent_job_id, list);
   }
   const locks = new Map<string, LockRow>();
@@ -174,41 +176,41 @@ export async function describeJobs(engine: BrainEngine, jobs: MinionJob[], opts:
   const spendRows = await engine.readJobSpendTree({ jobIds: ids, owner });
   const foreignTokens = new Map(read.foreign_tokens.map(r => [r.parent_job_id, r]));
 
-  const ctx: BlockCtx = { positions, holders, children, locks, owns, owner, remote: opts.remote === true };
+  const ctx: BlockCtx = { positions, holders, children, locks, fenced: owner !== null, remote: opts.remote === true };
   for (const job of jobs) {
     out.set(job.id, {
-      submitted_by: submittedBy(job, meta.get(job.id), owner),
+      submitted_by: submittedBy(job, meta.get(job.id), owner !== null),
       blocked_by: blockedBy(job, ctx),
       ...liveness(job, now),
-      spend: spendOf(job, spendRows.filter(r => r.root === job.id), foreignTokens.get(job.id)),
+      spend: spendOf(job, spendRows.filter(r => Number(r.root) === job.id), foreignTokens.get(job.id)),
+      ...(owner !== null && job.parent_job_id != null && meta.get(job.id)?.parent_owned !== true ? { parent_hidden: true as const } : {}),
     });
   }
   return out;
 }
 
-function submittedBy(job: MinionJob, m: { submitter: string | null; parent_owner: string | null } | undefined, owner: string | null): SubmittedBy {
+function submittedBy(job: MinionJob, m: { submitter: string | null; owned: boolean; parent_owned: boolean } | undefined, fenced: boolean): SubmittedBy {
   const authority = job.submission_authority;
   if (authority && authority.kind !== 'application') {
     const id = authority.principal.id;
-    if (owner !== null && id !== owner) return { kind: 'mcp_client' };
+    if (fenced && m?.owned !== true) return { kind: 'mcp_client' };
     return { kind: 'mcp_client', id, principal_kind: authority.principal.kind };
   }
   if (job.parent_job_id != null) {
-    if (owner !== null && m?.parent_owner !== owner) return { kind: 'parent_job' };
+    if (fenced && m?.parent_owned !== true) return { kind: 'parent_job' };
     return { kind: 'parent_job', id: job.parent_job_id };
   }
   if (!authority) return { kind: 'unreviewed' };
-  if (owner !== null || !m?.submitter) return { kind: 'local' };
+  if (fenced || !m?.submitter) return { kind: 'local' };
   return { kind: 'local', via: m.submitter };
 }
 
 interface BlockCtx {
   positions: Map<number, number>;
-  holders: Map<string, Array<{ id: number; name: string; owner: string | null }>>;
-  children: Map<number, Array<{ id: number; owner: string | null }>>;
+  holders: Map<string, Array<{ id: number; name: string; owned: boolean }>>;
+  children: Map<number, Array<{ id: number; owned: boolean }>>;
   locks: Map<string, LockRow>;
-  owns: (o: unknown) => boolean;
-  owner: string | null;
+  fenced: boolean;
   remote: boolean;
 }
 
@@ -216,7 +218,7 @@ function blockedBy(job: MinionJob, c: BlockCtx): BlockedBy[] | null {
   const reasons: BlockedBy[] = [];
   if (job.status === 'waiting-children') {
     const kids = c.children.get(job.id) ?? [];
-    reasons.push({ kind: 'waiting_children', pending: kids.length, child_ids: kids.filter(k => c.owns(k.owner)).slice(0, LIST_CAP).map(k => k.id) });
+    reasons.push({ kind: 'waiting_children', pending: kids.length, child_ids: kids.filter(k => k.owned).slice(0, LIST_CAP).map(k => k.id) });
   } else if (job.status === 'delayed') {
     reasons.push({ kind: 'delayed', delay_until: iso(job.delay_until), ...delayReason(job) });
   } else if (job.status === 'paused') {
@@ -228,7 +230,7 @@ function blockedBy(job: MinionJob, c: BlockCtx): BlockedBy[] | null {
     const active = c.holders.get(job.queue) ?? [];
     const ahead = c.positions.get(job.id) ?? 0;
     reasons.push({ kind: 'queue', queue: job.queue, queue_position: ahead + 1, ahead, active: active.length,
-      active_jobs: active.filter(h => c.owns(h.owner)).slice(0, LIST_CAP).map(h => ({ id: h.id, name: h.name })),
+      active_jobs: active.filter(h => h.owned).slice(0, LIST_CAP).map(h => ({ id: h.id, name: h.name })),
       ...(job.queue.startsWith('dream-inline-') ? { private_queue: true as const } : {}) });
   } else {
     return null;
@@ -240,8 +242,8 @@ function blockedBy(job: MinionJob, c: BlockCtx): BlockedBy[] | null {
     const beacon = lock.beacon;
     const holderJob = beacon?.kind === 'job' && typeof beacon.id === 'string' && /^\d+$/.test(beacon.id) ? Number(beacon.id) : null;
     if (holderJob === job.id) continue;
-    if (c.owner !== null) {
-      reasons.push(holderJob !== null && lock.holder_owner === c.owner ? { kind: 'lock', held: true, lock: id, holder_job_id: holderJob } : { kind: 'lock', held: true });
+    if (c.fenced) {
+      reasons.push(holderJob !== null && lock.holder_owned === true ? { kind: 'lock', held: true, lock: id, holder_job_id: holderJob } : { kind: 'lock', held: true });
       continue;
     }
     reasons.push({ kind: 'lock', held: true, lock: id, ...(holderJob !== null ? { holder_job_id: holderJob } : {}),
@@ -285,10 +287,17 @@ function spendOf(job: MinionJob, rows: SpendTreeRow[], foreign: { i: number; o: 
  */
 export function withInsight<T extends object>(job: T, insight: JobInsight | undefined): T & Partial<JobInsight> {
   if (!insight) return job;
+  const { parent_hidden: _hidden, ...visible } = insight;
+  return { ...withFencedCounts(job, insight), ...visible };
+}
+
+/** A fenced caller's job row: token counts without other callers' children, and no foreign parent id. */
+export function withFencedCounts<T extends object>(job: T, insight: JobInsight | undefined): T {
+  if (!insight) return job;
   const tokens = insight.spend.excludes_foreign_children
     ? { tokens_input: insight.spend.tokens_input, tokens_output: insight.spend.tokens_output, tokens_cache_read: insight.spend.tokens_cache_read }
     : {};
-  return { ...job, ...tokens, ...insight };
+  return { ...job, ...tokens, ...(insight.parent_hidden ? { parent_job_id: null } : {}) };
 }
 
 /** One compact cell for `jobs list`: why a job waits, or the liveness of a running one. */

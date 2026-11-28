@@ -8,7 +8,9 @@
  * - an aborted request calling `getSource` rejects with the request's AbortError and sends no statement (the member the
  *   preflight at preflight.ts:406 calls; its caller sits behind git steps, so the member itself is what is pinned);
  * - `resolvePageWriteTarget` and `runConnectorSync` under an aborted request send no SQL at all;
- * - a request that is not aborted still reads the source row.
+ * - a request that is not aborted still reads the source row;
+ * - `sourceGuardBlocksWrite` under an aborted request on a brain holding only `default` fails CLOSED (blocks) and sends
+ *   no statement: its source listing (`listAllSources`) refuses the cancelled request, as master's raw read did.
  * Fails when `PostgresEngine.getSource` stops checking the request signal before its statement.
  * No database: the engine runs on the recording fake.
  */
@@ -19,6 +21,7 @@ import { withRequestSignal } from '../src/core/request-signal.ts';
 import { resolvePageWriteTarget } from '../src/core/write-through.ts';
 import { runConnectorSync } from '../src/commands/sync/connector.ts';
 import type { SyncOpts } from '../src/commands/sync.ts';
+import { __resetSourceGuardQueryShape, sourceGuardBlocksWrite } from '../src/core/source-resolver.ts';
 import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
 
 function aborted(): AbortSignal {
@@ -60,4 +63,23 @@ test('getSource outside an aborted request still sends its one statement', async
   const { fake, engine } = fakeEngine();
   await engine.getSource('default');
   expect(fake.statements()).toHaveLength(1);
+});
+
+test('sourceGuardBlocksWrite on a brain with only `default` fails closed inside an aborted request, sending no statement', async () => {
+  __resetSourceGuardQueryShape();
+  const fake = makeFakeSql(stmt => (/FROM sources/i.test(stmt.text) ? [{ id: 'default', name: 'default', local_path: null, config: {}, archived: false }] : undefined));
+  const engine = new PostgresEngine();
+  (engine as unknown as { _sql: unknown })._sql = fake.sql;
+  const blocked = await withRequestSignal(aborted(), () => sourceGuardBlocksWrite(engine as unknown as BrainEngine, 'local_path'));
+  expect(blocked).toBe(true);
+  expect(fake.statements()).toHaveLength(0);
+});
+
+test('sourceGuardBlocksWrite on a brain with only `default` outside an aborted request does not block', async () => {
+  __resetSourceGuardQueryShape();
+  const fake = makeFakeSql(stmt => (/FROM sources/i.test(stmt.text) ? [{ id: 'default', name: 'default', local_path: null, config: {}, archived: false }] : undefined));
+  const engine = new PostgresEngine();
+  (engine as unknown as { _sql: unknown })._sql = fake.sql;
+  expect(await sourceGuardBlocksWrite(engine as unknown as BrainEngine, 'local_path')).toBe(false);
+  expect(fake.statements().length).toBeGreaterThan(0);
 });

@@ -47,7 +47,7 @@ export function parseHistoryFlags(args: string[], value: (flag: string) => strin
   if ((history === 'none' || history === 'decline') && (dir !== undefined || noExtract)) return '--history ' + history + ' imports nothing, so --history-dir and --no-extract do not apply; nothing was written';
   if (dir !== undefined && !dir.startsWith('/')) return '--history-dir needs an absolute path; nothing was written';
   const blocker = harness !== 'claude-code' && harness !== 'codex' ? 'gbrain setup ' + (harness ?? '') + ' (only claude-code and codex)'
-    : args.includes('--remove') ? '--remove' : args.includes('--instructions-only') ? '--instructions-only' : value('--serves') === 'several' ? '--serves several'
+    : args.includes('--remove') ? '--remove' : args.includes('--instructions-only') ? '--instructions-only' : value('--serves') === 'several' || args.includes('--members') || args.includes('--members-file') ? '--serves several or --members'
     : stdioMember !== undefined ? '--stdio-member' : args.includes('--team') ? '--team' : null;
   if (blocker) return 'the history import runs in gbrain setup claude-code or codex for a personal brain one person uses, so ' + blocker + ' does not take the history flags; nothing was written';
   return { ...(history !== undefined ? { history } : {}), ...(dir !== undefined ? { historyDir: dir } : {}), ...(decision !== undefined ? { historyDecision: decision } : {}), ...(noExtract ? { noExtract } : {}) };

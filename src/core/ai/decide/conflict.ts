@@ -42,7 +42,8 @@ export function factEvidence(f: ConflictFact): EvidenceItem {
 
 /** A fact with the timestamps the sweep orders a pair by. */
 export interface DatedConflictFact extends ConflictFact {
-  valid_from: Date | string;
+  /** Null: the event date is unknown (#10288); ordering then uses created_at. */
+  valid_from: Date | string | null;
   created_at: Date | string;
 }
 
@@ -50,17 +51,17 @@ const iso = (v: Date | string) => new Date(v).toISOString();
 
 /** The fact's timestamps as evidence with the fact's own provenance (egress judges it exactly like the fact). */
 function timeEvidence(f: DatedConflictFact): EvidenceItem {
-  return { ...factEvidence(f), text: `valid from ${iso(f.valid_from)}; recorded ${iso(f.created_at)}` };
+  return { ...factEvidence(f), text: `valid from ${f.valid_from == null ? 'unknown' : iso(f.valid_from)}; recorded ${iso(f.created_at)}` };
 }
 
 /**
- * True when `a` is older than `b`: valid_from, then created_at, then id. The sweep presents the newer fact of a pair
+ * True when `a` is older than `b`: valid_from (created_at when unknown), then created_at, then id. The sweep presents the newer fact of a pair
  * as `fact`, so a proposal always retires the older one, even when the older fact is the one being swept (a fact
  * that just gained an entity through `gbrain facts relink`).
  */
 export function isOlderFact(a: DatedConflictFact, b: DatedConflictFact): boolean {
   const ms = (v: Date | string) => new Date(v).getTime();
-  return (ms(a.valid_from) - ms(b.valid_from) || ms(a.created_at) - ms(b.created_at) || a.id - b.id) < 0;
+  return (ms(a.valid_from ?? a.created_at) - ms(b.valid_from ?? b.created_at) || ms(a.created_at) - ms(b.created_at) || a.id - b.id) < 0;
 }
 
 export function conflictState(f: ConflictFact): Record<string, EvidenceItem> {

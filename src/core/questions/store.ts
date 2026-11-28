@@ -104,7 +104,17 @@ export function pinScope(row: Pick<PinRow, 'source_id' | 'scope_slug_prefix' | '
   };
 }
 
-export async function getPin(engine: BrainEngine, sourceId: string, slug: string, opts: { forUpdate?: boolean } = {}): Promise<PinRow | null> {
+/**
+ * The pin's question page is live and the current caller reads it (its readers and privacy, as page reads judge them):
+ * a page read under `excludePrivate`, so every engine answers it through its page member (the caller's private-page
+ * filter on PGLite and Postgres; the store's page policy on the Rust engine, which refuses a caller it cannot judge).
+ */
+async function questionPageReadable(engine: BrainEngine, sourceId: string, slug: string): Promise<boolean> {
+  return (await engine.getPage(slug, { sourceId, excludePrivate: true })) !== null;
+}
+
+export async function getPin(engine: BrainEngine, sourceId: string, slug: string, opts: { forUpdate?: boolean; readablePage?: boolean } = {}): Promise<PinRow | null> {
+  if (opts.readablePage && !await questionPageReadable(engine, sourceId, slug)) return null;
   if (!opts.forUpdate) {
     const row = await engine.readPinnedQuestion(sourceId, slug);
     return row ? toPinRow(row) : null;
@@ -115,11 +125,16 @@ export async function getPin(engine: BrainEngine, sourceId: string, slug: string
   return rows[0] ? toPinRow(rows[0]) : null;
 }
 
-export async function listPins(engine: BrainEngine, opts: { sourceIds?: string[]; includeArchived?: boolean; states?: PinState[] } = {}): Promise<PinRow[]> {
+export async function listPins(engine: BrainEngine, opts: { sourceIds?: string[]; includeArchived?: boolean; states?: PinState[]; readablePage?: boolean } = {}): Promise<PinRow[]> {
   // One constant statement per filter combination (engine-sql/pinned-questions.ts PINNED_QUESTION_SQL).
   const rows = await engine.listPinnedQuestions({
     ...(opts.sourceIds ? { sourceIds: opts.sourceIds } : {}), ...(opts.states ? { states: opts.states } : {}), includeArchived: opts.includeArchived === true,
   });
+  if (opts.readablePage) {
+    const readable: typeof rows = [];
+    for (const row of rows) if (await questionPageReadable(engine, String(row.source_id), String(row.slug))) readable.push(row);
+    return readable.map(toPinRow);
+  }
   return rows.map(toPinRow);
 }
 

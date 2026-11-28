@@ -409,6 +409,7 @@ export const FACTS_MEMBERS = {
   countConversationWindowFacts: 'facts',
   countConversationFactsOutsideWindows: 'facts',
   clearConversationPageFacts: 'facts',
+  narrowConversationExpiredCopies: 'facts',
   findSameClaimFenceRow: 'facts',
   findOntologyTwin: 'facts',
   readRelinkSource: 'facts',
@@ -460,6 +461,7 @@ export const FACTS_MEMBERS = {
   listCallOffCueFacts: 'facts',
   listPoolEntityPairs: 'facts',
   listFactRowsByIds: 'facts',
+  listPooledFactRows: 'facts',
   listReadablePageSlugs: 'facts',
 
   // ontology

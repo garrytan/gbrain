@@ -13,8 +13,8 @@ import { refusePinStore } from '../rust-engine/question-stops.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
 import { hostOnlyError, invalidParam, readFix } from '../ops/op-fix.ts';
-import { assertSourceInCallerScope, assertSourceInCallerWriteScope, enforceClientSlugFence, sourceScopeOpts } from '../ops/context.ts';
-import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { assertSourceInCallerScope, assertSourceInCallerWriteScope, enforceClientSlugFence, readHolders, sourceScopeOpts } from '../ops/context.ts';
+import { callerIsOwner, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { readConsentPreapprovals } from '../consent-preapproval.ts';
 import { ALL_SOURCES } from '../source-id.ts';
 import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } from '../cycle/budget-meter.ts';
@@ -33,13 +33,25 @@ const MAX_WAIT_MS = 300_000;
 /** Test seams: an injected chat function and publication hooks (production callers pass none). */
 export interface QuestionsDeps { chat?: QuestionChatFn; hooks?: RefreshHooks }
 
-export interface CallerAccess { readableSources: string[] | null; remote: boolean }
+export interface CallerAccess {
+  readableSources: string[] | null;
+  remote: boolean;
+  /** questions_list and questions_status by the brain owner's own credential: pins and evidence follow its page reads. */
+  ownerRead?: { takesHolders: string[] | undefined };
+}
+
+const OWNER_READ_OPS = new Set(['questions_list', 'questions_status']);
 
 /**
  * Owner-capable callers: the trusted local CLI, or a remote grant that reads
  * private pages (the operator opted remote readers into private pages) and is
- * not slug-fenced or a delegated subagent. Everyone else is refused with the
- * CLI equivalent, so restricted grants never learn a question or answer.
+ * not slug-fenced or a delegated subagent. Where private pages stay hidden,
+ * a credential bound to the brain owner (GST-2059) also qualifies for
+ * questions_list and questions_status, under the same fence and delegation
+ * rules; it sees only pins whose question page it reads and evidence it
+ * reads (ownerRead). Everyone
+ * else is refused with the CLI equivalent, so restricted grants never learn a
+ * question or answer.
  */
 export async function requireOwnerCapable(ctx: OperationContext, op: string, cli: string[]): Promise<CallerAccess> {
   if (ctx.remote === false) {
@@ -47,16 +59,17 @@ export async function requireOwnerCapable(ctx: OperationContext, op: string, cli
     return { readableSources: scope.sourceIds ?? null, remote: false };
   }
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+  const ownerRead = excludePrivate && OWNER_READ_OPS.has(op) && callerIsOwner();
   const restricted = ctx.viaSubagent === true || (ctx.auth?.boundSlugPrefixes?.length ?? 0) > 0
     || ctx.auth?.fenceProjectionDegraded === true || ctx.auth?.grantProjectionDegraded === true;
-  if (excludePrivate || restricted) {
+  if ((excludePrivate && !ownerRead) || restricted) {
     throw hostOnlyError(ctx, 'question_owner_only', `${op}: pinned questions are owner-private, and this connection cannot read private pages.`, cli,
       'Pinned questions and their answers are private to the brain owner in this version. This connection is a restricted grant (it cannot read private pages' +
-      `${restricted ? ', or it is slug-fenced or delegated' : ''}), so the owner runs the command on the brain host. An operator who wants this MCP connection to manage pins sets search.remote_private_pages=visible, which also shows it every private page.`);
+      `${restricted ? ', or it is slug-fenced or delegated' : ''}), so the owner runs the command on the brain host. A credential bound to the brain owner (gbrain auth rescope --member <owner>) lists pins and reads their status; an operator who wants this MCP connection to manage pins sets search.remote_private_pages=visible, which also shows it every private page.`);
   }
   const scope = sourceScopeOpts(ctx);
   const readable = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null);
-  return { readableSources: readable, remote: true };
+  return { readableSources: readable, remote: true, ...(ownerRead ? { ownerRead: { takesHolders: readHolders(ctx) } } : {}) };
 }
 
 function defaultSource(ctx: OperationContext): string {
@@ -106,7 +119,7 @@ async function resolvePin(ctx: OperationContext, access: CallerAccess, rawId: un
     { fix: readFix('Lists the pinned questions this connection can read, with their ids.', { argv: ['gbrain', 'questions', 'list', '--json'], mcp: { tool: 'questions_list', arguments: {} } }) });
   if (!parsed) throw notFound();
   if (access.readableSources && !access.readableSources.includes(parsed.sourceId)) throw notFound();
-  const pin = await getPin(ctx.engine, parsed.sourceId, parsed.slug);
+  const pin = await getPin(ctx.engine, parsed.sourceId, parsed.slug, { readablePage: !!access.ownerRead });
   if (!pin) throw notFound();
   return pin;
 }
@@ -137,7 +150,7 @@ async function boundedRefresh(ctx: OperationContext, pin: PinRow, opts: { full: 
 
 async function receiptFor(ctx: OperationContext, access: CallerAccess, sourceId: string, slug: string, includeAnswer: boolean, refresh?: RefreshOutcome): Promise<QuestionReceipt> {
   const pin = (await getPin(ctx.engine, sourceId, slug))!;
-  const receipt = await buildReceipt(ctx.engine, pin, { readableSources: access.readableSources, includeAnswer, remote: access.remote, refresh });
+  const receipt = await buildReceipt(ctx.engine, pin, { ...access, includeAnswer, refresh });
   if (receipt.blocked_reason || receipt.freshness === 'stale') {
     ctx.emitNotice?.({
       code: 'pinned_answer_stale', kind: 'degraded',
@@ -207,9 +220,9 @@ export async function listQuestions(ctx: OperationContext, p: Record<string, unk
   } else if (access.remote && !sources) {
     sources = [defaultSource(ctx)];
   }
-  const pins = await listPins(ctx.engine, { ...(sources ? { sourceIds: sources } : {}), includeArchived: p.include_archived === true });
+  const pins = await listPins(ctx.engine, { ...(sources ? { sourceIds: sources } : {}), includeArchived: p.include_archived === true, readablePage: !!access.ownerRead });
   const questions: QuestionReceipt[] = [];
-  for (const pin of pins) questions.push(await buildReceipt(ctx.engine, pin, { readableSources: access.readableSources, includeAnswer: false, remote: access.remote }));
+  for (const pin of pins) questions.push(await buildReceipt(ctx.engine, pin, { ...access, includeAnswer: false }));
   const count = (f: (r: QuestionReceipt) => boolean) => questions.filter(f).length;
   return {
     questions,

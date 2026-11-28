@@ -33,7 +33,7 @@ FACTS: `SELECT f.id, f.fact, f.entity_slug, f.valid_from, ${FACT_HASH_SQL('f')} 
          AND ${projectionEligibleSql('facts', 'f', undefined)}
          AND NOT EXISTS (SELECT 1 FROM pages fp WHERE fp.source_id = f.source_id AND fp.slug = f.source_markdown_slug
            AND (fp.type IN ('question', 'synthesis') OR fp.frontmatter ? '${PINNED_QUESTION_MARKER}'))
-       ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC LIMIT ${MAX_FACTS}`,
+       ORDER BY (CASE WHEN f.valid_from IS NULL OR f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC LIMIT ${MAX_FACTS}`,
 TIMELINE: `SELECT t.id, t.date, t.summary, t.detail, p.id AS page_id, p.slug, p.generation, p.knowledge_revision::text AS revision, ${TIMELINE_HASH_SQL('t')} AS hash
        FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.id = ANY($1::integer[]) AND ${projectionEligibleSql('timeline_entries', 't', undefined)} ORDER BY t.date DESC, t.id DESC LIMIT ${MAX_TIMELINE}`,
 TAKES: `SELECT k.id, k.claim, k.holder, k.weight, p.id AS page_id, p.slug, p.generation, p.knowledge_revision::text AS revision, ${TAKE_HASH_SQL('k')} AS hash

@@ -164,7 +164,7 @@ function groupReads(tx: BrainEngine): BrainEngine {
     if (!value) { value = read(); reads.set(id, value); value.catch(() => reads.delete(id)); }
     return value;
   };
-  return new Proxy(tx, { get(target, key) {
+  return new Proxy(tx, { get(target, key, receiver) {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
       STABLE_IN_GROUP.has(flat(sql)) ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     // The typed owner-binding read (the effect journal's Git target) shares the HOST_BINDING_SQL answer, so the group
@@ -173,6 +173,12 @@ function groupReads(tx: BrainEngine): BrainEngine {
       once<{ local_path: string | null }[]>(JSON.stringify([flat(HOST_BINDING_SQL), [worktreeId]]),
         () => target.readOwnerHostBinding(worktreeId).then(path => path === null ? [] : [{ local_path: path }]))
         .then(rows => rows[0]?.local_path ?? null);
+    // The publication journal's owner path (effect-journal.ts's Git target) is that same read: answered from the shared
+    // HOST_BINDING_SQL answer as the raw statement it replaced was, not sent again on the store's own handle.
+    if (key === 'publicationJournalStore') return async () => {
+      const store = await target.publicationJournalStore();
+      return { ...store, ownerPath: (worktreeId: string) => (receiver as BrainEngine).readOwnerHostBinding(worktreeId) };
+    };
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
     if (key === 'readSourceState') return (sourceId: string, opts?: SourceStateOptions) =>
       opts?.lock ? target.readSourceState(sourceId, opts) : once(JSON.stringify([key, sourceId]), () => target.readSourceState(sourceId));
@@ -782,7 +788,7 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
           // The member's signal reaches its preparer through its clock (enterClaimStep), never as a blanket statement signal: see the memo rule.
           const prep = startPreparation(async signal => {
             signal.addEventListener('abort', () => cancels[offset]!.abort(signal.reason), { once: true });
-            await faultPoint('consumer:preparing', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation, signal });
+            await faultPoint('consumer:preparing', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation, signal, clock: clocks[i] });
             return run.prepare(row, reads, undefined, clocks[i]);
           }, budget, { onDeadline: () => {
             if (!ordered) return;

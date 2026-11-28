@@ -2260,7 +2260,7 @@
       "listFactsByEntity": {
         "allFilters": [
           {
-            "paramCount": 14,
+            "paramCount": 20,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2271,7 +2271,7 @@
         ],
         "default": [
           {
-            "paramCount": 8,
+            "paramCount": 11,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -4049,7 +4049,7 @@
             "via": "unsafe"
           },
           {
-            "paramCount": 18,
+            "paramCount": 22,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -4105,7 +4105,7 @@
             "via": "unsafe"
           },
           {
-            "paramCount": 18,
+            "paramCount": 22,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -4169,7 +4169,7 @@
             "via": "unsafe"
           },
           {
-            "paramCount": 18,
+            "paramCount": 22,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -5354,6 +5354,19 @@
               "cancelFence": false,
               "prepare": true,
               "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "listActiveSourceConfigs": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
             },
             "via": "unsafe"
           }

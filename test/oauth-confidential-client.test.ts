@@ -136,9 +136,8 @@ describe('confidential-client full flow #1166', () => {
     expect(rotated.refresh_token).toBeTruthy();
     expect(rotated.refresh_token).not.toBe(refreshToken); // rotated
 
-    // Original refresh token is now consumed; second use rejected.
-    await expect(
-      provider.exchangeRefreshToken(client, refreshToken),
-    ).rejects.toThrow(/not found/);
+    // #9364: the same client resending the consumed token inside the grace window gets the same pair back, never a new one.
+    const resent = await provider.exchangeRefreshToken(client, refreshToken);
+    expect({ access: resent.access_token, refresh: resent.refresh_token }).toEqual({ access: rotated.access_token, refresh: rotated.refresh_token });
   });
 });

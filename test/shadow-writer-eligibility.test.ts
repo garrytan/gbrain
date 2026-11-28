@@ -346,7 +346,7 @@ describe('eligibility builder', () => {
     observer(dir).note();
     await settle(observers[0]!);
     const one = await buildEligibilityStatus({ dir, state: state(new Date(Date.now() - 86_400_000).toISOString()), engine: primary, source: noUnknown, brainId: () => 'host', addonTarget: () => 'linux-x64-glibc' });
-    expect(one).toEqual({ eligibility: { writer_hosts_7d: 1, unknown_writer_paths: 0, team_brain: false, preview_target: true } });
+    expect(one).toEqual({ eligibility: { writer_hosts_7d: 1, unknown_writer_paths: 0, legacy_write_writers: 0, team_brain: false, preview_target: true } }); // was without legacy_write_writers
     observer(dir, { host: HOST_B, app: 'gbrain serve:2:abcdef02' }).note();
     await settle(observers[1]!);
     const two = await buildEligibilityStatus({ dir, state: null, engine: primary, source: noUnknown, brainId: () => 'host', addonTarget: () => 'linux-x64-glibc' });

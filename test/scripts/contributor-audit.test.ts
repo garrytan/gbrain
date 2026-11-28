@@ -15,7 +15,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildFixture } from '../../scripts/contributor-audit-fixture.ts';
-import { classifyPath, classifyReversed, parseArgs, sandboxEnv } from '../../scripts/contributor-audit.ts';
+import { classifyPath, classifyReversed, parseArgs, parseCounts, sandboxEnv } from '../../scripts/contributor-audit.ts';
 
 const SCRIPT = join(import.meta.dir, '..', '..', 'scripts', 'contributor-audit.ts');
 
@@ -147,6 +147,38 @@ describe('untrusted code runs in a scrubbed environment', () => {
 });
 
 describe('classification and refusals', () => {
+  test('an unresolved import is vacuous even when the Bun summary says one fail', () => {
+    const output = `test/page.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: Cannot find module './page.ts' from 'test/page.test.ts'
+-------------------------------
+
+ 0 pass
+ 1 fail
+ 1 error
+Ran 1 test across 1 file.
+`;
+    const counts = parseCounts(output);
+    expect(counts).toEqual({ pass: 0, fail: 0 });
+    expect(classifyReversed({ ...counts, exit: 1, timedOut: false }).result).toBe('vacuous_failure');
+  });
+
+  test('each failed test counts once even when Bun also reports an unhandled error', () => {
+    const output = `test/page.test.ts:
+error: expect(received).toBe(expected)
+(fail) rejects a missing field [0.12ms]
+(pass) keeps an existing field [0.03ms]
+
+ 1 pass
+ 2 fail
+ 1 error
+Ran 3 tests across 2 files.
+`;
+    expect(parseCounts(output)).toEqual({ pass: 1, fail: 1 });
+  });
+
   test('the reversed run maps onto the discrimination vocabulary', () => {
     expect(classifyReversed({ exit: 1, pass: 0, fail: 2, timedOut: false }).result).toBe('discriminates');
     expect(classifyReversed({ exit: 0, pass: 3, fail: 0, timedOut: false }).result).toBe('does_not_discriminate');

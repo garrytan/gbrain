@@ -376,13 +376,15 @@ test('gbrain.io source: a run stopped only by a usage limit says so, even when i
     expect((listing as { stopped_on?: string }).stopped_on).toBe('usage_limit');
     expect(listing.added + listing.modified + listing.deleted).toBe(0);
 
-    fakeGbrainio(MAIL.map((m) => m.tid === 'b2b2b2b2b2b2b200' ? { ...m, id: m.id.slice(0, -1) + 'f', ms: NOW_MS - 60_000 } : m),
+    // The thread gets a new message: from here on it lists at its new date.
+    const answered = MAIL.map((m) => m.tid === 'b2b2b2b2b2b2b200' ? { ...m, id: m.id.slice(0, -1) + 'f', ms: NOW_MS - 60_000 } : m);
+    fakeGbrainio(answered,
       { override: (args) => { if (args[2] === 'thread' && args[4] === 'b2b2b2b2b2b2b200') throw new Error('Gmail API HTTP 403: forbidden'); return null; } });
     const denied = await runGoogleSync(engine, f.id, cfg, options);
     expect(denied.status).toBe('partial');
     expect((denied as { stopped_on?: string }).stopped_on).toBeUndefined();
 
-    fakeGbrainio(MAIL, { override: (args) => args[2] === 'thread' && args[4] === 'b2b2b2b2b2b2b200' ? { exitCode: 1, stdout: '', stderr: 'upstream error' } : null });
+    fakeGbrainio(answered, { override: (args) => args[2] === 'thread' && args[4] === 'b2b2b2b2b2b2b200' ? { exitCode: 1, stdout: '', stderr: 'upstream error' } : null });
     const failed = await runGoogleSync(engine, f.id, cfg, options);
     expect(failed.status).toBe('partial');
     expect((failed as { stopped_on?: string }).stopped_on).toBeUndefined();
@@ -430,3 +432,45 @@ test('gbrain.io source: a usage limit on the profile read stops the run as a usa
     expect(io.shows()).toEqual([]);
   }
 }), 180_000);
+
+test('gbrain.io source: after a usage limit the sweep sends no more searches, not even a checkpoint proof', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const config = gbrainioConfig();
+    const f = await source(engine, config);
+    const cfg = parseGoogleSourceConfig(config, f.dir);
+    const limit = { exitCode: 1, stdout: '', stderr: 'daily usage limit reached' };
+    const io = fakeGbrainio(MAIL, { override: (args) => args[2] === 'thread' && args[4] === 'c3c3c3c3c3c3c300' ? limit : null });
+    const limited = await runGoogleSync(engine, f.id, cfg, options);
+    expect((limited as { stopped_on?: string }).stopped_on).toBe('usage_limit');
+    const stop = io.calls.findIndex((a) => a[2] === 'thread' && a[4] === 'c3c3c3c3c3c3c300');
+    expect(stop).toBeGreaterThan(0);
+    expect(io.calls.slice(stop + 1).filter((a) => a[3] === 'search')).toEqual([]);
+  }
+}), 120_000);
+
+test('GST-4026: a usage limit raised by the checkpoint proof search stops the sweep at once, with no more thread reads or searches', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const config = gbrainioConfig();
+    const f = await source(engine, config);
+    const cfg = parseGoogleSourceConfig(config, f.dir);
+    const mail: Msg[] = Array.from({ length: 30 }, (_, i) => ({ id: `9a9a9a9a9a9a9${String(i).padStart(3, '0')}`, tid: `9b9b9b9b9b9b9${String(i).padStart(3, '0')}`,
+      ms: NOW_MS - (i + 1) * 12 * HOUR, from: 'Peer Example <peer@example.invalid>', to: OWNER, subject: `Topic ${i}` }));
+    // The proof after the first 25-thread batch lists from the 25th thread's second down to the floor.
+    const proofSec = Math.floor(mail[24]!.ms / 1000);
+    const limit = { exitCode: 1, stdout: '', stderr: 'daily usage limit reached' };
+    let proofAt = -1;
+    const io = fakeGbrainio(mail, { override: (args) => {
+      if (args[3] !== 'search' || proofAt >= 0) return null;
+      const q = args[4]!;
+      const after = Number(/after:(\d+)/.exec(q)?.[1] ?? -1);
+      if (q.replace(/after:\d+|before:\d+/g, '').trim() || after < proofSec - 1 || after > proofSec) return null;
+      proofAt = io.calls.length - 1;
+      return limit;
+    } });
+    const limited = await runGoogleSync(engine, f.id, cfg, options);
+    expect(proofAt).toBeGreaterThan(0);
+    expect((limited as { stopped_on?: string }).stopped_on).toBe('usage_limit');
+    expect(io.calls.slice(proofAt + 1).filter((a) => a[2] === 'thread' || a[3] === 'search')).toEqual([]);
+  }
+}), 120_000);
+

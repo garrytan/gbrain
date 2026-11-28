@@ -27,25 +27,27 @@ export const CHANGE_CUE = /\b(?:moved|relocated|left|quit|joined|switched|transf
 
 export interface SlotRow {
   id: number; source_id: string; entity_slug: string; dimension: string; value_hash: string;
-  valid_from: Date | string; source_markdown_slug: string | null; fact: string;
+  valid_from: Date | string | null; source_markdown_slug: string | null; fact: string;
 }
 
 /**
  * Derived ends by fact id. Rows of one (source, entity, dimension) are walked in valid_from order; consecutive rows of
  * one value are one stint (a restatement continues it). A stint ends where the next distinct value starts when that
  * value's first row is on a page one of the stint's rows came from, or its fact matches CHANGE_CUE, and only when it
- * starts later than the stint. Callers pass only rows the reader may see.
+ * starts later than the stint. A row with no event date (#10288) has no place in the walk and is skipped. Callers pass
+ * only rows the reader may see.
  */
 export function deriveSlotEnds(rows: readonly SlotRow[]): Map<number, Date> {
   const ends = new Map<number, Date>();
   const groups = new Map<string, SlotRow[]>();
   for (const r of rows) {
+    if (r.valid_from == null) continue;
     const key = [r.source_id, r.entity_slug, r.dimension].join('\u0000');
     const group = groups.get(key);
     if (group) group.push(r);
     else groups.set(key, [r]);
   }
-  const time = (r: SlotRow) => new Date(r.valid_from).getTime();
+  const time = (r: SlotRow) => new Date(r.valid_from!).getTime();
   for (const group of groups.values()) {
     group.sort((a, b) => time(a) - time(b) || a.value_hash.localeCompare(b.value_hash) || Number(a.id) - Number(b.id));
     const stints: SlotRow[][] = [];
@@ -60,7 +62,7 @@ export function deriveSlotEnds(rows: readonly SlotRow[]): Map<number, Date> {
       if (time(next) <= time(stint[0]!)) continue;
       const samePage = next.source_markdown_slug != null && stint.some(r => r.source_markdown_slug === next.source_markdown_slug);
       if (!samePage && !CHANGE_CUE.test(next.fact)) continue;
-      for (const r of stint) ends.set(Number(r.id), new Date(next.valid_from));
+      for (const r of stint) ends.set(Number(r.id), new Date(next.valid_from!));
     }
   }
   return ends;

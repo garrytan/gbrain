@@ -90,6 +90,8 @@ async function completedChild(engine: BrainEngine, name: string, parent: number,
   return id;
 }
 
+/** A fenced caller: the OAuth client that owns rows by their `__owner_client_id` stamp (these rows record no principal). */
+const CLIENT_A = { principal: { kind: 'oauth_client', id: 'client-a' }, clientId: 'client-a', actor: ['', '', '', ''] as const };
 const empty = { jobIds: [], waitingIds: [], waitingQueues: [], parentIds: [], lockIds: [], holderQueue: BEACON_QUEUE, holderLimit: 500, owner: null } satisfies JobInsightSpec;
 
 /** The rows as the engines must agree on them: ids relative to `base`, lease dates as present. */
@@ -139,7 +141,7 @@ describe('engine parity: job insight', () => {
       const spec = (extra: Partial<JobInsightSpec>): JobInsightSpec => ({ ...empty, ...extra });
       const waiting = [late, first, second, remote, otherQueue, holderTwo];
       const fenced = view(await engine.readJobInsight(spec({
-        jobIds: all, waitingIds: waiting, waitingQueues: ['default', 'other'], parentIds: [parent], owner: 'client-a',
+        jobIds: all, waitingIds: waiting, waitingQueues: ['default', 'other'], parentIds: [parent], owner: CLIENT_A,
       })), base);
       const unfenced = view(await engine.readJobInsight(spec({
         jobIds: all, waitingIds: waiting, waitingQueues: ['default', 'other'], parentIds: [parent],
@@ -151,7 +153,7 @@ describe('engine parity: job insight', () => {
         jobIds: [late], waitingIds: [late], waitingQueues: ['default', 'other', BEACON_QUEUE],
       })), base);
       const none = view(await engine.readJobInsight(spec({ jobIds: [], waitingQueues: ['default'] })), base);
-      const missing = view(await engine.readJobInsight(spec({ jobIds: [base + 100_000], owner: 'client-a' })), base);
+      const missing = view(await engine.readJobInsight(spec({ jobIds: [base + 100_000], owner: CLIENT_A })), base);
       return {
         fenced: { ...fenced, meta: sorted(fenced.meta, m => String(m.id).padStart(8, '0')) },
         unfenced: { foreign: unfenced.foreign_tokens, children: unfenced.children },
@@ -180,13 +182,13 @@ describe('engine parity: job insight', () => {
       // An expired lease, and a live one the caller does not ask about.
       expect(await engine.acquireCycleLock('gbrain-sync:expired', lease(105, TOKEN(5), -1))).not.toBeNull();
       expect(await engine.acquireCycleLock('gbrain-sync:unasked', lease(106, TOKEN(6)))).not.toBeNull();
-      const ask = (lockIds: string[], owner: string | null = null) => engine.readJobInsight({ ...empty, jobIds: [base], lockIds, owner });
+      const ask = (lockIds: string[], owner: typeof CLIENT_A | null = null) => engine.readJobInsight({ ...empty, jobIds: [base], lockIds, owner });
       const lockIds = ['gbrain-sync:src1', 'gbrain-sync:src2', 'gbrain-sync:src3', 'gbrain-sync:src4', 'gbrain-sync:expired', 'gbrain-sync:absent'];
       return {
         locks: view(await ask(lockIds), base).locks,
         one: view(await ask(['gbrain-sync:src1', 'gbrain-sync:unasked']), base).locks.map(l => l.id),
         expiredOnly: view(await ask(['gbrain-sync:expired']), base).locks,
-        fenced: view(await ask(['gbrain-sync:src1'], 'client-a'), base).locks.map(l => l.holder_owner),
+        fenced: view(await ask(['gbrain-sync:src1'], CLIENT_A), base).locks.map(l => l.holder_owned),
       };
     });
 });

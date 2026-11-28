@@ -66,7 +66,7 @@ import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingRes
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { PageDateFieldsByIdRow, PageDateFieldsRow, PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourcesNotReadableOpts, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourcePathRow } from './engine-sql/sources.ts';
+import type { ActiveSourceConfigRow, DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourcesNotReadableOpts, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourcePathRow } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder,
   NotifierSourceRow, NotifierStatusRow, PendingWantedMarker, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput, FirstDueRow,
@@ -183,6 +183,7 @@ import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './en
 import type { PageRevisionWriter, RevisionWriterRequest } from './engine-sql/sync-run-reads.ts';
 import type { RepairBusyRows } from './engine-sql/repair-busy.ts';
 import type { SourceDeleteImpact, SourceDeleteResult, SourceSyncStampOptions, SourceIncarnationListRow as SourcesIncarnationRow, SyncCheckpointAdvance } from './engine-sql/sources.ts';
+import type { IgnoredLabelPageRow } from './engine-sql/entity-reads.ts';
 import type { SyncAdmissionEffectsInput } from './engine-sql/sync-admission.ts';
 import type { SyncImportPageQuery, SyncImportPageRow, SyncImportPageWindow } from './engine-sql/sync-pass-pages.ts';
 
@@ -839,7 +840,8 @@ export interface FactRow {
    */
   notability: 'high' | 'medium' | 'low';
   context: string | null;
-  valid_from: Date;
+  /** Event time; null when the event date is unknown (#10288), which reads order by created_at. */
+  valid_from: Date | null;
   valid_until: Date | null;
   expired_at: Date | null;
   superseded_by: number | null;
@@ -879,7 +881,7 @@ export interface NewFact {
   entity_slug?: string | null;
   visibility?: FactVisibility;          // default 'private'
   context?: string | null;
-  valid_from?: Date;                   // default now()
+  valid_from?: Date | null;            // null or omitted: event date unknown, stored NULL (#10288)
   valid_until?: Date | null;
   /**
    * v0.46 (#3014) — explicit expiry timestamp. When set, the row is
@@ -957,9 +959,12 @@ export interface FactListOpts {
    * not by when the underlying event occurred. Off by default, so the
    * facts meta-hook's hot-memory injection cache (`facts/meta-hook.ts`,
    * a 24h recency window re-ranked by decayed confidence) keeps its
-   * creation-time semantics unchanged.
+   * creation-time semantics unchanged. #10288: an event-time read matches
+   * only facts with a known event date unless `includeUndated` is set.
    */
   eventTime?: boolean;
+  /** With `eventTime`: also return facts whose event date is unknown (valid_from NULL), placed by created_at. For unbounded timelines only, never a window. */
+  includeUndated?: boolean;
   /**
    * When true, exclude the durable audit checkpoint rows that
    * extract-conversation-facts writes into the facts table
@@ -1455,13 +1460,25 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readFederationExposedPages(sourceId: string, hidePrivate: boolean): Promise<FederationExposureSql.FederationExposedRow[]>;
 
   /** One source row (id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides), or null when no source has that id. */
-  getSource(sourceId: string): Promise<SourceDetailRow | null>;
+  getSource(sourceId: string, opts?: { timeoutMs?: number }): Promise<SourceDetailRow | null>;
 
   /**
    * Local paths of every source that has one (non-null, non-empty), in no particular order. The filesystem lock
    * (`withSourceFilesystemLock`) canonicalizes each to pick the outermost worktree root an import locks.
    */
   listSourceLocalPaths(): Promise<string[]>;
+  /** The active sources with their raw config, by id (the read that scopes a legacy remote caller). */
+  listActiveSourceConfigs(): Promise<ActiveSourceConfigRow[]>;
+  /**
+   * Live pages of one source, by slug or updated since a database timestamp, that carry a privacy label gbrain does not
+   * recognize and no visibility key (`ignoredPrivacyLabelSql`), at most `limit` (default 100,000), in no set order.
+   */
+  readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string },
+    opts?: { limit?: number; timeoutMs?: number }): Promise<IgnoredLabelPageRow[]>;
+  /** The type and frontmatter of the live page at `slug` in the source, or null; `timeoutMs` bounds Postgres (default 1 s). */
+  readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }): Promise<IgnoredLabelPageRow | null>;
+  /** Whether this connection's role owns the gbrain tables (so it can apply migrations); false only when it provably does not. */
+  ownsSchemaTables(): Promise<boolean>;
 
   /** How many sources that are not archived have a non-empty local path (the readiness sync probe). */
   countRepoBoundSources(): Promise<number>;
@@ -3884,6 +3901,13 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    */
   pruneHoldingPageVersions(pageId: number): Promise<number>;
   /**
+   * #9737 (engine-sql/version-prune.ts): removes exactly the inline (not segmented) saved versions an approved `gbrain pages
+   * prune-history` plan named, under the caller's page lock, and marks the history it cut. Nothing goes when the page is no
+   * longer live at the named source and slug (or of the `type` a --type plan selected) or is an agent_policy page; `keep`
+   * also spares the page's newest `keep` versions. Answers how many it deleted.
+   */
+  pruneInlineVersionsById(page: { pageId: number; sourceId: string; slug: string; type?: string | null; keep?: number | null }, versionIds: readonly number[]): Promise<number>;
+  /**
    * v0.31.8 (D12): `opts.sourceId` source-scopes both the version lookup
    * and the page revert. Without it, multi-source brains can revert the
    * wrong row when the slug exists in 2+ sources.
@@ -4231,7 +4255,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   ): Promise<{ migrated: number }>;
 
   // Config
-  getConfig(key: string): Promise<string | null>;
+  getConfig(key: string, opts?: { timeoutMs?: number }): Promise<string | null>;
   setConfig(key: string, value: string): Promise<void>;
   /**
    * v0.32.3 — delete a config row. Returns the number of rows deleted (0 or 1).

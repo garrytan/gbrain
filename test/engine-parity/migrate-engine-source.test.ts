@@ -147,7 +147,8 @@ describe('engine parity: gbrain migrate from each source engine', () => {
       // A soft-deleted page keeps its columns and its manual statements.
       deletedPage: (await engine.readMigrationPageColumns(NOTE, 'default'))?.source_path ?? null,
       missingPage: await engine.readMigrationPageColumns('notes/none-example', 'default'),
-      page: page && { ...page, effective_date: iso(page.effective_date), ingested_at: page.ingested_at != null },
+      // The Rust store keeps no content author (GST-4056, rust/docs/store/seed.md) and omits the column; an absent author reads as none.
+      page: page && { ...page, effective_date: iso(page.effective_date), ingested_at: page.ingested_at != null, content_author: page.content_author ?? null },
       transitions: await engine.listManualLinkTransitions(NOTE, 'default'),
       noTransitions: await engine.listManualLinkTransitions(CO, 'default'),
       sourceColumns: sources.columns,

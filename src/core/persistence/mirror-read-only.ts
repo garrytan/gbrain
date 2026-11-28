@@ -26,7 +26,10 @@ import { urlCloneReadOnly } from '../url-clone.ts';
 export async function sourceMirrorReadOnly(engine: SqlEngine, sourceId: string, lock = false): Promise<boolean> {
   const row = await (engine as unknown as Pick<BrainEngine, 'readSourceState'>).readSourceState(sourceId, lock ? { lock: 'share' } : undefined);
   if (!row) return false;
-  return String(row.config.mirror_read_only) === 'true' || await urlCloneReadOnly(engine, sourceId, row);
+  // The flag as master's SQL read it (`COALESCE(config->>'mirror_read_only','false')='true'`): only a JSON true or the
+  // string "true" turns it on; String() would also read an array such as ["true"] or [true] as on.
+  const flag = row.config.mirror_read_only;
+  return flag === true || flag === 'true' || await urlCloneReadOnly(engine, sourceId, row);
 }
 
 /**

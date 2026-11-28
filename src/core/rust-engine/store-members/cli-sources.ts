@@ -16,7 +16,7 @@
  * sources.rs).
  */
 import type { SourceRecordRow } from '../../engine.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageIdentityRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, SourceCheckRow, SourcesNotReadableOpts, SourceDeleteImpact, SourceDeleteResult, SourceInsert, SourcePathPageRow, SourceRoutingRow, SourceUpstreamObservation, SourcePathRow } from '../../engine-sql/sources.ts';
+import type { ActiveSourceConfigRow, DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageIdentityRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, SourceCheckRow, SourcesNotReadableOpts, SourceDeleteImpact, SourceDeleteResult, SourceInsert, SourcePathPageRow, SourceRoutingRow, SourceUpstreamObservation, SourcePathRow } from '../../engine-sql/sources.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
@@ -94,6 +94,12 @@ async function sourceCheckRow(brain: StoreBrain, member: string, sourceId: strin
 
 export const readSourceRow: StoreMember<[sourceId: string], SourceCheckRow | null> = (brain, sourceId) =>
   sourceCheckRow(brain, 'readSourceRow', sourceId);
+
+/** The active sources with their raw config, from the store's source records (it keeps no separate statement for them). */
+export const listActiveSourceConfigs: StoreMember<[], ActiveSourceConfigRow[]> = async (brain) => {
+  const rows = (await storeCall({ member: 'listActiveSourceConfigs' }, () => brain.listSourceRecords())) as SourceRecordRow[];
+  return rows.filter(row => row.archived !== true).map(({ id, config }) => ({ id, config, archived: false }));
+};
 
 /** The store serializes its writes and the Rust engine runs no SQL transaction, so there is no row lock to take. */
 export const lockSourceRow: StoreMember<[sourceId: string], SourceCheckRow | null> = (brain, sourceId) =>

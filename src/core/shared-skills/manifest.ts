@@ -3,6 +3,7 @@ import { sha256 } from '../persistence/digest.ts';
 import { FAILSAFE_SCHEMA } from 'js-yaml';
 import { loadBoundedYaml as load } from '../data-frontmatter.ts';
 import { SHARED_SKILL_LIMITS, type SharedSkillFileInput, type SkillFileClass, type SkillMetadata, type StoredSkillFile } from './model.ts';
+import { foldSkillPath } from './case-collisions.ts';
 
 export function skillName(value: unknown, field = 'name'): string {
   if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,127}$/.test(value)) {
@@ -47,7 +48,7 @@ export function normalizeSkillFiles(name: string, input: unknown): StoredSkillFi
       throw opError('invalid_params', 'Files must belong to this skill or its declared shared conventions.',
         `Place every file under skills/${name}/ or skills/conventions/, and never publish credential, secret or .env files.`);
     }
-    const folded = path.toLocaleLowerCase('en-US');
+    const folded = foldSkillPath(path);
     if (seen.has(folded)) {
       throw opError('invalid_params', 'Duplicate or case-colliding skill paths.',
         `List ${path} once; paths that differ only by letter case collide on case-insensitive checkouts, so rename one of them.`);

@@ -8,6 +8,9 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { AnswerSentence, PinRow } from './store.ts';
+import { quarantinedProvenanceFilterFragment } from '../quarantine.ts';
+import { privateFactFilterForReader, privatePagesFilterForCaller, privateTimelineEventFilterForCaller } from '../search/private-visibility.ts';
+import { projectionEligibleSql } from '../eligibility/sql.ts';
 
 export type StaleReason =
   | 'page_missing' | 'page_deleted' | 'page_changed' | 'source_archived'
@@ -39,7 +42,7 @@ export const TAKE_HASH_SQL = (a: string) => `md5(${a}.claim || '|' || ${a}.holde
 
 export interface EvaluatedSentence extends AnswerSentence {
   stale: boolean;
-  /** Not readable by this caller (evidence outside its source grant): never returned as text. */
+  /** Not readable by this caller (evidence outside its source grant, or for an owner read a row its page reads hide): never returned as text. */
   hidden: boolean;
   reasons: StaleReason[];
 }
@@ -79,6 +82,8 @@ interface EvidenceJoinRow {
   k_active: boolean | null;
   k_superseded: number | null;
   k_hash: string | null;
+  readable?: boolean | null;
+  scope_unreadable?: boolean | null;
 }
 
 function pageReasons(r: EvidenceJoinRow, changed: StaleReason): StaleReason[] {
@@ -124,22 +129,79 @@ export function evidenceReasons(r: EvidenceJoinRow): StaleReason[] {
 }
 
 /**
+ * Whether the current caller reads one evidence row as its page reads would: the fact under the fact read gate and
+ * fact eligibility (hidden with a deleted or quarantined page, or awaiting re-derivation), else the cited page under
+ * its readers and privacy, and its timeline row's event page.
+ */
+function evidenceReadableSql(): string {
+  return `CASE WHEN e.kind = 'fact' THEN f.id IS NOT NULL AND ${privateFactFilterForReader('f')} AND ${projectionEligibleSql('facts', 'f', undefined)}
+    ELSE p.id IS NOT NULL AND ${privatePagesFilterForCaller('p')}
+      AND (e.kind <> 'timeline' OR (t.id IS NOT NULL AND ${privateTimelineEventFilterForCaller('t')}))
+  END`;
+}
+
+/**
+ * True when the pin's scope ($3 its source; $4 its slug-prefix LIKE pattern or NULL, $5 its scope entity) holds a page,
+ * fact or timeline row the current caller cannot read: the refresh reads the whole scope, so such a row may have fed
+ * any sentence.
+ */
+function scopeUnreadableSql(): string {
+  const inScope = (col: string) => `($4::text IS NULL OR ${col} LIKE $4 OR ${col} = $5)`;
+  const inputPage = (a: string) => `${a}.source_id = $3 AND ${a}.deleted_at IS NULL AND ${a}.type NOT IN ('question', 'synthesis')
+    AND NOT (${a}.frontmatter ? 'pinned_question') AND ${inScope(`${a}.slug`)}`;
+  return `(EXISTS (SELECT 1 FROM pages sp WHERE ${inputPage('sp')} AND (${privatePagesFilterForCaller('sp')}) IS NOT TRUE)
+    OR EXISTS (SELECT 1 FROM facts sf WHERE sf.source_id = $3 AND sf.expired_at IS NULL AND ${inScope('sf.entity_slug')}
+      AND (${privateFactFilterForReader('sf')}) IS NOT TRUE)
+    OR EXISTS (SELECT 1 FROM timeline_entries st JOIN pages stp ON stp.id = st.page_id WHERE ${inputPage('stp')}
+      AND (${privateTimelineEventFilterForCaller('st')}) IS NOT TRUE))`;
+}
+
+/**
  * Evaluate the current answer for one reader. `readableSources` null means the
  * trusted local view (every source); otherwise a sentence citing evidence in a
- * source outside the list is hidden, never returned.
+ * source outside the list is hidden, never returned. `ownerRead` (the brain
+ * owner's remote read) also hides a sentence citing a row the owner's page
+ * reads would not show it, and every sentence when the credential reads only
+ * some take holders or the pin's scope holds a row it cannot read: an answer is
+ * written from the whole scope, takes included, and its citations do not prove
+ * which input a sentence came from.
  */
 export async function evaluateAnswer(
   engine: BrainEngine,
-  pin: Pick<PinRow, 'id' | 'answer' | 'answer_revision'>,
-  opts: { readableSources: string[] | null },
+  pin: Pick<PinRow, 'id' | 'answer' | 'answer_revision' | 'source_id' | 'scope_slug_prefix' | 'scope_entity'>,
+  opts: { readableSources: string[] | null; ownerRead?: { takesHolders: string[] | undefined } },
 ): Promise<AnswerEvaluation> {
-  const rows = pin.answer.length === 0 ? [] : await engine.listQuestionEvidenceJoin(pin.id, pin.answer_revision) as unknown as EvidenceJoinRow[];
+  // The owner's remote read judges each row by the caller's page reads, so its statement carries caller-built
+  // filters and stays raw; every other read is the typed member (engine-sql/question-reads.ts).
+  const rows = pin.answer.length === 0 ? [] : !opts.ownerRead
+    ? await engine.listQuestionEvidenceJoin(pin.id, pin.answer_revision) as unknown as EvidenceJoinRow[]
+    : await engine.executeRaw<EvidenceJoinRow>(
+    `SELECT e.sentence_id, e.kind, e.source_id, e.page_id, e.page_generation, e.page_revision, e.content_hash,
+       p.id AS p_id, p.generation AS p_generation, p.knowledge_revision::text AS p_revision, p.deleted_at AS p_deleted,
+       s.archived AS p_source_archived, ${OWNER_BODY_HASH_SQL('p')} AS p_body_hash,
+       f.id AS f_id, f.expired_at AS f_expired, (f.valid_until IS NOT NULL AND f.valid_until <= now()) AS f_valid_until_passed,
+       f.superseded_by AS f_superseded, ${FACT_HASH_SQL('f')} AS f_hash,
+       (f.id IS NOT NULL AND NOT ${quarantinedProvenanceFilterFragment('f')}) AS f_source_quarantined,
+       t.id AS t_id, ${TIMELINE_HASH_SQL('t')} AS t_hash,
+       k.id AS k_id, k.active AS k_active, k.superseded_by AS k_superseded, ${TAKE_HASH_SQL('k')} AS k_hash
+       , ${evidenceReadableSql()} AS readable, ${scopeUnreadableSql()} AS scope_unreadable
+     FROM question_evidence e
+     LEFT JOIN pages p ON p.id = e.page_id
+     LEFT JOIN sources s ON s.id = p.source_id
+     LEFT JOIN facts f ON e.kind = 'fact' AND f.id = e.item_id AND f.source_id = e.source_id
+     LEFT JOIN timeline_entries t ON e.kind = 'timeline' AND t.id = e.item_id
+     LEFT JOIN takes k ON e.kind = 'take' AND k.id = e.item_id
+     WHERE e.question_id = $1 AND e.answer_revision = $2`,
+    [pin.id, pin.answer_revision, pin.source_id, pin.scope_slug_prefix ? `${pin.scope_slug_prefix.replace(/[\\%_]/g, '\\$&')}%` : null, pin.scope_entity ?? '']);
+  const narrowed = opts.ownerRead !== undefined
+    && (opts.ownerRead.takesHolders !== undefined || rows.length === 0 || rows.some(r => r.scope_unreadable !== false));
   const bySentence = new Map<string, EvidenceJoinRow[]>();
   for (const r of rows) bySentence.set(r.sentence_id, [...(bySentence.get(r.sentence_id) ?? []), r]);
   const sentences = pin.answer.map((s): EvaluatedSentence => {
     const evidence = bySentence.get(s.id) ?? [];
     const reasons = evidence.length === 0 ? ['unverifiable' as const] : [...new Set(evidence.flatMap(evidenceReasons))];
-    const hidden = opts.readableSources !== null && evidence.some(e => !opts.readableSources!.includes(e.source_id));
+    const hidden = narrowed || (opts.readableSources !== null && evidence.some(e => !opts.readableSources!.includes(e.source_id)))
+      || (opts.ownerRead !== undefined && evidence.some(e => e.readable !== true));
     return { ...s, stale: reasons.length > 0, hidden, reasons };
   });
   return {

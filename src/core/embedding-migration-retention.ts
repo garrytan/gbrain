@@ -41,8 +41,10 @@ export async function assertRetainedEmbeddingRebuildability(tx: BrainEngine, dim
       const state: Pick<MigrationState, 'from_model' | 'from_dims' | 'companion_vectors_invalidated'> =
         prior.state?.to_model === model && prior.state.to_dims === dimensions ? prior.state
           : { from_model: plan?.from_model ?? storedModel ?? 'unrecorded', from_dims: plan?.from_dims ?? width ?? 0 };
+      // #8533/#10231: a label without its provider names the same model at the same width, so a label-only repair keeps companion vectors.
+      const sameModel = (label: string | null | undefined) => label === model || (!!label && !label.includes(':') && label === model.slice(model.indexOf(':') + 1));
       clearCompanions = !state.companion_vectors_invalidated
-        && (state.from_model !== model || state.from_dims !== dimensions || storedModel !== model);
+        && (!sameModel(state.from_model) || state.from_dims !== dimensions || !sameModel(storedModel));
     }
     const factColumns = await tx.executeRaw<{ type: string }>(`SELECT format_type(atttypid,atttypmod) AS type
       FROM pg_attribute WHERE attrelid='facts'::regclass AND attname='embedding' AND attnum>0 AND NOT attisdropped`);

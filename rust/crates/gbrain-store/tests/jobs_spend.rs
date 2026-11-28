@@ -59,9 +59,14 @@ fn row(b: &Brain, n: u32) -> Value {
     b.spend_reservation_row(&uuid(n)).unwrap().expect("a row")
 }
 
+/// A fenced caller: the OAuth client that owns rows by their `__owner_client_id` stamp (these rows record no principal).
+fn client(id: &str) -> Value {
+    json!({ "principal": {"kind": "oauth_client", "id": id}, "clientId": id, "actor": ["", "", "", ""] })
+}
+
 fn tree(b: &Brain, jobs: &[i64], owner: Option<&str>) -> Vec<(i64, bool, Value, i64, i64)> {
     let spec: SpendTreeSpec =
-        serde_json::from_value(json!({ "jobIds": jobs, "owner": owner })).unwrap();
+        serde_json::from_value(json!({ "jobIds": jobs, "owner": owner.map(client) })).unwrap();
     b.read_job_spend_tree(&spec)
         .unwrap()
         .as_array()

@@ -28,7 +28,7 @@ delete process.env.GBRAIN_SOURCE;
 type Call = { name: string; params: Record<string, unknown> };
 const calls: Call[] = [];
 // Scripted responses, consumed in order by callRemoteTool.
-const scripted: Array<{ facts: Array<Record<string, unknown>>; total: number }> = [];
+const scripted: Array<{ facts: Array<Record<string, unknown>>; total: number } | Error> = [];
 
 const realConfig = await import('../src/core/config.ts');
 mock.module('../src/core/config.ts', () => ({
@@ -42,11 +42,13 @@ mock.module('../src/core/mcp-client.ts', () => ({
   callRemoteTool: async (_cfg: unknown, name: string, params: Record<string, unknown>) => {
     calls.push({ name, params });
     const body = scripted.shift() ?? { facts: [], total: 0 };
+    if (body instanceof Error) throw body;
     return { content: [{ type: 'text', text: JSON.stringify(body) }] };
   },
 }));
 
 const { runRecall } = await import('../src/commands/recall.ts');
+const { RemoteMcpError } = await import('../src/core/remote-mcp-error.ts');
 
 function fact(id: number, text: string, entity: string | null = null): Record<string, unknown> {
   return {
@@ -127,5 +129,20 @@ describe('#4720 thin-client recall entity→text fallback', () => {
     expect(calls.length).toBe(1);
     expect(calls[0].params.grep).toBe('semicolons');
     expect(JSON.parse(stdout).total).toBe(0);
+  });
+});
+
+describe('#10288 thin-client recall and an unknown event date', () => {
+  test('a fact with no event date keeps valid_from null', async () => {
+    scripted.push({ facts: [{ ...fact(9, 'The example note has no event date.'), valid_from: null }], total: 1 });
+    const { stdout } = await captureRecall(['--grep', 'example', '--json']);
+    expect(JSON.parse(stdout).facts[0].valid_from).toBeNull();
+  });
+
+  test('a host that refuses include_undated is asked again without it', async () => {
+    scripted.push(new RemoteMcpError('tool_error', 'Remote tool recall failed', { code: 'invalid_params', suggestion: 'Unknown parameter "include_undated".' } as never));
+    scripted.push({ facts: [fact(4, 'Saved today.')], total: 1 });
+    await captureRecall(['--today', '--json']);
+    expect(calls.map(c => c.params.include_undated)).toEqual([true, undefined]);
   });
 });

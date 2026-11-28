@@ -221,6 +221,16 @@
           }
         ]
       },
+      "listActiveSourceConfigs": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id, config, archived FROM sources WHERE archived = false ORDER BY id",
+            "textSha256": "c53c7976fb939fbcd0d1d28fc6544ee7d97df591d4fa9eacf9c2c66bc7e218fc"
+          }
+        ]
+      },
       "listAllSources": {
         "default": [
           {
