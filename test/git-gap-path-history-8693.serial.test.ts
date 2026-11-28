@@ -106,6 +106,25 @@ describe('readPathHistory', () => {
     expect(history!.get('notes/plain.md')).toHaveLength(1);
   }, 60_000);
 
+  test('a large interest set walks the whole scope, which is cheaper than matching every entry against every path', async () => {
+    const r = checkout();
+    const paths = Array.from({ length: 40 }, (_, i) => `notes/page-${i}.md`);
+    for (const path of paths) r.put(path, 'one');
+    r.put('other/page.md', 'one'); r.commit('one');
+    for (const path of paths) r.put(path, `two ${path}`);
+    r.commit('two');
+    const seen: string[][] = [];
+    const original = hardened.hardenedGitStream;
+    const spy = spyOn(hardened, 'hardenedGitStream').mockImplementation(async (root, args, opts) => { seen.push([...args]); return original(root, args, opts); });
+    let history: Awaited<ReturnType<typeof readPathHistory>>;
+    try { history = await readPathHistory(r.root, 'HEAD', 'notes', new Set([...paths, 'other/page.md'])); } finally { spy.mockRestore(); }
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).not.toContain('--stdin');
+    expect(seen[0]!.slice(-2)).toEqual(['--', ':(literal)notes']);
+    expect([...history!.keys()].sort()).toEqual([...paths].sort());
+    for (const path of paths) expect(history!.get(path)).toHaveLength(2);
+  }, 60_000);
+
   test('merge history keeps full-history entries and first-parent merge diffs', async () => {
     const r = checkout();
     r.put('notes/main.md', 'base'); r.put('notes/side.md', 'base'); r.commit('base');
