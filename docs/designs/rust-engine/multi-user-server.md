@@ -365,6 +365,14 @@ normalised relative path. Segmented storage of a Markdown file over 24 MiB is no
 `served` is in `MULTIUSER_CAPABILITIES` (I-8.v2), not `ENGINE_CAPABILITIES`, so with the switch off every
 capability set and the error catalogue's list of capabilities stay as they were.
 
+### Served parity set
+
+`test/engine-parity/rust-served-set.tsv` lists every parity file with a nonzero pin in `rust-tally.tsv` (472 files).
+`scripts/run-rust-served-set.sh <env|config>` runs each one on the Rust arm as a served client, in one multi-user
+route. The runner is red when a file fails, when the file did not run in that route, or when its served tally line is
+missing or worse than its pin. The pin check counts the cases the multi-user view holds as known gaps or pinned stops,
+as the parity harness does. `test/scripts/run-rust-served-set.test.ts` fails when a file with a nonzero pin is left out.
+
 ### Follower frames
 
 `src/core/rust-engine/served/follower-frames.ts` defines the frames that carry `gbrain_store::follower` over protocol
