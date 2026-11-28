@@ -137,6 +137,14 @@ pub struct ExtractedRef {
     pub extracted_at: Option<String>,
 }
 
+/// One page of `readPageComparisonColumns`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ComparisonRef {
+    pub slug: String,
+    pub source_id: String,
+}
+
 /// One ref of `markPagesAttendanceBlocked`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -442,6 +450,34 @@ impl Store {
             }
             Ok(marked.len() as u64)
         })
+    }
+
+    /// `readPageComparisonColumns(refs)`: the shadow write comparison's read of three stored page
+    /// columns no other read returns. One row `{ source_id, slug, links_extracted_at,
+    /// links_attendance_blocked_revision, embedding_signature }` per ref that names a page
+    /// (soft-deleted ones included; a ref with no page has no row). `links_extracted_at` is the
+    /// microseconds since the epoch as text, the form the comparison reads the primary in; an
+    /// unset column is null. Read only.
+    pub fn read_page_comparison_columns(&self, refs: &[ComparisonRef]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut rows = Vec::with_capacity(refs.len());
+        for r in refs {
+            let Some(page) = read_page(&*read, &r.source_id, &r.slug)? else {
+                continue;
+            };
+            let record = read_record(&*read, page.id)?;
+            let signature = read
+                .get(&crate::embeddings::signature_key(page.id))?
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+            rows.push(json!({
+                "source_id": page.source_id,
+                "slug": page.slug,
+                "links_extracted_at": record.links_extracted_at_us.map(|us| us.to_string()),
+                "links_attendance_blocked_revision": record.links_attendance_blocked_revision,
+                "embedding_signature": signature,
+            }));
+        }
+        Ok(rows)
     }
 
     /// `countStaleFrontmatterKeyPages({ sourceIds })`: `{ source_id, n }` per source that has live

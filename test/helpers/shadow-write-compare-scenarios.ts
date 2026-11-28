@@ -38,7 +38,8 @@ import { declarePersistence } from '../../src/core/engine-sql/persistence-declar
 import { lockEffectClaimRow } from '../../src/core/engine-sql/embedding-install.ts';
 import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../../src/core/rust-engine.ts';
-import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
+import { LOST_NONQUALIFYING, MAX_PRE_LINKS, QUALIFYING_LINE_REASONS, readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
+import { encodeArgs } from '../../src/shadow/codec.ts';
 import { ensureEpoch, readEpoch } from '../../src/shadow/evidence-epoch.ts';
 import { withEnv } from './with-env.ts';
 import { withStoredSlug } from '../../src/core/utils.ts';
@@ -190,6 +191,33 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(inbox.map((e) => [e.outcome, e.reason])).toEqual([['uncomparable', 'preimage_timeout']]);
       expect((await tallyOf(inbox)).comparable).toBe(0);
     }, 60_000);
+
+    // Postgres only, and registered only there: a skipped test fails the rust-store lane's every-test-ran check.
+    if (ctx.kind === 'postgres') test('the page-id lookup of an id-named write is stopped by the database at the read deadline, not left waiting on a pool connection behind a lock', async () => {
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      const [row] = await primary().executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1', ['companies/acme-example']);
+      const [{ d }] = await primary().executeRaw<{ d: string }>('SELECT current_database() AS d');
+      if (!d.startsWith('gbrain_test_')) throw new Error('refusing to lock a database that is not a test clone');
+      const url = new URL(process.env.DATABASE_URL!); url.pathname = `/${d}`;
+      // Another process holds the pages table (as a migration would) for longer than the read deadline.
+      const holder = Bun.spawn([process.execPath, '-e', "import postgres from '#postgres'; const s = postgres(process.env.OTHER_URL, { max: 1, prepare: false }); await s.begin(async (t) => { await t.unsafe('LOCK TABLE pages IN ACCESS EXCLUSIVE MODE'); await t.unsafe('SELECT pg_sleep(8)'); }); await s.end();"], {
+        cwd: join(import.meta.dir, '..', '..'), env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', OTHER_URL: url.toString() }, stdout: 'ignore', stderr: 'pipe',
+      });
+      const count = async (sql: string): Promise<number> => Number((await primary().executeRaw<{ n: string }>(sql))[0]!.n);
+      const poll = async (sql: string, want: number, ms: number): Promise<void> => { const end = Date.now() + ms; while (await count(sql) !== want) { if (Date.now() > end) throw new Error(`timed out waiting for ${want}`); await new Promise((r) => setTimeout(r, 50)); } };
+      await poll("SELECT count(*)::text AS n FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE c.relname = 'pages' AND l.mode = 'AccessExclusiveLock' AND l.granted", 1, 15_000);
+      const { inbox, wrapped } = rig();
+      const write = wrapped.stripStaleFrontmatterKeys({ sourceId: 'default', ids: [Number(row!.id)] });
+      const lookups = "SELECT count(*)::text AS n FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND state = 'active' AND query LIKE '/* shadow write targets */%'";
+      await poll(lookups, 1, 5_000); // the lookup waits behind the lock
+      await poll(lookups, 0, 4_000); // and the database ends it at the read deadline (2 s), while the lock is still held
+      expect(holder.exitCode).toBeNull();
+      expect(await holder.exited).toBe(0);
+      await write;
+      await until(() => inbox.length >= 1);
+      expect(inbox.map((e) => [e.op, e.outcome])).toEqual([['stripStaleFrontmatterKeys', 'uncomparable']]);
+    }, 60_000);
   });
 
   (ctx.addon ? describe : describe.skip)('a sampled page or link write replayed on a scratch Rust store', () => {
@@ -259,6 +287,254 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
         (ev.post as { pages: Array<{ title: string }> }).pages[0]!.title = 'Not What Rust Wrote';
       });
       expect(out.tally).toMatchObject({ comparable: 0, unexplained_difference: 1 });
+    }, 60_000);
+
+    /** One hand-made sample through the real comparer and the real addon (what the serving process would have sent). */
+    async function lone(event: WriteEvent) {
+      const dir = ctx.tempDir();
+      const on = tallyOn(dir);
+      const comparer = createWriteComparer({ dir, tally: on.tally, alive: () => true, load: { ok: true, addon: addonOf() } as never, scratchRoot: ctx.tempDir() });
+      await settle(comparer, [event]);
+      return on.counts();
+    }
+
+    test('a write that names no page to compare is uncomparable (target_unresolved), never comparable (it read back nothing from both sides)', async () => {
+      const empty = { sources: [], pages: [], links: [] };
+      const tally = await lone({ t: 'write', op: 'addLinksBatch', args: encodeArgs([[]]), pre: empty, post: { pages: [], links: [] }, moved: false });
+      expect(tally).toMatchObject({ comparable: 0, unexplained_difference: 0, uncomparable: 1, uncomparable_by_reason: { target_unresolved: 1 } });
+    }, 60_000);
+
+    test('a target_unresolved sample and a nothing_to_compare sample each add 1 to uncomparable and leave comparable and unexplained_difference as they were', async () => {
+      // Neither reason settles or stands for a lost page write: they are ordinary uncomparable verdicts, never a lost-line reason.
+      for (const reason of ['target_unresolved', 'nothing_to_compare']) { expect(QUALIFYING_LINE_REASONS.has(reason)).toBe(false); expect(LOST_NONQUALIFYING.has(reason)).toBe(false); }
+      const noop = (await replay(async (e) => { await e.removeLink('companies/acme-example', 'people/alice-example', 'works_at'); }, 1)).inbox[0]!; // the link runs the other way
+      const empty = { sources: [], pages: [], links: [] };
+      const unnamed: WriteEvent = { t: 'write', op: 'addLinksBatch', args: encodeArgs([[]]), pre: empty, post: { pages: [], links: [] }, moved: false };
+      const dir = ctx.tempDir(); const on = tallyOn(dir);
+      on.tally.note('comparable'); on.tally.note('unexplained_difference'); on.tally.save();
+      let before = on.counts();
+      expect(before).toMatchObject({ comparable: 1, unexplained_difference: 1, uncomparable: 0 });
+      for (const [event, reason] of [[unnamed, 'target_unresolved'], [noop, 'nothing_to_compare']] as const) {
+        await settle(createWriteComparer({ dir, tally: on.tally, alive: () => true, load: { ok: true, addon: addonOf() } as never, scratchRoot: ctx.tempDir() }), [event]);
+        const after = on.counts();
+        expect(after).toMatchObject({ comparable: before.comparable, unexplained_difference: before.unexplained_difference, uncomparable: before.uncomparable + 1, capability_missing: before.capability_missing });
+        expect(after.uncomparable_by_reason[reason]).toBe((before.uncomparable_by_reason[reason] ?? 0) + 1);
+        before = after;
+      }
+    }, 120_000);
+
+    test('a link removal with no link to remove is uncomparable (nothing_to_compare), never comparable: the wrong direction, the wrong type, or no link at all', async () => {
+      const out = await replay(async (e, sampled) => {
+        await e.removeLink('companies/acme-example', 'people/alice-example', 'works_at'); await sampled(1); // the link runs the other way
+        await e.removeLink('people/alice-example', 'companies/acme-example', 'invests_in'); // another type
+      }, 2);
+      expect(out.tally).toMatchObject({ comparable: 0, unexplained_difference: 0, uncomparable: 2, uncomparable_by_reason: { nothing_to_compare: 2 } });
+    }, 120_000);
+
+    test('a link removal from a page to itself is replayed and counted comparable (one page, named twice)', async () => {
+      const out = await replay(async (e) => {
+        await primary().addLink('people/alice-example', 'people/alice-example', 'self', 'knows'); // not sampled: the primary, unwrapped
+        await e.removeLink('people/alice-example', 'people/alice-example', 'knows');
+      }, 1);
+      expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+    }, 120_000);
+
+    // The nine members added to the comparison (B1): each is replayed on a scratch Rust store and compared (a real primary, the real addon), and a deliberate
+    // difference in what the primary read back is detected, never counted comparable. The three stamps are tampered in their own new column only.
+    const ALICE = { slug: 'people/alice-example', source_id: 'default' };
+    const ACME = { slug: 'companies/acme-example', source_id: 'default' };
+    const post = (ev: WriteEvent, i = 0) => (ev.post as { pages: Array<Record<string, unknown>> }).pages[i]!;
+    const NINE: Array<{ op: string; act: (e: BrainEngine, sampled: (n: number) => Promise<void>) => Promise<unknown>; changed: (p: BrainEngine) => Promise<boolean>; tamper: (ev: WriteEvent) => void }> = [
+      { op: 'softDeletePage', act: (e) => e.softDeletePage(ALICE.slug, { sourceId: 'default' }),
+        changed: async (p) => (await p.getPage(ALICE.slug, { includeDeleted: true }))?.deleted_at != null, tamper: (ev) => { post(ev).deleted_at = null; } },
+      { op: 'softDeletePages', act: (e) => e.softDeletePages([ALICE.slug, ACME.slug], { sourceId: 'default' }),
+        changed: async (p) => (await p.getPage(ACME.slug, { includeDeleted: true }))?.deleted_at != null, tamper: (ev) => { post(ev, 1).deleted_at = null; } },
+      { op: 'refreshPageBody', act: (e) => e.refreshPageBody(ALICE.slug, 'default', 'Alice now runs the gadget team.', '', 'hash-after-refresh'),
+        changed: async (p) => (await p.getPage(ALICE.slug))?.compiled_truth === 'Alice now runs the gadget team.', tamper: (ev) => { post(ev).compiled_truth = 'Not what Rust wrote'; } },
+      { op: 'stripStaleFrontmatterKeys',
+        act: async (e) => {
+          await primary().executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"title": "stale", "keep": "me"}'::jsonb WHERE slug = $1`, [ALICE.slug]);
+          const [row] = await primary().executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1', [ALICE.slug]);
+          return e.stripStaleFrontmatterKeys({ sourceId: 'default', ids: [Number(row!.id)] });
+        },
+        changed: async (p) => { const fm = (await p.getPage(ALICE.slug))?.frontmatter as Record<string, unknown>; return fm.keep === 'me' && !('title' in fm); }, tamper: (ev) => { post(ev).frontmatter = { title: 'stale', keep: 'me' }; } },
+      { op: 'setEmotionalWeightBatch', act: (e) => e.setEmotionalWeightBatch([{ ...ALICE, weight: 0.75 }, { ...ACME, weight: 0.25 }]),
+        changed: async (p) => Math.abs(Number((await p.getPage(ALICE.slug))?.emotional_weight) - 0.75) < 1e-6, tamper: (ev) => { post(ev).emotional_weight = 0.5; } },
+      { op: 'removeLinksByPagesAndSource',
+        act: async (e) => { const [link] = await primary().getLinks(ALICE.slug); return e.removeLinksByPagesAndSource([ALICE], { linkSource: link!.link_source! }); },
+        changed: async (p) => (await p.getLinks(ALICE.slug)).length === 0, tamper: (ev) => { (ev.post as { links: unknown[] }).links = ['["a","link the primary no longer has"]']; } },
+      { op: 'markPagesExtractedBatch', act: (e) => e.markPagesExtractedBatch([{ ...ALICE, extractedAt: '2026-11-01T00:00:00.000Z' }, ACME], '2026-11-02T00:00:00.000Z'),
+        changed: async (p) => (await p.executeRaw<{ n: string }>(`SELECT count(*)::text AS n FROM pages WHERE links_extracted_at IS NOT NULL`))[0]!.n === '2', tamper: (ev) => { post(ev).links_extracted_at = '1'; } },
+      { op: 'markPagesAttendanceBlocked',
+        act: async (e) => e.markPagesAttendanceBlocked([{ ...ALICE, revision: (await primary().getPage(ALICE.slug))!.knowledge_revision! }]),
+        changed: async (p) => (await p.executeRaw<{ n: string }>(`SELECT count(*)::text AS n FROM pages WHERE links_attendance_blocked_revision IS NOT NULL`))[0]!.n === '1', tamper: (ev) => { post(ev).links_attendance_blocked_revision = null; } },
+      { op: 'setPageEmbeddingSignature', act: (e) => e.setPageEmbeddingSignature(ALICE.slug, { sourceId: 'default', signature: 'model-a:1536' }),
+        changed: async (p) => (await p.executeRaw<{ s: string }>(`SELECT embedding_signature AS s FROM pages WHERE slug = $1`, [ALICE.slug]))[0]!.s === 'model-a:1536', tamper: (ev) => { post(ev).embedding_signature = 'model-b:768'; } },
+    ];
+    for (const m of NINE) {
+      test(`${m.op}: a sampled write whose changed rows match is counted comparable, and the primary really changed`, async () => {
+        const out = await replay(async (e, sampled) => { await m.act(e, sampled); }, 1);
+        expect(await m.changed(primary())).toBe(true);
+        expect(out.inbox[0]!.op).toBe(m.op);
+        expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
+      }, 120_000);
+
+      test(`${m.op}: a difference in what the primary read back is counted unexplained_difference, never comparable`, async () => {
+        const out = await replay(async (e, sampled) => { await m.act(e, sampled); }, 1, m.tamper);
+        expect(out.tally).toMatchObject({ comparable: 0, unexplained_difference: 1, uncomparable: 0 });
+      }, 120_000);
+    }
+
+    // Two sources that hold the same slugs: each batch write is keyed on (source_id, slug), so the copy and the read-back must name the right page in each source.
+    const TEAM = 'team-b-example';
+    const ALICE_B = { slug: ALICE.slug, source_id: TEAM };
+    const twoSources = async (): Promise<void> => {
+      await primary().executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [TEAM]);
+      await primary().putPage(ALICE.slug, page('Alice Example (team b)'), { sourceId: TEAM });
+      await primary().putPage(ACME.slug, page('Acme Example (team b)'), { sourceId: TEAM });
+    };
+    const TWO_SOURCE: Array<{ op: string; act: (e: BrainEngine) => Promise<unknown>; changed: (p: BrainEngine) => Promise<boolean> }> = [
+      { op: 'softDeletePages', act: (e) => e.softDeletePages([ALICE.slug, ACME.slug], { sourceId: TEAM }),
+        changed: async (p) => (await p.getPage(ALICE.slug, { sourceId: TEAM, includeDeleted: true }))?.deleted_at != null && (await p.getPage(ALICE.slug, { sourceId: 'default' }))?.deleted_at == null },
+      { op: 'setEmotionalWeightBatch', act: (e) => e.setEmotionalWeightBatch([{ ...ALICE, weight: 0.75 }, { ...ALICE_B, weight: 0.25 }]),
+        changed: async (p) => Math.abs(Number((await p.getPage(ALICE.slug, { sourceId: TEAM }))?.emotional_weight) - 0.25) < 1e-6 && Math.abs(Number((await p.getPage(ALICE.slug, { sourceId: 'default' }))?.emotional_weight) - 0.75) < 1e-6 },
+      { op: 'markPagesExtractedBatch', act: (e) => e.markPagesExtractedBatch([{ ...ALICE, extractedAt: '2026-11-01T00:00:00.000Z' }, ALICE_B], '2026-11-02T00:00:00.000Z'),
+        changed: async (p) => (await p.executeRaw<{ n: string }>(`SELECT count(DISTINCT links_extracted_at)::text AS n FROM pages WHERE slug = $1 AND links_extracted_at IS NOT NULL`, [ALICE.slug]))[0]!.n === '2' },
+      { op: 'markPagesAttendanceBlocked',
+        act: async (e) => e.markPagesAttendanceBlocked([{ ...ALICE_B, revision: (await primary().getPage(ALICE.slug, { sourceId: TEAM }))!.knowledge_revision! }]),
+        changed: async (p) => (await p.executeRaw<{ s: string }>(`SELECT string_agg(source_id, ',') AS s FROM pages WHERE links_attendance_blocked_revision IS NOT NULL`))[0]!.s === TEAM },
+      { op: 'removeLinksByPagesAndSource',
+        act: async (e) => { const [link] = await primary().getLinks(ALICE.slug); return e.removeLinksByPagesAndSource([ALICE, ALICE_B], { linkSource: link!.link_source! }); },
+        changed: async (p) => (await p.getLinks(ALICE.slug)).length === 0 },
+    ];
+    for (const m of TWO_SOURCE) {
+      test(`${m.op}: a batch over two sources that hold the same slug is compared on (source_id, slug), and only the named page changes`, async () => {
+        const out = await replay(async (e) => { await twoSources(); await m.act(e); }, 1);
+        expect(await m.changed(primary())).toBe(true);
+        expect(out.inbox[0]!.op).toBe(m.op);
+        expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
+      }, 120_000);
+    }
+
+    test('a difference on the second source\'s page of a two-source batch is counted unexplained_difference, never comparable', async () => {
+      const team = (ev: WriteEvent): Record<string, unknown> => (ev.post as { pages: Array<Record<string, unknown>> }).pages.find((p) => p?.source_id === TEAM)!;
+      const out = await replay(async (e) => { await twoSources(); await e.setEmotionalWeightBatch([{ ...ALICE, weight: 0.75 }, { ...ALICE_B, weight: 0.25 }]); }, 1, (ev) => { team(ev).emotional_weight = 0.75; });
+      expect(out.tally).toMatchObject({ comparable: 0, unexplained_difference: 1, uncomparable: 0 });
+      const deleted = await replay(async (e) => { await twoSources(); await e.softDeletePages([ALICE.slug], { sourceId: TEAM }); }, 1, (ev) => { team(ev).deleted_at = null; });
+      expect(deleted.tally).toMatchObject({ comparable: 0, unexplained_difference: 1, uncomparable: 0 });
+    }, 120_000);
+
+    test('a write whose pages are not in the copy is uncomparable (target_absent), and a batch with one page that is there is compared', async () => {
+      const out = await replay(async (e, sampled) => {
+        await e.softDeletePage('people/never-example', { sourceId: 'default' }); await sampled(1);
+        await e.refreshPageBody('people/never-example', 'default', 'x', '', 'h'); await sampled(2);
+        await e.setPageEmbeddingSignature('people/never-example', { signature: 'm:1' }); await sampled(3);
+        await e.markPagesExtractedBatch([{ slug: 'people/never-example', source_id: 'default' }], '2026-11-02T00:00:00.000Z'); await sampled(4);
+        await e.softDeletePages([ALICE.slug, 'people/never-example'], { sourceId: 'default' });
+      }, 5);
+      expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 4, uncomparable_by_reason: { target_absent: 4 } });
+    }, 120_000);
+
+    test('a write whose pages cannot be named is uncomparable (target_unresolved) and still goes through: no source for softDeletePage, a page id that is not there for stripStaleFrontmatterKeys', async () => {
+      const out = await replay(async (e, sampled) => {
+        await e.softDeletePage(ALICE.slug); await sampled(1); // no sourceId: it hides the slug in every source
+        await e.stripStaleFrontmatterKeys({ sourceId: 'default', ids: [987654] });
+      }, 2);
+      expect(await primary().getPage(ALICE.slug, { includeDeleted: true })).toMatchObject({ deleted_at: expect.anything() });
+      expect(out.tally).toMatchObject({ comparable: 0, uncomparable: 2, uncomparable_by_reason: { target_unresolved: 2 } });
+    }, 120_000);
+
+    test('removeLinksByPagesAndSource keeps the typed-NER pairs it is told to keep: they are not counted as removed, and the rest is compared', async () => {
+      const out = await replay(async (e) => {
+        const [link] = await primary().getLinks(ALICE.slug);
+        await e.removeLinksByPagesAndSource([ALICE], { linkSource: link!.link_source!, keepTypedNerPairs: [{ from_slug: ALICE.slug, from_source_id: 'default', to_slug: ACME.slug, to_source_id: 'default' }] });
+      }, 1);
+      expect(out.tally).toMatchObject({ unexplained_difference: 0, comparable: 1 }); // the link is a plain one, not typed NER: removed on both sides
+    }, 60_000);
+
+    test('removeLinksByPagesAndSource with a real typed-NER link: the kept one survives on both sides, the other is removed, and the write is compared', async () => {
+      let kept: unknown[] = [];
+      const out = await replay(async (e) => {
+        await primary().putPage('people/dora-example', page('Dora Example')); // not sampled: the primary, unwrapped
+        const [link] = await primary().getLinks(ALICE.slug);
+        await primary().addLink(ALICE.slug, 'people/dora-example', 'knows Dora', 'knows', link!.link_source!);
+        await primary().executeRaw(`UPDATE links SET link_kind = 'typed_ner' WHERE link_type = 'works_at'`);
+        await e.removeLinksByPagesAndSource([ALICE], { linkSource: link!.link_source!, keepTypedNerPairs: [{ from_slug: ALICE.slug, from_source_id: 'default', to_slug: ACME.slug, to_source_id: 'default' }] });
+        kept = (await primary().getLinks(ALICE.slug)).map((l) => [l.to_slug, l.link_type]);
+      }, 1);
+      expect(kept).toEqual([[ACME.slug, 'works_at']]);
+      expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+    }, 60_000);
+
+    test('removeLinksByPagesAndSource that keeps its only typed-NER link has nothing to compare', async () => {
+      const out = await replay(async (e) => {
+        const [link] = await primary().getLinks(ALICE.slug);
+        await primary().executeRaw(`UPDATE links SET link_kind = 'typed_ner' WHERE link_type = 'works_at'`);
+        await e.removeLinksByPagesAndSource([ALICE], { linkSource: link!.link_source!, keepTypedNerPairs: [{ from_slug: ALICE.slug, from_source_id: 'default', to_slug: ACME.slug, to_source_id: 'default' }] });
+      }, 1);
+      expect(out.tally).toMatchObject({ comparable: 0, uncomparable: 1, uncomparable_by_reason: { nothing_to_compare: 1 } });
+    }, 60_000);
+
+    test('a link between two neighbours of the written page is copied too: removing links from one corner of a triangle is compared, not booked moved', async () => {
+      const out = await replay(async (e) => {
+        await primary().putPage('people/dora-example', page('Dora Example')); // not sampled: the primary, unwrapped
+        const [link] = await primary().getLinks(ALICE.slug);
+        await primary().addLink(ALICE.slug, 'people/dora-example', 'knows Dora', 'knows', link!.link_source!);
+        await primary().addLink(ACME.slug, 'people/dora-example', 'employs Dora', 'employs', link!.link_source!); // between the two neighbours
+        await e.removeLinksByPagesAndSource([ALICE], { linkSource: link!.link_source! });
+      }, 1);
+      expect(out.inbox[0]!.moved).toBe(false);
+      expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+    }, 60_000);
+
+    // On Postgres the data fence re-reads the copy after the write. These two pin that it reads only the links among the copied pages: an unchanged link from a copied
+    // neighbour to a page the copy never held (a soft-deleted one, or one of hundreds) must not fail the fence and book the sample moved.
+    test('a neighbour\'s unchanged link to a soft-deleted page the copy never held: removing links is compared, not booked moved', async () => {
+      const out = await replay(async (e) => {
+        await primary().putPage('people/dora-example', page('Dora Example')); // not sampled: the primary, unwrapped
+        const [link] = await primary().getLinks(ALICE.slug);
+        await primary().addLink(ACME.slug, 'people/dora-example', 'employs Dora', 'employs', link!.link_source!); // a second hop from the written page
+        await primary().executeRaw(`UPDATE pages SET deleted_at = now() WHERE slug = 'people/dora-example'`);
+        await e.removeLinksByPagesAndSource([ALICE], { linkSource: link!.link_source! });
+      }, 1);
+      expect(out.inbox[0]!.moved).toBe(false);
+      expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+    }, 60_000);
+
+    test('a neighbour with more unrelated links than the copy holds: removing links is compared, not booked moved', async () => {
+      const out = await replay(async (e) => {
+        await primary().putPage('people/dora-example', page('Dora Example')); // not sampled: the primary, unwrapped
+        const [link] = await primary().getLinks(ALICE.slug);
+        await primary().executeRaw(`INSERT INTO links (from_page_id, to_page_id, link_type, link_source)
+          SELECT a.id, d.id, 'rel' || g, $3 FROM pages a, pages d, generate_series(1, ${MAX_PRE_LINKS + 1}) g WHERE a.slug = $1 AND d.slug = $2`, [ACME.slug, 'people/dora-example', link!.link_source!]);
+        await e.removeLinksByPagesAndSource([ALICE], { linkSource: link!.link_source! });
+      }, 1);
+      expect(out.inbox[0]!.moved).toBe(false);
+      expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+    }, 60_000);
+
+    test('stripStaleFrontmatterKeys is uncomparable (preimage_not_loaded) when the scratch store would hold other ids than the write names', async () => {
+      const out = await replay(async (e) => {
+        await primary().executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"title": "stale"}'::jsonb WHERE slug = $1`, [ALICE.slug]);
+        const [row] = await primary().executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1', [ALICE.slug]);
+        await e.stripStaleFrontmatterKeys({ sourceId: 'default', ids: [Number(row!.id)] });
+      }, 1, (ev) => { ev.pre!.pages.forEach((p) => { p.id = '9999'; }); });
+      expect(out.tally).toMatchObject({ comparable: 0, unexplained_difference: 0, uncomparable: 1, uncomparable_by_reason: { preimage_not_loaded: 1 } });
+    }, 60_000);
+
+    test('an addon that lacks the three-column read cannot compare: uncomparable (addon_unavailable), never comparable', async () => {
+      const dir = ctx.tempDir(); const on = tallyOn(dir);
+      const comparer = createWriteComparer({
+        dir, tally: on.tally, alive: () => true, load: { ok: true, addon: {} } as never, scratchRoot: ctx.tempDir(),
+        openEngine: () => ({ connect: async () => {}, disconnect: async () => {}, storeFor: async () => ({ brain: {}, importRelation: async (_s: string, _r: string, rows: unknown[]) => ({ imported: rows.length, skipped: 0, dropped: 0, unmapped_columns: [], losses: {} }) }), putPage: async () => {}, getPage: async () => null, getLinks: async () => [] }),
+      });
+      await settle(comparer, [{ t: 'write', op: 'putPage', args: encodeArgs(['people/x-example', page('X Example')]), pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] }, moved: false }]);
+      expect(on.counts()).toMatchObject({ comparable: 0, uncomparable: 1, uncomparable_by_reason: { addon_unavailable: 1 } });
+    });
+
+    test('removeLinksByPagesAndSource with only links it keeps or links of another source has nothing to compare', async () => {
+      const out = await replay(async (e) => { await e.removeLinksByPagesAndSource([ALICE], { linkSource: 'no-such-source' }); }, 1);
+      expect(out.tally).toMatchObject({ comparable: 0, uncomparable: 1, uncomparable_by_reason: { nothing_to_compare: 1 } });
     }, 60_000);
 
     test('a difference that comes with another write landing meanwhile is uncomparable, not unexplained', async () => {
@@ -346,13 +622,13 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
     const { inbox, wrapped } = rig();
     await wrapped.putPage('people/dora-example', page('Dora Example')); // pilot: not part of this test
     await wrapped.addTag('people/dora-example', 'team');
-    await wrapped.softDeletePage('people/dora-example'); // a page member the pilot does not cover
-    await until(() => inbox.some((e) => e.op === 'softDeletePage'));
-    const others = inbox.filter((e) => e.op === 'addTag' || e.op === 'softDeletePage');
-    expect(others.map((e) => [e.op, e.outcome, e.family, e.pre])).toEqual([['addTag', 'capability_missing', 'tags', undefined], ['softDeletePage', 'capability_missing', 'pages:softDeletePage', undefined]]);
+    await wrapped.restorePage('people/dora-example'); // a page member the pilot does not cover
+    await until(() => inbox.some((e) => e.op === 'restorePage'));
+    const others = inbox.filter((e) => e.op === 'addTag' || e.op === 'restorePage');
+    expect(others.map((e) => [e.op, e.outcome, e.family, e.pre])).toEqual([['addTag', 'capability_missing', 'tags', undefined], ['restorePage', 'capability_missing', 'pages:restorePage', undefined]]);
     const comparer = fakeComparer(dir);
     await settle(comparer, others);
-    expect(comparer.counts()).toMatchObject({ comparable: 0, capability_missing: 2, capability_missing_by_family: { tags: 1, 'pages:softDeletePage': 1 } });
+    expect(comparer.counts()).toMatchObject({ comparable: 0, capability_missing: 2, capability_missing_by_family: { tags: 1, 'pages:restorePage': 1 } });
   });
 
 
@@ -391,6 +667,56 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
     });
     expect(await tallyOf(absent)).toMatchObject({ comparable: 0, unexplained_difference: 0, uncomparable: 1 });
   }, 60_000);
+
+    test('a pilot write that names no page is sent uncomparable (target_unresolved) by the serving process, and the write still goes through', async () => {
+      await ctx.reset();
+      const { inbox, wrapped } = rig();
+      await wrapped.addLinksBatch([]);
+      await until(() => inbox.length >= 1);
+      expect(inbox.map((e) => [e.op, e.outcome, e.reason, e.pre])).toEqual([['addLinksBatch', 'uncomparable', 'target_unresolved', undefined]]);
+    }, 60_000);
+
+    /** One B1 member in each transaction shape: the outermost (sampled after the commit), a nested one, and an id-named one. */
+    const b1InTransactions = async (): Promise<WriteEvent[]> => {
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      await wrapped.transaction(async (tx) => { await tx.softDeletePage('people/alice-example', { sourceId: 'default' }); });
+      await until(() => inbox.length >= 1);
+      await wrapped.transaction(async (tx) => tx.transaction(async (nested) => { await nested.setPageEmbeddingSignature('companies/acme-example', { sourceId: 'default', signature: 'm:1' }); }));
+      await until(() => inbox.length >= 2);
+      const [row] = await primary().executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1', ['companies/acme-example']);
+      await wrapped.transaction(async (tx) => { await tx.stripStaleFrontmatterKeys({ sourceId: 'default', ids: [Number(row!.id)] }); }); // its pages are looked up by id outside a transaction only
+      await until(() => inbox.length >= 3);
+      expect(inbox[0]).toMatchObject({ op: 'softDeletePage', moved: false });
+      expect(inbox[0]!.pre).toBeDefined();
+      expect(inbox.slice(1).map((e) => [e.op, e.outcome, e.reason, e.pre])).toEqual([['setPageEmbeddingSignature', 'uncomparable', 'in_transaction', undefined], ['stripStaleFrontmatterKeys', 'uncomparable', 'target_unresolved', undefined]]);
+      return inbox;
+    };
+
+    test('a B1 member in the outermost transaction is sampled after the commit; in a nested transaction it is uncomparable (in_transaction); an id-named one is uncomparable (target_unresolved)', async () => {
+      await b1InTransactions();
+    }, 60_000);
+
+    (ctx.addon ? test : test.skip)('and the scratch replay counts the outermost one comparable and the other two uncomparable', async () => {
+      const inbox = await b1InTransactions();
+      const dir = ctx.tempDir(); const on = tallyOn(dir);
+      await settle(createWriteComparer({ dir, tally: on.tally, alive: () => true, load: { ok: true, addon: addonOf() } as never, scratchRoot: ctx.tempDir() }), inbox);
+      expect(on.counts()).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 2 });
+    }, 60_000);
+
+    test('only a comparable verdict counts toward criterion 5: every other outcome adds nothing to comparable, and the row stays closed', async () => {
+      const reasons = ['in_transaction', 'target_unresolved', 'nothing_to_compare', 'target_absent', 'preimage_too_large', 'moved'];
+      const events: WriteEvent[] = [
+        ...reasons.map((reason) => ({ t: 'write', op: 'putPage', outcome: 'uncomparable', reason }) as WriteEvent),
+        { t: 'write', op: 'restorePage', outcome: 'capability_missing', family: 'pages:restorePage' } as WriteEvent,
+      ];
+      const tally = await tallyOf(events);
+      expect(tally).toMatchObject({ comparable: 0, unexplained_difference: 0, uncomparable: reasons.length, capability_missing: 1 });
+      const row = row5({ write_comparisons: { state: 'measured', sample_rate: 1, comparable: tally.comparable, unexplained_difference: tally.unexplained_difference, uncomparable: tally.uncomparable, capability_missing: tally.capability_missing, capability_missing_by_family: tally.capability_missing_by_family } as ShadowStatus['write_comparisons'] });
+      expect(row.state).toBe('fail');
+      expect(row.detail).toContain('0 of 1000 comparable');
+    });
 
     test('samples the pipe refused are counted uncomparable on the next one (a full queue is never comparable)', async () => {
       let refuse = 2;
@@ -1574,7 +1900,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       const t0 = Date.now();
       await wrapped.transaction(async (tx) => {
         await Promise.all([
-          tx.keywordBoundedRead(async () => { await new Promise((r) => setTimeout(r, 20)); await tx.addTag('people/alice-example', 'bounded'); return null; }),
+          tx.keywordBoundedRead(async () => { await new Promise((r) => setTimeout(r, 20)); await tx.addTag('people/alice-example', 'bounded'); return null; }), // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
           tx.putPage('people/cb-example', page('Callback Example')),
         ]);
       });

@@ -33,7 +33,7 @@ import { newMirrorCounters } from '../src/shadow/mirror.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
 import { faultsPath, readFaults } from '../src/shadow/ledger.ts';
 import { sampleWeight } from '../src/shadow/supervisor.ts';
-import { droppedWeight, MAX_DROPPED, lostPath, movedOutsideFootprint, owedPath, pageRefs, readOwed, readWriteSnapshot, readWriteTally, recordLost, sampleQualifyingWeight, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { droppedWeight, ID_TARGET_WRITES, MAX_DROPPED, lostPath, movedOutsideFootprint, nothingToCompare, owedPath, PILOT_WRITES, pageRefs, readOwed, readWriteSnapshot, readWriteTally, recordLost, sampleQualifyingWeight, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -550,6 +550,29 @@ describe('the data fence and the scratch location (lane owner ruling)', () => {
     expect(movedOutsideFootprint('addLink', link, { ...pre, pages: [A, jobs] }, { sources: [], pages: [A, { ...jobs, projection_job_revision: 'r2' }], links: [L] })).toBe(false); // job-queue state is not an edit
   });
 
+  test('removeLinksByPagesAndSource excuses only the links it removes: a typed-NER link it keeps that changes or goes marks the sample moved', () => {
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
+    const kept = R({ id: '20', from_page_id: '1', to_page_id: '2', link_type: 'mentions', link_source: 'ner', link_kind: 'typed_ner', context: 'old' });
+    const removed = R({ id: '21', from_page_id: '1', to_page_id: '2', link_type: 'knows', link_source: 'ner', context: 'c' });
+    const args = [[{ slug: 'a/x', source_id: 'default' }], { linkSource: 'ner', keepTypedNerPairs: [{ from_slug: 'a/x', from_source_id: 'default', to_slug: 'a/y', to_source_id: 'default' }] }];
+    const before = { sources: [], pages: [A, B], links: [kept, removed] };
+    const after = (links: Array<Record<string, string>>) => ({ sources: [], pages: [A, B], links });
+    expect(movedOutsideFootprint('removeLinksByPagesAndSource', args, before, after([kept]))).toBe(false); // it removed its link and kept the other
+    expect(movedOutsideFootprint('removeLinksByPagesAndSource', args, before, after([{ ...kept, context: 'edited elsewhere' }]))).toBe(true); // a kept link changed
+    expect(movedOutsideFootprint('removeLinksByPagesAndSource', args, before, after([]))).toBe(true); // a kept link is gone
+    const unkept = [args[0], { linkSource: 'ner' }];
+    expect(movedOutsideFootprint('removeLinksByPagesAndSource', unkept, before, after([]))).toBe(false); // with nothing kept, both are its own
+  });
+
+  test('a removeLink of a self-link names one page and is compared when the link is there', () => {
+    const self = R({ id: '30', from_page_id: '1', to_page_id: '1', link_type: 'knows' });
+    const args = ['a/x', 'a/x', 'knows'];
+    const targets = pageRefs('removeLink', args);
+    expect(targets).toEqual([{ source: 'default', slug: 'a/x' }]);
+    expect(nothingToCompare('removeLink', args, targets, { sources: [], pages: [A], links: [self] })).toBeNull();
+    expect(nothingToCompare('removeLink', args, targets, { sources: [], pages: [A], links: [] })).toBe('nothing_to_compare');
+  });
+
   test('a link another process adds between the same two pages, with another type or source, is not the write\'s own (a type or source it leaves out matches any)', () => {
     const typed = ['a/x', 'a/y', 'c', 'knows', 'markdown'];
     const other = R({ id: '13', from_page_id: '1', to_page_id: '2', link_type: 'works_at', link_source: 'markdown' });
@@ -566,6 +589,7 @@ describe('the data fence and the scratch location (lane owner ruling)', () => {
     const O = R({ id: '3', source_id: 'default', slug: 'a/o', title: 'O' }); const P = R({ id: '4', source_id: 'default', slug: 'a/p', title: 'P' });
     const base = { sources: [], pages: [A, B, O, P], links: [L] };
     const after = (links: Array<Record<string, string | null>>) => ({ sources: [], pages: [A, B, O, P], links: [L, ...links] });
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     const row = (origin: string | null, id = '20') => R({ id, from_page_id: '1', to_page_id: '2', link_type: 'knows', link_source: 'markdown', origin_page_id: origin as never });
     const named = ['a/x', 'a/y', 'c', 'knows', 'markdown', 'a/o'];
     expect(movedOutsideFootprint('addLink', named, base, after([row('3')]))).toBe(false); // the origin it named
@@ -711,6 +735,7 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
     for (const q of [-1, 6, 2.5, null, '3']) { write(q); expect(readOwed(dir, 'sess-q')).toBe('unreadable'); }
   });
 
+  // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
   test('a deficit larger than 10,000 is counted whole, never cut (20,001 owed, 1 read: 20,000 counted pipe_unflushed)', async () => {
     const { dir, epoch } = await childWithOwed(20_001, ['{"t":"write","op":"putPage"}\n']);
     const t = readWriteTally(dir, epoch)!;
@@ -825,6 +850,7 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
       const dir = tmp(); writeSeedRecord(dir, SEED);
       const put = (session: string, body: Record<string, unknown>, ageMs = 0): void => { const f = receiptFile(dir, session); writeFileSync(f, JSON.stringify({ session, ...body })); if (ageMs) { const t = new Date(Date.now() - ageMs); utimesSync(f, t, t); } };
       put('dead', { sent: 7, pid: deadPid() });
+      // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
       put('recycled', { sent: 2, pid: process.ppid }, 20 * 60_000); // its pid is alive but the file is old: the pid was reused
       put('live', { sent: 50, pid: process.ppid }); // a running worker's own receipt
       put('nopid', { sent: 50 }); // cannot tell yet: fresh
@@ -1136,6 +1162,7 @@ describe('S2c: a durable per-session obligation for write samples', () => {
     owe(dir, 'sq', 25, { child_pid: deadPid(), owed_qualifying: 4 } as never);
     worker(dir, epoch, 'owner-q').recover();
     const t = readWriteTally(dir, epoch)!;
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     expect(t.uncomparable_by_reason).toMatchObject({ receipt_orphaned: 1 }); // before: 20
     expect(t.capability_missing_by_family).toMatchObject({ receipt_orphaned_nonqualifying: 19 });
     expect(existsSync(owedPath(dir, 'sq'))).toBe(false);
@@ -1728,6 +1755,7 @@ describe('S2c: every credit site settles exactly the weight it stands for', () =
     accept = 2; await wrapAgain(); // the main line and one extra are accepted, the second extra is refused
     const raw = (l: string): number => Number(/"dropped":(\d+)/.exec(l)?.[1] ?? 0);
     expect(more.map(raw)).toEqual([10_000, 10_000]); // each bounded
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     accept = 10; await wrapAgain(); // the next accepted send: the remainder (25,000 - 20,000) was kept, not cleared, by the refusal
     expect(more.map(raw)).toEqual([10_000, 10_000, 5_000]);
   });
@@ -1934,5 +1962,60 @@ describe('S2d: a pending marker blocks status, and every owed-file remover re-re
     const fs = await import('node:fs'); const realList = fs.readdirSync;
     const spy = spyOn(fs, 'readdirSync').mockImplementation(((p: unknown, ...rest: unknown[]) => { if (String(p) === dir) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return (realList as (...a: unknown[]) => unknown)(p, ...rest); }) as never);
     try { expect(stat(dir)).toMatchObject({ state: 'capability_missing' }); } finally { spy.mockRestore(); }
+  });
+});
+
+describe('pageRefs names the exact pages each compared write touches (source and slug, as the write matches them)', () => {
+  const at = (source: string, slug: string) => ({ source, slug });
+  test('the nine members added to the comparison resolve their exact targets: arrays, page ids and source-scoped arguments', () => {
+    expect(pageRefs('softDeletePage', ['notes/a', { sourceId: 's1' }])).toEqual([at('s1', 'notes/a')]);
+    expect(pageRefs('softDeletePages', [['notes/a', 'notes/b'], { sourceId: 's1' }])).toEqual([at('s1', 'notes/a'), at('s1', 'notes/b')]);
+    expect(pageRefs('refreshPageBody', ['notes/a', 's1', 'body', '', 'hash'])).toEqual([at('s1', 'notes/a')]);
+    expect(pageRefs('setEmotionalWeightBatch', [[{ slug: 'notes/a', source_id: 's1', weight: 1 }, { slug: 'notes/b', source_id: 's2', weight: 0 }]])).toEqual([at('s1', 'notes/a'), at('s2', 'notes/b')]);
+    expect(pageRefs('removeLinksByPagesAndSource', [[{ slug: 'notes/a', source_id: 's1' }, { slug: 'notes/b', source_id: 's2' }], { linkSource: 'markdown' }])).toEqual([at('s1', 'notes/a'), at('s2', 'notes/b')]);
+    expect(pageRefs('markPagesExtractedBatch', [[{ slug: 'notes/a', source_id: 's1' }, { slug: 'notes/b', source_id: 's2', extractedAt: '2026-01-01T00:00:00Z' }], '2026-02-01T00:00:00Z'])).toEqual([at('s1', 'notes/a'), at('s2', 'notes/b')]);
+    expect(pageRefs('markPagesAttendanceBlocked', [[{ slug: 'notes/a', source_id: 's1', revision: '00000000-0000-4000-8000-000000000001' }]])).toEqual([at('s1', 'notes/a')]);
+    expect(pageRefs('setPageEmbeddingSignature', ['notes/a', { sourceId: 's1', signature: 'm:1' }])).toEqual([at('s1', 'notes/a')]);
+    expect(pageRefs('setPageEmbeddingSignature', ['notes/a', { signature: 'm:1' }])).toEqual([at('default', 'notes/a')]); // the store writes `sourceId ?? 'default'`
+    expect(pageRefs('stripStaleFrontmatterKeys', [{ sourceId: 's1', ids: [1, 2] }])).toEqual([]); // page ids name no slug: the serving process looks them up
+  });
+
+  test('a write that names its pages across every source, or leaves a source out, names none (it is unresolved, never guessed as default)', () => {
+    expect(pageRefs('softDeletePage', ['notes/a'])).toEqual([]); // no sourceId: it hides the slug in every source
+    expect(pageRefs('softDeletePages', [['notes/a'], {}])).toEqual([]);
+    expect(pageRefs('markPagesExtractedBatch', [[{ slug: 'notes/a' }, { slug: 'notes/b', source_id: 's1' }], 'x'])).toEqual([]); // one item with no source: the whole write is unresolved
+  });
+
+  test('slugs of these writes are matched as written, not lower-cased', () => {
+    expect(pageRefs('softDeletePage', ['Notes/A', { sourceId: 's1' }])).toEqual([at('s1', 'Notes/A')]);
+  });
+});
+
+describe('every compared write has an explicit way to name its pages', () => {
+  test('each PILOT_WRITES member is listed with arguments that name a page (or a page id), so a member cannot be added with a default', () => {
+    const sample: Record<string, unknown[]> = {
+      putPage: ['notes/a', {}, { sourceId: 's1' }], deletePage: ['notes/a', { sourceId: 's1' }],
+      addLink: ['notes/a', 'notes/b', '', 'x', 'manual', undefined, undefined, { fromSourceId: 's1', toSourceId: 's1' }],
+      addLinksBatch: [[{ from_slug: 'notes/a', from_source_id: 's1', to_slug: 'notes/b', to_source_id: 's1' }]], removeLink: ['notes/a', 'notes/b', 'x', 'manual', { fromSourceId: 's1', toSourceId: 's1' }],
+      softDeletePage: ['notes/a', { sourceId: 's1' }], softDeletePages: [['notes/a'], { sourceId: 's1' }], refreshPageBody: ['notes/a', 's1', '', '', 'h'],
+      stripStaleFrontmatterKeys: [{ sourceId: 's1', ids: [1] }], setEmotionalWeightBatch: [[{ slug: 'notes/a', source_id: 's1', weight: 1 }]],
+      removeLinksByPagesAndSource: [[{ slug: 'notes/a', source_id: 's1' }], { linkSource: 'm' }], markPagesExtractedBatch: [[{ slug: 'notes/a', source_id: 's1' }], 'x'],
+      markPagesAttendanceBlocked: [[{ slug: 'notes/a', source_id: 's1', revision: 'r' }]], setPageEmbeddingSignature: ['notes/a', { sourceId: 's1', signature: 's' }],
+    };
+    expect(new Set(Object.keys(sample))).toEqual(new Set(PILOT_WRITES));
+    for (const [op, args] of Object.entries(sample)) {
+      if (ID_TARGET_WRITES.has(op)) expect(pageRefs(op, args)).toEqual([]); // named by id: the serving process looks them up
+      else expect(pageRefs(op, args).length).toBeGreaterThan(0);
+    }
+  });
+
+  test('empty lists, a non-list and a partly named list name no page; repeated pages count once', () => {
+    expect(pageRefs('softDeletePages', [[], { sourceId: 's1' }])).toEqual([]);
+    expect(pageRefs('markPagesExtractedBatch', [[], 'x'])).toEqual([]);
+    expect(pageRefs('setEmotionalWeightBatch', ['notes/a'])).toEqual([]);
+    expect(pageRefs('addLinksBatch', [[]])).toEqual([]);
+    expect(pageRefs('addLinksBatch', [[{ from_slug: 'notes/a', to_slug: 'notes/b' }, { from_slug: 'notes/c' }]])).toEqual([]);
+    expect(pageRefs('softDeletePages', [['notes/a', 'notes/a'], { sourceId: 's1' }])).toEqual([{ source: 's1', slug: 'notes/a' }]);
+    expect(pageRefs('putPage', ['', {}])).toEqual([]);
   });
 });

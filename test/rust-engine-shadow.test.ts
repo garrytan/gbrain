@@ -793,8 +793,12 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
   test('a sample is qualifying only by the op the sampler wrote as its second key, never by text inside the page', () => {
     expect(sampleQualifyingWeight('{"t":"write","op":"putPage","args":[]}\n')).toBe(1);
     for (const op of ['deletePage', 'addLink', 'addLinksBatch', 'removeLink']) expect(sampleQualifyingWeight(`{"t":"write","op":"${op}"}\n`)).toBe(1);
-    expect(sampleQualifyingWeight('{"t":"write","op":"softDeletePages","outcome":"capability_missing"}\n')).toBe(0);
-    expect(sampleQualifyingWeight('{"t":"write","op":"softDeletePages","args":[{"op":"putPage"}],"dropped":3}\n')).toBe(3); // the refusals it carries only
+    // The nine compared since adapter version 13 qualify the same way (write-compare.ts PILOT_WRITES, the one set).
+    for (const op of ['softDeletePage', 'softDeletePages', 'refreshPageBody', 'stripStaleFrontmatterKeys', 'setEmotionalWeightBatch', 'removeLinksByPagesAndSource', 'markPagesExtractedBatch', 'markPagesAttendanceBlocked', 'setPageEmbeddingSignature']) {
+      expect(sampleQualifyingWeight(`{"t":"write","op":"${op}","args":[]}\n`)).toBe(1);
+    }
+    expect(sampleQualifyingWeight('{"t":"write","op":"restorePage","outcome":"capability_missing"}\n')).toBe(0);
+    expect(sampleQualifyingWeight('{"t":"write","op":"restorePage","args":[{"op":"putPage"}],"dropped":3}\n')).toBe(3); // the refusals it carries only
     expect(sampleQualifyingWeight('{"t":"read","op":"putPage"}\n')).toBe(0);
     expect(sampleQualifyingWeight('{"t":"write","x":{"op":"putPage"}}\n')).toBe(0);
   });

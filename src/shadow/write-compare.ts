@@ -1,11 +1,14 @@
 /**
  * Write comparisons, the part both processes share (swap criterion 5; docs/designs/RUST_ENGINE.md, "What is compared", Writes).
  *
- * A pilot covers ONLY putPage, deletePage, addLink, addLinksBatch and removeLink. For a sampled one the serving process copies the
+ * A pilot covers ONLY the members in PILOT_WRITES: putPage, deletePage, addLink, addLinksBatch and removeLink, and softDeletePage, softDeletePages,
+ * refreshPageBody, stripStaleFrontmatterKeys, setEmotionalWeightBatch, removeLinksByPagesAndSource, markPagesExtractedBatch, markPagesAttendanceBlocked and
+ * setPageEmbeddingSignature. For a sampled one the serving process copies the
  * rows the write touches from the primary (the preimage) and sends them with the write; the shadow child seeds a SCRATCH Rust store
  * with them, applies the same write there (never to the live shadow store, never to the primary) and compares typed read-backs
  * of the changed rows. Every sampled write of another family is `capability_missing`, by family. Fail closed: a write
- * whose preimage could not be read or loaded, or that failed on one side, is `uncomparable` and never `comparable`.
+ * whose preimage could not be read or loaded, that failed on one side, whose pages cannot be named (`target_unresolved`) or that had nothing to
+ * change (`target_absent`, `nothing_to_compare`) is `uncomparable` and never `comparable`: a replay that reads back nothing from both sides proves nothing.
  *
  * Counts live in `write-comparisons.json`, written only through the locked tally below; `status` reads them.
  */
@@ -16,7 +19,13 @@ import { flushDirectory, flushFile } from '../core/fs-durable.ts';
 import { readEpoch, withLock } from './evidence-epoch.ts';
 import { memberKind, WRITE_MAP } from './write-map.ts';
 
-export const PILOT_WRITES: ReadonlySet<string> = new Set(['putPage', 'deletePage', 'addLink', 'addLinksBatch', 'removeLink']);
+export const PILOT_WRITES: ReadonlySet<string> = new Set([
+  'putPage', 'deletePage', 'addLink', 'addLinksBatch', 'removeLink',
+  'softDeletePage', 'softDeletePages', 'refreshPageBody', 'stripStaleFrontmatterKeys', 'setEmotionalWeightBatch', 'removeLinksByPagesAndSource',
+  'markPagesExtractedBatch', 'markPagesAttendanceBlocked', 'setPageEmbeddingSignature',
+]);
+/** Pilot writes that name their pages by id, not slug: the serving process looks the ids up and sends the pages with the sample (`WriteEvent.targets`). */
+export const ID_TARGET_WRITES: ReadonlySet<string> = new Set(['stripStaleFrontmatterKeys']);
 /** Most pages and links one sampled write copies; a bigger write is `uncomparable` (preimage_too_large). */
 export const MAX_PRE_PAGES = 40;
 export const MAX_PRE_LINKS = 200;
@@ -26,7 +35,7 @@ export interface PageRef { source: string; slug: string }
 /** Text-valued rows of the primary as the seed reads them (seed.ts `relationRead`). */
 export interface PreImage { sources: Array<Record<string, string | null>>; pages: Array<Record<string, string | null>>; links: Array<Record<string, string | null>> }
 /** What the serving process sends for one sampled write: a full sample (`pre`, `post`), or just its outcome (`outcome`, `reason`/`family`). */
-export interface WriteEvent { t: 'write'; op: string; outcome?: WriteOutcome; reason?: string; family?: string; /** Earlier samples the pipe refused (counted uncomparable, `send_shed`). */ dropped?: number; args?: unknown[]; pre?: PreImage; post?: unknown; moved?: boolean; /** Calls the transaction made on the page after the write that change a compared column, replayed in order (`updatePageContextualRetrievalState`). */ then?: unknown[][] }
+export interface WriteEvent { t: 'write'; op: string; /** The pages an id-named write (ID_TARGET_WRITES) touches, as the serving process looked them up. */ targets?: PageRef[]; outcome?: WriteOutcome; reason?: string; family?: string; /** Earlier samples the pipe refused (counted uncomparable, `send_shed`). */ dropped?: number; args?: unknown[]; pre?: PreImage; post?: unknown; moved?: boolean; /** Calls the transaction made on the page after the write that change a compared column, replayed in order (`updatePageContextualRetrievalState`). */ then?: unknown[][] }
 
 const ref = (slug: unknown, source: unknown): PageRef | null =>
   (typeof slug === 'string' && slug ? { source: typeof source === 'string' && source ? source : 'default', slug: slug.toLowerCase() } : null);
@@ -34,28 +43,58 @@ const ref = (slug: unknown, source: unknown): PageRef | null =>
 /** Where each pilot write takes its options: `putPage(slug, page, opts)`, `deletePage(slug, opts)`, `addLink(from, to, context, type, source, originSlug, originField, opts)`, `removeLink(from, to, type, source, opts)`. */
 const OPTS_AT: Record<string, number> = { putPage: 2, deletePage: 1, addLink: 7, removeLink: 4 };
 
-/** The pages a pilot write names (both link ends and the origin page of a link), by source and slug. An omitted origin source is `default` on both engines, whatever the from-source. */
+/** A page named by exact source and slug, as the write matches it (no default source, no lower-casing); null when either is missing. */
+const exact = (slug: unknown, source: unknown): PageRef | null => (typeof slug === 'string' && slug && typeof source === 'string' && source ? { source, slug } : null);
+const unique = (refs: PageRef[]): PageRef[] => [...new Map(refs.map((r) => [`${r.source}\0${r.slug}`, r])).values()];
+/** Every ref, or none at all when there is no ref or one cannot be named: a write whose pages are only partly known is unresolved, never compared on the part that is. */
+const wholly = (refs: Array<PageRef | null>): PageRef[] => (refs.length > 0 && refs.every((r) => r !== null) ? unique(refs as PageRef[]) : []);
+/** The link ends, all of them or none, and then the origin pages that are named (an origin is optional). */
+const withOrigins = (ends: Array<PageRef | null>, origins: Array<PageRef | null>): PageRef[] => { const base = wholly(ends); return base.length ? unique([...base, ...origins.filter((r): r is PageRef => r !== null)]) : []; };
+const items = (v: unknown): any[] => (Array.isArray(v) ? v : []);
+
+/**
+ * The pages a pilot write names (both link ends and the origin page of a link), by source and slug. An omitted origin source is `default` on both engines, whatever the from-source.
+ * Empty means the write's pages cannot be named from its arguments (no page, a part of them unnamed, or a page id: ID_TARGET_WRITES), and the sample is `target_unresolved`.
+ */
 export function pageRefs(op: string, args: any[]): PageRef[] {
   const o = (args[OPTS_AT[op] ?? 1] ?? {}) as Record<string, unknown>;
-  const all = op === 'addLinksBatch'
-    ? (args[0] as any[]).flatMap((l) => [ref(l.from_slug, l.from_source_id), ref(l.to_slug, l.to_source_id), ref(l.origin_slug, l.origin_source_id)])
-    : op === 'addLink' ? [ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), ref(args[5], o.originSourceId)]
-    : op === 'removeLink' ? [ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId)]
-    : [ref(args[0], o.sourceId)];
-  return [...new Map(all.filter((r): r is PageRef => r !== null).map((r) => [`${r.source}\0${r.slug}`, r])).values()];
+  switch (op) {
+    case 'softDeletePage': return wholly([exact(args[0], o.sourceId)]); // with no sourceId it hides the slug in every source: not one page
+    case 'softDeletePages': return wholly(items(args[0]).map((slug) => exact(slug, o.sourceId)));
+    case 'refreshPageBody': return wholly([exact(args[0], args[1])]);
+    case 'setPageEmbeddingSignature': return wholly([exact(args[0], o.sourceId ?? 'default')]);
+    case 'setEmotionalWeightBatch': case 'markPagesExtractedBatch': case 'markPagesAttendanceBlocked': case 'removeLinksByPagesAndSource':
+      return wholly(items(args[0]).map((r) => exact(r?.slug, r?.source_id)));
+    case 'stripStaleFrontmatterKeys': return [];
+    case 'addLinksBatch': {
+      const links = items(args[0]);
+      return withOrigins(links.flatMap((l) => [ref(l?.from_slug, l?.from_source_id), ref(l?.to_slug, l?.to_source_id)]), links.map((l) => ref(l?.origin_slug, l?.origin_source_id)));
+    }
+    case 'addLink': return withOrigins([ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId)], [ref(args[5], o.originSourceId)]);
+    case 'removeLink': return wholly([ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId)]);
+    default: return wholly([ref(args[0], o.sourceId)]); // putPage, deletePage
+  }
 }
 
 /** What a pilot write itself changes: the pages it writes or deletes, and the links it adds or removes (from, to, and the type and source it names; one it leaves out matches any). An added link also names its origin page: `null` is no origin, which only a row with no origin matches; a removal leaves `origin` out and matches any. */
-export function footprint(op: string, args: any[]): { pages: PageRef[]; links: Array<{ from: PageRef; to: PageRef; type?: string; source?: string; origin?: PageRef | null }> } {
+export function footprint(op: string, args: any[], targets: PageRef[] = pageRefs(op, args)): { pages: PageRef[]; links: Array<{ from: PageRef; to: PageRef | null; type?: string; source?: string; origin?: PageRef | null; keep?: Array<{ from: PageRef; to: PageRef }> }> } {
   const o = (args[OPTS_AT[op] ?? 1] ?? {}) as Record<string, unknown>;
   const link = (from: PageRef | null, to: PageRef | null, type?: unknown, source?: unknown, origin?: PageRef | null) => (from && to ? [{ from, to, type: typeof type === 'string' ? type : undefined, source: typeof source === 'string' ? source : undefined, origin }] : []);
   if (op === 'addLinksBatch') return { pages: [], links: (args[0] as any[]).flatMap((l) => link(ref(l.from_slug, l.from_source_id), ref(l.to_slug, l.to_source_id), l.link_type, l.link_source, ref(l.origin_slug, l.origin_source_id))) };
   if (op === 'addLink') return { pages: [], links: link(ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), args[3], args[4], ref(args[5], o.originSourceId)) };
   if (op === 'removeLink') return { pages: [], links: link(ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), args[2], args[3]) };
-  return { pages: pageRefs(op, args), links: [] };
+  // Every link from these pages with this link source, to any page (`to: null`), except a typed-NER link between a pair it keeps (`keep`): the write does not change those, so they are not excused.
+  if (op === 'removeLinksByPagesAndSource') {
+    const opts = (args[1] ?? {}) as { linkSource?: unknown; keepTypedNerPairs?: unknown };
+    const keep = items(opts.keepTypedNerPairs).flatMap((k) => { const [from, to] = [exact(k?.from_slug, k?.from_source_id), exact(k?.to_slug, k?.to_source_id)]; return from && to ? [{ from, to }] : []; });
+    return { pages: [], links: targets.map((from) => ({ from, to: null, source: typeof opts.linkSource === 'string' ? opts.linkSource : undefined, keep })) };
+  }
+  return { pages: targets, links: [] };
 }
 
 type Row = Record<string, string | null>;
+/** A footprint link that may reach any page (never a page id, which is a number). */
+const ANY_PAGE = '*';
 /** Job-queue state the seed read joins in beside a page (not page content): background workers move it, and that is not another writer's edit. */
 const JOB_COLUMNS = new Set(['projection_job_revision', 'projection_job_reason', 'projection_job_updated_at']);
 const sameRow = (a: Row, b: Row): boolean => Object.keys(a).length === Object.keys(b).length && Object.keys(a).every((k) => JOB_COLUMNS.has(k) || a[k] === b[k]);
@@ -68,13 +107,14 @@ const sameRow = (a: Row, b: Row): boolean => Object.keys(a).length === Object.ke
  * was pinned just before the commit (the revision and every compared field), where the fence and the pin decide.
  * Open gap: another process editing the very rows the write changes is not seen here; it can show as a difference, never as a match.
  */
-export function movedOutsideFootprint(op: string, args: any[], pre: PreImage, now: PreImage): boolean {
-  const fp = footprint(op, args);
+export function movedOutsideFootprint(op: string, args: any[], pre: PreImage, now: PreImage, targets: PageRef[] = pageRefs(op, args)): boolean {
+  const fp = footprint(op, args, targets);
   const key = (r: PageRef): string => `${r.source}\0${r.slug}`;
   const ids = new Map<string, string | null>([...pre.pages, ...now.pages].map((p) => [`${p.source_id}\0${p.slug}`, p.id ?? null]));
   const ownPages = new Set(fp.pages.map((r) => ids.get(key(r))));
-  const own = fp.links.map((l) => ({ from: ids.get(key(l.from)), to: ids.get(key(l.to)), type: l.type, source: l.source, origin: l.origin === undefined ? undefined : l.origin ? ids.get(key(l.origin)) ?? null : null }));
-  const ownLink = (l: Row): boolean => own.some((w) => w.from === l.from_page_id && w.to === l.to_page_id && (w.type === undefined || w.type === l.link_type) && (w.source === undefined || w.source === l.link_source) && (w.origin === undefined || w.origin === (l.origin_page_id ?? null)))
+  const own = fp.links.map((l) => ({ from: ids.get(key(l.from)), to: l.to === null ? ANY_PAGE : ids.get(key(l.to)), type: l.type, source: l.source, origin: l.origin === undefined ? undefined : l.origin ? ids.get(key(l.origin)) ?? null : null, keep: new Set((l.keep ?? []).map((k) => `${ids.get(key(k.from))}\0${ids.get(key(k.to))}`)) }));
+  const kept = (w: (typeof own)[number], l: Row): boolean => (l.link_kind ?? '') === 'typed_ner' && w.keep.has(`${l.from_page_id}\0${l.to_page_id}`);
+  const ownLink = (l: Row): boolean => own.some((w) => w.from === l.from_page_id && (w.to === ANY_PAGE || w.to === l.to_page_id) && (w.type === undefined || w.type === l.link_type) && (w.source === undefined || w.source === l.link_source) && (w.origin === undefined || w.origin === (l.origin_page_id ?? null)) && !kept(w, l))
     || (op === 'deletePage' && (ownPages.has(l.from_page_id) || ownPages.has(l.to_page_id)));
   const after = (rows: Row[]): Map<string | null, Row> => new Map(rows.map((r) => [r.id ?? null, r]));
   const pagesNow = after(now.pages); const linksNow = after(now.links);
@@ -89,9 +129,21 @@ export function movedOutsideFootprint(op: string, args: any[], pre: PreImage, no
 export const pageSet = (targets: PageRef[], pre: PreImage): PageRef[] =>
   [...new Map([...targets, ...pre.pages.map((p) => ({ source: p.source_id ?? 'default', slug: p.slug ?? '' }))].map((r) => [`${r.source}\0${r.slug}`, r])).values()];
 
-/** The typed read-back both engines answer: the written pages, and the links among the pages in `set`. */
-export async function readBack(engine: Record<string, any>, targets: PageRef[], set: PageRef[]): Promise<{ pages: unknown[]; links: unknown[] }> {
-  const pages = await Promise.all(targets.map((r) => engine.getPage(r.slug, { sourceId: r.source, includeDeleted: true })));
+/** The three `pages` columns no typed read returns (the comparison widens its page read with exactly these): text per page, `links_extracted_at` as microseconds since the epoch. */
+export const STATE_COLUMNS = ['links_extracted_at', 'links_attendance_blocked_revision', 'embedding_signature'] as const;
+/** One engine's read of STATE_COLUMNS for the pages `refs` name: a row `{ source_id, slug, ...columns }` for each page that exists. */
+export type StateColumnsRead = (refs: PageRef[]) => Promise<Array<Record<string, string | null>>>;
+
+/** The typed read-back both engines answer: the written pages (with STATE_COLUMNS when `columns` reads them), and the links among the pages in `set`. */
+export async function readBack(engine: Record<string, any>, targets: PageRef[], set: PageRef[], columns?: StateColumnsRead): Promise<{ pages: unknown[]; links: unknown[] }> {
+  let pages = await Promise.all(targets.map((r) => engine.getPage(r.slug, { sourceId: r.source, includeDeleted: true })));
+  if (columns && targets.length) {
+    const found = await columns(targets);
+    pages = pages.map((p: any) => {
+      const row = p && found.find((f) => f.source_id === p.source_id && f.slug === p.slug);
+      return row ? { ...p, ...Object.fromEntries(STATE_COLUMNS.map((c) => [c, row[c] ?? null])) } : p;
+    });
+  }
   const keys = new Set(set.map((r) => `${r.source}\0${r.slug}`));
   const links: unknown[] = [];
   for (const r of set) {
@@ -100,6 +152,33 @@ export async function readBack(engine: Record<string, any>, targets: PageRef[], 
     }
   }
   return { pages, links };
+}
+
+/**
+ * Why a replay would compare nothing, or null. A page-writing member whose pages are all missing from the copy changes nothing on either engine, and a link
+ * removal with no link it could remove changes nothing either: both read back the same empty rows, so the sample is uncomparable, never a match.
+ * (A putPage creates its page and the link adds are judged by their own failures, so neither is held to this.)
+ */
+export function nothingToCompare(op: string, args: any[], targets: PageRef[], pre: PreImage): 'target_absent' | 'nothing_to_compare' | null {
+  if (op === 'putPage' || op === 'addLink' || op === 'addLinksBatch') return null;
+  const idOf = (r: PageRef): string | null => pre.pages.find((p) => p.source_id === r.source && p.slug === r.slug)?.id ?? null;
+  const present = targets.filter((r) => idOf(r) !== null);
+  if (op === 'removeLink' ? present.length < targets.length : present.length === 0) return 'target_absent';
+  if (op === 'removeLink') {
+    const o = (args[OPTS_AT.removeLink!] ?? {}) as Record<string, unknown>;
+    const ends = [ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId)]; // from the arguments: the target list holds a self-link's one page once
+    const [from, to] = ends.map((r) => (r ? idOf(r) : null));
+    const [type, source] = [args[2], args[3]];
+    return pre.links.some((l) => l.from_page_id === from && l.to_page_id === to && (typeof type !== 'string' || l.link_type === type) && (typeof source !== 'string' || l.link_source === source)) ? null : 'nothing_to_compare';
+  }
+  if (op === 'removeLinksByPagesAndSource') {
+    const opts = (args[1] ?? {}) as { linkSource?: unknown; keepTypedNerPairs?: Array<{ from_slug: string; from_source_id: string; to_slug: string; to_source_id: string }> };
+    const from = new Set(present.map(idOf));
+    const idAt = (slug: string, source: string): string | null => pre.pages.find((p) => p.source_id === source && p.slug === slug)?.id ?? null;
+    const kept = new Set(items(opts.keepTypedNerPairs).map((k) => `${idAt(k.from_slug, k.from_source_id)}\0${idAt(k.to_slug, k.to_source_id)}`));
+    return pre.links.some((l) => from.has(l.from_page_id ?? null) && l.link_source === opts.linkSource && !(l.link_kind === 'typed_ner' && kept.has(`${l.from_page_id}\0${l.to_page_id}`))) ? null : 'nothing_to_compare';
+  }
+  return null;
 }
 
 /** Fields each engine generates itself (ids, clocks, a random revision): never compared. */
@@ -559,7 +638,7 @@ const MAX_KEYS = 64;
 /** The one reason a full map never folds into `other`: status reads it as a lost window of unknown size (never measured), so it must stay countable (the map may hold one key more than `MAX_KEYS` for it). */
 export const WINDOW_LOST_REASON = 'write_window_lost';
 /** Lost-line reasons that settle page and link writes (`settled_qualifying`); a line of any other reason settles only `settled`, so the qualifying part of a session is never overstated. A lost window's one counts: the open marker's extra sample is counted as a page and link write. */
-const QUALIFYING_LINE_REASONS: ReadonlySet<string> = new Set(['pipe_unflushed', 'receipt_orphaned', WINDOW_LOST_REASON]);
+export const QUALIFYING_LINE_REASONS: ReadonlySet<string> = new Set(['pipe_unflushed', 'receipt_orphaned', WINDOW_LOST_REASON]);
 /** Whether a lost line settles a page or link write: its reason is one of `QUALIFYING_LINE_REASONS`, or it says so (`q: 1`, a client or retired worker's verdict on one). A line of an older writer has no `q`: it settles only `settled`. */
 const settlesQualifying = (x: LostLine): boolean => x.q || QUALIFYING_LINE_REASONS.has(x.reason);
 const bump = (map: Record<string, number>, key: string, n: number): void => { const k = key in map || Object.keys(map).length < MAX_KEYS || key === WINDOW_LOST_REASON ? key : 'other'; map[k] = (map[k] ?? 0) + n; };

@@ -364,6 +364,7 @@ describe('search arms', () => {
 describe('child health', () => {
   test('panics are internal errors plus SIGABRT exits; faults are exits and failed spawns; the whole history counts', () => {
     const { dir, epoch } = epochDir();
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     for (let i = 0; i < 40; i++) fault(dir, { kind: 'mirroring_disabled', detail: 'x', epoch_id: epoch }); // pushes the first lines out of the 20-line display tail
     fault(dir, { kind: 'child_exit', detail: 'code=1 signal=none', epoch_id: epoch });
     expect(status(dir).child).toEqual({ panics: 0, faults: 1 });
@@ -596,7 +597,7 @@ describe('adapter identity', () => {
     // test-reads-source-ok[raw-bytes]: the adapter's source bytes are the fingerprint under test; a change must bump the epoch input
     for (const f of files) digest.update(`${f}\0${readFileSync(join(root, f), 'utf8')}\0`);
     // When this fails, the adapter's mapping changed: bump SHADOW_ADAPTER_VERSION (a new evidence epoch) and set both values here.
-    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([20, '6c42af4101587e7b801739a0be8040ddbb1eaa414489ce57a4fee04d4cf2c6be']);
+    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([27, '6c42af4101587e7b801739a0be8040ddbb1eaa414489ce57a4fee04d4cf2c6be']);
   });
 });
 

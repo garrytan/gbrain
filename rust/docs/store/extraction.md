@@ -31,6 +31,7 @@ nothing.
 | `brain.countStaleFrontmatterKeyPages({ sourceIds })` | `{ source_id, n }[]` by source id: live pages whose frontmatter has a parser-reserved key (`slug`, `tags`, `title`, `type`) | `countStaleFrontmatterKeyPages` |
 | `brain.listStaleFrontmatterKeyPages({ sourceId, afterId, limit })` | `{ id, slug, keys }[]` by id, `keys` sorted | `listStaleFrontmatterKeyPages` |
 | `brain.stripStaleFrontmatterKeys({ sourceId, ids })` | the number of pages changed. Removes the reserved keys, gives the page a new knowledge revision and clears its text projection revision; `updated_at` and chunks stay | `stripStaleFrontmatterKeys` |
+| `brain.readPageComparisonColumns(refs)` | `{ source_id, slug, links_extracted_at, links_attendance_blocked_revision, embedding_signature }` for each `{ slug, source_id }` ref that names a page (deleted pages included; a ref with no page has no row). `links_extracted_at` is microseconds since the epoch as text; an unset column is null. Read only. Not a BrainEngine member: only the shadow write comparison calls it, to read the three stored columns no typed read returns | none (a plain `SELECT` of the three columns) |
 
 Where this engine differs from PGLite:
 

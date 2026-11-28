@@ -215,6 +215,7 @@ describe('OWC ship-p1 R2: a first marker that was renamed and then threw is repl
   });
 
   test('R3: the second window\'s marker renamed and then threw, after a window closed normally: the repair replaces it (the cached close record must not stand in for it)', async () => {
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     const r = rig({ owedWindowMs: 20 });
     try {
       expect(r.sup.send(sample(0))).toBe(true); await sleep(80); expect(r.owed()).toMatchObject({ v: 1, owed: 1 }); // a window closed: its record is cached as written
@@ -231,6 +232,7 @@ describe('OWC ship-p1 R2: a first marker that was renamed and then threw is repl
     r.state.fault = 'after-rename'; expect(r.sup.send(sample(1))).toBe(false); expect(r.owed()).toMatchObject({ v: 2, owed: 2 });
   };
   test('R3 lesson: after a normal window, the worker exits once the disk recovers: the exit-time record replaces the stray marker, and nothing is booked as a lost window', async () => {
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     const r = rig({ owedWindowMs: 20 });
     try {
       await afterNormalWindow(r); r.state.fault = null; r.children[0]!.emit('exit', 1, null);
@@ -239,6 +241,7 @@ describe('OWC ship-p1 R2: a first marker that was renamed and then threw is repl
     } finally { r.done(); }
   });
   test('R3 lesson: after a normal window, stop/drain/exit-hook (closeOwed) replaces the stray marker with the close record of what was accepted', async () => {
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     const r = rig({ owedWindowMs: 20 });
     try {
       await afterNormalWindow(r); r.state.fault = null; r.sup.closeOwed();
@@ -247,6 +250,7 @@ describe('OWC ship-p1 R2: a first marker that was renamed and then threw is repl
     } finally { r.done(); }
   });
   test('R3 lesson: after a normal window, a pending retry (the disk failing for a while) still replaces the stray marker when the disk recovers', async () => {
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     const r = rig({ owedWindowMs: 20 });
     try {
       await afterNormalWindow(r); r.state.fault = 'before-rename'; await sleep(60); expect(r.owed()).toMatchObject({ v: 2, owed: 2 });
@@ -255,6 +259,7 @@ describe('OWC ship-p1 R2: a first marker that was renamed and then threw is repl
     } finally { r.done(); }
   });
   test('R3 lesson: after a normal window, the next sample opens a fresh marker over the stray one and the window closes with exactly what was accepted', async () => {
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     const r = rig({ owedWindowMs: 20 });
     try {
       await afterNormalWindow(r); r.state.fault = null;
@@ -263,6 +268,7 @@ describe('OWC ship-p1 R2: a first marker that was renamed and then threw is repl
     } finally { r.done(); }
   });
   test('R3 lesson: after a normal window, a close record that renamed and then threw (a half-finished save) owes exactly what was accepted; the retry no-ops on it, and a kill books that, not a window', async () => {
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     const r = rig({ owedWindowMs: 20 });
     try {
       expect(r.sup.send(sample(0))).toBe(true); await sleep(80); expect(r.owed()).toMatchObject({ v: 1, owed: 1 });
