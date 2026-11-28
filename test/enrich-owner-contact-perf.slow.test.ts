@@ -8,10 +8,14 @@
  * Lane: slow (seeding 100k pages takes several seconds). Triggers are off
  * while seeding (session_replication_role = replica) because only pages,
  * links and their indexes matter to this query. The median of three runs is
- * compared, after one warm-up, so one noisy run does not fail it.
+ * compared, after one warm-up, so one noisy run does not fail it. Each run is
+ * timed by the thread's CPU time (PGLite's WASM engine runs on the calling
+ * thread): CI runs at about 200 ms, and a 504 ms wall-clock run was a runner
+ * holding the thread off the CPU, which this budget is not about.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { cpuMsAsync } from './helpers/cpu-time.ts';
 
 const PAGES = 100_000;
 const BUDGET_MS = 500;
@@ -49,17 +53,19 @@ describe('owner-contact enrich order at 100k pages (PGLite)', () => {
 
   test(`the candidate query answers in under ${BUDGET_MS} ms`, async () => {
     const run = async () => {
-      const started = performance.now();
-      const rows = await engine.listEnrichCandidates({
-        types: ['person', 'company'], thinThreshold: 500, order: 'owner-contact', limit: 50,
-        reenrichAfterMs: 30 * 86_400_000, sourceId: 'default', ownerSlug: 'people/p-1', ownerSourceId: 'default',
+      let rows: Awaited<ReturnType<PGLiteEngine['listEnrichCandidates']>> = [];
+      const ms = await cpuMsAsync(async () => {
+        rows = await engine.listEnrichCandidates({
+          types: ['person', 'company'], thinThreshold: 500, order: 'owner-contact', limit: 50,
+          reenrichAfterMs: 30 * 86_400_000, sourceId: 'default', ownerSlug: 'people/p-1', ownerSourceId: 'default',
+        });
       });
-      return { ms: performance.now() - started, rows };
+      return { ms, rows };
     };
     const warm = await run();
     expect(warm.rows.length).toBe(50);
     const times = [(await run()).ms, (await run()).ms, (await run()).ms].sort((a, b) => a - b);
-    console.log(`[owner-contact perf] ${PAGES} pages: ${times.map((t) => Math.round(t)).join(', ')} ms`);
+    console.log(`[owner-contact perf] ${PAGES} pages: ${times.map((t) => Math.round(t)).join(', ')} ms of thread CPU`);
     expect(times[1]!).toBeLessThan(BUDGET_MS);
   }, 120_000);
 });

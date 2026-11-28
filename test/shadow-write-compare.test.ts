@@ -1252,6 +1252,16 @@ describe('S2c: a durable per-session obligation for write samples', () => {
     expect(buildFollowStatus(dir, STATE, NOW).write_comparisons.state).toBe('measured'); // a quiet tally reads normally
   });
 
+  test('a tally saved again within one clock tick, keeping its inode and size, still reads as unresolved: its bytes are part of its identity', () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch, { updated_at: '0' });
+    const tick = new Date('2026-11-01T00:00:00Z'); // a filesystem's mtime granularity (a 4 ms jiffy on ext4): every save below lands in this one tick
+    utimesSync(writeTallyPath(dir), tick, tick);
+    let k = 0;
+    const snap = readWriteSnapshot(dir, epoch, () => { passing(dir, epoch, { updated_at: String(++k) }); utimesSync(writeTallyPath(dir), tick, tick); });
+    expect(k).toBeLessThan(10); // each save keeps the size: a one-digit updated_at
+    expect(snap.unstable).toBe(true);
+  });
+
   test('a retired-epoch worker writes its results as epoch_retired lines naming the session: the new owner settles the session and counts no outcome of the retired epoch', () => {
     const dir = tmp(); const oldEpoch = epochOf(dir);
     const old = worker(dir, oldEpoch, 'sr'); owe(dir, 'sr', 3, { child_pid: process.pid });

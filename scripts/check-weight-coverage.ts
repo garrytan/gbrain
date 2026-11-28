@@ -50,12 +50,12 @@ const LANES = [
   {
     lane: 'unit', map: 'scripts/test-weights.json', threshold: 0.05,
     files: tests.filter(f => !f.endsWith('.serial.test.ts') && !f.startsWith('test/e2e/')),
-    miner: `bun run weights:mine --lane unit --run ${latestRun('test.yml', 'push')}`,
+    miner: 'bun run weights:mine --lane unit --latest 5 --coverage-only',
   },
   {
     lane: 'serial', map: 'scripts/serial-weights.json', threshold: 0.10,
     files: tests.filter(f => f.endsWith('.serial.test.ts') && f.startsWith('test/') && !f.startsWith('test/e2e/')),
-    miner: `bun run weights:mine --lane serial --run ${latestRun('test.yml', 'push')}`,
+    miner: 'bun run weights:mine --lane serial --latest 5',
   },
   {
     lane: 'e2e', map: 'scripts/e2e-weights.json', threshold: 0.10,
