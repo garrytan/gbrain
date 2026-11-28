@@ -265,6 +265,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listFactsPageBodies',
   'listBracketPathPages',
   'listSlugPathCandidates',
+  'probeSlugSources',
   // Doctor search reads (engine-sql/doctor-search.ts; covered by test/engine-parity/doctor-search.test.ts)
   'listOrphanedAliasCounts',
   'readSoftDeletedAliasCounts',

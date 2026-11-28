@@ -407,6 +407,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listFactsPageBodies': OOS.doctorPages,
   'listBracketPathPages': OOS.doctorPages,
   'listSlugPathCandidates': OOS.doctorPages,
+  'probeSlugSources': OOS.doctorPages,
   'listOrphanedAliasCounts': OOS.doctorSearch,
   'readSoftDeletedAliasCounts': OOS.doctorSearch,
   'listPageTypePairs': OOS.doctorSearch,

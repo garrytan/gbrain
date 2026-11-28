@@ -29,6 +29,7 @@ of its own. The TypeScript side is `src/core/rust-engine/store-members/doctor-pa
 | `listFactsPageBodies()` | live `facts` pages: `{slug, source_id, segmented, body}` by source and slug | `facts_undated_lines` |
 | `listBracketPathPages()` | live pages whose `source_path` holds `[`, `]` or a control character | `malformed_path_pages` |
 | `listSlugPathCandidates(sourceIds \| null)` | live pages with a source path and an unusual slug, in id order, in unarchived sources, at most 20001 | `slug_path_mismatch` |
+| `probeSlugSources(slugs, sourceId)` | per candidate, each of `default` and `sourceId` with a live page at it, else one null row, by slug then source | `multi_source_drift` |
 
 ## How each read follows the SQL
 
@@ -56,6 +57,10 @@ of its own. The TypeScript side is `src/core/rust-engine/store-members/doctor-pa
 - `listSlugPathCandidates` does not run a regular expression: the candidate predicate is hard-coded as the pattern
   `[^a-z0-9/._-]|--|-/|/-|^-|-$|//` means (a character outside the set, a hyphen run, a hyphen at either edge or next
   to a slash, or an empty segment). A page in an archived source is left out, as the join on `sources` leaves it out.
+- `probeSlugSources` reads the live slugs of `default` and of `sourceId` (`readLiveSlugs`, one read each, one when they
+  are the same source) and builds one row per candidate as the left join does, a repeated candidate answering twice. It
+  orders by code unit; the SQL engines order by their collation, which is the same order on the C collation. The caller
+  reads the rows into a map, so the order does not change the drift answer.
 - `readRawProvenanceGaps` finds a page's `raw_data` rows by the `r 0x01 <page id>` key prefix and its synthesis
   evidence by `A 0x03 <page id>`. `extract_atoms%` is a literal prefix test with `_` escaped, as in the SQL.
 - `countUnverifiedExtractions` takes its cutoff from the store's clock, `now - days * 86400e6` microseconds, where the SQL

@@ -195,7 +195,6 @@ src/commands/doctor/last-known.ts#writeLastKnown	catch_empty	1
 src/commands/doctor/registry.ts#readEntryBudget	promise_catch_empty	1
 src/commands/doctor/remediate.ts#pendingMigrationsNotice	catch_empty	1
 src/commands/doctor/remediate.ts#pendingMigrationsNotice	promise_catch_empty	1
-src/commands/doctor/report-remote.ts#doctorReportRemote	capability_refusal_swallowed	1
 src/commands/doctor/report-remote.ts#doctorReportRemote	catch_empty	2
 src/commands/doctor/schema-pack-checks.ts#checkSchemaPackActive	catch_empty	1
 src/commands/doctor/schema-pack-checks.ts#checkSchemaPackSourceDrift	capability_refusal_swallowed	1

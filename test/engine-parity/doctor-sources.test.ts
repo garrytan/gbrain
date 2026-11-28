@@ -25,7 +25,7 @@ const HOST = '00000000-0000-4000-8000-000000000001';
 const UNSCOPED: readonly DoctorSourceVariant[] = [
   'roots_live_ordered', 'roots_live_fallback', 'relative_paths', 'pathless_live', 'strict_git', 'google_connectors', 'guest_marked_ids',
   'first_two_ids', 'all_ids', 'ids_with_live_pages', 'local_path_state', 'brain_writer_live', 'live_incarnations', 'connector_keys',
-  'config_shape', 'synopsis_ids', 'claim_candidates',
+  'config_shape', 'synopsis_ids', 'claim_candidates', 'drift_roster',
 ];
 
 type Row = Record<string, unknown>;
@@ -64,6 +64,8 @@ describe('doctor source reads', () => {
       answers['paths_scoped'] = normal(await engine.readDoctorSources('paths_scoped', { sourceIds: null }) as unknown as Row[]);
       answers['freshness:scoped'] = normal(await engine.readDoctorSources('freshness', { sourceIds: scopedIds }) as unknown as Row[]);
       answers['freshness'] = normal(await engine.readDoctorSources('freshness') as unknown as Row[]);
+      answers['drift_roster:scoped'] = normal(await engine.readDoctorSources('drift_roster', { sourceIds: scopedIds }) as unknown as Row[]);
+      answers['drift_roster:none'] = normal(await engine.readDoctorSources('drift_roster', { sourceIds: [] }) as unknown as Row[]);
       for (const id of ['storage', 'retired', 'gmail', 'missing']) {
         for (const variant of ['storage_shelf', 'brain_writer_by_id', 'shared_skills_view', 'detached'] as const) {
           answers[`${variant}:${id}`] = normal(await engine.readDoctorSources(variant, { sourceId: id }) as unknown as Row[]);
@@ -76,6 +78,8 @@ describe('doctor source reads', () => {
       expect(answers['claim_candidates']!.map((r) => [r.id, r.claimed, r.lifted])).toContainEqual(['half-claimed', true, false]);
       expect(answers['storage_shelf:retired']).toEqual([]);
       expect(answers['brain_writer_by_id:retired']!.length).toBe(1);
+      expect(answers['drift_roster:scoped']!.map((r) => r.id)).toEqual(['docs', 'gmail', 'retired']);
+      expect(answers['drift_roster:none']).toEqual([]);
       expect(answers['relative_paths']!.map((r) => r.id)).toEqual(['docs', 'gmail', 'notes', 'relative', 'slack-team', 'storage']);
       return answers;
     },

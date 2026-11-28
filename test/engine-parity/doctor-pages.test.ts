@@ -377,4 +377,34 @@ describe('doctor page reads', () => {
       return { empty, all, scoped, scopedTwo, none };
     },
   );
+
+  parityTest(
+    'probeSlugSources answers each candidate with the live holders among default and the probed source, a null row when neither holds it',
+    { methods: ['putPage', 'softDeletePage', 'probeSlugSources'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other-src');
+      await createSource(engine, backend, 'third-src');
+      await put(engine, 'notes/at-default');
+      await put(engine, 'notes/at-other', {}, 'other-src');
+      await put(engine, 'notes/at-both');
+      await put(engine, 'notes/at-both', {}, 'other-src');
+      await put(engine, 'notes/gone');
+      await engine.softDeletePage('notes/gone');
+      await put(engine, 'notes/at-third', {}, 'third-src');
+      const candidates = ['notes/at-other', 'notes/at-default', 'notes/missing', 'notes/at-both', 'notes/gone', 'notes/at-third', 'notes/at-default'];
+      const other = await engine.probeSlugSources(candidates, 'other-src');
+      const atDefault = await engine.probeSlugSources(candidates, 'default');
+      const unknown = await engine.probeSlugSources(['notes/at-other', 'notes/at-default'], 'no-such-src');
+      const empty = await engine.probeSlugSources([], 'other-src');
+      expect(other).toEqual([
+        { slug: 'notes/at-both', source_id: 'default' }, { slug: 'notes/at-both', source_id: 'other-src' },
+        { slug: 'notes/at-default', source_id: 'default' }, { slug: 'notes/at-default', source_id: 'default' },
+        { slug: 'notes/at-other', source_id: 'other-src' }, { slug: 'notes/at-third', source_id: null },
+        { slug: 'notes/gone', source_id: null }, { slug: 'notes/missing', source_id: null },
+      ]);
+      expect(unknown).toEqual([{ slug: 'notes/at-default', source_id: 'default' }, { slug: 'notes/at-other', source_id: null }]);
+      expect(empty).toEqual([]);
+      return { other, atDefault, unknown, empty };
+    },
+  );
 });

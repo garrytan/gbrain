@@ -77,6 +77,18 @@ describe('doctor pages SQL text', () => {
     expect(SLUG_PATH_CANDIDATE_PATTERN).toBe('[^a-z0-9/._-]|--|-/|/-|^-|-$|//');
   });
 
+  test('the multi_source_drift probe sends the text src/core/multi-source-drift.ts ran at 3852ea1505, byte for byte', () => {
+    expect(DOCTOR_PAGES_SQL.slugSourceProbe).toBe(`
+    WITH candidates(slug) AS (SELECT unnest($1::text[]))
+    SELECT c.slug, p.source_id
+    FROM candidates c
+    LEFT JOIN pages p
+      ON p.slug = c.slug AND p.deleted_at IS NULL
+         AND p.source_id IN ('default', $2::text)
+    ORDER BY c.slug, p.source_id
+  `);
+  });
+
   // The scraper scan also says which rows are segmented, so content_sanity counts them from the scan (no second query).
   test('the other reads keep the text the checks ran', () => {
     expect(DOCTOR_PAGES_SQL.scraperJunkLimited).toBe(`SELECT p.slug, p.source_id, p.title,

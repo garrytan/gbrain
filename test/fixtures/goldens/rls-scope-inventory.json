@@ -11029,6 +11029,7 @@
         "probeProjectionWindowCandidates": "none",
         "probePurgeDerivations": "none",
         "probeRetypeRows": "none",
+        "probeSlugSources": "none",
         "probeTargetRows": "none",
         "probeTornPages": "none",
         "probeUntypedPathPrefix": "none",

@@ -308,10 +308,7 @@ export async function doctorReportRemote(
     const { findMisroutedPages } = await import('../../core/multi-source-drift.ts');
     // Source isolation: a scoped caller's roster (and the sample slugs the
     // walk returns) stays inside its grant; unscoped = brain-wide.
-    const sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
-      `SELECT id, local_path FROM sources ${opts.sourceIds ? 'WHERE id = ANY($1::text[])' : ''}`,
-      opts.sourceIds ? [opts.sourceIds] : undefined,
-    );
+    const sources = await engine.readDoctorSources('drift_roster', { sourceIds: opts.sourceIds ?? null });
     const nonDefaultWithPath = sources.filter(s => s.id !== 'default' && s.local_path);
     if (sources.length > 1 && nonDefaultWithPath.length > 0) {
       const result = await findMisroutedPages(

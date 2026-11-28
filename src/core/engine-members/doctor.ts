@@ -222,6 +222,8 @@ export interface DoctorMembers {
   listBracketPathPages(): Promise<DoctorPagesSql.BracketPathPage[]>;
   /** Live pages of an unarchived source whose slug matches the slug-change pattern (in `sourceIds` when given), in id order. */
   listSlugPathCandidates(sourceIds: string[] | null): Promise<DoctorPagesSql.SlugPathCandidate[]>;
+  /** Per candidate slug, each of `default` and `sourceId` with a live page at it (a null `source_id` row: neither), by slug then source (the multi_source_drift probe). */
+  probeSlugSources(slugs: readonly string[], sourceId: string): Promise<DoctorPagesSql.SlugSourceRow[]>;
   /** Pages awaiting atom extraction (no atom of their current content yet, no held or tombstoned disposition) in the query's source scope; `opts.signal` cancels the count on the SQL engines. */
   countAtomExtractionBacklog(query: AtomBacklogSql.AtomBacklogQuery, opts?: { signal?: AbortSignal }): Promise<number>;
   /** The sources with a live page, by id in byte order (the extract_atoms_backlog roster). */

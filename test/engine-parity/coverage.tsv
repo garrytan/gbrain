@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2522/2554
+# covered: 2523/2555
 # lifecycle: 21/22
 # pages: 141/142
 # search: 8/8
@@ -109,7 +109,7 @@
 # reflex_reads: 3/3
 # doctor_derived: 29/29
 # doctor_persistence: 37/37
-# doctor_pages: 18/18
+# doctor_pages: 19/19
 # doctor_search: 11/11
 # doctor_reads_acc: 29/29
 # doctor_checkpoints: 18/18
@@ -148,13 +148,13 @@ getPage	pages	yes	294	yes	yes	yes	serves
 readPageSnapshot	pages	yes	121	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1428	yes	yes	yes	serves
+putPage	pages	yes	1429	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
 deletePages	pages	yes	10	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
-softDeletePage	pages	yes	356	yes	yes	yes	serves
+softDeletePage	pages	yes	357	yes	yes	yes	serves
 softDeletePages	pages	yes	8	yes	yes	yes	serves
 restorePage	pages	yes	22	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	12	no	yes	yes	serves
@@ -2565,6 +2565,7 @@ countImageModalityMismatches	doctor_pages	yes	1	no	yes	yes	serves
 readImagePageCoverage	doctor_pages	yes	1	no	yes	yes	serves
 listBracketPathPages	doctor_pages	yes	1	no	yes	yes	serves
 listSlugPathCandidates	doctor_pages	yes	1	no	yes	yes	serves
+probeSlugSources	doctor_pages	yes	1	no	yes	yes	serves
 countAtomExtractionBacklog	doctor_search	yes	2	no	yes	yes	serves
 listAtomBacklogSourceIds	doctor_search	yes	2	no	yes	yes	serves
 listGitImageHoldCounts	doctor_search	yes	1	no	yes	yes	serves

@@ -66,3 +66,30 @@ export const listBracketPathPages: Member<'listBracketPathPages'> = async (brain
 
 export const listSlugPathCandidates: Member<'listSlugPathCandidates'> = async (brain, sourceIds) =>
   storeCall({ member: 'listSlugPathCandidates' }, () => brain.listSlugPathCandidates(sourceIds));
+
+/**
+ * The live slugs of `default` and of `sourceId` (one store read each, one when they are the same source), then one row
+ * per candidate and holder (a null holder when neither has the slug), by slug then source in code-unit order with the
+ * null row last. The SQL engines order by their collation, so the order can differ on a non-C collation; the caller
+ * reads the rows into a map.
+ */
+export const probeSlugSources: Member<'probeSlugSources'> = async (brain, slugs, sourceId) => {
+  const member = { member: 'probeSlugSources', sourceId };
+  const unique = [...new Set(slugs)];
+  const holders = new Map<string, Set<string>>();
+  for (const id of sourceId === 'default' ? ['default'] : ['default', sourceId]) {
+    const live = await storeCall(member, () => brain.readLiveSlugs(id, unique, null)) as string[];
+    for (const slug of live) {
+      if (!holders.has(slug)) holders.set(slug, new Set());
+      holders.get(slug)!.add(id);
+    }
+  }
+  const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+  const rows: Array<{ slug: string; source_id: string | null }> = [];
+  for (const slug of [...slugs].sort(byCodeUnit)) {
+    const held = [...(holders.get(slug) ?? [])].sort(byCodeUnit);
+    if (held.length === 0) rows.push({ slug, source_id: null });
+    else for (const id of held) rows.push({ slug, source_id: id });
+  }
+  return rows;
+};

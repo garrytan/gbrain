@@ -18,6 +18,7 @@ export const DOCTOR_PAGES_MEMBERS: readonly string[] = [
   'countUnverifiedExtractions', 'listContentHashDuplicates', 'countTranscriptImportPages', 'countPageRows',
   'countPagesBySlugPrefix', 'countLivePages', 'readOldestPageCreatedAt', 'countPageTrustTiers', 'countPagesWithMentionLinks',
   'countImageModalityMismatches', 'readImagePageCoverage', 'listFactsPageBodies', 'listBracketPathPages', 'listSlugPathCandidates',
+  'probeSlugSources',
 ];
 
 /** Rows `listOversizedPages` reads: the list limit of the oversized_pages check plus one (a full list means a floor). */
@@ -37,6 +38,8 @@ export interface ImagePageCoverage { image_pages: number; without_image_vector: 
 export interface FactsPageBody { slug: string; source_id: string; segmented: boolean; body: string | null }
 export interface BracketPathPage { slug: string; source_id: string; source_path: string }
 export interface SlugPathCandidate { source_id: string; slug: string; source_path: string }
+/** One candidate slug and a source among `default` and the probed source holding a live page at it; `source_id` null: neither does. */
+export interface SlugSourceRow { slug: string; source_id: string | null }
 /** A frontmatter key doctor counts pages by. */
 export type PageMarker = 'quarantine' | 'content_flag';
 
@@ -148,6 +151,17 @@ const IMAGE_PAGE_COVERAGE_SQL = `SELECT count(*)::int AS image_pages,
 const FACTS_PAGE_BODIES_SQL = `SELECT p.slug, p.source_id, p.body_storage = 'segmented' AS segmented, left(coalesce(p.compiled_truth, p.truth_lead), 65536) AS body
          FROM pages p WHERE p.type = 'facts' AND p.deleted_at IS NULL ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`;
 
+/** The multi_source_drift existence probe (src/core/multi-source-drift.ts `batchProbeExistence`), byte for byte. */
+const SLUG_SOURCE_PROBE_SQL = `
+    WITH candidates(slug) AS (SELECT unnest($1::text[]))
+    SELECT c.slug, p.source_id
+    FROM candidates c
+    LEFT JOIN pages p
+      ON p.slug = c.slug AND p.deleted_at IS NULL
+         AND p.source_id IN ('default', $2::text)
+    ORDER BY c.slug, p.source_id
+  `;
+
 const BRACKET_PATH_PAGES_SQL = `SELECT slug, source_id, source_path FROM pages
           WHERE source_path IS NOT NULL AND deleted_at IS NULL
             AND (source_path LIKE '%[%' OR source_path LIKE '%]%'
@@ -184,6 +198,7 @@ export const DOCTOR_PAGES_SQL = {
   imagePageCoverage: IMAGE_PAGE_COVERAGE_SQL,
   factsPageBodies: FACTS_PAGE_BODIES_SQL,
   bracketPathPages: BRACKET_PATH_PAGES_SQL,
+  slugSourceProbe: SLUG_SOURCE_PROBE_SQL,
   slugPathCandidates: SLUG_PATH_CANDIDATES_SQL,
   slugPathCandidatesInSources: SLUG_PATH_CANDIDATES_IN_SOURCES_SQL,
 } as const;
@@ -303,4 +318,12 @@ export async function listSlugPathCandidates(raw: EngineRawRead, sourceIds: stri
   return sourceIds
     ? raw<SlugPathCandidate>(SLUG_PATH_CANDIDATES_IN_SOURCES_SQL, [SLUG_PATH_CANDIDATE_PATTERN, sourceIds])
     : raw<SlugPathCandidate>(SLUG_PATH_CANDIDATES_SQL, [SLUG_PATH_CANDIDATE_PATTERN]);
+}
+
+/**
+ * For each of `slugs` (one row per candidate, a slug given twice answers twice), each source among `default` and
+ * `sourceId` with a live page at it, or one row with a null `source_id` when neither has one; by slug, then source.
+ */
+export async function probeSlugSources(raw: EngineRawRead, slugs: readonly string[], sourceId: string): Promise<SlugSourceRow[]> {
+  return raw<SlugSourceRow>(SLUG_SOURCE_PROBE_SQL, [[...slugs], sourceId]);
 }

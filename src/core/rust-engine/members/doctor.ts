@@ -53,6 +53,7 @@ export const DOCTOR_MEMBERS = {
   listFactsPageBodies: 'health',
   listBracketPathPages: 'health',
   listSlugPathCandidates: 'health',
+  probeSlugSources: 'health',
   countAtomExtractionBacklog: 'health',
   listAtomBacklogSourceIds: 'health',
   readProjectionBacklog: 'health',

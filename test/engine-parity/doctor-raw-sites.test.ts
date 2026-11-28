@@ -1,12 +1,12 @@
 /**
- * BrainEngine parity: the four doctor checks that still read through `executeRaw` (the timeline dedup index shape in
- * src/core/timeline-dedup-repair.ts, the sources read in src/commands/doctor/report-remote.ts, the schema-pack config
- * reads in src/commands/doctor/schema-pack-checks.ts, and the three counts in src/commands/doctor/checks/calibration.ts).
+ * BrainEngine parity: the three doctor checks that still read through `executeRaw` (the timeline dedup index shape in
+ * src/core/timeline-dedup-repair.ts, the schema-pack config reads in src/commands/doctor/schema-pack-checks.ts, and the
+ * three counts in src/commands/doctor/checks/calibration.ts), and the multi_source_drift row, which every arm answers.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the focused doctor report run_doctor returns (doctorReportRemote, brain-wide, as an unscoped caller gets it)
  *    completes on every arm and has a row for each check
- *    these four files feed. On PGLite and Postgres each row is a real answer. On the Rust arm each row says it could not
+ *    these three files feed. On PGLite and Postgres each row is a real answer. On the Rust arm each row says it could not
  *    check (a `Could not check ...` row, or a `Not verified` row), never ok or a zero count, because the Rust engine
  *    refuses `executeRaw` and the check catches that refusal. The idx_timeline_dedup shape is a named permanent loss: it
  *    is a Postgres index, and the Rust store keeps no SQL index.
@@ -15,8 +15,8 @@
  *    nothing to catch it.
  *  - Why existing coverage misses it: test/doctor-report-remote.serial.test.ts and the doctor golden tests run on PGLite
  *    and Postgres only; no parity file ran run_doctor on the Rust arm and asked what each of these rows says.
- *  - Seam: none. A page is seeded with putPage and a second source with an empty local directory (createSource), so the
- *    drift check has a source to walk on every arm. The report is called directly: run_doctor over MCP binds the caller
+ *  - Seam: none. A page is seeded with putPage and a second source with a local directory (createSource) holding that
+ *    page's file and an uningested one, so the drift walk reaches its existence probe on every arm and finds one misroute. The report is called directly: run_doctor over MCP binds the caller
  *    to one source, and the drift check needs a second one to run at all.
  *  - On the Rust arm the caught refusals are pinned by calling file in test/rust-stop-pins/lane-2b-doctor-raw.tsv. Each
  *    pin goes when its file stops calling executeRaw on a Rust brain. Any source with a local path and no successful
@@ -30,7 +30,7 @@
  */
 import { expect } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSource, parityArms } from './harness.ts';
@@ -44,10 +44,9 @@ import { checkTimelineDedupIndex, repairTimelineDedupIndex } from '../../src/cor
 
 const { parityTest } = parityArms(testBackends());
 
-/** The rows the four raw-SQL doctor files feed, with the file each row reads through. */
+/** The rows the three raw-SQL doctor files feed, with the file each row reads through. */
 const RAW_ROWS: Record<string, string> = {
   timeline_dedup_index: 'src/core/timeline-dedup-repair.ts',
-  multi_source_drift: 'src/commands/doctor/report-remote.ts',
   schema_pack_source_drift: 'src/commands/doctor/schema-pack-checks.ts',
   abandoned_threads: 'src/commands/doctor/checks/calibration.ts',
   grade_confidence_drift: 'src/commands/doctor/checks/calibration.ts',
@@ -64,6 +63,9 @@ parityTest('the doctor report answers each raw-SQL check on SQL engines and says
   const dir = mkdtempSync(join(tmpdir(), 'doctor-raw-source-'));
   let report: Awaited<ReturnType<typeof doctorReportRemote>>;
   try {
+    mkdirSync(join(dir, 'notes'));
+    writeFileSync(join(dir, 'notes', 'doctor-raw.md'), '# Doctor raw\n');
+    writeFileSync(join(dir, 'notes', 'not-ingested.md'), '# Not ingested\n');
     await createSource(engine, backend, 'doctor-raw-second', {}, dir);
     report = await doctorReportRemote(engine, { remote: true });
   } finally {
@@ -78,7 +80,13 @@ parityTest('the doctor report answers each raw-SQL check on SQL engines and says
   // The swap-critical half: on Rust no row may pass as healthy, and on the SQL engines no row may be a non-answer.
   const notChecked = rows.filter((r) => r.status === 'warn' && NOT_CHECKED.test(r.message)).map((r) => r.name);
   expect({ backend, notChecked }).toEqual({ backend, notChecked: backend === 'rust' ? Object.keys(RAW_ROWS) : [] });
-  return { rows: rows.map((r) => r.name) };
+  // The drift roster and existence probe are typed members (readDoctorSources 'drift_roster', probeSlugSources): every
+  // arm walks the second source and finds the one page that sits at default but not at its intended source.
+  const drift = checks.find((c) => c.name === 'multi_source_drift') as Check & { details?: { code?: unknown } } | undefined;
+  const driftRow = { status: drift?.status, code: drift?.details?.code, message: drift?.message };
+  expect({ status: driftRow.status, code: driftRow.code }).toEqual({ status: 'warn', code: 'drift_detected' });
+  expect(String(driftRow.message)).toStartWith("1 page slug(s) appear at 'default' but NOT at the intended source (e.g., notes/doctor-raw (intended=doctor-raw-second)).");
+  return { rows: rows.map((r) => r.name), drift: driftRow };
 });
 
 parityTest('the timeline dedup index check reads the shape of a Postgres index', {

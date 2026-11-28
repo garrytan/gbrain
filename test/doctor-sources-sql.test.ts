@@ -64,6 +64,9 @@ describe('doctor source reads SQL text', () => {
     expect(texts('detached', { sourceId: 'x' })).toEqual(["SELECT local_path, config->>'strategy' AS strategy, last_commit FROM sources WHERE id=$1 AND archived IS NOT TRUE"]);
     expect(texts('synopsis_ids')).toEqual(["SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id COLLATE \"C\""]);
     expect(texts('live_incarnations')).toEqual(['SELECT id,incarnation::text AS incarnation,local_path,config FROM sources WHERE archived IS NOT TRUE']);
+    // The multi_source_drift roster as src/commands/doctor/report-remote.ts built it at 3852ea1505, the trailing space included.
+    expect(doctorSourceStatements('drift_roster')).toEqual(['SELECT id, local_path FROM sources ']);
+    expect(doctorSourceStatements('drift_roster', { sourceIds: ['a'] })).toEqual(['SELECT id, local_path FROM sources WHERE id = ANY($1::text[])']);
   });
 
   test('the connector, claim and freshness statements equal what their builders produced', () => {

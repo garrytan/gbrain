@@ -33,6 +33,7 @@ export interface SourceKindRow { id: string; local_path: string | null; kind: st
 export interface SourceConnectorKeyRow { id: string; incarnation: string; local_path: string | null; config: unknown; archived: boolean }
 export interface SourceOptOutRow { config: unknown; incarnation: string }
 export interface SourceDetachedRow { local_path: string | null; strategy: string | null; last_commit: string | null }
+export interface SourceRosterRow { id: string; local_path: string | null }
 export interface SourceClaimRow { id: string; claimed: boolean; lifted: boolean }
 /** A source the sync-freshness roster reads; the `upstream_*` columns read null on a schema that lacks them. */
 export interface SourceFreshnessRow {
@@ -90,6 +91,8 @@ export interface DoctorSourceRows {
   synopsis_ids: SourceIdRow;
   /** Live non-connector sources with whether each is claimed and whether its claim lift finished, by id. */
   claim_candidates: SourceClaimRow;
+  /** Every source's path, archived ones included, in no order (`scope.sourceIds` confines them): the multi_source_drift roster. */
+  drift_roster: SourceRosterRow;
 }
 
 export type DoctorSourceVariant = keyof DoctorSourceRows;
@@ -149,6 +152,10 @@ const PLANS: { readonly [V in DoctorSourceVariant]: Plan } = {
   synopsis_ids: () => one("SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id COLLATE \"C\""),
   claim_candidates: () => one(`SELECT s.id, (s.config ? 'trust_claimed_at' AND s.config->>'trust_tier' = 'operator_curated' AND COALESCE(s.config->>'kind', '') NOT IN ${CONNECTOR_KIND_LIST_SQL}) AS claimed, `
     + `(s.config ? 'trust_claim_lifted_at') AS lifted FROM sources s WHERE NOT s.archived AND COALESCE(s.config->>'kind', '') NOT IN ${CONNECTOR_KIND_LIST_SQL} ORDER BY s.id COLLATE "C"`),
+  // The unscoped text keeps the trailing space the report built it with (src/commands/doctor/report-remote.ts).
+  drift_roster: (scope) => (scope.sourceIds
+    ? one('SELECT id, local_path FROM sources WHERE id = ANY($1::text[])', [scope.sourceIds])
+    : one('SELECT id, local_path FROM sources ')),
 };
 
 /** The statements a variant runs, in fallback order (the first that does not throw answers), for the test that pins them. */

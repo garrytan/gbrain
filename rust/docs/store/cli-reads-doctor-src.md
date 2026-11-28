@@ -23,7 +23,8 @@ The engine members are `readDoctorSources(variant, scope)`, `listGuestSourceRows
 `roots_live_ordered`, `roots_live_fallback`, `live_path_ids` (scoped by `sourceIds`), `relative_paths`, `pathless_live`,
 `paths_scoped` (archived ones included), `strict_git`, `google_connectors`, `guest_marked_ids`, `first_two_ids`, `all_ids`,
 `ids_with_live_pages`, `local_path_state`, `storage_shelf`, `brain_writer_by_id`, `brain_writer_live`, `live_incarnations`,
-`connector_keys`, `freshness`, `shared_skills_view`, `detached` and `claim_candidates` are served: the same filter and the
+`connector_keys`, `freshness`, `shared_skills_view`, `detached`, `claim_candidates` and `drift_roster` (archived ones included,
+scoped by `sourceIds`; an empty list reads none) are served: the same filter and the
 same columns as the statement, over the store's rows. The `config` column is the source's config object; a connector kind
 is one of `google`, `github`, `meetings`, `slack`, `imessage`.
 

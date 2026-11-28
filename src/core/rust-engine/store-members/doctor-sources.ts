@@ -62,6 +62,7 @@ const PROJECTIONS: { readonly [V in Exclude<DoctorSourceVariant, 'ids_with_live_
   freshness: (rows, scope) => rows.filter((s) => live(s) && hasPath(s) && inScope(s, scope)).map(freshness),
   shared_skills_view: (rows, scope) => rows.filter((s) => s.id === scope.sourceId && live(s)).map((s) => ({ config: s.config, incarnation: s.incarnation })),
   detached: (rows, scope) => rows.filter((s) => s.id === scope.sourceId && live(s)).map((s) => ({ local_path: s.local_path, strategy: sourceConfigText(s.config, 'strategy'), last_commit: null })),
+  drift_roster: (rows, scope) => rows.filter((s) => inScope(s, scope)).map((s) => ({ id: s.id, local_path: s.local_path })),
   claim_candidates: (rows) => rows.filter((s) => live(s) && !isConnectorSourceKind(kindOf(s))).map((s) => ({ id: s.id, claimed: claimed(s), lifted: 'trust_claim_lifted_at' in s.config })),
 };
 

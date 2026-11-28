@@ -58,7 +58,6 @@ src/commands/doctor/checks/unindexed-files.ts	execute_raw	1
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
 src/commands/doctor/checks/write-gate-hold-ambiguous.ts	execute_raw	1	lists held writes the v333 upgrade left unbound with candidate pages; doctor checks read raw SQL (same shape as trust-release-unpreviewed.ts)
 src/commands/doctor/checks/write-gate-holds-stranded.ts	execute_raw	5	read-only doctor check: a row-security visibility preflight, one keyset read of held rows, one per-batch page and rename lookup and, when something is listed, the count of listed holds noted for the maintenance sweep with its privilege and row-security preflight (raised from 3); all stay raw SQL until holds have a typed engine method (a raw-SQL refusal on the Rust engine is reported as a named unknown)
-src/commands/doctor/report-remote.ts	execute_raw	1
 src/commands/doctor/schema-pack-checks.ts	execute_raw	2
 src/commands/engine-status.ts	execute_raw	1
 src/commands/enrich.ts	execute_raw	2	GST-3815: the reader-scope check on backlink and search evidence (pageReadsToReadersOfSql) sits beside the raw facts read it shares a predicate with; no typed engine method exists for either, and both convert together
@@ -302,7 +301,6 @@ src/core/minions/sync-queue-wake.ts	execute_raw	2
 src/core/minions/terminal-events.ts	execute_raw	1
 src/core/minions/worker-shutdown.ts	execute_raw	1
 src/core/minions/worker.ts	execute_raw	2
-src/core/multi-source-drift.ts	execute_raw	1
 src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/first-session.ts	execute_raw	3	first-session suggestion: the onboarding.first_session record compare-and-swap in config (insert and update) and the pointer read of recent world-visible pages under remoteReadFloorSql; converts with setup-history.ts
