@@ -2091,8 +2091,9 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   flag wins; `0` or `none` means no limit) sets the limit, and `--batch-rows <n>` (default 500, 1 to 10000) the rows
   read per batch. `seed --restart` deletes the partial store a stopped seed left and seeds again from the start, so after
   a budget stop run `gbrain engine shadow seed --restart --budget-minutes <n>`. It refuses a finished seed (`seed.json`
-  exists; use `stop --delete` for that) and a store another process holds, and then leaves the store where it was; with no
-  store it just seeds. A seed never resumes into a partial store, because every row it copies must come from one snapshot.
+  exists; use `stop --delete` for that), a store another process holds and a `store` path that is a symbolic link, and
+  then leaves the store where it was. It deletes the store by renaming it away while it holds the store's lock, so a
+  racing seed never opens a store at the path that is being deleted. With no store it just seeds. A seed never resumes into a partial store, because every row it copies must come from one snapshot.
   **A long seed holds one snapshot open on the brain database for its whole run.** On Postgres that holds back vacuum
   for every table for that time, and the seed's connection must stay up: a dropped connection or a server that ends
   an idle transaction (`idle_in_transaction_session_timeout`) stops the seed, and `--restart` starts it over. Through a
