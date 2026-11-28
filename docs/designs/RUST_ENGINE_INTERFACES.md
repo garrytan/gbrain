@@ -169,6 +169,7 @@ Rules:
   | 12 | `rust-engine/enforced-member-writes-rust` (provisional, main's 11 plus one; the trunk renumbers at intake): the enforced member CLI's four reads in `store-members/page-mutation-reads.ts` |
   | 12 | `rust-engine/enforced-member-writes-rust` claims a provisional number (main's 11 plus one; the trunk renumbers at intake): the enforced member CLI's four reads in `store-members/page-mutation-reads.ts` |
   | 12 | `rust-engine/labelled-only-create-rust` claims a provisional number (main's 11 plus one, as the enforced-member branch's row above; the trunk renumbers both at intake): the writer's hidden-page read `readPageHiddenFromWriter` in `store-members/remote-links.ts` |
+  | 14 | `rust-engine/owner-fact-reads` claims a provisional number (main's 13 plus one; the trunk renumbers at intake): the owner's lineage read flag `ownerLineage` that `storePrivacyPolicy` in `store-members/private-provenance.ts` sends |
 
 Reserved tags:
 
