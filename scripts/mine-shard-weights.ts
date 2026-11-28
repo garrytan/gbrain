@@ -338,23 +338,26 @@ async function main(): Promise<void> {
   else if (latest) {
     const { workflow, events } = laneSource(lane, e2eProfile);
     mined = [];
-    let scanned = 0;
+    const seen = new Set<string>();
     for (let page = 1; page <= LATEST_PAGES && mined.length < latest; page++) {
       const listed = gh(["api", `repos/{owner}/{repo}/actions/workflows/${workflow}/runs?branch=master&status=completed&per_page=100&page=${page}`,
         "--jq", ".workflow_runs[] | [.id, .event] | @tsv"]).split("\n").filter(Boolean).map(line => line.split("\t"));
       for (const [run, event] of listed) {
         if (mined.length === latest) break;
-        scanned++;
+        // A run that finished while the miner read page one shifts the list, so page two can repeat its last run.
+        if (seen.has(run!)) continue;
+        seen.add(run!);
         if (!events.includes(event!)) continue;
         const info = viewRun(run!);
-        // A push that reused a full run of its tree skipped the lane; a run that cancelled or failed part of it has no complete set.
-        if (!laneSucceeded(info)) continue;
+        // A push that reused a full run of its tree skipped the lane; a run that cancelled or failed part of it has no
+        // complete set; a full-profile corpus also needs the whole run green.
+        if (!laneSucceeded(info) || (full && info.conclusion !== "success")) continue;
         mined.push(mineRun(run!, info));
         runs.push(run!);
       }
       if (listed.length < 100) break;
     }
-    if (mined.length < latest) throw new Error(`--latest ${latest}: only ${mined.length} of the newest ${scanned} completed ${workflow} master runs ran the ${lane} lane to success`);
+    if (mined.length < latest) throw new Error(`--latest ${latest}: only ${mined.length} of the newest ${seen.size} completed ${workflow} master runs ran the ${lane} lane to success`);
   } else {
     const raw = input ? readFileSync(input, "utf8") : await new Response(Bun.stdin.stream()).text();
     mined = [{ run: null, commit: null, jobs: [], raw, measured: mineWeights(raw, lane, { e2eProfile }) }];
