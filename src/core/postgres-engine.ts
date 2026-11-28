@@ -1867,8 +1867,7 @@ export class PostgresEngine implements BrainEngine {
     // so the HNSW index stays usable; the outer stages re-rank by source
     // factor. Statement shape, freshness placement (#5824) and pool counts
     // live in search/vector-statement.ts, shared with PGLite and doctor.
-    const scope = await this.vectorScope(opts);
-    const brainChunks = opts?.afterDate || opts?.beforeDate ? this.brainChunkEstimate(this._pageTransaction ? undefined : () => this.executeRaw<{ chunks: unknown }>(BRAIN_CHUNK_ESTIMATE_SQL, undefined, { timeoutMs: BRAIN_CHUNK_ESTIMATE_TIMEOUT_MS })) : undefined;
+    const scope = await this.vectorScope(opts), brainChunks = opts?.afterDate || opts?.beforeDate ? this.brainChunkEstimate(this._pageTransaction ? undefined : () => this.executeRaw<{ chunks: unknown }>(BRAIN_CHUNK_ESTIMATE_SQL, undefined, { timeoutMs: BRAIN_CHUNK_ESTIMATE_TIMEOUT_MS })) : undefined;
     const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, brainChunks }));
     const stmt = statementFor(true);
     const iterative = await this.vectorIterativeScanSupported();
@@ -1901,8 +1900,7 @@ export class PostgresEngine implements BrainEngine {
    */
   async explainVectorSearch(embedding: Float32Array, opts?: SearchOpts): Promise<Record<string, unknown>> {
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
-    const scope = await this.vectorScope(opts);
-    const brainChunks = opts?.afterDate || opts?.beforeDate ? this.brainChunkEstimate(this._pageTransaction ? undefined : () => this.executeRaw<{ chunks: unknown }>(BRAIN_CHUNK_ESTIMATE_SQL, undefined, { timeoutMs: BRAIN_CHUNK_ESTIMATE_TIMEOUT_MS })) : undefined;
+    const scope = await this.vectorScope(opts), brainChunks = opts?.afterDate || opts?.beforeDate ? this.brainChunkEstimate(this._pageTransaction ? undefined : () => this.executeRaw<{ chunks: unknown }>(BRAIN_CHUNK_ESTIMATE_SQL, undefined, { timeoutMs: BRAIN_CHUNK_ESTIMATE_TIMEOUT_MS })) : undefined;
     const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, brainChunks }));
     const stmt = statementFor(true);
     const iterative = await this.vectorIterativeScanSupported();
