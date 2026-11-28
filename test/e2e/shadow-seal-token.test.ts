@@ -76,13 +76,14 @@ async function holdWrite(app: string, key: string): Promise<{ release: () => Pro
   return { sql, release: async () => { release(); await tx; } };
 }
 
-/** The rpc a serving process holds to its follow child: records every call; `onConfirm` runs inside the `confirmSeal` call. */
-function fakeRpc(token: string | null, onConfirm?: (args: Record<string, unknown>) => Promise<void>) {
+/** The rpc a serving process holds to its follow child: records every call; `onConfirm` runs inside the `confirmSeal` call, `onCommit` inside `commitSeal`. */
+function fakeRpc(token: string | null, onConfirm?: (args: Record<string, unknown>) => Promise<void>, onCommit?: () => Promise<void>) {
   const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
   const rpc = (async (method: string, args: Record<string, unknown> = {}) => {
     calls.push({ method, args });
     if (method === 'state') return { pending_seal: { db_at: token } };
     if (method === 'confirmSeal') await onConfirm?.(args);
+    if (method === 'commitSeal') await onCommit?.();
     return {};
   }) as never;
   return { calls, rpc };
@@ -151,8 +152,18 @@ d('the seal change token on Postgres', () => {
     expect(await quietSince(deps(), token)).toEqual({ ok: true });
     const { calls, rpc } = fakeRpc(token);
     await confirmSeal({ ...deps(), rpc });
-    expect(calls.map((c) => c.method)).toEqual(['state', 'confirmSeal']);
+    // The commit is sent only after the second read was quiet too.
+    expect(calls.map((c) => c.method)).toEqual(['state', 'confirmSeal', 'commitSeal']);
     expect(calls[1]!.args).toEqual({ db_at: token, ok: true, reason: null });
+    expect(calls[2]!.args).toEqual({ db_at: token });
+  }, 60_000);
+
+  test('a commit the child does not acknowledge is revoked (seal_commit_unacknowledged): a lost answer does not prove it was not applied', async () => {
+    const token = await sealed();
+    const { calls, rpc } = fakeRpc(token, undefined, async () => { throw new Error('timeout'); });
+    expect(await confirmSeal({ ...deps(), rpc, revokeRetryMs: [0] })).toEqual({ doubt: null });
+    expect(calls.map((c) => c.method)).toEqual(['state', 'confirmSeal', 'commitSeal', 'revokeSeal']);
+    expect(calls[3]!.args).toEqual({ reason: 'seal_commit_unacknowledged' });
   }, 60_000);
 
   test('a writer that is still connected is refused at the seal, though its session row is old and not the newest', async () => {
@@ -235,7 +246,7 @@ d('the seal change token on Postgres', () => {
     try {
       await confirmSeal({ ...deps(), rpc });
     } finally { await (open as Awaited<ReturnType<typeof holdWrite>> | null)?.release().catch(() => undefined); }
-    expect(calls.map((c) => c.method)).toEqual(['state', 'confirmSeal', 'revokeSeal']);
+    expect(calls.map((c) => c.method)).toEqual(['state', 'confirmSeal', 'revokeSeal']); // revoked, and never committed
     expect(calls[2]!.args).toEqual({ reason: 'other_writer_open' });
   }, 60_000);
 

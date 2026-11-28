@@ -601,12 +601,14 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
           next.handle({ t: 'rpc', id: n, method, args });
         });
         expect(await nextRpc('state')).toMatchObject({ valid: false, pending_seal: { db_at: 'mark-1' } });
-        // Applied in the child; the answer is what was lost.
-        expect(await nextRpc('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: true, confirmed: true });
+        // Both phases applied in the child (the confirmation is held invalid until the commit); the commit's answer is what was lost.
+        expect(await nextRpc('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, invalidated_reason: 'seal_confirm_pending', confirmed: true });
+        expect(await nextRpc('state')).toMatchObject({ valid: false, continuity: null });
+        expect(await nextRpc('commitSeal', { db_at: 'mark-1' })).toMatchObject({ valid: true, confirmed: true });
         expect(await nextRpc('state')).toMatchObject({ valid: true, continuity: progress.continuity });
         await ctx.primary().executeRaw(`UPDATE pages SET title = 'Changed While The Confirmation Was In Doubt' WHERE id = (SELECT min(id) FROM pages)`);
         const before = readPasses(r.dir).length;
-        const checked = new Reconciler({ dir: r.dir, reads: base, rpc: nextRpc, intervalRows: 2, ready: async () => ({ doubt: 'seal_confirm_unacknowledged' }) });
+        const checked = new Reconciler({ dir: r.dir, reads: base, rpc: nextRpc, intervalRows: 2, ready: async () => ({ doubt: 'seal_commit_unacknowledged' }) });
         // The real first check (startNightly runs it FIRST_CHECK_MS after the start) with the real pass.
         await (checked as unknown as { firstRun(): Promise<void> }).firstRun();
         const added = readPasses(r.dir).slice(before);
