@@ -95,10 +95,10 @@ async function sealed(r: ReadSource = reads): Promise<string> {
 }
 
 /** A login role (BYPASSRLS when asked, so its write is not stopped by row security) with the given grants and no route to record evidence; dropped with its privileges. */
-async function throwawayRole(grants: string[], bypassRls = false): Promise<{ role: string; connect: (app: string) => ReturnType<typeof postgres>; drop: () => Promise<void> }> {
+async function throwawayRole(grants: string[], bypassRls = false, attributes = ''): Promise<{ role: string; connect: (app: string) => ReturnType<typeof postgres>; drop: () => Promise<void> }> {
   const role = `seal_tok_${process.pid}_${Math.floor(Math.random() * 1e6)}`;
   const phrase = ['gbtest', role].join('_'); // the throwaway role's login phrase, built from its own name
-  await engine.executeRaw(`CREATE ROLE ${role} LOGIN PASSWORD '${phrase}'${bypassRls ? ' BYPASSRLS' : ''}`);
+  await engine.executeRaw(`CREATE ROLE ${role} LOGIN PASSWORD '${phrase}'${bypassRls ? ' BYPASSRLS' : ''}${attributes ? ` ${attributes}` : ''}`);
   for (const g of grants) await engine.executeRaw(g.replace(/\$ROLE/g, role));
   return {
     role,
@@ -289,6 +289,36 @@ d('the seal change token on Postgres', () => {
       } finally { release(); await tx; }
       await finish(sql, app);
     } finally { await hidden.drop(); await writer.drop(); }
+  }, 60_000);
+
+  test('a hidden NOINHERIT login that can SET ROLE to a writer role, holding an uncommitted INSERT as that role, is refused at the seal and at the check', async () => {
+    // The login itself has no privilege on any table; the NOLOGIN role it can switch to writes config and has every
+    // route to record evidence, so no role is uncovered. pg_stat_activity names the login, not the role it switched to.
+    const target = `seal_tgt_${process.pid}_${Math.floor(Math.random() * 1e6)}`;
+    await engine.executeRaw(`CREATE ROLE ${target} NOLOGIN BYPASSRLS`);
+    for (const g of ['GRANT INSERT ON config TO $ROLE', 'GRANT INSERT ON engine_writer_coverage_gaps TO $ROLE', 'GRANT INSERT, UPDATE ON engine_writer_sessions TO $ROLE', 'GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO $ROLE']) await engine.executeRaw(g.replace(/\$ROLE/g, target));
+    const login = await throwawayRole([`GRANT ${target} TO $ROLE`], false, 'NOINHERIT');
+    const hidden = await unprivilegedReads();
+    try {
+      const token = await sealed(hidden.reads); // nobody connected yet: the reachable role is covered, so no refusal
+      const app = 'hidden-set-role-writer';
+      const sql = login.connect(app);
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      let started!: () => void;
+      const open = new Promise<void>((r) => { started = r; });
+      const tx = sql.begin(async (t) => { await t.unsafe(`SET LOCAL ROLE ${target}`); await t`INSERT INTO config (key, value) VALUES ('hidden-set-role-open', '1')`; started(); await held; });
+      await open;
+      try {
+        expect(await sealMark(deps(hidden.reads))).toEqual({ refused: 'other_backend_unseen' });
+        expect(await quietSince(deps(hidden.reads), token)).toEqual({ ok: false, reason: 'other_backend_unseen' });
+      } finally { release(); await tx; }
+      await finish(sql, app);
+    } finally {
+      await hidden.drop(); await login.drop();
+      await engine.executeRaw(`DROP OWNED BY ${target}`).catch(() => undefined);
+      await engine.executeRaw(`DROP ROLE IF EXISTS ${target}`).catch(() => undefined);
+    }
   }, 60_000);
 
   test('a statistics reset is refused', async () => {
