@@ -17,6 +17,7 @@
 import { opError } from '../../ops/contract.ts';
 import { isRemoteCaller } from '../../remote-caller.ts';
 import type { BrainEngine } from '../../engine.ts';
+import { nextReadablePage } from './remote-scan-guard.ts';
 
 type Member = (...args: unknown[]) => Promise<unknown>;
 /** The page ids one call names, read from its arguments; a value that is not a list of safe integers is refused. */
@@ -48,6 +49,8 @@ const PAGE_ID_GUARDS: Readonly<Record<string, PageIdGuard>> = {
 /** The owner's call target for `member` on `engine` (the engine or a transaction handle): the remote caller's check first, else the member itself. */
 export function remoteMemberPolicy(engine: object, member: string, method: Member): Member {
   const plain: Member = (...args) => method.apply(engine, args);
+  // Output-aware guards (served/remote-scan-guard.ts): the answer, not the arguments, is checked.
+  if (member === 'nextLivePageAfter') return (...args) => (isRemoteCaller() ? nextReadablePage(engine, plain)(...args) : plain(...args));
   const guard = Object.hasOwn(PAGE_ID_GUARDS, member) ? PAGE_ID_GUARDS[member]! : undefined;
   if (!guard) return plain;
   return async (...args) => {

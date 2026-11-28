@@ -134,6 +134,9 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   'readEntityCardRows', 'rankEntities', 'listNameVariantCardCandidates', 'readVisibleVariantPages',
   'listVisibleNameVariantCandidates', 'readRetirementHop', 'readEntityAliasRows', 'readRankCoverage', 'readReferrerTargetCounts',
   'listVersionReasonWriters',
+  // served-remote-g1-search-probes (lane L3 S4, group 1): a remote search or query probes the page types of its `types` filter
+  // and the target of its explain_target before it ranks, under the caller's read scope.
+  'probePageTypes', 'probeTargetRows',
 ];
 
 /**
