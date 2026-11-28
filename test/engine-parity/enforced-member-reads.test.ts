@@ -149,7 +149,7 @@ describe('engine parity: the enforced member CLI reads', () => {
     const out = {
       // Names the member; names nobody; has no row; a soft-deleted row that names the member; a page that names someone else.
       listed: await labelled('notes/listed'), open: await labelled('notes/open'), none: await labelled('notes/none'),
-      gone: await labelled('notes/gone'), twin: await labelled('notes/twin'), otherSource: await engine.readMemberPageReadable('vault', 'notes/listed', MEMBER_RECORD.identity, [], true),
+      gone: await labelled('notes/gone'), twin: await labelled('notes/twin'), otherSource: await withCallerAccess({ ...MEMBER_RECORD, satisfiedRuleIds: [], labelledOnly: true }, () => engine.readMemberPageReadable('vault', 'notes/listed', MEMBER_RECORD.identity, [], true)),
     };
     expect(out).toEqual({ listed: true, open: false, none: null, gone: true, twin: false, otherSource: null });
     return out;

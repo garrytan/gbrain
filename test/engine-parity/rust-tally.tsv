@@ -104,7 +104,7 @@ test/engine-parity/effect-scans.test.ts	3	0
 test/engine-parity/embed-stale-work.test.ts	10	0
 test/engine-parity/embedding-catalog.test.ts	8	0
 test/engine-parity/embedding-install.test.ts	3	0
-test/engine-parity/enforced-member-reads.test.ts	3	1
+test/engine-parity/enforced-member-reads.test.ts	8	0
 test/engine-parity/entity-anchor-reads.test.ts	2	0
 test/engine-parity/entity-basename.test.ts	3	0
 test/engine-parity/entity-card-option-reads.test.ts	6	0
