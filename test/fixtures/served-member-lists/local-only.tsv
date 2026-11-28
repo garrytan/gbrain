@@ -85,18 +85,18 @@ countMemberPageFacts	ruling A default
 countMentionDueSince	ruling A default
 countMentionLinksTo	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 countOauthAccessTokens	HTTP admin routes only: the serve process reads it as the owner, outside any remote caller's operation
-countOffGridTakeWeights	ruling A default
+countOffGridTakeWeights	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countOpenFactReasons	ruling A default
 countOpenJobsByOwner	ruling A default
 countOpenLoopsByCounterpartyEmail	ruling A default
 countOpenPages	ruling A default
-countOrphanChunks	ruling A default
+countOrphanChunks	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countOrphanEventProjections	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countOutstandingBySource	ruling A default
 countOversizedCorePages	ruling A default
 countOversizedEmbedSkips	ruling A default
 countPageCascadeRows	ruling A default
-countPageChildOrphans	ruling A default
+countPageChildOrphans	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countPageChunks	ruling A default
 countPageConversationFacts	ruling A default
 countPageManifestRows	ruling A default
@@ -740,7 +740,7 @@ listRevivalPages	write path only: a write or purge operation reads it; a remote 
 listRootPageSlugsAfter	ruling A default
 listRulePagesReadByNobody	ruling A default
 listRunningClaimOwners	ruling A default
-listRunningRequestStalls	ruling A default
+listRunningRequestStalls	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listSafeChunksPending	ruling A default
 listScraperJunkCandidates	ruling A default
 listSegmentChunkRows	ruling A default
@@ -763,7 +763,7 @@ listSingleFactMetadata	ruling A default
 listSlugAliases	ruling A default
 listSlugPathCandidates	ruling A default
 listSlugSpellingCandidates	ruling A default
-listSourceBindingsForMovement	ruling A default
+listSourceBindingsForMovement	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listSourceChangedPagesAfter	ruling A default
 listSourceCheckpointRecords	ruling A default
 listSourceHoldRecords	ruling A default
@@ -934,7 +934,7 @@ pageSlugExists	ruling A default
 pageTypeTotals	ruling A default
 pendingTrustProposalsFor	ruling A default
 pickValidTimeEdition	ruling A default
-pingStore	ruling A default
+pingStore	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 planFactPurgeIds	write path and shadow write map only: a write or purge reads it, and the shadow wrapper after the owner's write commits
 planFactPurgeTakes	write path and shadow write map only: a write or purge reads it, and the shadow wrapper after the owner's write commits
 probeIdleWork	ruling A default
@@ -1171,12 +1171,12 @@ readLabelGuardTiers	ruling A default
 readLastAutopilotCycles	ruling A default
 readLastCompletedJobAt	ruling A default
 readLastContradictionsPromptVersion	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
-readLastFailedGlobalMaintenanceJob	ruling A default
+readLastFailedGlobalMaintenanceJob	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readLastFinishedJobAt	ruling A default
 readLastUndoneHandoverId	ruling A default
 readLatestBeliefCoverage	ruling A default
 readLatestCatalogProvenanceAudit	ruling A default
-readLatestConnectorReceipt	ruling A default
+readLatestConnectorReceipt	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readLatestTakeGrades	ruling A default
 readLatestVersionId	ruling A default
 readLatestVersionIdAtTier	ruling A default
@@ -1350,7 +1350,7 @@ readQueueHealthSignals	reached remotely only through run_doctor (admin scope); s
 readQueuedPageChars	ruling A default
 readQueuedSpendRows	ruling A default
 readRawDataValue	ruling A default
-readRawProvenanceGaps	ruling A default
+readRawProvenanceGaps	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readReadableFileForUrl	localOnly file operations and the CLI only: the MCP dispatch refuses file_* for a remote caller
 readReadableFileForVerify	localOnly file operations and the CLI only: the MCP dispatch refuses file_* for a remote caller
 readReadablePageId	localOnly file operations and the CLI only: the MCP dispatch refuses file_* for a remote caller

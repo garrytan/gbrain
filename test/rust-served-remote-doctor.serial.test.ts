@@ -13,9 +13,10 @@
  *    - the four wave checks whose read failure has its own shape (connector_checkpoints, unbound_source,
  *      segmented_storage, fact_bulk_dates) are offered to the remote caller and report unknown;
  *    - no local-only data reaches the remote caller: a private page body, a config value and the brain's directory
- *      never appear in the report;
- *    - each row of test/fixtures/served-member-lists/local-only.tsv with the run_doctor reason is a member this remote
- *      run_doctor calls and the served client refuses before sending, while the report still completes.
+ *      never appear in any report;
+ *    - each row of test/fixtures/served-member-lists/local-only.tsv with the run_doctor reason is a member one of the
+ *      three remote run_doctor reports (focused, tier ops, the page-class checks) calls and the served client refuses
+ *      before sending, while every report still completes.
  * 2. Fails on: a remote doctor that reports a host action for a check whose read was refused, that returns local-only
  *    data, or a run_doctor-reason row that this run never refuses.
  * 3. Seam: none below the engine: a real owner, a real v3 listener, a real served client, the MCP dispatch.
@@ -24,6 +25,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PAGE_CHECK_NAMES } from '../src/core/doctor-categories.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { listenServed, type ServedListener } from '../src/core/rust-engine/served/listener.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
@@ -87,10 +89,16 @@ describeAddon('a remote run_doctor over the served wire', () => {
     listener = await listenServed(owner.ownerServer()!, { host: '127.0.0.1', port: 0 });
     client = openRustEngine({ addon: await loadRustArmAddon(), databasePath: dir, served: { url: `gbrain+tcp://127.0.0.1:${listener.port}`, token: TOKEN } });
     await client.connect({ engine: 'rust', database_path: dir } as never);
-    const out = await dispatchToolCall(recordRefusals(client), 'run_doctor', {}, STDIO as never);
-    expect(out.isError === true).toBe(false);
-    text = (out.content as Array<{ text: string }>).map(c => c.text).join('\n');
-    report = JSON.parse(text) as Report;
+    // The focused report, the ops tier and the page-class checks are the three remote run_doctor reports; each reaches
+    // members the others do not.
+    const texts: string[] = [];
+    for (const params of [{}, { tier: 'ops' }, { only: [...PAGE_CHECK_NAMES] }]) {
+      const out = await dispatchToolCall(recordRefusals(client), 'run_doctor', params, STDIO as never);
+      expect({ params, error: out.isError === true }).toEqual({ params, error: false });
+      texts.push((out.content as Array<{ text: string }>).map(c => c.text).join('\n'));
+    }
+    report = JSON.parse(texts[0]!) as Report;
+    text = texts.join('\n');
   }, 300_000);
 
   afterAll(async () => {
