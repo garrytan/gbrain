@@ -674,6 +674,46 @@ describe('confirmSeal over the real child: an unacknowledged confirmation or rev
     expect(result).toEqual({ doubt: 'seal_confirm_unacknowledged' });
   });
 
+  // The veto line got through but no revoke did, and the serving process closes before the child's next heartbeat or any
+  // `state` call: the child's last writes (a refused seal, then its close) must read the veto first. Without that the
+  // child exits with a freshly written valid file, and status reads that file, not the invalidation lines.
+  for (const close of ['a refused seal, then the close', 'a close without a seal'] as const) test(`a veto line the child has not read yet is read before its last write (${close}): the file and status are invalid, named for the revocation`, async () => {
+    const { dir, s } = await takenOver();
+    const calls: string[] = [];
+    const rpc: Rpc = async (method, args) => {
+      calls.push(method);
+      if (method === 'revokeSeal') throw new Error('child_unavailable'); // every revoke send is refused
+      const value = await s.ask(method, args ?? {});
+      if (method === 'confirmSeal') throw new Error('timeout'); // applied in the child; the answer never came back
+      return value;
+    };
+    await confirmSeal({ dir, reads: fakeReads(), postgres: true, rpc: rpc as never, revokeRetryMs: [0] } as never);
+    expect(calls).toEqual(['state', 'confirmSeal', 'revokeSeal', 'revokeSeal']);
+    expect(readFileSync(join(dir, FOREIGN), 'utf8')).toContain('seal_revoked:seal_confirm_unacknowledged'); // the veto line is on disk
+    expect(readFollowerFile(dir)?.watermark.valid).toBe(true); // what the child last wrote: the confirmed seal
+    // What attach.ts sends at close while a revoke is unacknowledged, then the end of stdin; nothing else reaches the child.
+    if (close === 'a refused seal, then the close') s.child.handle({ t: 'seal', db_at: null, refused: 'seal_confirm_unacknowledged' } as never);
+    await s.child.close();
+    const reason = 'foreign_write:seal_revoked:seal_confirm_unacknowledged';
+    expect(readFollowerFile(dir)?.watermark).toMatchObject({ valid: false, invalidated_reason: reason });
+    expect(buildFollowStatus(dir, STATE, new Date(5_000)).follower.coverage_watermark).toMatchObject({ valid: false, invalidated_reason: reason });
+  });
+
+  test('when the veto line got through but every revoke failed, confirmSeal still returns the doubt: an appended line is not proof that a live child read it', async () => {
+    const { dir, s } = await takenOver();
+    const rpc: Rpc = async (method, args) => {
+      if (method === 'revokeSeal') throw new Error('child_unavailable');
+      const value = await s.ask(method, args ?? {});
+      if (method === 'confirmSeal') throw new Error('timeout');
+      return value;
+    };
+    const revoking: Array<string | null> = [];
+    const result = await confirmSeal({ dir, reads: fakeReads(), postgres: true, rpc: rpc as never, revokeRetryMs: [0], revoking: (r: string | null) => revoking.push(r) } as never);
+    expect(readFileSync(join(dir, FOREIGN), 'utf8')).toContain('seal_revoked:seal_confirm_unacknowledged');
+    expect(result).toEqual({ doubt: 'seal_confirm_unacknowledged' });
+    expect(revoking).toEqual(['seal_confirm_unacknowledged']); // still revoking: a close does not seal
+  });
+
   test('the first check runs a full pass when the confirmation is left in doubt, though the child says valid and the last full pass is recent', async () => {
     for (const doubt of [null, 'seal_confirm_unacknowledged']) {
       const dir = tmp();
