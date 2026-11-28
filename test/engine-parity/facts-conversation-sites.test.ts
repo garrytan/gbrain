@@ -186,7 +186,7 @@ describe('engine parity: group 5 facts conversation publication and relink state
     return out;
   });
 
-  parityTest('the page counts: newest id, highest row number, active and total extractor rows, audit rows aside, and the held slots', {
+  parityTest('the page counts: newest id, highest row number, active extractor rows (the page count and the active count agree since #10443), audit rows aside, and the held slots', {
     methods: ['putPage', 'insertFacts', 'expireFact', 'readNewestConversationFactId', 'maxConversationRowNum', 'countActiveConversationFacts',
       'countPageConversationFacts', 'listHeldFactSlots'],
   }, async (engine) => {
@@ -212,12 +212,12 @@ describe('engine parity: group 5 facts conversation publication and relink state
       active: await engine.countActiveConversationFacts(SRC, PAGE),
       page: await engine.countPageConversationFacts(SRC, PAGE),
       otherPage: await engine.countPageConversationFacts(SRC, 'conversations/c2'),
-      slots: slots.map(s => ({ entity_slug: s.entity_slug, dimension: s.dimension, hashed: /^[0-9a-f]+$/.test(s.value_hash), valid_from: new Date(s.valid_from).toISOString() })),
+      slots: slots.map(s => ({ entity_slug: s.entity_slug, dimension: s.dimension, hashed: /^[0-9a-f]+$/.test(s.value_hash), valid_from: s.valid_from == null ? null : new Date(s.valid_from).toISOString() })),
       noSlots: await engine.listHeldFactSlots(SRC, 'conversations/none'),
     };
     expect(out).toEqual({
       noneNewest: null, noneTop: null, newestIsLast: true, top: 1,
-      active: 3, page: 4, otherPage: 1,
+      active: 3, page: 3, otherPage: 1,
       slots: [{ entity_slug: 'people/a', dimension: 'role', hashed: true, valid_from: '2024-01-01T00:00:00.000Z' }],
       noSlots: [],
     });
@@ -259,7 +259,7 @@ describe('engine parity: group 5 facts conversation publication and relink state
     return { before, after };
   });
 
-  parityTest('clearConversationPageFacts: a window clear takes the keyed rows, keep takes the others, and the whole-page clear expires what is held', {
+  parityTest('clearConversationPageFacts: a window clear expires the keyed rows, keep expires the others, and an audit row stays', {
     methods: ['putPage', 'insertFacts', 'stampConversationSourceWindows', 'clearConversationPageFacts', 'listFactsSince'],
   }, async (engine) => {
     await engine.putPage(PAGE, note('Chat'));
@@ -271,19 +271,23 @@ describe('engine parity: group 5 facts conversation publication and relink state
     await derived(engine, PAGE, 'EXTRACTION_COMPLETE', { source: TERMINAL });
     await derived(engine, 'conversations/c2', 'untouched on another page');
     await engine.stampConversationSourceWindows([{ id: a, w: win(1, 1, 'a') }, { id: b, w: win(1, 2, 'b') }, { id: c, w: win(1, 3, 'c') }]);
-    // Replace window a only: its row goes, the audit row, the unanchored row and the other windows stay.
+    // Replace window a only: its row is expired (#10443: kept as history); the audit row, the unanchored row and the other windows stay active.
     const windowA = await engine.clearConversationPageFacts(SRC, PAGE, { keys: ['1:1:a'], keep: false, unanchored: false });
     const afterA = await state(engine);
-    // Keep window b: window c and the unanchored row go (the audit row is never a window clear's).
+    // Keep window b: window c and the unanchored row are expired (the audit row is never a window clear's).
     const keepB = await engine.clearConversationPageFacts(SRC, PAGE, { keys: ['1:2:b'], keep: true, unanchored: true });
     const afterKeep = await state(engine);
     expect({ windowA, keepB }).toEqual({ windowA: 1, keepB: 2 });
-    expect(afterA.map(r => r.fact)).toEqual(['EXTRACTION_COMPLETE', 'in window b', 'in window c', 'unanchored', 'untouched on another page']);
-    expect(afterKeep.map(r => r.fact)).toEqual(['EXTRACTION_COMPLETE', 'in window b', 'untouched on another page']);
+    const active = (rows: Array<{ fact: string; expired: boolean }>) => rows.filter(r => !r.expired).map(r => r.fact);
+    const expired = (rows: Array<{ fact: string; expired: boolean }>) => rows.filter(r => r.expired).map(r => r.fact);
+    expect(active(afterA)).toEqual(['EXTRACTION_COMPLETE', 'in window b', 'in window c', 'unanchored', 'untouched on another page']);
+    expect(expired(afterA)).toEqual(['in window a']);
+    expect(active(afterKeep)).toEqual(['EXTRACTION_COMPLETE', 'in window b', 'untouched on another page']);
+    expect(expired(afterKeep)).toEqual(['in window a', 'in window c', 'unanchored']);
     return { windowA, keepB, afterA, afterKeep };
   });
 
-  parityTest('clearConversationPageFacts: the whole-page clear deletes the unheld rows and expires the rows a loop or a relink holds', {
+  parityTest('clearConversationPageFacts: the whole-page clear expires every active extractor row and deletes only the audit rows', {
     methods: ['putPage', 'insertFacts', 'upsertOpenLoop', 'clearConversationPageFacts', 'listFactsSince', 'listHeldFactSlots', 'countActiveConversationFacts'],
   }, async (engine) => {
     const slug = PAGE;
@@ -302,15 +306,17 @@ describe('engine parity: group 5 facts conversation publication and relink state
     expect([plain, successor, relinked].every(id => id > 0)).toBe(true);
     const total = await engine.clearConversationPageFacts(SRC, slug);
     const out = { total, state: await state(engine), slots: await engine.listHeldFactSlots(SRC, slug), active: await engine.countActiveConversationFacts(SRC, slug) };
-    // Deleted (3): plain, the successor and the audit row. Expired and kept (1 + 1): the relinked row, then the loop's row. Untouched: the labels row.
-    expect(out.total).toBe(5);
+    // #10443: the audit row is the only row deleted (1); the other five (plain, the loop's, the successor, the relinked and the labels row) are expired and kept.
+    expect(out.total).toBe(6);
     expect(out.state).toEqual([
       { fact: 'held by a loop', expired: true },
+      { fact: 'plain', expired: true },
       { fact: 'relinked row', expired: true },
-      { fact: 'retired by labels', expired: false },
+      { fact: 'retired by labels', expired: true },
+      { fact: 'the successor', expired: true },
     ]);
     expect(out.slots).toEqual([]);
-    expect(out.active).toBe(1);
+    expect(out.active).toBe(0);
     return out;
   });
 
@@ -615,7 +621,7 @@ describe('engine parity: group 5 facts conversation publication and relink state
     return locked;
   });
 
-  parityTest('listClearedRelinkedFacts lists a page\'s expired relinked rows whose entity page is live, newest first', {
+  parityTest('listClearedRelinkedFacts lists a page\'s expired extractor rows newest first, carried only for a relinked row whose entity page is live', {
     methods: ['putPage', 'softDeletePage', 'insertFacts', 'expireFact', 'listClearedRelinkedFacts'],
   }, async (engine) => {
     await engine.putPage('people/alive', note('Alive', 'body', {}, 'person'));
@@ -635,11 +641,48 @@ describe('engine parity: group 5 facts conversation publication and relink state
     expect(active).toBeGreaterThan(0);
     const found = await engine.listClearedRelinkedFacts(SRC, PAGE);
     expect(found).toEqual([
-      { fact: 'newer', entity_slug: 'people/alive', context: 'said; entity relinked from newer' },
-      { fact: 'older', entity_slug: 'people/alive', context: 'said; entity relinked from older' },
+      { fact: 'plain', entity_slug: 'people/alive', context: 'no marker', carried: false },
+      { fact: 'missing', entity_slug: 'people/missing', context: 'said; entity relinked from missing', carried: false },
+      { fact: 'dead', entity_slug: 'people/dead', context: 'said; entity relinked from dead', carried: false },
+      { fact: 'newer', entity_slug: 'people/alive', context: 'said; entity relinked from newer', carried: true },
+      { fact: 'older', entity_slug: 'people/alive', context: 'said; entity relinked from older', carried: true },
     ]);
     expect(await engine.listClearedRelinkedFacts(SRC, 'conversations/none')).toEqual([]);
     return found;
+  });
+
+  parityTest('narrowConversationExpiredCopies makes the page\'s wider expired extractor copies of the named claims private and leaves every other row', {
+    methods: ['putPage', 'insertFacts', 'expireFact', 'narrowConversationExpiredCopies', 'listFactsSince'],
+  }, async (engine) => {
+    await engine.putPage(PAGE, note('Chat'));
+    await engine.putPage('conversations/c2', note('Other'));
+    const world = { visibility: 'world' } as const;
+    const expiredCopy = await derived(engine, PAGE, 'Ship the thing', world);
+    const active = await derived(engine, PAGE, 'Ship the thing', world);
+    const remembered = await derived(engine, PAGE, 'Ship the thing', { ...world, source: 'cli:remember' });
+    const unnamed = await derived(engine, PAGE, 'Another claim', world);
+    const otherPage = await derived(engine, 'conversations/c2', 'Ship the thing', world);
+    for (const id of [expiredCopy, remembered, unnamed, otherPage]) expect(await engine.expireFact(id)).toBe(true);
+    const names = labels({ expiredCopy, active, remembered, unnamed, otherPage });
+    const visibility = async () => {
+      const found = await engine.listFactsSince(SRC, new Date(0), { activeOnly: false, limit: 500 } as never);
+      return Object.fromEntries(sorted(found.map(r => [nameOf(names, r.id), r.visibility] as const), r => r[0]));
+    };
+    const before = await visibility();
+    await engine.narrowConversationExpiredCopies(SRC, PAGE, []);
+    await engine.narrowConversationExpiredCopies(SRC, 'conversations/none', ['ship the  THING']);
+    const untouched = await visibility();
+    // The claim fingerprint folds case and spacing, so a differently spelled claim names the same copies.
+    await engine.narrowConversationExpiredCopies(SRC, PAGE, ['ship the  THING']);
+    const after = await visibility();
+    await engine.narrowConversationExpiredCopies(SRC, PAGE, ['ship the  THING']);
+    const again = await visibility();
+    const out = { before, untouched, after, again };
+    expect(before).toEqual({ expiredCopy: 'world', active: 'world', remembered: 'world', unnamed: 'world', otherPage: 'world' });
+    expect(untouched).toEqual(before);
+    expect(after).toEqual({ expiredCopy: 'private', active: 'world', remembered: 'world', unnamed: 'world', otherPage: 'world' });
+    expect(again).toEqual(after);
+    return out;
   });
 
   parityTest('countEmbeddedFactsAmong counts the named facts of the source that carry an embedding', {

@@ -30,7 +30,7 @@ import { namesAgree } from '../name-variants.ts';
 import { decidedSets } from '../identity-decisions.ts';
 import { withEngineScope } from '../../engine-scope.ts';
 import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
-import { exaQueryFor } from './exa.ts';
+import { EXA_SITE_FIELDS, EXA_WORK_FIELDS, exaQueryFor } from './exa.ts';
 import { identityEmailKey } from '../../ops/whois.ts';
 import { canonicalPhone, parsePhoneCountryCode, PHONE_COUNTRY_CODE_CONFIG_KEY } from '../../phone-key.ts';
 import { DEFAULT_SOURCE_ID } from '../../sync-failure-ledger.ts';
@@ -53,6 +53,8 @@ export interface PersonPage {
   handles: Set<string>;
   company: string | null;
   role: string | null;
+  exaWork?: string[];
+  exaSites?: string[];
   /** A page labelled family or about a minor, read broadly: never searched on the web. */
   sensitive: Sensitivity | null;
   /** The same label read for linking (sensitivityOf with use 'link'): a pair with such a page never links automatically. */
@@ -87,8 +89,11 @@ export interface PeopleScan {
   countryCode: string;
 }
 
+const SENSITIVITY_KEYS = ['tags', 'groups', 'relationship', 'relation', 'family', 'minor', 'is_minor', 'age', 'born', 'birth_year', 'birthday', 'birthdate'];
 const PERSON_KEYS = ['email', 'emails', 'phone', 'phones', 'company', 'employer', 'organization', 'job_title', 'role', 'position', 'visibility',
-  'readable_by', 'tags', 'groups', 'relationship', 'relation', 'family', 'minor', 'is_minor', 'age', 'born', 'birth_year', 'birthday', 'birthdate'];
+  'readable_by', ...SENSITIVITY_KEYS];
+const EXA_PERSON_KEYS = [...PERSON_KEYS, ...EXA_WORK_FIELDS, ...EXA_SITE_FIELDS];
+const LINK_CLUE_CAP = 20;
 const FAMILY_WORDS = new Set(['family', 'spouse', 'wife', 'husband', 'mother', 'father', 'mom', 'mum', 'dad', 'parent', 'son', 'daughter', 'child',
   'sibling', 'brother', 'sister', 'grandmother', 'grandfather', 'grandparent', 'grandchild', 'aunt', 'uncle', 'cousin', 'niece', 'nephew', 'stepson',
   'stepdaughter', 'stepmother', 'stepfather', 'in-law', 'son-in-law', 'daughter-in-law', 'mother-in-law', 'father-in-law', 'brother-in-law',
@@ -180,40 +185,69 @@ export function readsAsNonPerson(title: string): boolean {
   return words.length === 1 && NON_PERSON_PARTS.some(p => words[0]!.includes(p));
 }
 
-function toPerson(row: { source_id: string; slug: string; page_id: number; title: string | null; keys: Record<string, unknown>; identity: { entity_id: string } | null }, countryCode: string): PersonPage {
+function toPerson(row: { source_id: string; slug: string; page_id: number; title: string | null; keys: Record<string, unknown>; identity: { entity_id: string } | null }, countryCode: string, includeExa: boolean): PersonPage {
   const k = row.keys;
   const handles = new Set<string>();
   for (const raw of [...strings(k.email), ...strings(k.emails)]) { const e = identityEmailKey(raw); if (e) handles.add(`e:${e}`); }
   for (const raw of [...strings(k.phone), ...strings(k.phones)]) { const p = phoneHandle(raw, countryCode); if (p) handles.add(p); }
   const visibility = first(k.visibility)?.toLowerCase() ?? 'world';
   const title = row.title ?? '';
+  const company = first(k.company) ?? first(k.employer) ?? first(k.organization);
+  const role = first(k.job_title) ?? first(k.role) ?? first(k.position);
   return { source_id: row.source_id, slug: row.slug, page_id: row.page_id, title, strict: strictNameFold(title), handles,
-    company: first(k.company) ?? first(k.employer) ?? first(k.organization), role: first(k.job_title) ?? first(k.role) ?? first(k.position),
+    company, role,
+    ...(includeExa && company === null && role === null ? {
+      exaWork: EXA_WORK_FIELDS.flatMap(field => first(k[field]) ?? []),
+      exaSites: EXA_SITE_FIELDS.flatMap(field => first(k[field]) ?? []),
+    } : {}),
     sensitive: sensitivityOf(k), hold: sensitivityOf(k, new Date(), 'link'), nonPerson: readsAsNonPerson(title),
     restricted: visibility !== 'world' || strings(k.readable_by).length > 0, entity_id: row.identity?.entity_id ?? null };
 }
 
 /** Every live person page, keyed by pageKey; `restricted` holds only the frontmatter rule until markRestricted runs. */
-export async function readPeople(engine: BrainEngine, countryCode: string): Promise<Map<string, PersonPage>> {
+export async function readPeople(engine: BrainEngine, countryCode: string, includeExa = false): Promise<Map<string, PersonPage>> {
   const types = await personPageTypes(engine);
   const out = new Map<string, PersonPage>();
   for (let after: { source_id: string; slug: string } | undefined; ;) {
-    const rows = await engine.listEntityKeyRows({ types, keys: PERSON_KEYS, limit: PAGE, ...(after ? { after } : {}) });
-    for (const row of rows) out.set(pageKey(row), toPerson(row, countryCode));
+    const rows = await engine.listEntityKeyRows({ types, keys: includeExa ? EXA_PERSON_KEYS : PERSON_KEYS, limit: PAGE, ...(after ? { after } : {}) });
+    for (const row of rows) out.set(pageKey(row), toPerson(row, countryCode, includeExa));
     if (rows.length < PAGE) return out;
     after = { source_id: rows.at(-1)!.source_id, slug: rows.at(-1)!.slug };
   }
 }
 
-/** Reads the page again at send time: true while it would still send exactly this query. */
+export async function exaQueryForPerson(engine: BrainEngine, p: PersonPage): Promise<ReturnType<typeof exaQueryFor>> {
+  const q = exaQueryFor(p);
+  if (!('blocked' in q) || q.blocked !== 'no_clue' || p.company !== null || p.role !== null) return q;
+
+  const links = await engine.getLinks(p.slug, { sourceId: p.source_id,
+    page: { linkType: 'works_at', contextChars: 1, limit: LINK_CLUE_CAP + 1 } });
+  if (links.length === 0 || links.length > LINK_CLUE_CAP) return q;
+  const members = links.filter(l => !l.origin_slug || (l.origin_slug === p.slug && l.origin_source_id === p.source_id))
+    .map(l => ({ source_id: l.to_source_id, slug: l.to_slug }));
+  if (!members.length) return q;
+  const companies = (await engine.listEntityKeyRows({
+    types: ['company'], keys: ['visibility', 'readable_by', ...SENSITIVITY_KEYS], members, limit: LINK_CLUE_CAP,
+  })).filter(row => row.title && (first(row.keys.visibility)?.toLowerCase() ?? 'world') === 'world'
+    && !strings(row.keys.readable_by).length && !sensitivityOf(row.keys)).map(row => ({ ...row, restricted: false }));
+  if (!companies.length) return q;
+  await markRestricted(engine, companies);
+  const visible = companies.filter(row => !row.restricted);
+  if (visible.length !== 1) return q;
+  const company = visible[0]!;
+  if (sensitivityOf({ tags: await engine.getTags(company.slug, { sourceId: company.source_id }) })) return q;
+  return exaQueryFor(p, company.title ?? undefined);
+}
+
+/** Reads the page and any linked clue again at send time: true while it would still send exactly this query. */
 export async function stillSendsQuery(engine: BrainEngine, p: PersonPage, query: string): Promise<boolean> {
   const page = await engine.getPage(p.slug, { sourceId: p.source_id } as never);
   if (!page) return false;
-  const keys = Object.fromEntries(PERSON_KEYS.map(k => [k, (page.frontmatter as Record<string, unknown> | undefined)?.[k]]));
-  const fresh = toPerson({ source_id: p.source_id, slug: p.slug, page_id: p.page_id, title: page.title, keys, identity: null }, '');
+  const keys = Object.fromEntries(EXA_PERSON_KEYS.map(k => [k, (page.frontmatter as Record<string, unknown> | undefined)?.[k]]));
+  const fresh = toPerson({ source_id: p.source_id, slug: p.slug, page_id: p.page_id, title: page.title, keys, identity: null }, '', true);
   await foldTags(engine, fresh);
   await markRestricted(engine, [fresh]);
-  const q = exaQueryFor(fresh);
+  const q = await exaQueryForPerson(engine, fresh);
   return 'query' in q && q.query === query;
 }
 
@@ -221,9 +255,9 @@ export async function stillSendsQuery(engine: BrainEngine, p: PersonPage, query:
  * Marks restricted every page not every reader may read: the frontmatter rule, the shared private-page rule (privacy
  * labels, folder rules, private lineage) and owner-only sources. Only the web search needs it, so only it pays for it.
  */
-export async function markRestricted(engine: BrainEngine, pages: Iterable<PersonPage>): Promise<void> {
+export async function markRestricted(engine: BrainEngine, pages: Iterable<Pick<PersonPage, 'source_id' | 'slug' | 'restricted'>>): Promise<void> {
   const ownerOnly = new Set((await engine.listAllSources({ includeArchived: true })).filter(s => isOwnerOnlySourceConfig(s.config)).map(s => s.id));
-  const open = new Map<string, PersonPage>();
+  const open = new Map<string, Pick<PersonPage, 'source_id' | 'slug' | 'restricted'>>();
   for (const p of pages) {
     if (ownerOnly.has(p.source_id)) p.restricted = true;
     if (!p.restricted) open.set(pageKey(p), p);
@@ -295,11 +329,11 @@ export function isCopy(x: PersonPage, y: PersonPage): boolean {
 }
 
 /** Read the person pages and build every candidate pair with its base class. */
-export async function scanPeople(engine: BrainEngine): Promise<PeopleScan> {
+export async function scanPeople(engine: BrainEngine, includeExa = false): Promise<PeopleScan> {
   const countryCode = parsePhoneCountryCode(await engine.getConfig(PHONE_COUNTRY_CODE_CONFIG_KEY));
   const decided = decidedSets(await engine.listIdentityDecisions());
   const { result, kindOf, pages: finderPages } = await findTypedDuplicateGroups(engine, { decided });
-  const people = await readPeople(engine, countryCode);
+  const people = await readPeople(engine, countryCode, includeExa);
   const carriers = new Map<string, string[]>();
   const nameCounts = new Map<string, number>();
   const bySlug = new Map<string, PersonPage[]>();

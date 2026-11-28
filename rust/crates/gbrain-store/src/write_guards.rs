@@ -79,6 +79,9 @@ pub struct PageIngestStamp {
     pub source_kind: Option<String>,
     pub ingested_via: Option<String>,
     pub ingested_at: Option<String>,
+    /// The page already has an `ingested_at`: it stays exactly as stored (GST-4056).
+    #[serde(default)]
+    pub keep_ingested_at: bool,
 }
 
 /// `sealImportedPage`'s seal: the page's revision when the caller read it live (null: none), the
@@ -338,7 +341,9 @@ impl Store {
             };
             page.source_kind = stamp.source_kind.clone();
             page.ingested_via = stamp.ingested_via.clone();
-            page.ingested_at_us = ingested_at_us;
+            if !(stamp.keep_ingested_at && page.ingested_at_us.is_some()) {
+                page.ingested_at_us = ingested_at_us;
+            }
             write_page(tx, &page)
         })
     }

@@ -137,7 +137,7 @@ for (const kind of testBackends()) {
           const page = archived.find(p => p.body.includes(canary));
           expect(page?.frontmatter.readable_by).toBeUndefined();
           pages.push({ slug: page!.slug, canary });
-          await engine.insertFact({ fact: 'planning notes ' + FACT_ONLY[canary], kind: 'fact', source: 'test', visibility: 'world' }, { source_id: SRC });
+          await engine.insertFact({ fact: 'planning notes ' + FACT_ONLY[canary], kind: 'fact', source: 'test', visibility: 'world', valid_from: new Date('2026-01-01') }, { source_id: SRC });
           await engine.executeRaw('UPDATE facts SET source_markdown_slug = $1 WHERE fact LIKE $2', [page!.slug, '%' + FACT_ONLY[canary]]);
         }
 

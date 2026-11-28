@@ -555,7 +555,7 @@ export function resolveBrainstormChatModel(
   modelOverride?: string,
   gatewayChatModel?: string | null,
 ): string {
-  return modelOverride ?? gatewayChatModel ?? config.chat_model ?? 'anthropic:claude-sonnet-4-6';
+  return modelOverride ?? gatewayChatModel ?? config.chat_model ?? 'anthropic:claude-sonnet-5-5';
 }
 
 /** Models and cost gate resolved once per run, before the tracker scope opens. */

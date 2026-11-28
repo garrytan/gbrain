@@ -116,7 +116,11 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   // The access, page-visibility, grant and source reads a preparation makes (caller identity, folder rules, writer fences, credential
   // grants, source rows): each ran as a raw statement through this view's `executeRaw` before it became a typed member.
   'readWriterSlugFence', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readSourceRow',
-  'readMayActFor', 'readAudiencePrincipals', 'readScopeSourceConfigs', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig']);
+  'readMayActFor', 'readAudiencePrincipals', 'readScopeSourceConfigs', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig',
+  // The fence overlay, stored-body and purge-ledger reads a page preparation makes (page-prepare.ts): raw statements before they became typed members.
+  'readFenceOverlayRows', 'readLiveStoredBody', 'readSourcePurgeFlags', 'listPurgedTakeRows',
+  // Part A: the import's company-brain receipt, guest-source and source-list reads, each a statement master's engine bounded through `executeRaw`.
+  'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listAllSources']);
 
 /**
  * Engine members that return a store over the engine. The view binds them to itself, so the store's raw statements go

@@ -13,6 +13,8 @@ Drop this into your agent's workspace as a skill or system prompt. Your agent wi
 > `docs/schema-author-tutorial.md`. The prose schema here and the active
 > schema pack should describe the same brain; when you evolve one, evolve
 > the other.
+> For `ideas/` and `originals/` on the default `gbrain-base-v2` pack, use
+> [the idea capture frontmatter](guides/idea-capture.md#the-authorship-test).
 
 ---
 

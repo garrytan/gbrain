@@ -79,7 +79,8 @@ export function haltReasonsWithUnknown(haltCount: number, recorded: Record<strin
 }
 
 /**
- * The halt reasons recorded over the last 7 days, summed per kind. A brain
+ * The halt reasons recorded over the last 7 UTC days (the window doctor's
+ * totals read, #10397), summed per kind. A brain
  * whose schema is behind v239 has no column: every halt then reads as
  * `unknown` (a backfill never runs; `unknown` is computed on read).
  */

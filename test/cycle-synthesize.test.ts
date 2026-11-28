@@ -415,10 +415,10 @@ describe('judgeSignificance', () => {
     expect(captured.model).toBe('claude-sonnet-4-6');
   });
 
-  test('defaults to claude-haiku-4-5-20251001 when model omitted', async () => {
+  test('defaults to claude-haiku-5-5 when model omitted', async () => {
     const captured: { model?: string } = {};
     await judgeSignificance(mockClient(captured), makeTranscript());
-    expect(captured.model).toBe('claude-haiku-4-5-20251001');
+    expect(captured.model).toBe('claude-haiku-5-5');
   });
 
   test('parses a scored triage verdict: score, content_type, segments, entities', async () => {

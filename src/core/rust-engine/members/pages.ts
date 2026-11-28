@@ -214,6 +214,7 @@ export const PAGES_MEMBERS = {
   readLiveIdentityHolders: 'sources',
   readSourceLastCommit: 'sources',
   listSourceRecords: 'sources',
+  listActiveSourceConfigs: 'sources',
   readSourceIncarnation: 'sources',
   readSyncDispatchRow: 'sources',
   // #9968's retained read (connector-status.ts): no Rust store member yet, so it is refused like raw SQL and the caller

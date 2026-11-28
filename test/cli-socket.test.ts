@@ -110,6 +110,8 @@ const NOT_READ_BEHAVIOR = new Set([
   'GBRAIN_REMOTE_CLIENT_ID', 'GBRAIN_REMOTE_CLIENT_SECRET', 'GBRAIN_REMOTE_ISSUER_URL', 'GBRAIN_REMOTE_MCP_URL', 'GBRAIN_REMOTE_TOKEN', 'GBRAIN_REMOTE_TOKEN_ENV',
   'GBRAIN_THIN_CLIENT_NAME', 'GBRAIN_TAILSCALE_LOGIN_TIMEOUT_MS', 'GBRAIN_ADMIN_BOOTSTRAP_TOKEN',
   'GBRAIN_OPENCLAW_GATEWAY_URL', 'GBRAIN_OPENCLAW_GATEWAY_TOKEN',
+  // Opt-in usage telemetry: only the telemetry client reads these, after a command ends; no read's answer depends on them.
+  'GBRAIN_TELEMETRY', 'GBRAIN_TELEMETRY_KEY', 'GBRAIN_TELEMETRY_SOURCE', 'GBRAIN_TELEMETRY_URL',
   // Rust engine addon path: only the addon loader reads it, and no read path calls the loader yet.
   // Move it to READ_BEHAVIOR_ENV when a brain can be served by the Rust engine.
   'GBRAIN_RUST_ENGINE_ADDON',

@@ -39,6 +39,9 @@ import type { SqlFragment } from './fragment.ts';
 
 export type Row = Record<string, unknown>;
 
+/** What a read that master ran as `engine.executeRaw` needs: the raw path alone, so an engine can pass itself (instance wrappers, request abort and retry stay with it). */
+export type RawQuery = Pick<SqlExecutor, 'executeRaw'>;
+
 /** EO18 result envelope. `affectedRows` is 0 when the driver reports no count. */
 export interface ExecResult<R = Row> {
   rows: R[];

@@ -6,8 +6,10 @@
  * recorded as internal state.
  */
 export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
+  'loops.owner_addresses', // google/loops-owner-addresses.ts (#10094): the owner's other mailboxes, a comma list; Gmail loop detection counts mail from them as the owner's own, default none
   'apple.helper.port', // imessage/imessage-source.ts: the GBrain Helper's loopback port an imessage source reads (set by setup; no default)
   'dedupe.exa', 'dedupe.exa_run_cap', 'dedupe.exa_total_cap_usd', // entities/evidence/exa.ts (GST-3609): web search for gbrain dedupe classes/sample --exa, off unless on and EXA_API_KEY is set; queries per run, default 2000; total spend cap in USD, default 25
+  'google.gmail.redact_credentials', // google/gmail-redact.ts (#9389): true = each Gmail sweep replaces labelled one-time codes, sign-in links, credentials and labelled passwords in message bodies with placeholders before they are stored, default false
   'google_contacts.identity_links', // google/contact-identity.ts (GST-3609): on = each Google sync links the contacts it changed by exact email or phone; set by gbrain dedupe link-contacts --apply / --unlink, default off
   'identity.phone_country_code', // phone-key.ts, read by ops/whois.ts and apple-contacts/apple-contacts-source.ts: country code for phone numbers written without one, default 1
   'apple_contacts.write', 'apple_contacts.destructive_writes', 'apple_contacts.owner_key_file', // commands/apple-contacts.ts (GST-3278): write switch off|dry_run|on and destructive switch, both default off; absolute path of the 0600 owner key file

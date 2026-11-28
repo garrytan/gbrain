@@ -41,6 +41,8 @@
  * The managed sync checkpoint moved from sync-prepare.ts's raw UPDATE to the typed advanceSyncCheckpoint member
  * (engine-sql/sources.ts; rust-engine/sync-checkpoint-callers): the pass stamp's one statement changes text (the member's
  * parameter order and spacing), same statement, same place; that one entry was re-captured on PGLite and on Postgres.
+ * GST-4037 (stampPageIngest's keepIngestedAt) keeps the stored `ingested_at` of a managed rewrite: the typed member's one statement gains a
+ * CASE on a sixth parameter; same statement, same order.
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';

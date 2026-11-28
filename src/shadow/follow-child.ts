@@ -332,6 +332,7 @@ export class FollowChild {
         file.probe = probeRecord(sql, rust, meta, new Date(this.now()));
         return file.probe;
       }
+      case 'probeReset': file.probe = NOT_RUN_PROBE; return file.probe;
       case 'watermark': {
         this.readForeign();
         this.restore(a.since as number, a.relations as string[] | undefined);

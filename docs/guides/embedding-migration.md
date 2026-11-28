@@ -1,8 +1,9 @@
 # Embedding migration — moving a brain to another embedding provider
 
-`gbrain migrate embeddings` re-embeds an entire brain onto a supported
-embedding provider/model, safely and resumably. It requires an explicit target
-and approval; upgrading or changing a default does not convert stored vectors.
+`gbrain migrate embeddings` moves a brain to a supported embedding model or
+repairs its stored model label. It re-embeds stale vectors and can resume after
+an interruption. It requires an explicit target and approval; upgrading or
+changing a default does not convert stored vectors.
 Inspect the intended brain with `--status`, keep a verified full backup, and
 coordinate quiescing embedding writers before approving a live run.
 
@@ -48,8 +49,9 @@ plane, which the provider pipeline reads), or by editing
 
 **Pick `--dim` = your brain's current column width when the target supports
 it.** A different width triggers the destructive schema transition (column +
-index rebuild across all three dim-pinned tables); the same width skips it
-entirely, but still requires re-embedding into the target model's space.
+index rebuild across all three dim-pinned tables). If the columns already have
+the target width, no resize is needed, but changing models still requires
+re-embedding into the target model's space.
 
 Keeping the width does not make different models' vectors compatible. A model
 change still invalidates old fact and take vectors and clears the semantic
@@ -110,9 +112,10 @@ even if a custom base URL still serves its old model.
    AGREE with the target the run proceeds with a loud notice (env-first
    deployments are legitimate; keep the env in sync everywhere gbrain runs).
    Nothing load-bearing trusts the env either way: the "nothing to migrate"
-   decision verifies the DATABASE (column widths, NULL censuses, signature
-   census, the un-merged file plane), so a pre-set env var cannot fake a
-   completed migration.
+   decision checks the actual column widths, NULL and signature counts, and
+   the model and width in both the database and the runtime config. The
+   environment can stand in for a missing config file only if it pins both
+   values to the target; it cannot override a database mismatch.
 5. **Apply.** When the target width differs from the actual column width,
    runs the atomic schema transition owned by `embedding-migration.ts`,
    in one transaction. It rebuilds **all three dim-pinned text-embedding-space
@@ -138,7 +141,7 @@ even if a custom base URL still serves its old model.
    path as `embed --facts --stale`, including same-width model swaps and
    facts-only brains. Expired, withdrawn, superseded and audit rows are not
    work. Unknown legacy fact provenance is never inferred from new config.
-   Active takes on live pages are re-embedded in the same drain (their
+   Stale active takes on live pages are re-embedded in the same drain (their
    vectors record the model and claim text, and `takes.embedding` is resized
    with the other text columns on a width change); the plan, `--status`
    (`takes pending`) and the completion check all count them.
@@ -411,6 +414,15 @@ and the last completion record including its smoke-check outcome. It is the
 mid-incident "where am I?" surface; `gbrain doctor`'s
 `embedding_migration_state` check surfaces the same marker on every doctor
 run.
+
+If the database still stores the target model without its provider prefix,
+the target-specific `--dry-run --json` reports that mismatch in
+`verified.blockers` and sets `verified.details.db_plane_ok` to `false`.
+An approved label repair keeps current fact and take vectors when the stored
+name is the same untagged model at the same width. A tagged name without a
+provider (such as `qwen3-embedding:8b`), a model change, or a missing stored
+model row instead clears those vectors for re-embedding. The live run still
+probes the provider and requires a cost cap, even if no vectors need repair.
 
 ## Custom embedding columns
 

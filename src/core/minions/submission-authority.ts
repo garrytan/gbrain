@@ -49,6 +49,10 @@ export interface RemoteJobAuthority {
     worktreeRoot: string | null;
     jobName: RemoteJobName;
     allowedOperations?: string[] | null;
+    /** GST-4010: the audience or attested actor the submitting call declared, as RemoteAgentAuthority records them; every
+     *  owner-fenced job read and control matches them (jobOwnedSql), so people behind one credential never see each other's jobs. */
+    actingFor?: string[];
+    actor?: { system: string; external_id: string; member: string };
   };
   payloadHash: string;
 }
@@ -79,6 +83,11 @@ export function authorityDigest(value: unknown): string {
     : v;
   return createHash('sha256').update(JSON.stringify(stable(value))).digest('hex');
 }
+/** The declared audience (`actingFor`) and attested actor of a remote grant are well formed, and at most one is present. */
+function actingForInvalid(g: Record<string, unknown>): boolean {
+  return (g.actingFor !== undefined && (!Array.isArray(g.actingFor) || !g.actingFor.length || g.actingFor.length > 50 || !g.actingFor.every(v => typeof v === 'string' && v.length))) ||
+    (g.actor !== undefined && (g.actingFor !== undefined || !parseStoredActor(g.actor)));
+}
 export function parseSubmissionAuthority(value: unknown): SubmissionAuthority | null {
   if (typeof value === 'string') { try { value = JSON.parse(value); } catch { return null; } }
   const a = record(value);
@@ -91,8 +100,7 @@ export function parseSubmissionAuthority(value: unknown): SubmissionAuthority | 
         typeof g.sourceId !== 'string' || !isValidSourceId(g.sourceId) || typeof g.sourceCreatedAt !== 'string' ||
         !Array.isArray(g.allowedTools) || !g.allowedTools.length || !g.allowedTools.every(v => typeof v === 'string' && v.length) ||
         !Array.isArray(g.allowedSlugPrefixes) || !g.allowedSlugPrefixes.every(v => typeof v === 'string') ||
-        (g.actingFor !== undefined && (!Array.isArray(g.actingFor) || !g.actingFor.length || g.actingFor.length > 50 || !g.actingFor.every(v => typeof v === 'string' && v.length))) ||
-        (g.actor !== undefined && (g.actingFor !== undefined || !parseStoredActor(g.actor))) ||
+        actingForInvalid(g) ||
         (g.surface !== undefined && !['verbs', 'starter', 'full'].includes(g.surface as string)) ||
         typeof a.payloadHash !== 'string' || !/^[a-f0-9]{64}$/.test(a.payloadHash)) return null;
     return structuredClone(a) as unknown as RemoteAgentAuthority;
@@ -105,7 +113,7 @@ export function parseSubmissionAuthority(value: unknown): SubmissionAuthority | 
       typeof g.sourceId !== 'string' || !isValidSourceId(g.sourceId) ||
       typeof g.sourceCreatedAt !== 'string' || typeof g.canonicalRoot !== 'string' || !g.canonicalRoot ||
       !(g.worktreeRoot === null || typeof g.worktreeRoot === 'string') ||
-      !REMOTE_JOB_NAMES.includes(g.jobName as RemoteJobName) || typeof a.payloadHash !== 'string' ||
+      !REMOTE_JOB_NAMES.includes(g.jobName as RemoteJobName) || actingForInvalid(g) || typeof a.payloadHash !== 'string' ||
       !/^[a-f0-9]{64}$/.test(a.payloadHash)) return null;
   return structuredClone(a) as unknown as RemoteJobAuthority;
 }
@@ -209,10 +217,13 @@ export async function prepareRemoteJob(
   const data: Record<string, unknown> = name === 'sync'
     ? { repoPath: boundary.canonicalRoot, sourceId, noPull: !pull, noEmbed: true, noExtract: true, auto_embed_backfill: false }
     : { dir: boundary.canonicalRoot, sourceId, ...(name === 'import' ? { noEmbed: true } : {}) };
+  const { currentCallerAccess } = await import('../search/private-visibility.ts');
+  const { actor, audience: actingFor } = currentCallerAccess();
   const authority: RemoteJobAuthority = {
     version: 1, kind: 'remote_generic', principal: { ...principal },
     grant: { scopes: [...ctx.auth!.scopes], sourceId, ...boundary, jobName: name as RemoteJobName,
-      allowedOperations: ctx.auth?.allowedOperations == null ? null : [...ctx.auth.allowedOperations] },
+      allowedOperations: ctx.auth?.allowedOperations == null ? null : [...ctx.auth.allowedOperations],
+      ...(actor ? { actor: { ...actor } } : actingFor?.length ? { actingFor: [...actingFor] } : {}) },
     payloadHash: authorityDigest(data),
   };
   await assertCurrentRemoteJobPrincipal(ctx.engine, authority);

@@ -108,8 +108,8 @@ classes             count the pairs of person pages by class and by what would h
                     shared ids, emails and phones (C1 to C7), your email pages (E1, E3, E4) and chat pages (M1 to M3);
                     changes nothing
   --exa             also search the web (Exa) for pairs that would otherwise wait: needs EXA_API_KEY and
-                    ${EXA_SWITCH_KEY} on; sends only a name plus one company or job title, never for a private,
-                    family or minor page; cached, and capped per run and in total
+                    ${EXA_SWITCH_KEY} on; sends only a name plus one work clue (company, job title or company-site
+                    label), never for a private, family or minor page; cached, and capped per run and in total
   --dry-run         with --exa: count the queries a run would send and their cost; sends nothing
 sample              a seeded random sample of one class's pairs with their evidence, for labelling; changes nothing
   --class <class>   ${PAIR_CLASSES.join(', ')}

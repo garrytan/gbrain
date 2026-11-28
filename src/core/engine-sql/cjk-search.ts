@@ -39,7 +39,7 @@
  */
 import type { SearchResult } from '../types.ts';
 import { rowToSearchResult } from '../utils.ts';
-import { splitCJKQueryTerms } from '../cjk.ts';
+import { cjkMatchTerms } from '../cjk.ts';
 import { buildCJKCandidateSql, buildCJKKeywordSql, type CjkKeywordCtx, type CjkKeywordVariant } from '../search/cjk-keyword-sql.ts';
 import { scopedRead, type ScopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
@@ -160,7 +160,7 @@ export async function searchKeywordCJK(
 ): Promise<SearchResult[]> {
   if (!buildCJKKeywordSql(query, ctx)) return [];
   const started = performance.now();
-  const orFallback = ctx.opts?.orFallback === true && splitCJKQueryTerms(query).length > 1;
+  const orFallback = ctx.opts?.orFallback === true && cjkMatchTerms(query).length > 1;
   const run = ctx.opts?.cjkKeyword;
   if (!run) return (await scoped(exec => fullScoring(exec, query, ctx, orFallback))).map(rowToSearchResult);
   const cap = run.candidateCap ?? CJK_CANDIDATE_CAP;

@@ -115,8 +115,10 @@ const CASES: Case[] = [
     returns: [{ slug: 'people/a', type: 'person', frontmatter: {}, retired: false, folder_restricted: false }] },
   { name: 'lockPageById', rows: [], run: e => e.lockPageById(11),
     sends: [{ text: BASE_SQL.lockPageById!, params: [11] }], returns: undefined },
-  { name: 'listClearedRelinkedFacts', rows: [{ fact: 'f', entity_slug: 'people/a', context: 'entity relinked from x' }], run: e => e.listClearedRelinkedFacts(SRC, SLUG),
-    sends: [{ text: BASE_SQL.listClearedRelinkedFacts!, params: [SRC, SLUG] }], returns: [{ fact: 'f', entity_slug: 'people/a', context: 'entity relinked from x' }] },
+  { name: 'listClearedRelinkedFacts', rows: [{ fact: 'f', entity_slug: 'people/a', context: 'entity relinked from x', carried: true }], run: e => e.listClearedRelinkedFacts(SRC, SLUG),
+    sends: [{ text: BASE_SQL.listClearedRelinkedFacts!, params: [SRC, SLUG] }], returns: [{ fact: 'f', entity_slug: 'people/a', context: 'entity relinked from x', carried: true }] },
+  { name: 'narrowConversationExpiredCopies', rows: [], run: e => e.narrowConversationExpiredCopies(SRC, SLUG, ['a claim', 'another claim']),
+    sends: [{ text: BASE_SQL.narrowConversationExpiredCopies!, params: [SRC, SLUG, ['a claim', 'another claim']] }], returns: undefined },
   { name: 'countEmbeddedFactsAmong', rows: [{ n: '2' }], run: e => e.countEmbeddedFactsAmong(SRC, [1, 2, 3]),
     sends: [{ text: BASE_SQL.countEmbeddedFactsAmong!, params: [SRC, [1, 2, 3]] }], returns: 2 },
 ];
@@ -151,18 +153,18 @@ describe('conversation publication and relink members send the statements their 
     expect((await record([{ t: null }], e => e.factRelinkAttemptsTableExists())).value).toBe(false);
   });
 
-  test('clearConversationPageFacts sends the five base statements of a whole-page clear and sums the three counts', async () => {
+  test('clearConversationPageFacts sends the three statements of a whole-page clear (unslot, delete the audit rows, expire the rest) and sums the two counts', async () => {
     const { statements, value } = await record([{ count: '2' }], e => e.clearConversationPageFacts(SRC, SLUG));
     expect(statements).toEqual(BASE_CLEAR.plain);
-    expect(value).toBe(6);
+    expect(value).toBe(4);
   });
 
-  test('clearConversationPageFacts sends the five base statements of a window clear, binding keys, flags and audit sources in order', async () => {
+  test('clearConversationPageFacts sends the two statements of a window clear (no audit delete), binding keys, flags and audit sources in order', async () => {
     const windows = { keys: ['a:1:x', 'b:2:y'], keep: true, unanchored: false };
     const { statements, value } = await record([{ count: '2' }], e => e.clearConversationPageFacts(SRC, SLUG, windows));
     expect(statements).toEqual(BASE_CLEAR.windows);
     expect(statements.every(s => s.params.length === 6)).toBe(true);
-    expect(value).toBe(6);
+    expect(value).toBe(2);
   });
 
   test('clearConversationPageFacts counts nothing when the statements answer no rows', async () => {
@@ -196,8 +198,8 @@ describe('the members that spell a helper out still carry the helper\'s text', (
   test('the relinked-row predicate and the retired-label marker', () => {
     expect(RELINKED_DERIVED_ROW).toBe(`f.entity_slug IS NOT NULL AND COALESCE(f.context, '') LIKE '%entity relinked from %'`);
     expect(LABEL_RETIRED_MARKER).toBe('retired: conversation-labels');
-    expect(BASE_CLEAR.plain.map(s => s.text).join('\n')).toContain(RELINKED_DERIVED_ROW);
-    expect(BASE_CLEAR.plain[4]!.text).toContain(`NOT LIKE '%${LABEL_RETIRED_MARKER}%'`);
+    // #10443: a clear expires every active extractor row (the relinked and the retired ones too), so only the carry read names the predicate.
+    expect(BASE_SQL.listClearedRelinkedFacts).toContain(RELINKED_DERIVED_ROW);
   });
 
   test('the retired-page and folder-restricted tests of the entity-hint member', () => {

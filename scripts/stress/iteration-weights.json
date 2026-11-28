@@ -891,6 +891,7 @@
   "test/ontology-raw-files-parity.test.ts": 2400,
   "test/op-checkpoint-pass-rows-gc-6712.test.ts": 700,
   "test/open-shared-pages.test.ts": 4200,
+  "test/openclaw-skill-plugin.test.ts": 223400,
   "test/operations-coverage-ledger.test.ts": 200,
   "test/origin-guard-6948.test.ts": 6800,
   "test/origin-twin-sequence-7150.test.ts": 6700,

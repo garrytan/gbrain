@@ -36,6 +36,8 @@ SETUP
   projections drain [--limit n]      Rebuild queued text projections now [--json]
   doctor [--json] [--fast] [--probe-pglite]  Health check (resolver, skills, pgvector, RLS, embeddings; --probe-pglite runs the scratch-store probe)
   integrations [subcommand]          Manage integration recipes (senses + reflexes)
+  telemetry [status|show|off|anonymous|community|forget|pulse]
+                                     Opt-in usage telemetry: off unless you say yes; show prints what is sent
 
 MEMORY (facts agents recall; MEMORY_VERBS v1)
   remember "<fact>" --entity <slug>  Save a fact the user stated, with --provenance; world-visible

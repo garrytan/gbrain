@@ -173,7 +173,7 @@ export function parseAdvertiseFlag(args: string[]): McpSurface | null {
   const raw = inline !== undefined ? inline.slice('--advertise='.length) : args[idx + 1];
   if (raw === undefined || raw.startsWith('--') || !isMcpSurface(raw)) {
     throw opError('invalid_params', `gbrain serve --advertise takes verbs, starter or full${raw === undefined || raw.startsWith('--') ? '' : ` (got "${raw}")`}`,
-      'Run gbrain serve --advertise verbs (list the 7 memory verbs and request_tools), gbrain serve --advertise starter or gbrain serve --advertise full. Every tool the surface allows stays callable.');
+      'Run gbrain serve --advertise verbs (list the 7 memory verbs, correct and request_tools), gbrain serve --advertise starter or gbrain serve --advertise full. Every tool the surface allows stays callable.');
   }
   return raw;
 }
@@ -524,15 +524,19 @@ export async function clientAdvertisedSurface(
 }
 
 /**
- * The tools to list: the callable set narrowed to the advertised surface
- * (never wider). A narrowed list always keeps request_tools when it is
- * callable: it is how an agent reaches the unlisted tools (the verbs surface
- * itself has none).
+ * Tools a narrowed list always keeps when they are callable. request_tools is
+ * how an agent reaches the unlisted tools; correct (GST-4058) is the only tool
+ * for a user's standing rule, and agents that never saw it fell back to
+ * remember plus forget. The verbs surface itself lists neither: it stays the
+ * seven frozen verbs.
  */
+const ALWAYS_LISTED: ReadonlySet<string> = new Set(['request_tools', 'correct']);
+
+/** The tools to list: the callable set narrowed to the advertised surface (never wider), plus ALWAYS_LISTED. */
 export function advertisedOps<T extends OperationMeta>(callable: T[], callableSurface: McpSurface, advertised: McpSurface | null): T[] {
   if (!advertised || !surfaceWiderThan(callableSurface, advertised)) return callable;
   const listed = new Set(filterOpsForSurface(callable, advertised).map(op => op.name));
-  return callable.filter(op => listed.has(op.name) || op.name === 'request_tools');
+  return callable.filter(op => listed.has(op.name) || ALWAYS_LISTED.has(op.name));
 }
 
 /**

@@ -343,7 +343,7 @@ describe('evidence epoch in the child', () => {
   });
 
   test('records an epoch of comparator version 2 collected stay out of the epoch the current comparator opens: their recall and clearance do not count', async () => {
-    expect(SHADOW_COMPARATOR_VERSION).toBeGreaterThanOrEqual(3); // the privacy, rerun and recall rules changed what a record means
+    expect(SHADOW_COMPARATOR_VERSION).toBeGreaterThanOrEqual(4); // the privacy, rerun and recall rules changed what a record means
     const engine = () => ({ async connect() {}, async disconnect() {}, getPage: async () => ({ slug: 'a' }) }) as never;
     const probe = seeded();
     await runChild(probe, [], { openEngine: engine });
@@ -351,7 +351,7 @@ describe('evidence epoch in the child', () => {
     const dir = seeded();
     // pregate-literal: SHADOW_ADAPTER_VERSION=11 the number 11 on the next line is test data (a date, index or count), not the adapter version
     const old = ensureEpoch(dir, { ...inputs, comparator_version: 2 } as never, Date.parse('2026-11-24T00:00:00Z'));
-    for (let i = 0; i < 30; i++) appendRecall(dir, { ts: new Date().toISOString(), epoch_id: old.epoch_id, vector: 1, primary: 1, overlap: 1, ref_size: 10 }); // thirty perfect scores of the old rule
+    for (let i = 0; i < 30; i++) appendRecall(dir, { ts: new Date().toISOString(), epoch_id: old.epoch_id, vector: 1, primary: 1, overlap: 1, ref_size: 10 }); // thirty perfect scores of the old rule // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
     await runChild(dir, [], { openEngine: engine }); // the shadow restarts on the new build
     const now = manifest(dir);
     expect(now.epoch_id).not.toBe(old.epoch_id);

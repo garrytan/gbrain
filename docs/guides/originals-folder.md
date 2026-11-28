@@ -8,6 +8,11 @@ Without this: the user generates a brilliant framework in conversation and it va
 
 ## Implementation
 
+On the default pack, `gbrain-base-v2`, write `type: concept` with
+`subtype: original` for `originals/` and `subtype: idea` for `ideas/`.
+The folder alone does not set the subtype. If the source uses
+`gbrain-recommended`, write its declared `type: original` for `originals/`.
+
 ```
 on user_message(message):
     # Detect original thinking in every message
@@ -26,6 +31,11 @@ on user_message(message):
 
         # Step 2: Create the originals page
         gbrain put originals/{slug} --content """
+            ---
+            type: concept
+            subtype: original
+            ---
+
             # {User's Exact Phrase}
 
             ## The Idea
@@ -50,8 +60,9 @@ on user_message(message):
             gbrain link originals/{slug} <entity_slug>
             gbrain link <entity_slug> originals/{slug}
 
-        # Step 4: Sync
-        gbrain sync
+        # Step 4: Sync only if the source has a checkout
+        if source_has_checkout:
+            gbrain sync
 
 # What counts as original thinking:
 #   - Novel frameworks ("the meatsuit maintenance tax")
@@ -70,7 +81,7 @@ on user_message(message):
 ## Tricky Spots
 
 1. **Naming: the vividness IS the concept.** `meatsuit-maintenance-tax` not `biological-needs-maintenance-overhead`. `ambition-debt` not `deferred-career-risk-accumulation`. The user's colorful phrasing is the intellectual artifact. Never sanitize it into corporate-speak.
-2. **Synthesis IS original.** The user's take on Peter Thiel's zero-to-one framework goes in `originals/`, not `concepts/`. The original part is the user's synthesis, interpretation, or disagreement -- even though the underlying ideas came from someone else.
+2. **Synthesis IS original.** The user's take on someone else's framework goes in `originals/`, not `concepts/`. The original part is the user's synthesis, interpretation, or disagreement -- even though the underlying ideas came from someone else.
 3. **An original without cross-links is a dead original.** The connections ARE the intelligence. An idea about "ambition debt" that doesn't link to the people who exemplify it, the meeting where it was discussed, and the book that influenced it is just a note in a graveyard. Cross-link aggressively.
 4. **Originals form clusters.** Over time, the user's ideas connect to each other. "Meatsuit maintenance tax" connects to "ambition debt" connects to "founder energy budget." Link originals to other originals. The cluster IS the user's worldview.
 5. **Capture the trigger context.** What conversation, meeting, article, or moment sparked this idea? The context often matters as much as the idea itself for future retrieval. Include it in the page.
@@ -80,7 +91,7 @@ on user_message(message):
 1. Generate an original idea in conversation (e.g., "I call this the 'ambition debt' problem -- every year you delay going big, the compound interest works against you"). Confirm a new page appears at `brain/originals/ambition-debt` with `gbrain get originals/ambition-debt`.
 2. Check that the page uses the user's exact phrasing for the title and slug -- not a sanitized version.
 3. Run `gbrain call get_links '{"slug": "originals/ambition-debt"}'`. Confirm cross-links exist to related people, meetings, or other originals.
-4. Express a take on someone else's idea (e.g., "I think Thiel's contrarian question is wrong because..."). Confirm it goes to `originals/` (synthesis is original), not `concepts/`.
+4. Express a disagreement with someone else's framework. Confirm it goes to `originals/` (synthesis is original), not `concepts/`.
 5. Run `gbrain search "ambition debt"`. Confirm the originals page appears in search results and is discoverable.
 
 ---

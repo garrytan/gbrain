@@ -2,7 +2,7 @@ import { observationDateLine, observationDateRule } from '../ai/date-grounding.t
 import { isConsumerDateGroundingOn } from '../facts/extract.ts';
 import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { reportFileHolds, reverseWriteDreamRefs, writeDreamPageFile } from './derived-write-through.ts';
-import { emptySessionSourceRouting, keepSessionSourceTranscripts, withSessionSourceRouting, type SessionSourceRouting } from './synthesize-source-routing.ts';
+import { emptySessionSourceRouting, withSessionSourceRouting, type SessionSourceRouting } from './synthesize-source-routing.ts';
 import { deferPublishOrThrow, finishDeferredPostprocess, loadCommittedOutputsOrDefer, postprocessManagedSynthesis, withPostprocessConflicts, withPublishPending, type PostprocessConflict, type RetainedOutput } from './synthesize-postprocess.ts';
 /**
  * Synthesize phase (v0.23; #4152 two-stage cascade) — conversation-to-brain
@@ -65,8 +65,7 @@ import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine, DreamVerdict, TriageSegment } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
 import { DEFAULT_PRIVATE_QUEUE_LEASE_MS, MinionQueue } from '../minions/queue.ts';
-import { clampSubagentBudgets, CYCLE_DEADLINE_RESERVE_MS, MIN_PATTERNS_SUBAGENT_BUDGET_MS, loadPatternsOutputSlugPrefix } from './patterns.ts';
-import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
+import { clampSubagentBudgets, CYCLE_DEADLINE_RESERVE_MS, MIN_PATTERNS_SUBAGENT_BUDGET_MS } from './patterns.ts';
 import { isQueueQuotaExceededError } from '../minions/admission.ts';
 import { waitForCompletionRenewing, TimeoutError } from '../minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
@@ -88,7 +87,8 @@ import { findSynthV2Completion, noCandidates, noNewTranscripts, partitionComplet
 export { runSubagentsInline, runDrainRenewalTick };
 import { loadAllowedSlugPrefixes } from './filing-rules.ts';
 export { loadAllowedSlugPrefixes };
-import { discoverTranscripts, DEFAULT_EXCLUDE_PATTERNS, type DiscoveredTranscript, conversationPagesOptedIn, conversationPagesNotConsumed, withConversationPages, withTranscriptSeats } from './transcript-discovery.ts';
+import { DEFAULT_EXCLUDE_PATTERNS, type DiscoveredTranscript, conversationPagesOptedIn, conversationPagesNotConsumed, parseTranscriptDate, withTranscriptSeats } from './transcript-discovery.ts';
+import { discoverSynthesisCandidates, previewSynthesisCandidates } from './synthesize-discovery.ts';
 import { loadStorageConfig, isDbOnly } from '../storage-config.ts';
 import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
@@ -341,7 +341,7 @@ export function rewriteChunkedSlug(slug: string, hash6: string, idx: number): st
 // ── Public entry ──────────────────────────────────────────────────────
 
 export interface SynthesizePhaseOpts {
-  brainDir: string;
+  brainDir: string | null;
   dryRun: boolean;
   /** #4077: cooperative cancellation from the enclosing cycle/minion job. A
    *  cancelled cycle must stop judge calls, inline children, and every
@@ -429,15 +429,27 @@ async function runPhaseSynthesizeInner(
   // chain. Throw on empty (silent cwd-resolution is worse than a loud
   // failure); resolve if relative (`.` / `./brain` / `../sibling` all valid
   // inputs but must canonicalize before the write).
-  if (!opts.brainDir || opts.brainDir.trim() === '') {
+  if (opts.brainDir !== null && !opts.brainDir?.trim()) {
     return failed(makeError('InternalError', 'BRAINDIR_EMPTY',
       'opts.brainDir is empty; refusing to run synthesize. Pass an absolute path.'));
   }
-  if (!isAbsolute(opts.brainDir)) {
-    opts.brainDir = resolve(opts.brainDir);
-  }
+  if (opts.brainDir !== null && !isAbsolute(opts.brainDir)) opts.brainDir = resolve(opts.brainDir);
+  const { brainDir } = opts;
   try {
     throwIfAborted(opts.signal, '[dream] synthesize');
+    const since = (await engine.getConfig('dream.synthesize.since'))?.trim();
+    const sinceMs = since === undefined ? undefined : parseTranscriptDate(since);
+    if (sinceMs === null) {
+      return failed(makeError('ConfigError', 'INVALID_SYNTHESIZE_SINCE',
+        'dream.synthesize.since must be an ISO-8601 date or timestamp.',
+        'Set an ISO value, e.g. gbrain config set dream.synthesize.since 2026-09-02, or unset the key.'));
+    }
+    if (brainDir === null && !opts.dryRun) {
+      const sourceId = opts.sourceId ?? 'default';
+      if ((await engine.getSource(sourceId))?.local_path || (sourceId === 'default' && await engine.getConfig('sync.repo_path'))) {
+        return skipped('no_brain_dir', 'the configured brain directory is unavailable; pass --dir <path> to run synthesize');
+      }
+    }
     const config = await loadSynthConfig(engine);
     // #4348: the calendar day that owns this run — explicit --date >
     // cycle.timezone config > host IANA timezone > UTC. Sampled ONCE at
@@ -464,29 +476,33 @@ async function runPhaseSynthesizeInner(
     config.subagentTimeoutMs = clamped.timeoutMs;
     config.subagentWaitTimeoutMs = clamped.waitTimeoutMs;
 
+    const previewFloor = opts.dryRun && since !== undefined;
+    let discoveryOnly = false;
     // Allow ad-hoc --input to run even when config is disabled.
     if (!opts.inputFile && !config.corpusDir && !(await conversationPagesOptedIn(engine))) {
       return await conversationPagesNotConsumed(engine, opts.sourceId ?? 'default')
         ?? skipped('not_configured', 'dream.synthesize.session_corpus_dir is unset');
     }
     if (!opts.inputFile && !config.enabled) {
-      if (!opts.once) {
+      if (!opts.once && !previewFloor) {
         return skipped('not_configured',
           'dream.synthesize.enabled is explicitly false');
       }
-      process.stderr.write(
+      if (opts.once) process.stderr.write(
         '[dream] --once: dream.synthesize.enabled is false but ' +
         '--phase synthesize --once forces this run (config untouched)\n',
       );
+      else discoveryOnly = true;
     }
 
     // Cooldown check (skipped for explicit --input / --date / --from / --to runs).
     const explicitTarget = opts.inputFile || opts.date || opts.from || opts.to;
-    if (!explicitTarget) {
+    if (!explicitTarget && !discoveryOnly) {
       const cooldown = await checkCooldown(engine, config.cooldownHours);
       if (cooldown.active) {
-        return skipped('cooldown_active',
+        if (!previewFloor) return skipped('cooldown_active',
           `synthesize cooled down until ${cooldown.expires_at} (${config.cooldownHours}h cooldown)`);
+        discoveryOnly = true;
       }
     }
 
@@ -497,7 +513,7 @@ async function runPhaseSynthesizeInner(
       );
     }
 
-    const maintenance = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId ?? 'default', opts.brainDir, { deadlineAtMs: opts.deadlineAtMs });
+    const maintenance = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId ?? 'default', brainDir ?? undefined, { deadlineAtMs: opts.deadlineAtMs });
 
     // v0.32.6 M2: pre-fetch prior contradictions from the most recent probe
     // run (if any). Surfaced as an informational block to the synthesize
@@ -505,40 +521,15 @@ async function runPhaseSynthesizeInner(
     // them. Best-effort — a probe that's never run is a normal early state.
     const priorContradictionsBlock = await loadPriorContradictionsBlock(engine);
 
-    // Discover: the corpus walk (or --input) plus #4419 imported conversation pages.
-    const transcripts = await keepSessionSourceTranscripts(engine, await withConversationPages(engine, opts, config, opts.inputFile
-      ? loadAdHocTranscript(opts.inputFile, config.minChars, config.excludePatterns, opts.bypassDreamGuard)
-      : !config.corpusDir ? [] : discoverTranscripts({
-          corpusDir: config.corpusDir,
-          meetingTranscriptsDir: config.meetingTranscriptsDir ?? undefined,
-          minChars: config.minChars,
-          excludePatterns: config.excludePatterns,
-          date: opts.date,
-          from: opts.from,
-          to: opts.to,
-          bypassGuard: opts.bypassDreamGuard,
-          // #5471: outputs a failed postprocess left unmarked must not come
-          // back as transcripts; the explicit bypass re-enables them.
-          excludeDirs: opts.bypassDreamGuard
-            ? []
-            : [
-                config.reflectionsPrefix,
-                config.originalsPrefix,
-                await loadPatternsOutputSlugPrefix(engine, config.outputRoot),
-                dirname(buildDreamSummarySlug(config.outputRoot, 'x')),
-              ].map(prefix => join(opts.brainDir, prefix)),
-          // #5413: corpus files captured from gbrain's own claude-cli calls.
-          selfCaptureSessionIds: claudeCliSelfSessionIds(),
-        })), { corpusDir: config.corpusDir, sourceId: opts.sourceId ?? 'default', readOnly: opts.dryRun, sessionsOnly: opts.sessionsOnly }, routing);
-
-    if (transcripts.length === 0) {
-      return noCandidates('no transcripts to process', { transcripts_discovered: 0 });
+    const transcripts = await discoverSynthesisCandidates(engine, opts, config, routing, dirname(buildDreamSummarySlug(config.outputRoot, 'x')), sinceMs);
+    if (transcripts.length === 0 || discoveryOnly) {
+      return previewFloor ? await previewSynthesisCandidates(engine, transcripts, opts.sourceId ?? 'default', since)
+        : noCandidates('no transcripts to process', { transcripts_discovered: 0 });
     }
 
-    // Best-effort housekeeping (#4069): expiry is enforced on reads
-    // regardless, so a sweep failure must not block synthesis when the
-    // database is otherwise usable.
-    try {
+    // Best-effort housekeeping (#4069): expiry is enforced on reads regardless, so a sweep failure must not
+    // block synthesis when the database is otherwise usable. A --dry-run preview deletes nothing (#10448).
+    if (!opts.dryRun) try {
       const swept = await engine.sweepDreamVerdicts();
       if (swept > 0) process.stderr.write(`[dream] swept ${swept} expired verdict cache row(s)\n`);
     } catch (e) {
@@ -608,7 +599,9 @@ async function runPhaseSynthesizeInner(
     // synthesis. Codex finding #8: --dry-run does NOT mean "zero LLM calls";
     // it means "skip the synthesis model."
     if (opts.dryRun) {
-      return ok(`dry-run: ${worthProcessing.length - completed.size} of ${synthesisState.candidates} transcripts would synthesize${completed.size ? `; ${completed.size} already synthesized` : ''}${deferralSuffix}`, {
+      const floorSuffix = previewFloor ? ` (since ${since})` : '';
+      return ok(`dry-run: ${worthProcessing.length - completed.size} of ${synthesisState.candidates} transcripts would synthesize${completed.size ? `; ${completed.size} already synthesized` : ''}${deferralSuffix}${floorSuffix}`, {
+        ...(previewFloor ? { since } : {}),
         transcripts_discovered: transcripts.length,
         transcripts_processed: 0,
         pages_written: 0,
@@ -1180,20 +1173,21 @@ async function runPhaseSynthesizeInner(
 
     // Dual-write: reverse-render each DB row → markdown file.
     const fileHolds: string[] = [];
-    const reverseWriteCount = maintenance ? (maintenance.binding ? writtenRefs.length : 0) : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal, fileHolds);
+    const reverseWriteCount = maintenance ? (maintenance.binding ? writtenRefs.length : 0)
+      : opts.brainDir === null ? 0 : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal, fileHolds);
 
     const summarySlug = buildDreamSummarySlug(config.outputRoot, summaryDate);
     const writtenSlugs = writtenRefs.map(r => r.slug);
     if (SUMMARY_SLUG_RE.test(summarySlug) && !publishPending) {
       const preserveSummary = !writtenRefs.length && await engine.readPageSnapshot(summarySlug, { sourceId: cycleSourceId });
-      if (!preserveSummary) await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, finalizedRefs.map(r => r.slug), childOutcomes, cycleSourceId, opts.signal, maintenance, summaryRevision)
+      if (!preserveSummary) await writeSummaryPage(engine, brainDir, summarySlug, summaryDate, finalizedRefs.map(r => r.slug), childOutcomes, cycleSourceId, opts.signal, maintenance, summaryRevision)
         .then(held => held && fileHolds.push(held), (e: unknown) => { deferPublishOrThrow(e, summarySlug); publishPending++; });
     }
 
     // #4077: nothing below runs for a cancelled cycle — no phase-end embed
     // spend, no cooldown stamp (the next run must retry these transcripts).
     throwIfAborted(opts.signal, '[dream] synthesize completion');
-    const synthesisGenerations = await activateSynthesisGenerations(engine, { sourceId: cycleSourceId, maintenance, brainDir: opts.brainDir,
+    const synthesisGenerations = await activateSynthesisGenerations(engine, { sourceId: cycleSourceId, maintenance, brainDir,
       transcripts: worthProcessing, refs: writtenRefs, outcomes: childOutcomes, jobRawSource, deferred: new Set(budgetExhaustedDeferrals),
       publicationIncomplete: publishPending > 0 || postprocessConflicts.length > 0 || postprocessDeferral !== null,
       corpusDir: config.corpusDir, meetingDir: config.meetingTranscriptsDir });
@@ -2060,7 +2054,7 @@ function buildTriageSample(content: string, maxChars: number): { text: string; s
 export async function judgeSignificance(
   client: JudgeClient,
   t: DiscoveredTranscript,
-  verdictModel = 'claude-haiku-4-5-20251001',
+  verdictModel = 'claude-haiku-5-5',
   opts: { maxChars?: number; maxTokens?: number; signal?: AbortSignal } = {},
 ): Promise<TriageResult> {
   const maxChars = Math.max(1000, opts.maxChars ?? DEFAULT_TRIAGE_MAX_CHARS);
@@ -3040,7 +3034,7 @@ const SUMMARY_LINK_SAMPLE_LIMIT = 20;
  */
 async function writeSummaryPage(
   engine: BrainEngine,
-  brainDir: string,
+  brainDir: string | null,
   summarySlug: string,
   summaryDate: string,
   writtenSlugs: string[],
@@ -3126,9 +3120,10 @@ async function writeSummaryPage(
   }
 
   const fileWriteRaw = (await engine.getConfig('dream.synthesize.summary_file_write'))?.trim().toLowerCase();
-  const fileWriteEnabled = !(fileWriteRaw === 'false' || fileWriteRaw === '0' || fileWriteRaw === 'off');
+  const noCheckout = brainDir === null && !maintenance?.binding;
+  const fileWriteEnabled = !(noCheckout || fileWriteRaw === 'false' || fileWriteRaw === '0' || fileWriteRaw === 'off');
   let dbOnlyTier = false;
-  if (fileWriteEnabled) {
+  if (fileWriteEnabled && brainDir !== null) {
     try {
       const storage = loadStorageConfig(brainDir);
       dbOnlyTier = storage !== null && isDbOnly(summarySlug, storage);
@@ -3142,7 +3137,7 @@ async function writeSummaryPage(
       const snapshot = await engine.readPageSnapshot(summarySlug, { sourceId, includeDeleted: true });
       await publishMaintenancePage(engine, maintenance, summarySlug, fullMarkdown, { expectedRevision: snapshot?.revision ?? null, file: false, derivation: derivation.declaration });
     }
-    const why = !fileWriteEnabled ? 'dream.synthesize.summary_file_write=off' : 'db_only storage tier';
+    const why = noCheckout ? 'no checkout' : !fileWriteEnabled ? 'dream.synthesize.summary_file_write=off' : 'db_only storage tier';
     process.stderr.write(`[dream] summary file-write skipped (${why}): ${summarySlug} lives in the DB only\n`);
     return;
   }
@@ -3152,6 +3147,7 @@ async function writeSummaryPage(
     await publishMaintenancePage(engine, maintenance, summarySlug, fullMarkdown, { expectedRevision: snapshot?.revision ?? null, derivation: derivation.declaration });
     return;
   }
+  if (brainDir === null) return;
   try {
     const file = await writeDreamPageFile(engine, brainDir, summarySlug, sourceId, { nativeSourceId: sourceId, markdown: fullMarkdown });
     if (!file.written && file.held) return file.held;
@@ -3164,17 +3160,6 @@ async function writeSummaryPage(
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
-
-function loadAdHocTranscript(
-  filePath: string,
-  minChars: number,
-  excludePatterns: string[],
-  bypassGuard?: boolean,
-): DiscoveredTranscript[] {
-  const { readSingleTranscript } = require('./transcript-discovery.ts') as typeof import('./transcript-discovery.ts');
-  const t = readSingleTranscript(filePath, { minChars, excludePatterns, bypassGuard });
-  return t ? [t] : [];
-}
 
 function ok(summary: string, details: Record<string, unknown> = {}): PhaseResult {
   return { phase: 'synthesize', status: 'ok', duration_ms: 0, summary, details };

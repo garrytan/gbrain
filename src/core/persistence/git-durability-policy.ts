@@ -21,7 +21,9 @@
  * untouched), so a request keeps its one Git effect and the worker's ordinary
  * claim runs it.
  */
+import { join } from 'node:path';
 import { isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
+import { classifyGitCheckout } from '../git-checkout.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GitDurabilityCatchUpEffect } from '../engine-sql/git-durability.ts';
 import type { WorktreeBinding } from './ownership.ts';
@@ -38,6 +40,23 @@ export async function gitDurabilityPolicy(binding: Pick<WorktreeBinding, 'git_du
   if (binding?.git_durability === 'disabled') return { durable: false, source: 'binding' };
   const hooked = await probe(root);
   return hooked ? { durable: true, source: 'legacy_hook' } : { durable: false, source: 'no_hook' };
+}
+
+/**
+ * GST-3743: whether gbrain's own derived writes into a source (managed atom pages and their retirements, a sync import's
+ * canonical write-back) must stay database-only because nothing this writer runs would commit them: a source other than
+ * `default` whose root lies in a Git checkout that is neither git-canonical (`config.canonical = "git"`, whose door commits
+ * each file before its row) nor durable on this host (gitDurabilityPolicy: its Git effect skips the commit). Such a
+ * checkout is fed from another writer's remote, so a file gbrain wrote there would stay untracked or dirty, block its
+ * fast-forward, and be committed by whoever commits next. A plain folder, a durable or git-canonical checkout and the
+ * `default` source (the user's own brain) keep their files; an unreadable checkout counts as a Git one (fail closed).
+ */
+export async function foreignCheckout(engine: Pick<BrainEngine, 'getSourceStrictness'>, sourceId: string,
+  binding: Pick<WorktreeBinding, 'git_durability' | 'local_path' | 'relative_path'> | null | undefined,
+  probe: (root: string) => Promise<boolean> = isDurabilityHardenedAsync): Promise<boolean> {
+  if (sourceId === 'default' || !binding?.local_path || classifyGitCheckout(join(binding.local_path, binding.relative_path ?? '')) === 'not_git') return false;
+  if (await engine.getSourceStrictness(sourceId)) return false; // typed read of `config.canonical = 'git'`
+  return !(await gitDurabilityPolicy(binding, binding.local_path, probe).catch(() => ({ durable: false }))).durable;
 }
 
 /** The operator-facing tri-state: what is recorded, before any probe. */
