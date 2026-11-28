@@ -1439,7 +1439,9 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   const facts = ready.noop || p.noExtract || !factsConnector(p.connector) ? undefined
     : await prepareFactsBackstop(engine, row, ready.parsedPage, snapshot).catch((): FactsBackstopStatus => ({ skipped: 'backstop_error' }));
   const tags = [...new Set([...(snapshot?.tags ?? []), ...ready.parsedPage.tags])].sort();
-  const page: Page = { ...(snapshot?.page ?? { id: 0, slug: row.slug, source_id: row.source_id, created_at: new Date(row.created_at), updated_at: new Date(row.created_at) }), ...ready.parsedPage };
+  let page: Page = { ...(snapshot?.page ?? { id: 0, slug: row.slug, source_id: row.source_id, created_at: new Date(row.created_at), updated_at: new Date(row.created_at) }), ...ready.parsedPage };
+  // #10629: a no-op never rewrites the file, so its target keeps the stored marker (or its absence), not the one this import stamped.
+  if (ready.noop && snapshot) { const { trust_tier: _s, ...rest } = page.frontmatter; const kept = snapshot.page.frontmatter.trust_tier; page = { ...page, frontmatter: kept === undefined ? rest : { ...rest, trust_tier: kept } }; }
   const strictPrivate = await strictPrivateFile(engine, row, p.content, p.sourcePath, snapshot);
   const target = strictPrivate ? strictPrivate.file
     : await connectorFileTarget(engine, row, snapshot, serializePageToMarkdown(page, tags), p.sourcePath, p.canonicalRoot);
