@@ -470,18 +470,25 @@ pub(crate) fn write_changed(
 /// gazetteer (`mention_state::scrub_purged_entries`), the volunteer log (`volunteer_events::scrub_purged_slugs`) and the
 /// retrieval logs, ratings and weights (`retrieval_feedback::scrub_purged_slugs`) and, of `scrubPurgedSlugStores`, the
 /// take proposals (with their idempotency entries and nudges), the open loops (with their dedupe keys), the page aliases,
-/// slug aliases and rename history, scrubbed in PGLite's order (src/core/engine-sql/pages.ts deletePages). Core-edit
-/// notices and write-gate holds are not scrubbed here.
+/// slug aliases and rename history, scrubbed in PGLite's order (src/core/engine-sql/pages.ts deletePages). Between the
+/// name stores and the slug stores, as `scrubPurgedSlugHolds` runs there, go the slugs' write-gate holds with their receipts
+/// (`trust::write_gate::delete_slug_holds`): each slug's holds last seen up to its cut-off in `hold_cutoffs` (a purged
+/// tombstone's `deleted_at`), or every hold of the slug when the cut-off is None (`deletePages`). The store keeps holds by
+/// slug alone, so the SQL rules for a hold bound to a page id or marked with candidate pages have no rows here. Core-edit
+/// notices are not scrubbed here.
 fn scrub_purged_slugs(
     tx: &mut dyn KvWrite,
     source_id: &str,
     slugs: &[String],
+    hold_cutoffs: &BTreeMap<&str, Option<i64>>,
     secret_occurrences: &BTreeSet<u64>,
 ) -> Result<()> {
     crate::eval_capture::remove_retrieved_slugs(tx, source_id, slugs)?;
     crate::mention_state::scrub_purged_entries(tx, source_id, slugs)?;
     crate::volunteer_events::scrub_purged_slugs(tx, source_id, slugs)?;
     crate::retrieval_feedback::scrub_purged_slugs(tx, source_id, slugs)?;
+    // `scrubPurgedSlugHolds`, before the slug stores as in the SQL engines.
+    crate::trust::write_gate::delete_slug_holds(tx, source_id, hold_cutoffs)?;
     // `deletePurgedSlugStoreRows` (engine-sql/purge-slug-stores.ts SLUG_STORE_DELETES), in its order: the take proposals
     // and open loops filed under the slug, then the aliases and rename history.
     let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
@@ -1021,7 +1028,9 @@ impl Store {
                 remove_page(tx, &page)?;
                 deleted.push(page.slug);
             }
-            scrub_purged_slugs(tx, &source, &deleted, &secrets)?;
+            let cutoffs: BTreeMap<&str, Option<i64>> =
+                deleted.iter().map(|slug| (slug.as_str(), None)).collect();
+            scrub_purged_slugs(tx, &source, &deleted, &cutoffs, &secrets)?;
             Ok(deleted)
         })
     }
@@ -1102,10 +1111,17 @@ impl Store {
             crate::page_body::delete_purged_texts(tx, &texts)?;
             let now = self.env.now_micros();
             for (source, slugs) in &by_source {
+                // Each purged page's holds go up to its soft delete: a hold seen after it stays (`deletedAt` in the SQL engines).
+                let cutoffs: BTreeMap<&str, Option<i64>> = pages
+                    .iter()
+                    .filter(|p| &p.source_id == source)
+                    .map(|p| (p.slug.as_str(), p.deleted_at_us))
+                    .collect();
                 scrub_purged_slugs(
                     tx,
                     source,
                     slugs,
+                    &cutoffs,
                     &secrets.remove(source).unwrap_or_default(),
                 )?;
                 crate::facts::expire_gone_page_facts(tx, trust, source, slugs, now)?;

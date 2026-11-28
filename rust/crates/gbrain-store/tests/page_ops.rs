@@ -9,6 +9,7 @@ use gbrain_store::error::*;
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions, ReadScope};
 use gbrain_store::sources::SourceInput;
+use gbrain_store::trust::write_gate::{HoldInput, HoldListOpts, ReceiptInput};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
@@ -304,6 +305,116 @@ fn delete_pages_removes_live_and_deleted_pages_of_the_source() {
             .unwrap(),
         Vec::<String>::new()
     );
+}
+
+/// One write-gate hold of `slug` in `source` (named by `fingerprint`) with one receipt.
+fn hold_with_receipt(store: &Store, source: &str, slug: &str, fingerprint: &str) {
+    let id = store
+        .upsert_write_gate_hold(de::<HoldInput>(
+            json!({ "kind": "fact", "source_id": source, "slug": slug,
+            "fingerprint": fingerprint, "detector_version": 1, "tier": "agent_written",
+            "reason_families": ["prompt_injection"], "reasons": ["x"], "detector_error": false,
+            "payload": { "fact": fingerprint }, "write_origin": null, "request_id": null }),
+        ))
+        .unwrap();
+    store
+        .upsert_write_gate_receipt(de::<ReceiptInput>(json!({ "target_table": "write_gate_holds",
+            "target_id": id.to_string(), "source_id": source, "content_hash": format!("h-{fingerprint}"),
+            "tier": "agent_written", "detector_version": 1, "verdict": "flag", "reason_families": ["prompt_injection"],
+            "reasons": ["x"], "detector_error": false, "request_id": null })))
+        .unwrap();
+}
+
+/// Every hold left as `source/slug/fingerprint` with its receipt count, sorted.
+fn holds_left(store: &Store) -> Vec<(String, usize)> {
+    let opts: HoldListOpts = de(json!({ "status": "all", "limit": 100 }));
+    let mut out: Vec<(String, usize)> = store
+        .list_write_gate_hold_rows(&opts)
+        .unwrap()
+        .iter()
+        .map(|h| {
+            let receipts = store
+                .list_write_gate_receipts_for("write_gate_holds", &h["id"].to_string(), 100)
+                .unwrap()
+                .len();
+            let name = format!(
+                "{}/{}/{}",
+                h["source_id"].as_str().unwrap(),
+                h["slug"].as_str().unwrap(),
+                h["payload"]["fact"].as_str().unwrap()
+            );
+            (name, receipts)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+fn left(names: &[&str]) -> Vec<(String, usize)> {
+    names.iter().map(|n| (n.to_string(), 1)).collect()
+}
+
+#[test]
+fn delete_pages_drops_the_deleted_slugs_holds_and_their_receipts() {
+    let dir = TempDir::new("ops-delete-holds");
+    let store = open(&dir);
+    source(&store, "work");
+    put(&store, "notes/gone", note("Gone", "g"));
+    put(&store, "notes/kept", note("Kept", "k"));
+    put_in(&store, "work", "notes/gone", note("Gone", "g"));
+    hold_with_receipt(&store, "default", "notes/gone", "fp-1");
+    hold_with_receipt(&store, "default", "notes/gone", "fp-2");
+    hold_with_receipt(&store, "default", "notes/kept", "fp-3");
+    hold_with_receipt(&store, "work", "notes/gone", "fp-4");
+    // No page at this slug: the delete names no page there, so its hold stays.
+    hold_with_receipt(&store, "default", "notes/never", "fp-5");
+    let gone = store
+        .delete_pages(
+            &["notes/gone".to_string(), "notes/never".to_string()],
+            &de(json!({ "sourceId": "default" })),
+        )
+        .unwrap();
+    assert_eq!(gone, vec!["notes/gone"]);
+    assert_eq!(
+        holds_left(&store),
+        left(&[
+            "default/notes/kept/fp-3",
+            "default/notes/never/fp-5",
+            "work/notes/gone/fp-4"
+        ])
+    );
+}
+
+#[test]
+fn purge_deleted_pages_drops_holds_up_to_the_soft_delete_only() {
+    let dir = TempDir::new("ops-purge-holds");
+    let store = open(&dir);
+    put(&store, "notes/gone", note("Gone", "g"));
+    put(&store, "notes/live", note("Live", "l"));
+    hold_with_receipt(&store, "default", "notes/gone", "fp-before");
+    hold_with_receipt(&store, "default", "notes/live", "fp-live");
+    store
+        .soft_delete_page("notes/gone", Some("default"))
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    // Seen after the soft delete: the purge keeps it.
+    hold_with_receipt(&store, "default", "notes/gone", "fp-after");
+    let purged = store.purge_deleted_pages(0.0, &de(json!({}))).unwrap();
+    assert_eq!(strs(&purged["slugs"]), vec!["notes/gone"]);
+    assert_eq!(
+        holds_left(&store),
+        left(&["default/notes/gone/fp-after", "default/notes/live/fp-live"])
+    );
+}
+
+#[test]
+fn delete_page_keeps_the_pages_holds() {
+    let dir = TempDir::new("ops-delete-page-holds");
+    let store = open(&dir);
+    put(&store, "notes/single", note("Single", "s"));
+    hold_with_receipt(&store, "default", "notes/single", "fp-s1");
+    store.delete_page("notes/single", Some("default")).unwrap();
+    assert_eq!(holds_left(&store), left(&["default/notes/single/fp-s1"]));
 }
 
 #[test]

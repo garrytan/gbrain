@@ -31,6 +31,7 @@ use serde_json::{Value, json};
 mod purge;
 
 pub use purge::PurgedSlugPage;
+pub(crate) use purge::delete_slug_holds;
 
 const RECEIPT: u8 = 0x02;
 const RECEIPT_TARGET: u8 = 0x03;

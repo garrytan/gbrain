@@ -106,8 +106,11 @@ outer catch of the retrieval reflex in `src/core/context/reflex.ts`.
 - A hard delete (`deletePages`, `purgeDeletedPages`) scrubs, in the delete's write, the eval candidates, retrieval
   records, the take proposals (with their idempotency entries and nudges) and open loops (with their dedupe keys) filed
   under the slug in its source, and the page aliases, slug aliases and rename history, as PGLite's
-  `deletePurgedSlugStoreRows` does. PGLite also scrubs ratings, weights, the volunteer log, the gazetteer, core-edit
-  notices and write-gate holds, which this scrub does not touch.
+  `deletePurgedSlugStoreRows` does. Before the slug stores it drops the slug's write-gate holds in the source with the
+  receipts of those holds (`trust::write_gate::delete_slug_holds`, the `deletePurgedSlugHolds` rule): `deletePages`
+  drops every hold of the slug, `purgeDeletedPages` only the holds last seen up to the page's `deleted_at`, so a hold
+  that arrived after the soft delete stays. The single `deletePage` keeps the holds, as the SQL engines do. PGLite also
+  scrubs ratings, weights, the volunteer log, the gazetteer and core-edit notices, which this scrub does not touch.
 
 ## The purgeDeletedPages holds
 
