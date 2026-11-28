@@ -125,9 +125,15 @@ and `src/core/page-state/projections.ts`).
 | `lockEmbeddingSwitch()` | nothing: the store write that installs is exclusive, so the switch cannot flip inside it | `SELECT ... FOR SHARE` on the `embedding_disabled` config row |
 | `brain.installChunkEmbeddings(pageId, rows)` | stores each row's vector on the page's chunk with that id while the chunk still holds the row's text; any other row is skipped. A row with no model keeps the chunk's old one | the batch `UPDATE ... FROM jsonb_to_recordset` |
 
-The store has one vector column, `embedding`, and no image vectors. The members refuse another column, an
-image row and a row with no vector, so a vector never lands in the wrong space. The store keeps a sha256
+The store has one vector column, `embedding`, of 32-bit floats, and no image vectors. The members refuse another column, an
+image row and a row with no vector, so a vector never lands in the wrong space. `installChunkEmbeddings` also
+refuses (`engine_capability_missing`, before any write) a `halfvec` descriptor (Postgres rounds to half precision; the
+store keeps float32) and any row whose vector length differs from the width the store keeps (`readChunkVectorColumn`:
+the first stored vector, else the config `embedding_dimensions`); with no width known yet, a batch whose rows differ in
+length from each other. The descriptor's `dimensions` is not compared (see Known edges). A refused batch writes nothing,
+so no chunk is ever marked complete from a short vector. The store keeps a sha256
 text hash where PGLite keeps md5; both answer "the text has not changed since the vector was computed".
+`readEmbeddingCompletion` receives only the column's name, so it checks the name alone; it writes nothing.
 
 ## Vector catalog
 
@@ -166,5 +172,9 @@ is still refused on write.
 - Segment chunks get no pending stamp.
 - `ops` mode counts `embedded` exactly; `unstamped_created_at_min` is null.
 - `moveDisplacedChunksAndPrune` (PGLite's re-index of displaced chunks) is not done.
+- The default `embedding` descriptor carries the placeholder `dimensions: 1536` on every brain (`normalizeEngineColumn`:
+  the SQL engines cast with a bare `::vector`, which never reads it), so `installChunkEmbeddings` does not compare the
+  descriptor's `dimensions`; the store's own width is the check. On a brain with no stored vector and no
+  `embedding_dimensions`, the first batch fixes the width, so a first batch of the wrong width installs consistently.
 - The install path's zero-norm chunk update (`page-state/projections.ts`) is still raw SQL, so a Rust brain
   refuses a page with a zero-norm vector (`engine_capability_missing`).
