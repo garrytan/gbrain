@@ -93,7 +93,8 @@ function wired(b: Box, harness: 'claude-code' | 'codex', event: 'UserPromptSubmi
   return cmds[0];
 }
 
-interface Run { stdout: string; stderr: string; exitCode: number; wallMs: number }
+/** cpuMs: the hook process's CPU time over every thread (wait4's rusage, children it waited for included), which descheduling on a busy machine does not add to. */
+interface Run { stdout: string; stderr: string; exitCode: number; wallMs: number; cpuMs: number }
 /** Run a hook command the way the harness does: sh -c, the event JSON on stdin. Wall time is measured outside the process. */
 function hookEnv(b: Box, env: Record<string, string | undefined>): Record<string, string> {
   const merged: Record<string, string> = {};
@@ -105,7 +106,7 @@ async function hook(b: Box, command: string, payload: Record<string, unknown> | 
   const stdin = new TextEncoder().encode(typeof payload === 'string' ? payload : JSON.stringify({ cwd, ...payload }));
   const proc = Bun.spawn(['sh', '-c', command], { env: hookEnv(b, env), cwd, stdin, stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-  return { stdout, stderr, exitCode, wallMs: performance.now() - t0 };
+  return { stdout, stderr, exitCode, wallMs: performance.now() - t0, cpuMs: Number(proc.resourceUsage()!.cpuTime.total) / 1000 };
 }
 /** hook() over a real pipe whose last byte is held back for holdMs (or until the process exits): a harness still writing a long history to stdin. */
 async function hookHeld(b: Box, command: string, payload: Record<string, unknown>, holdMs: number, env: Record<string, string | undefined> = {}, cwd = b.project): Promise<Run> {
@@ -120,7 +121,7 @@ async function hookHeld(b: Box, command: string, payload: Record<string, unknown
     await proc.stdin.end();
   }
   const [stdout, stderr, exitCode] = await out;
-  return { stdout, stderr, exitCode, wallMs: performance.now() - t0 };
+  return { stdout, stderr, exitCode, wallMs: performance.now() - t0, cpuMs: Number(proc.resourceUsage()!.cpuTime.total) / 1000 };
 }
 const WIDE = { GBRAIN_TEST_SKILL_LANE_DEADLINE_MS: '10000' };
 const laneLog = (b: Box): any[] => [Date.now() - 86_400_000, Date.now()].flatMap((ms) => {
@@ -737,23 +738,24 @@ describe('skill-resolver lane: hermes', () => {
   test('a 5 MB conversation_history before and after user_message is read, never refused, and still delivers within a turn budget', async () => {
     const b = await hermesBox();
     const before = history(2.5e6), after = history(2.5e6);
-    const smallMs: number[] = [], bigMs: number[] = [];
+    const smallCpuMs: number[] = [], bigCpuMs: number[] = [];
     for (let n = 0; n < 3; n++) {
       const small = await hook(b, hermesCmd(b), { session_id: `h2a-${n}`, extra: { user_message: 'please deploy the widget to staging' } }, WIDE);
       expect(JSON.parse(small.stdout).context).toContain('id: "deploy-widget"');
-      smallMs.push(laneLog(b).at(-1).ms);
+      smallCpuMs.push(small.cpuMs);
       const turn = { session_id: `h2-${n}`, extra: { conversation_history: before, user_message: 'please deploy the widget to staging', later_history: after } };
       expect(JSON.stringify(turn).length).toBeGreaterThan(5e6);
       const r = await hook(b, hermesCmd(b), turn, WIDE);
       expect(r.exitCode).toBe(0);
       expect(JSON.parse(r.stdout).context).toContain('id: "deploy-widget"');
-      const big = laneLog(b).at(-1);
-      expect(big).toMatchObject({ outcome: 'delivered' });
-      bigMs.push(big.ms);
+      expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'delivered' });
+      bigCpuMs.push(r.cpuMs);
     }
-    // Reading 5 MB adds less than one lane deadline to a small turn; a buffering or quadratic reader would not.
-    // Each side's fastest of three runs, so one turn a busy machine descheduled cannot decide it.
-    expect(Math.min(...bigMs) - Math.min(...smallMs)).toBeLessThan(LANE_DEADLINE_MS);
+    // Reading 5 MB adds less than one lane deadline of work to a small turn; a buffering or quadratic reader would not.
+    // Work is the process's CPU time: a busy runner stretches a turn's wall time by however long it sat descheduled, so two
+    // wall clocks there differ by load, not by the reader. Each side's least of three, so one process whose JIT or GC
+    // threads ran longer cannot decide it.
+    expect(Math.min(...bigCpuMs) - Math.min(...smallCpuMs)).toBeLessThan(LANE_DEADLINE_MS);
   });
 
   test('a history still arriving down the pipe after the worker loaded does not spend the turn deadline (#10334)', async () => {
