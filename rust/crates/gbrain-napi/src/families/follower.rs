@@ -24,7 +24,7 @@ use napi::bindgen_prelude::{Buffer, Object};
 use napi_derive::napi;
 use serde_json::{Value, json};
 
-use crate::binding::{Pool, spawn};
+use crate::binding::{Pool, spawn, spawn_in};
 use crate::error::TaskError;
 use crate::pool;
 use crate::store_binding::{Brain, task_error};
@@ -311,7 +311,7 @@ impl Brain {
             .map(|a| position_of_value(&a, "after"))
             .transpose();
         let store = self.current();
-        spawn(env, &self.pool_handle(), move || {
+        spawn_in(env, &self.pool_handle(), self.lane(), move || {
             let after = after?;
             let store = store.ok_or_else(|| {
                 TaskError::new(gbrain_store::error::STORE_CLOSED, "the brain is not open")

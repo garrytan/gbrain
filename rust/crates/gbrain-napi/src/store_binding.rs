@@ -20,7 +20,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::binding::{Pool, spawn};
+use crate::binding::{Lane, Pool, spawn, spawn_in};
 use crate::error::TaskError;
 use crate::pool;
 use crate::store_bind::bind_into;
@@ -114,6 +114,10 @@ pub struct Brain {
     /// installed for the one call on the worker thread (`gbrain_store::call_context`). `None` on
     /// every handle `new Brain` makes.
     deadline: Option<Instant>,
+    /// True on a `withReadLane` handle: its calls wait in the pool's read lane (`pool.rs`), so a
+    /// read does not queue behind writes. Only which queue a call waits in changes; the store,
+    /// its answers and its writes are the same.
+    read_lane: bool,
     /// Multi-user sessions opened on this handle (`families/access_scope.rs`); unused unless one is minted.
     pub(crate) scopes: Arc<Mutex<crate::families::access_scope::ScopeTable>>,
 }
@@ -128,7 +132,7 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         let store = self.slot.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let deadline = self.deadline;
-        spawn(env, &self.pool, move || {
+        spawn_in(env, &self.pool, self.lane(), move || {
             let store = store.ok_or_else(|| {
                 TaskError::new(gbrain_store::error::STORE_CLOSED, "the brain is not open")
             })?;
@@ -149,6 +153,15 @@ impl Brain {
     /// This handle's worker pool (the follower family runs its calls there).
     pub(crate) fn pool_handle(&self) -> pool::Pool {
         self.pool.clone()
+    }
+
+    /// The queue this handle's calls wait in: the read lane for a `withReadLane` view.
+    pub(crate) fn lane(&self) -> Lane {
+        if self.read_lane {
+            Lane::Read
+        } else {
+            Lane::General
+        }
     }
 
     /// The open store, taken now on the calling thread; `None` when the handle is closed.
@@ -187,6 +200,7 @@ impl Brain {
             closes: Arc::new(AtomicU64::new(0)),
             binding: Arc::new(AtomicBool::new(false)),
             deadline: None,
+            read_lane: false,
             scopes: Arc::new(Mutex::new(Default::default())),
         }
     }
@@ -203,7 +217,23 @@ impl Brain {
             closes: self.closes.clone(),
             binding: self.binding.clone(),
             deadline: Some(instant_at(deadline_at_ms)),
+            read_lane: self.read_lane,
             // The same handle's sessions: the deadline view is the handle, not a new one.
+            scopes: self.scopes.clone(),
+        }
+    }
+
+    /// `withReadLane()`: a handle on the same brain and pool whose calls wait in the pool's read
+    /// lane, for calls that only read. `open`, `close` and binds stay in the main queue.
+    #[napi]
+    pub fn with_read_lane(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            slot: self.slot.clone(),
+            closes: self.closes.clone(),
+            binding: self.binding.clone(),
+            deadline: self.deadline,
+            read_lane: true,
             scopes: self.scopes.clone(),
         }
     }

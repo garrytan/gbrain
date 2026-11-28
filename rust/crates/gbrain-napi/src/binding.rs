@@ -336,6 +336,14 @@ fn settle<T: ToNapiValue + Send + 'static>(
     }));
 }
 
+/// Which of the pool's queues a call waits in (`pool.rs`).
+#[derive(Clone, Copy)]
+pub(crate) enum Lane {
+    General,
+    /// The read lane, for calls that only read.
+    Read,
+}
+
 /// Start `work` on the pool and return its promise. A pool that no longer takes work returns a
 /// promise already rejected with `engine_shutdown`.
 pub(crate) fn spawn<'env, T: ToNapiValue + Send + 'static>(
@@ -343,12 +351,26 @@ pub(crate) fn spawn<'env, T: ToNapiValue + Send + 'static>(
     pool: &pool::Pool,
     work: impl FnOnce() -> TaskResult<T> + Send + 'static,
 ) -> napi::Result<Object<'env>> {
+    spawn_in(env, pool, Lane::General, work)
+}
+
+/// [`spawn`] in the queue `lane` names.
+pub(crate) fn spawn_in<'env, T: ToNapiValue + Send + 'static>(
+    env: &'env Env,
+    pool: &pool::Pool,
+    lane: Lane,
+    work: impl FnOnce() -> TaskResult<T> + Send + 'static,
+) -> napi::Result<Object<'env>> {
     let (deferred, promise) = env.create_deferred::<T, Resolver<T>>()?;
     let task = Box::new(PromiseTask {
         deferred,
         work: Box::new(work) as Work<T>,
     });
-    if let Err(refused) = pool.submit(task) {
+    let submitted = match lane {
+        Lane::General => pool.submit(task),
+        Lane::Read => pool.submit_read(task),
+    };
+    if let Err(refused) = submitted {
         refused.cancel(TaskError::shutdown());
     }
     Ok(promise)
@@ -381,11 +403,16 @@ pub struct Pool {
 
 #[napi]
 impl Pool {
-    /// Starts `workers` threads: at least 1, at most 256. If a thread cannot start, throws
+    /// Starts `workers` threads: at least 1, at most 256, plus `readWorkers` (0 to 8, default 0)
+    /// that take only calls made in the read lane. If a thread cannot start, throws
     /// `internal_error` and stops the threads that did start.
     #[napi(constructor)]
-    pub fn new(env: &Env, workers: u32) -> napi::Result<Self> {
-        sync_call(env, || pool::Pool::new(workers as usize)).map(|pool| Self { pool })
+    pub fn new(env: &Env, workers: u32, read_workers: Option<u32>) -> napi::Result<Self> {
+        let read_workers = read_workers.unwrap_or(0) as usize;
+        sync_call(env, || {
+            pool::Pool::with_read_workers(workers as usize, read_workers)
+        })
+        .map(|pool| Self { pool })
     }
 
     /// Worker threads still running their loop.
@@ -408,6 +435,12 @@ impl Pool {
     #[napi(getter)]
     pub fn running(&self) -> u32 {
         self.pool.running()
+    }
+
+    /// Calls waiting in the read lane (also counted in `queued`).
+    #[napi(getter)]
+    pub fn queued_reads(&self) -> u32 {
+        self.pool.queued_reads()
     }
 
     /// Holds a worker for `ms` milliseconds, then resolves with `ms`. The event loop stays free.

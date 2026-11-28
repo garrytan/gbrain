@@ -2,6 +2,11 @@
 //!
 //! The pool is plain Rust: it knows nothing about JavaScript. The binding wraps each call in a
 //! [`Task`] that settles a JavaScript promise when the work finishes or is cancelled.
+//!
+//! A pool can keep a read lane: a second queue ([`Pool::submit_read`]) and workers that take only
+//! from it. A write that waits for the store's writer holds its worker, so with one queue a read
+//! waited behind every write queued ahead of it. The general workers take the main queue first and
+//! the read queue only when the main queue is empty, so reads never push writes aside.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -50,6 +55,10 @@ pub struct ShutdownReport {
 struct State {
     phase: Phase,
     queue: VecDeque<Box<dyn Task>>,
+    /// The read lane: tasks from [`Pool::submit_read`] when the pool has read workers.
+    reads: VecDeque<Box<dyn Task>>,
+    /// Read workers the pool started; 0 sends `submit_read` to the main queue.
+    read_workers: u32,
     running: u32,
     /// Worker threads that are still in their loop.
     workers: u32,
@@ -85,6 +94,9 @@ pub fn live_workers() -> u32 {
 /// The most worker threads one pool starts. A larger request is cut to this.
 pub const MAX_WORKERS: usize = 256;
 
+/// The most read workers one pool starts. A larger request is cut to this.
+pub const MAX_READ_WORKERS: usize = 8;
+
 /// Starts one worker thread. The default uses `std::thread`; tests pass one that can fail.
 type Spawner<'a> = dyn FnMut(usize, Box<dyn FnOnce() + Send>) -> std::io::Result<()> + 'a;
 
@@ -93,7 +105,13 @@ impl Pool {
     /// refuses a thread, the threads already started stop and the call returns
     /// `internal_error`; nothing panics.
     pub fn new(workers: usize) -> Result<Self, TaskError> {
-        Self::start(workers, &mut |index, work| {
+        Self::with_read_workers(workers, 0)
+    }
+
+    /// [`Pool::new`] plus `read_workers` threads (at most [`MAX_READ_WORKERS`]) that take only
+    /// tasks from [`Pool::submit_read`].
+    pub fn with_read_workers(workers: usize, read_workers: usize) -> Result<Self, TaskError> {
+        Self::start(workers, read_workers, &mut |index, work| {
             // Detached on purpose: at process exit the operating system ends the workers.
             thread::Builder::new()
                 .name(format!("gbrain-worker-{index}"))
@@ -102,22 +120,32 @@ impl Pool {
         })
     }
 
-    fn start(workers: usize, spawn: &mut Spawner<'_>) -> Result<Self, TaskError> {
+    fn start(
+        workers: usize,
+        read_workers: usize,
+        spawn: &mut Spawner<'_>,
+    ) -> Result<Self, TaskError> {
+        let general = workers.clamp(1, MAX_WORKERS);
+        let readers = read_workers.min(MAX_READ_WORKERS);
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
                 phase: Phase::Running,
                 queue: VecDeque::new(),
+                reads: VecDeque::new(),
+                read_workers: readers as u32,
                 running: 0,
                 workers: 0,
             }),
             changed: Condvar::new(),
         });
-        for index in 0..workers.clamp(1, MAX_WORKERS) {
+        for index in 0..general + readers {
             let worker_shared = Arc::clone(&shared);
+            let reads_only = index >= general;
             // Counted before the thread starts, so a worker that exits at once never underflows.
             shared.lock().workers += 1;
             LIVE_WORKERS.fetch_add(1, Ordering::SeqCst);
-            if spawn(index, Box::new(move || worker_loop(&worker_shared))).is_err() {
+            let work = Box::new(move || worker_loop(&worker_shared, reads_only));
+            if spawn(index, work).is_err() {
                 shared.lock().workers -= 1;
                 LIVE_WORKERS.fetch_sub(1, Ordering::SeqCst);
                 // Close the pool so the workers already started leave their loop.
@@ -133,8 +161,15 @@ impl Pool {
         self.shared.lock().phase
     }
 
+    /// Tasks waiting in either queue.
     pub fn queued(&self) -> u32 {
-        self.shared.lock().queue.len() as u32
+        let state = self.shared.lock();
+        (state.queue.len() + state.reads.len()) as u32
+    }
+
+    /// Tasks waiting in the read lane.
+    pub fn queued_reads(&self) -> u32 {
+        self.shared.lock().reads.len() as u32
     }
 
     pub fn running(&self) -> u32 {
@@ -160,7 +195,32 @@ impl Pool {
             return Err(task);
         }
         state.queue.push_back(task);
-        self.shared.changed.notify_one();
+        if state.read_workers == 0 {
+            self.shared.changed.notify_one();
+        } else {
+            // Read workers wait on the same condvar but never take this task, and `notify_one`
+            // may wake only one of them: wake all so an idle general worker always sees it.
+            self.shared.changed.notify_all();
+        }
+        Ok(())
+    }
+
+    /// Queue a task that only reads, in the read lane: a read worker or an idle general worker
+    /// takes it. With no read workers it joins the main queue, as [`Pool::submit`] does.
+    pub fn submit_read(&self, task: Box<dyn Task>) -> Result<(), Box<dyn Task>> {
+        let mut state = self.shared.lock();
+        if state.phase != Phase::Running {
+            return Err(task);
+        }
+        if state.read_workers == 0 {
+            state.queue.push_back(task);
+            self.shared.changed.notify_one();
+        } else {
+            state.reads.push_back(task);
+            // The one waiter `notify_one` wakes may be a general worker that is not idle for long,
+            // or a read worker; wake all so an idle read worker always sees the task.
+            self.shared.changed.notify_all();
+        }
         Ok(())
     }
 
@@ -181,7 +241,9 @@ impl Pool {
             if state.phase == Phase::Running {
                 state.phase = Phase::ShuttingDown;
             }
-            (std::mem::take(&mut state.queue), state.running)
+            let mut queued = std::mem::take(&mut state.queue);
+            queued.append(&mut state.reads);
+            (queued, state.running)
         };
         self.shared.changed.notify_all();
         Draining {
@@ -236,19 +298,24 @@ impl Draining {
     }
 }
 
-fn worker_loop(shared: &Shared) {
-    run_worker(shared);
+fn worker_loop(shared: &Shared, reads_only: bool) {
+    run_worker(shared, reads_only);
     shared.lock().workers -= 1;
     LIVE_WORKERS.fetch_sub(1, Ordering::SeqCst);
     shared.changed.notify_all();
 }
 
-fn run_worker(shared: &Shared) {
+fn run_worker(shared: &Shared, reads_only: bool) {
     loop {
         let task = {
             let mut state = shared.lock();
             loop {
-                if let Some(task) = state.queue.pop_front() {
+                let next = if reads_only {
+                    state.reads.pop_front()
+                } else {
+                    state.queue.pop_front().or_else(|| state.reads.pop_front())
+                };
+                if let Some(task) = next {
                     state.running += 1;
                     break task;
                 }
@@ -522,28 +589,33 @@ mod tests {
 
     #[test]
     fn a_worker_that_cannot_start_fails_the_pool_and_stops_the_others() {
-        let mut started = Vec::new();
-        let result = Pool::start(3, &mut |index, work| {
-            if index == 2 {
-                return Err(std::io::Error::other("no more threads"));
-            }
-            started.push(thread::spawn(work));
-            Ok(())
-        });
-        let error = result.err().expect("the pool must not start");
-        assert_eq!(error.code, INTERNAL_ERROR);
-        let (done_tx, done_rx) = mpsc::channel();
-        thread::spawn(move || {
-            for worker in started {
-                let _ = worker.join();
-            }
-            let _ = done_tx.send(());
-        });
-        assert_eq!(
-            done_rx.recv_timeout(LONG),
-            Ok(()),
-            "the workers already started must leave their loop"
-        );
+        // (general, read, failing index): a general worker fails, then a read worker fails after
+        // every general worker and one read worker have started.
+        for (workers, read_workers, failing) in [(3, 0, 2), (2, 2, 3)] {
+            let mut started = Vec::new();
+            let result = Pool::start(workers, read_workers, &mut |index, work| {
+                if index == failing {
+                    return Err(std::io::Error::other("no more threads"));
+                }
+                started.push(thread::spawn(work));
+                Ok(())
+            });
+            let error = result.err().expect("the pool must not start");
+            assert_eq!(error.code, INTERNAL_ERROR);
+            assert_eq!(started.len(), failing);
+            let (done_tx, done_rx) = mpsc::channel();
+            thread::spawn(move || {
+                for worker in started {
+                    let _ = worker.join();
+                }
+                let _ = done_tx.send(());
+            });
+            assert_eq!(
+                done_rx.recv_timeout(LONG),
+                Ok(()),
+                "the workers already started must leave their loop"
+            );
+        }
     }
 
     #[test]
@@ -551,7 +623,7 @@ mod tests {
         let mut asked = 0;
         let mut count = |workers| {
             asked = 0;
-            let pool = Pool::start(workers, &mut |_, _| {
+            let pool = Pool::start(workers, 0, &mut |_, _| {
                 asked += 1;
                 Ok(())
             })
@@ -562,6 +634,208 @@ mod tests {
         assert_eq!(count(0), 1);
         assert_eq!(count(3), 3);
         assert_eq!(count(usize::MAX), MAX_WORKERS);
+    }
+
+    /// Records each settle under its id: `run` or `cancel`, so a test can check that every task
+    /// settled exactly once.
+    struct Counted {
+        id: usize,
+        settles: Arc<Mutex<Vec<(usize, &'static str)>>>,
+        release: Option<mpsc::Receiver<()>>,
+        started: Option<mpsc::Sender<usize>>,
+    }
+
+    impl Task for Counted {
+        fn run(self: Box<Self>) {
+            if let Some(started) = &self.started {
+                let _ = started.send(self.id);
+            }
+            if let Some(release) = &self.release {
+                let _ = release.recv();
+            }
+            self.settles.lock().unwrap().push((self.id, "run"));
+        }
+        fn cancel(self: Box<Self>, error: TaskError) {
+            assert_eq!(error.code, CANCELLED);
+            self.settles.lock().unwrap().push((self.id, "cancel"));
+        }
+    }
+
+    #[test]
+    fn a_read_runs_while_every_general_worker_is_blocked() {
+        let pool = Pool::with_read_workers(4, 2).expect("start the pool");
+        eventually("the workers to start", || pool.workers() == 6);
+        let (tx, rx) = mpsc::channel();
+        let mut releases = Vec::new();
+        for _ in 0..4 {
+            let (held, release) = Probe::held(&tx);
+            assert!(pool.submit(held).is_ok());
+            releases.push(release);
+        }
+        for _ in 0..4 {
+            assert_eq!(rx.recv_timeout(LONG), Ok("started"));
+        }
+        // A fifth write waits in the main queue: no general worker is free.
+        let (queued, queued_release) = Probe::held(&tx);
+        assert!(pool.submit(queued).is_ok());
+        let (read_tx, read_rx) = mpsc::channel();
+        assert!(pool.submit_read(Probe::quick(&read_tx)).is_ok());
+        assert_eq!(read_rx.recv_timeout(LONG), Ok("started"));
+        assert_eq!(read_rx.recv_timeout(LONG), Ok("ran"));
+        assert_eq!(pool.queued(), 1, "the fifth write still waits");
+        assert_eq!(pool.queued_reads(), 0);
+        drop(releases);
+        drop(queued_release);
+        eventually("every task to end", || {
+            pool.running() == 0 && pool.queued() == 0
+        });
+        pool.close_now();
+    }
+
+    #[test]
+    fn a_general_worker_takes_a_waiting_write_before_a_waiting_read() {
+        // One general worker and no free read worker: the read worker is held by a read.
+        let pool = Pool::with_read_workers(1, 1).expect("start the pool");
+        let (tx, rx) = mpsc::channel();
+        let (general, release_general) = Probe::held(&tx);
+        assert!(pool.submit(general).is_ok());
+        let (reader, release_reader) = Probe::held(&tx);
+        assert!(pool.submit_read(reader).is_ok());
+        assert_eq!(rx.recv_timeout(LONG), Ok("started"));
+        assert_eq!(rx.recv_timeout(LONG), Ok("started"));
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let settles = |id| {
+            Box::new(Counted {
+                id,
+                settles: order.clone(),
+                release: None,
+                started: None,
+            })
+        };
+        assert!(pool.submit_read(settles(1)).is_ok());
+        assert!(pool.submit(settles(2)).is_ok());
+        drop(release_general);
+        eventually("both queued tasks to run", || {
+            order.lock().unwrap().len() == 2
+        });
+        assert_eq!(*order.lock().unwrap(), [(2, "run"), (1, "run")]);
+        drop(release_reader);
+        pool.shutdown(LONG);
+    }
+
+    #[test]
+    fn an_idle_general_worker_wakes_for_a_lone_task_while_read_workers_wait() {
+        // Every read worker waits on the condvar before the general worker does, so a wakeup
+        // that reaches only one waiter would reach a read worker, which skips general tasks.
+        let pool = Pool::with_read_workers(1, MAX_READ_WORKERS).expect("start the pool");
+        let (tx, rx) = mpsc::channel();
+        let (held, release) = Probe::held(&tx);
+        assert!(pool.submit(held).is_ok());
+        assert_eq!(rx.recv_timeout(LONG), Ok("started"));
+        thread::sleep(Duration::from_millis(50));
+        drop(release);
+        assert_eq!(rx.recv_timeout(LONG), Ok("ran"));
+        for _ in 0..20 {
+            eventually("the general worker to be idle", || pool.running() == 0);
+            thread::sleep(Duration::from_millis(5));
+            assert!(pool.submit(Probe::quick(&tx)).is_ok());
+            assert_eq!(
+                rx.recv_timeout(LONG),
+                Ok("started"),
+                "a lone general task must start"
+            );
+            assert_eq!(rx.recv_timeout(LONG), Ok("ran"));
+        }
+        pool.close_now();
+    }
+
+    #[test]
+    fn a_pool_without_read_workers_runs_reads_in_its_one_queue() {
+        let pool = pool(1);
+        let (tx, rx) = mpsc::channel();
+        assert!(pool.submit_read(Probe::quick(&tx)).is_ok());
+        assert_eq!(rx.recv_timeout(LONG), Ok("started"));
+        assert_eq!(rx.recv_timeout(LONG), Ok("ran"));
+        assert_eq!(pool.queued_reads(), 0);
+        pool.close_now();
+        assert!(
+            pool.submit_read(Probe::quick(&tx)).is_err(),
+            "a closed pool takes no read"
+        );
+    }
+
+    #[test]
+    fn shutdown_cancels_both_queues_and_settles_every_task_once() {
+        let pool = Pool::with_read_workers(1, 1).expect("start the pool");
+        let settles = Arc::new(Mutex::new(Vec::new()));
+        let (started_tx, started_rx) = mpsc::channel();
+        let releases = Arc::new(Mutex::new(Vec::new()));
+        let task = |id, held: bool| {
+            let release = held.then(|| {
+                let (release_tx, release_rx) = mpsc::channel();
+                releases.lock().unwrap().push(release_tx);
+                release_rx
+            });
+            Box::new(Counted {
+                id,
+                settles: settles.clone(),
+                release,
+                started: Some(started_tx.clone()),
+            })
+        };
+        // Task 0 holds the general worker and task 1 the read worker; 2-3 wait in the main
+        // queue and 4-5 in the read lane.
+        assert!(pool.submit(task(0, true)).is_ok());
+        assert!(pool.submit_read(task(1, true)).is_ok());
+        let mut running = [
+            started_rx.recv_timeout(LONG).unwrap(),
+            started_rx.recv_timeout(LONG).unwrap(),
+        ];
+        running.sort();
+        assert_eq!(running, [0, 1]);
+        assert!(pool.submit(task(2, false)).is_ok());
+        assert!(pool.submit(task(3, false)).is_ok());
+        assert!(pool.submit_read(task(4, false)).is_ok());
+        assert!(pool.submit_read(task(5, false)).is_ok());
+        assert_eq!(pool.queued(), 4);
+        assert_eq!(pool.queued_reads(), 2);
+        let shutdown = {
+            let pool = pool.clone();
+            thread::spawn(move || pool.shutdown(LONG))
+        };
+        eventually("the queued tasks to be cancelled", || {
+            settles.lock().unwrap().len() == 4
+        });
+        releases.lock().unwrap().clear();
+        let report = shutdown.join().unwrap();
+        assert_eq!(
+            report,
+            ShutdownReport {
+                cancelled_queued: 4,
+                finished_running: 2,
+                abandoned_running: 0
+            }
+        );
+        let mut seen = settles.lock().unwrap().clone();
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            [
+                (0, "run"),
+                (1, "run"),
+                (2, "cancel"),
+                (3, "cancel"),
+                (4, "cancel"),
+                (5, "cancel")
+            ]
+        );
+        assert!(pool.submit_read(task(6, false)).is_err());
+        eventually("the workers to exit", || pool.workers() == 0);
+        assert_eq!(
+            settles.lock().unwrap().len(),
+            6,
+            "a refused task is handed back, not settled"
+        );
     }
 
     #[test]
