@@ -15,14 +15,23 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runImport, ImportAbortError } from '../src/commands/import.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 
 // The abort sites fire before any WRITE; the preamble runs a couple of
 // read-only lookups (sources, config), so the stub answers those with
 // empty sets.
 const engineStub = {
   kind: 'pglite',
+  ...stubSourceMembers([]),
   executeRaw: async (sql: string) => sql.includes('FROM persistence_brain') ? [{ enabled: false }] : [], // #6482: the strict mode reader needs one well-formed unmanaged row.
   getConfig: async () => null,
+  // The typed managed-mode read (import.ts) answers through this stub's own executeRaw, so `answering` overrides reach it.
+  readManagedModeRows(this: { executeRaw: (sql: string) => Promise<unknown[]> }) { return this.executeRaw('SELECT enabled FROM persistence_brain'); },
+  // The guest-source gate (guests/admission.ts lookupGuestSource) reads one row: visible, and no guest_sources entry.
+  readGuestSourceRow: async () => ({ hidden: false, source_id: null, writers: null, trust_ceiling: null }),
+  // The company-brain profile read (company-brain/profile.ts): no receipt, so not a company brain.
+  hasCompanyBrainReceipt: async () => false,
 } as unknown as BrainEngine;
 
 // The CLI dispatch (src/cli/commands/import.ts) exits on any ImportAbortError

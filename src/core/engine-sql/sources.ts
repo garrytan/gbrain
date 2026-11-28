@@ -9,6 +9,7 @@ import type { SourceDetailRow, SourceRow } from '../engine.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
+import type { RawQuery } from './executor.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 import { renderFragment } from './fragment.ts';
 import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL } from '../access/owner-only.ts';
@@ -82,11 +83,22 @@ export async function updateSourceConfig(exec: SqlExecutor, sourceId: string, pa
     return affectedRows > 0;
   }
 
+/** One active source with its raw config (`listActiveSourceConfigs`). */
+export interface ActiveSourceConfigRow { id: string; config: unknown; archived: boolean }
+
+/**
+ * The active sources with their raw config, by id: the read that scopes a legacy remote caller to the sources it may see
+ * (`SELECT id, config, archived FROM sources WHERE archived = false ORDER BY id`, as master issued it). Unscoped on master.
+ */
+export async function listActiveSourceConfigs(exec: RawQuery): Promise<ActiveSourceConfigRow[]> {
+  return exec.executeRaw<ActiveSourceConfigRow>(`SELECT id, config, archived FROM sources WHERE archived = false ORDER BY id`);
+}
+
 /** One source row with the columns a source check reads: its checkout path, raw config and archived flag. */
 export interface SourceCheckRow { id: string; local_path: string | null; config: unknown; archived: boolean }
 
 /** The source row, or null (`SELECT id, local_path, config, archived FROM sources WHERE id=$1`). Unscoped on master. */
-export async function readSourceRow(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceCheckRow | null> {
+export async function readSourceRow(exec: RawQuery, sourceId: string): Promise<SourceCheckRow | null> {
   const [row] = await exec.executeRaw<SourceCheckRow>('SELECT id, local_path, config, archived FROM sources WHERE id=$1', [sourceId]);
   return row ?? null;
 }
@@ -98,7 +110,7 @@ export async function lockSourceRow(exec: SqlExecutor, sourceId: string): Promis
 }
 
 /** One source with the columns import and contextual retrieval read, or null for an unknown id. Rows come back as the driver returns them. */
-export async function getSource(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceDetailRow | null> {
+export async function getSource(exec: RawQuery, sourceId: string): Promise<SourceDetailRow | null> {
   const rows = await exec.executeRaw<SourceDetailRow>(
     `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at,
             contextual_retrieval_mode, trust_frontmatter_overrides
@@ -137,3 +149,61 @@ export async function readOwnerOnlySourceConfig(exec: OwnerOnlyRead, sourceId: s
   const rows = await exec.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1', [sourceId]);
   return rows[0] ?? null;
 }
+
+export async function listLocalPathSources(exec: RawQuery): Promise<LocalPathSourceRow[]> {
+  return exec.executeRaw<LocalPathSourceRow>(`SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL`);
+}
+
+/**
+ * Every source row ordered by id, each carrying whether `default` holds a live page, in one statement (the request
+ * config snapshot's `sources` read, #7147). Unscoped on master.
+ */
+export async function listSourceRoutingRows(exec: RawQuery): Promise<SourceRoutingRow[]> {
+  return exec.executeRaw<SourceRoutingRow>(
+    `SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id`,
+  );
+}
+
+/**
+ * Live pages in `default`, live pages elsewhere, and the number of non-default sources holding a live page (the
+ * default-write guard). Soft-deleted pages are left out. Unscoped on master.
+ */
+export async function countDefaultSourceSplit(exec: RawQuery): Promise<DefaultSourceSplit> {
+  const rows = await exec.executeRaw<{
+    default_pages: number | string | bigint | null;
+    non_default_pages: number | string | bigint | null;
+    non_default_sources: number | string | bigint | null;
+  }>(
+    `SELECT
+       COALESCE(SUM(CASE WHEN source_id = 'default' THEN 1 ELSE 0 END), 0) AS default_pages,
+       COALESCE(SUM(CASE WHEN source_id <> 'default' THEN 1 ELSE 0 END), 0) AS non_default_pages,
+       COUNT(DISTINCT source_id) FILTER (WHERE source_id <> 'default') AS non_default_sources
+     FROM pages
+     WHERE deleted_at IS NULL`,
+  );
+  const r = rows[0];
+  return {
+    defaultPages: Number(r?.default_pages) || 0,
+    nonDefaultPages: Number(r?.non_default_pages) || 0,
+    nonDefaultSources: Number(r?.non_default_sources) || 0,
+  };
+}
+
+/**
+ * Sets the source's last sync time to the database clock (`now()`): the stamp a clean `gbrain import` of a folder
+ * source makes (#1691). Returns whether a source was stamped; an unknown source changes nothing. One statement: the
+ * sync paths that also stamp an incarnation or newest_content_at keep their own writes until they move here.
+ */
+export async function markSourceSynced(exec: SqlExecutor, sourceId: string): Promise<boolean> {
+  const rows = await exec.executeRaw<{ id: string }>('UPDATE sources SET last_sync_at = now() WHERE id = $1 RETURNING id', [sourceId]);
+  return rows.length > 0;
+}
+
+/** A source with a local path and its archived flag (`listLocalPathSources`). */
+export interface LocalPathSourceRow { id: string; local_path: string; archived: boolean }
+
+/** One source row for request-scoped source resolution, with the brain-wide `default` emptiness flag (`listSourceRoutingRows`). */
+export interface SourceRoutingRow { id: string; local_path: string | null; archived: boolean; config: unknown; default_has_pages: boolean }
+
+/** Live page counts of `default` against every other source (`countDefaultSourceSplit`). */
+export interface DefaultSourceSplit { defaultPages: number; nonDefaultPages: number; nonDefaultSources: number }

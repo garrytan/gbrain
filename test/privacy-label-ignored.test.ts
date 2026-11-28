@@ -16,6 +16,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { runImport } from '../src/commands/import.ts';
 import { runWaveChecks } from '../src/commands/doctor/wave-checks.ts';
+import { withIgnoredPrivacyLabelNotice } from '../src/core/search/ignored-privacy-labels.ts';
 import { __resetPrivateVisibilityCacheForTests, isPrivacyDerivationPrivate, isPrivatePage } from '../src/core/search/private-visibility.ts';
 import { declaredDatabaseOnly } from '../src/core/persistence/git-gap.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -217,3 +218,36 @@ for (const kind of testBackends()) {
     }, 120_000);
   });
 }
+
+describe('the single-page notice reads the stored page through a typed member', () => {
+  const content = page('notes/labelled', 'access: personal');
+  const written = { slug: 'notes/labelled', status: 'created_or_updated' };
+  const sourceReads = { getSource: async () => ({ id: 'default', local_path: null, config: {} }), getConfig: async () => null };
+  const ctxFor = (engineMembers: Record<string, unknown>) => {
+    const notices: unknown[] = [];
+    return { notices, ctx: { engine: { ...sourceReads, ...engineMembers } as unknown as BrainEngine, emitNotice: (notice: unknown) => { notices.push(notice); } } as never };
+  };
+
+  test('a capability refusal reading the page back propagates and emits no notice', async () => {
+    const refusal = Object.assign(new Error('engine_capability_missing: readLivePageFrontmatter'), { code: 'engine_capability_missing' });
+    const { notices, ctx } = ctxFor({ readLivePageFrontmatter: async () => { throw refusal; } });
+    const error = await withIgnoredPrivacyLabelNotice(ctx, 'default', { slug: 'notes/labelled', content }, written).then(() => null, (e: unknown) => e);
+    expect(error).toBe(refusal);
+    expect(notices).toEqual([]);
+  });
+
+  test('a statement timeout reading the page back keeps the write result and emits no notice', async () => {
+    const timeout = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+    const { notices, ctx } = ctxFor({ readLivePageFrontmatter: async () => { throw timeout; } });
+    const result = await withIgnoredPrivacyLabelNotice(ctx, 'default', { slug: 'notes/labelled', content }, written);
+    expect(result).toBe(written);
+    expect(notices).toEqual([]);
+  });
+
+  test('a stored page that carries the ignored label emits one notice from the page read back', async () => {
+    const { notices, ctx } = ctxFor({ readLivePageFrontmatter: async () => ({ type: 'note', frontmatter: { access: 'personal' } }) });
+    const result = await withIgnoredPrivacyLabelNotice(ctx, 'default', { slug: 'notes/labelled', content }, written);
+    expect(result).toBe(written);
+    expect(notices).toHaveLength(1);
+  });
+});

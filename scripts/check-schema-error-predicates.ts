@@ -32,6 +32,7 @@ const BROAD = new Set(['isUndefinedColumnError', 'isUndefinedTableError']);
 
 /** Files allowed to keep a broad schema-error predicate. Each entry names its reason; a stale entry fails. */
 const ALLOWLIST: Record<string, string> = {
+  'src/core/engine-sql/cli-reads-import.ts': 'listSourceRecords keeps the sources-load.ts 42703 fallback to the minimal columns (moved here from loadAllSources); per-column audit is a follow-up',
   'src/core/oauth-provider.ts': 'OAuth token/client degrade ladders retry narrower projections on any 42703; per-column audit is a follow-up',
   'src/core/grants/legacy-token.ts': 'maps a missing grant column to grant_schema_required (a refusal, never a silent ok)',
   'src/core/item-failure.ts': 'classifies a missing table or column as run-scoped (the unit stops, never a silent ok or a skipped item)',

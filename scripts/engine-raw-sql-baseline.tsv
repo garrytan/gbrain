@@ -192,7 +192,7 @@ src/commands/google.ts	execute_raw	1
 src/commands/graph-query.ts	execute_raw	1
 src/commands/guests.ts	execute_raw	1
 src/commands/import-calls.ts	execute_raw	3	GST-2904 (open before #9641): reads the committed call page's id, frontmatter readers and whether a page_label_guards row exists, locked FOR UPDATE inside the maintenance transaction that raises the guard; no typed engine method exists yet
-src/commands/import.ts	execute_raw	6
+src/commands/import.ts	execute_raw	3
 src/commands/init-embedding-plane.ts	execute_raw	1
 src/commands/init-prefer-postgres.ts	execute_raw	5
 src/commands/init.ts	execute_raw	1
@@ -363,7 +363,7 @@ src/core/code-intel/traversal-cache.ts	execute_raw	4
 src/core/company-brain/admission.ts	execute_raw	12
 src/core/company-brain/demo.ts	execute_raw	2
 src/core/company-brain/evidence.ts	execute_raw	3
-src/core/company-brain/profile.ts	execute_raw	4
+src/core/company-brain/profile.ts	execute_raw	2
 src/core/company-brain/receipts.ts	execute_raw	9
 src/core/company-brain/runtime.ts	execute_raw	14
 src/core/company-brain/status.ts	execute_raw	1
@@ -565,7 +565,7 @@ src/core/grants/rescope.ts	sql_template	7
 src/core/grants/service.ts	sql_template	12	+1: stampReadShared writes oauth_clients.read_shared_revision beside a client grant write (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/grants/shared-exposure.ts	execute_raw	3	+2: reads every live access_tokens and oauth_clients row to list the credentials that read a source through the switch (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/guard-ledger-checks.ts	execute_raw	3
-src/core/guests/admission.ts	execute_raw	4
+src/core/guests/admission.ts	execute_raw	3
 src/core/guests/marker.ts	execute_raw	2
 src/core/guests/owner-credentials.ts	execute_raw	1
 src/core/guests/promote.ts	execute_raw	4
@@ -1106,7 +1106,6 @@ src/core/search/fact-relevance.ts	execute_raw	15	came from master #9627 (held pr
 src/core/search/facts-arm.ts	execute_raw	3
 src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/frontmatter-where.ts	execute_raw	1
-src/core/search/ignored-privacy-labels.ts	execute_raw	3
 src/core/search/image-vector-presence.ts	execute_raw	1
 src/core/search/private-visibility.ts	execute_raw	1
 src/core/search/projection-readiness.ts	execute_raw	2
@@ -1153,7 +1152,6 @@ src/core/slug-spelling-key.ts	execute_raw	1	Reads the server encoding (SHOW serv
 src/core/source-default-search.ts	execute_raw	2
 src/core/source-delete.ts	execute_raw	2
 src/core/source-health.ts	execute_raw	6
-src/core/source-resolver.ts	execute_raw	15
 src/core/sources-load.ts	execute_raw	4
 src/core/sources-not-readable.ts	execute_raw	1
 src/core/sources-ops.ts	execute_raw	16	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
@@ -1204,7 +1202,7 @@ src/core/transcripts/recover.ts	execute_raw	1
 src/core/transcripts/secret-audit.ts	execute_raw	1
 src/core/trust/allow-rules.ts	execute_raw	6
 src/core/trust/backfill.ts	execute_raw	15
-src/core/trust/channel.ts	execute_raw	2
+src/core/trust/channel.ts	execute_raw	1
 src/core/trust/claim-state.ts	execute_raw	1
 src/core/trust/claim.ts	execute_raw	9
 src/core/trust/derived-gate.ts	execute_raw	1

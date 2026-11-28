@@ -45,7 +45,6 @@ const ALLOWLIST = new Map([
   ['src/core/engine-sql/retrieval-coverage.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/writer-status.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/shared-skills/rust-publication.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
-  ['src/core/engine-sql/entity-reads.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/memory-mutation-reads.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   ['src/core/engine-sql/projection-backlog.ts', 'held: lands ahead of its caller as a Rust engine landing part; the landing part that wires it in removes this entry'],
   // Empty: every module is reachable from an entrypoint or a test.

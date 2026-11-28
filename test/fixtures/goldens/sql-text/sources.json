@@ -2,6 +2,16 @@
   "golden": {
     "domain": "sources",
     "methods": {
+      "countDefaultSourceSplit": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT COALESCE(SUM(CASE WHEN source_id = 'default' THEN 1 ELSE 0 END), 0) AS default_pages, COALESCE(SUM(CASE WHEN source_id <> 'default' THEN 1 ELSE 0 END), 0) AS non_default_pages, COUNT(DISTINCT source_id) FILTER (WHERE source_id <> 'default') AS non_default_sources FROM pages WHERE deleted_at IS NULL",
+            "textSha256": "a6b4777ef6df7355cf421077a62b9c88c47ebc510ed7355cfd0aab1717f6c809"
+          }
+        ]
+      },
       "getSource": {
         "default": [
           {
@@ -11,6 +21,16 @@
             ],
             "sql": "SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides FROM sources WHERE id = $1",
             "textSha256": "62f0fbc57b866ec35d27b204bffed68c8c0fe2b01b0f1c9d762645e14d571356"
+          }
+        ]
+      },
+      "listActiveSourceConfigs": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id, config, archived FROM sources WHERE archived = false ORDER BY id",
+            "textSha256": "c53c7976fb939fbcd0d1d28fc6544ee7d97df591d4fa9eacf9c2c66bc7e218fc"
           }
         ]
       },
@@ -27,6 +47,16 @@
           }
         ]
       },
+      "listLocalPathSources": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL",
+            "textSha256": "1dd7814b965c14090ee33bf1c44121abffc58c1a95b477a2755cc51615452682"
+          }
+        ]
+      },
       "listSourceLocalPaths": {
         "default": [
           {
@@ -34,6 +64,16 @@
             "params": [],
             "sql": "SELECT local_path FROM sources WHERE local_path IS NOT NULL AND local_path <> ''",
             "textSha256": "c7ffb048a4fd728fc6ccb9ec8d9f4dd3eb3d14173d5a73c101a2cb8eb6449c91"
+          }
+        ]
+      },
+      "listSourceRoutingRows": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id",
+            "textSha256": "054aca20c098f544c08e897c04f7b4e40a1d032830a5ccfa14d9f93aa06bb3fc"
           }
         ]
       },
@@ -46,6 +86,18 @@
             ],
             "sql": "SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE",
             "textSha256": "c96279eec5f617f9eee6412cb97ea5799f1b30d4c826b2eaf5be7c7456bf2c08"
+          }
+        ]
+      },
+      "markSourceSynced": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "UPDATE sources SET last_sync_at = now() WHERE id = $1 RETURNING id",
+            "textSha256": "72bc1a1d299ab56d8d771bcac792ea729527abe61c469a9e0a340d7acbba5827"
           }
         ]
       },

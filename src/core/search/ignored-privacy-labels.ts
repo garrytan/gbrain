@@ -16,6 +16,7 @@ import type { OperationContext } from '../ops/contract.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { edgeTrimSql } from '../edge-whitespace.ts';
 import { isPrivacyDerivationPrivate, PRIVACY_ALIASES, privacyAliasSql } from './private-visibility.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const PRIVACY_LABEL_IGNORED = 'privacy_label_ignored';
 export const PRIVACY_LABEL_KEYS: readonly string[] = Object.keys(PRIVACY_ALIASES);
@@ -82,13 +83,17 @@ function recognized(key: string): string {
  * Does this source keep pages in a git checkout (its own path, canonical git, or the default source's sync.repo_path)?
  * A repo-less source answers false and its notice leaves out the git sentence. An unreadable answer counts as true.
  */
-export async function sourceHasRepo(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<boolean> {
+export async function sourceHasRepo(engine: Pick<BrainEngine, 'getSource' | 'getConfig'>, sourceId: string): Promise<boolean> {
   try {
-    const [row] = await engine.executeRaw<{ repo: boolean }>(
-      `SELECT (COALESCE(s.local_path, '') <> '' OR s.config->>'canonical' = 'git'
-          OR (s.id = 'default' AND EXISTS (SELECT 1 FROM config c WHERE c.key = 'sync.repo_path' AND COALESCE(c.value, '') <> ''))) AS repo
-        FROM sources s WHERE s.id = $1`, [sourceId], { timeoutMs: NOTICE_READ_TIMEOUT_MS });
-    return row ? row.repo === true : false;
+    // Bounded as the one statement it replaced was: the source read ends on the server after NOTICE_READ_TIMEOUT_MS, and so is the config read.
+    const source = await engine.getSource(sourceId, { timeoutMs: NOTICE_READ_TIMEOUT_MS });
+    if (!source) return false;
+    let config: Record<string, unknown> | null;
+    try { config = typeof source.config === 'string' ? JSON.parse(source.config) as Record<string, unknown> : source.config as Record<string, unknown> | null; } catch { config = null; }
+    if ((source.local_path ?? '') !== '' || config?.canonical === 'git') return true;
+    if (sourceId !== 'default') return false;
+    const repoPath = await engine.getConfig('sync.repo_path', { timeoutMs: NOTICE_READ_TIMEOUT_MS });
+    return (repoPath ?? '') !== '';
   } catch {
     return true;
   }
@@ -150,16 +155,11 @@ export function tallyIgnoredLabels(pages: Iterable<IgnoredPrivacyLabel[]>): { la
  * Only pages that carry a label key are read (the GIN prefilter), at most SCAN_CAP of them; null when there are none or
  * the read fails, so the notice never fails a run.
  */
-export async function ignoredPrivacyLabelRunNotice(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string,
+export async function ignoredPrivacyLabelRunNotice(engine: Pick<BrainEngine, 'getSource' | 'getConfig' | 'readIgnoredPrivacyLabelPages'>, sourceId: string,
   scope: { slugs: readonly string[] } | { since: string }, run: 'import' | 'sync'): Promise<Notice | null> {
   if ('slugs' in scope && !scope.slugs.length) return null;
   try {
-    const rows = await engine.executeRaw<{ type: string | null; frontmatter: Record<string, unknown> | null }>(
-      `SELECT p.type, p.frontmatter FROM pages p
-        WHERE p.source_id = $1 AND ${'slugs' in scope ? 'p.slug = ANY($2::text[])' : 'p.updated_at >= $2::timestamptz'} AND p.deleted_at IS NULL
-          AND NOT (p.frontmatter ? 'readable_by') AND p.folder_rule_ids IS NULL
-          AND ${privacyLabelKeySql('p')} AND ${ignoredPrivacyLabelSql('p')}
-        LIMIT ${SCAN_CAP}`, [sourceId, 'slugs' in scope ? [...new Set(scope.slugs)] : scope.since], { timeoutMs: NOTICE_READ_TIMEOUT_MS });
+    const rows = await engine.readIgnoredPrivacyLabelPages(sourceId, scope);
     const tally = tallyIgnoredLabels(rows.map(row => ignoredPrivacyLabels(row)));
     if (!tally.pages) return null;
     return ignoredPrivacyLabelNotice({ ...tally, repo: await sourceHasRepo(engine, sourceId), sourceId, run });
@@ -181,12 +181,13 @@ export async function withIgnoredPrivacyLabelNotice<R>(ctx: Pick<OperationContex
     const written = (result ?? {}) as Record<string, unknown>;
     const stored = typeof written.slug === 'string' ? written.slug : String(params.slug);
     const committed = written.status === 'created_or_updated' || written.status === 'skipped';
-    const [page] = committed ? await ctx.engine.executeRaw<{ type: string | null; frontmatter: Record<string, unknown> | null }>(
-      'SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, stored],
-      { timeoutMs: NOTICE_READ_TIMEOUT_MS }) : [];
+    const page = committed ? await ctx.engine.readLivePageFrontmatter(sourceId, stored, { timeoutMs: NOTICE_READ_TIMEOUT_MS }) : null;
     const labels = ignoredPrivacyLabels(page ?? parseMarkdown(content, `${stored}.md`));
     if (labels.length) ctx.emitNotice(ignoredPrivacyLabelNotice({ labels: labels.map(l => ({ ...l, pages: 1 })), pages: 1,
       repo: await sourceHasRepo(ctx.engine, sourceId), sourceId, slug: stored }));
-  } catch { /* the notice never fails a write */ }
+  } catch (err) {
+    // An engine that cannot read the page back says so; any other failure never fails a write.
+    rethrowCapabilityRefusal(err);
+  }
   return result;
 }

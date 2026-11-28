@@ -122,6 +122,9 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
       BATCH_SHARED_READS.has(flatSql(sql)) || extra?.has(flatSql(sql)) ? once(JSON.stringify([flatSql(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     if (key === 'readPersistenceBrainId') return () => once('typed:brain', () => target.readPersistenceBrainId());
+    // The managed import's company-profile check reads the source's incarnation and receipt once per batch, as its two statements did.
+    if (key === 'readSourceIncarnation') return (id: string) => once(JSON.stringify(['typed:incarnation', id]), () => target.readSourceIncarnation(id)).then(row => row && { ...row });
+    if (key === 'hasCompanyBrainReceipt') return (id: string) => once(JSON.stringify(['typed:receipt', id]), () => target.hasCompanyBrainReceipt(id));
     // The authorization's plain writer read (once the shared LOCAL_WRITER_SQL statement above, now the typed member) and
     // the screen's credential check, once per batch.
     if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);

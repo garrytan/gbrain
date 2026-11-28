@@ -12,10 +12,7 @@ export const PAGES_MEMBERS = {
   readPageTrustRows: 'pages',
   readOwnerOnlySourcesPresent: 'pages', // held: no Rust store member yet; served later as 'sources'
   readOwnerOnlySourceConfig: 'pages', // held: no Rust store member yet; served later as 'sources'
-  readSourceRow: 'pages', // held: no Rust store member yet; served later as 'sources'
   lockSourceRow: 'pages', // held: no Rust store member yet; served later as 'sources'
-  readSourceIncarnation: 'pages', // held: no Rust store member yet; served later as 'sources'
-  hasCompanyBrainReceipt: 'pages', // held: no Rust store member yet; served later as 'sources'
   listGuestSourceIds: 'pages', // held: no Rust store member yet; served later as 'sources'
   readSourceState: 'pages', // held: no Rust store member yet; served later as 'sources'
   attachSourcePath: 'pages', // held: no Rust store member yet; served later as 'sources'

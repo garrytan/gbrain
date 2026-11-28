@@ -5132,6 +5132,19 @@
       }
     },
     "sources": {
+      "countDefaultSourceSplit": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "getSource": {
         "default": [
           {
@@ -5140,6 +5153,19 @@
               "cancelFence": false,
               "prepare": true,
               "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "listActiveSourceConfigs": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
             },
             "via": "unsafe"
           }
@@ -5158,6 +5184,19 @@
           }
         ]
       },
+      "listLocalPathSources": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "listSourceLocalPaths": {
         "default": [
           {
@@ -5171,7 +5210,33 @@
           }
         ]
       },
+      "listSourceRoutingRows": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "lockSourceRow": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "markSourceSynced": {
         "default": [
           {
             "paramCount": 1,

@@ -22,7 +22,7 @@ const DEADLINE_MS = 150;
 /** Well under any wait the stalled read could end on its own, well over the timer's slack. */
 const SETTLE_MS = 1_000;
 
-/** The decide, queue-health and belief-coverage members a doctor check calls, as test/doctor-typed-reads-deadline.test.ts lists them. */
+/** The decide, queue-health, belief-coverage and source-resolution members a doctor check calls, as test/doctor-typed-reads-deadline.test.ts lists them. */
 const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   readDecideState: (e) => e.readDecideState('doctor_deadline_probe'),
   decideSlotUsage: (e) => e.decideSlotUsage(24),
@@ -48,6 +48,13 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   countSegmentedTimelinePages: (e) => e.countSegmentedTimelinePages(['default'], 10),
   hasNotifierCoverage: (e) => e.hasNotifierCoverage(),
   getWorktreeBinding: (e) => e.getWorktreeBinding('default', null),
+  // The source reads source resolution makes inside a doctor check (part A).
+  listLocalPathSources: (e) => e.listLocalPathSources(),
+  listSourceRoutingRows: (e) => e.listSourceRoutingRows(),
+  countDefaultSourceSplit: (e) => e.countDefaultSourceSplit(),
+  readSourceRow: (e) => e.readSourceRow('default'),
+  listActiveSourceConfigs: (e) => e.listActiveSourceConfigs(),
+  listSourceRecords: (e) => e.listSourceRecords(),
 };
 
 test('every bounded typed read has a stall case', () => {
@@ -57,7 +64,7 @@ test('every bounded typed read has a stall case', () => {
 for (const [member, call] of Object.entries(CALLS)) {
   test(`${member} stalled on its connection under the doctor deadline ends by the deadline and gives back its connection and gauge slot`, async () => {
     const counts = { discards: 0, releases: 0 };
-    const fake = makeFakeSql(stmt => (/decide_|decision_receipts|minion_jobs|belief_events|fact_withdrawals|timeline_entries|worktree|notifier/i.test(stmt.text) ? never() : undefined));
+    const fake = makeFakeSql(stmt => (/decide_|decision_receipts|minion_jobs|belief_events|fact_withdrawals|timeline_entries|worktree|notifier|FROM sources|FROM pages/i.test(stmt.text) ? never() : undefined));
     const reserve = fake.sql.reserve;
     fake.sql.reserve = async () => {
       const r = await reserve();

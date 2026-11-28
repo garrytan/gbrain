@@ -1,5 +1,7 @@
 
 import { callerAccessAllowedSql, privatePagesFilterForCaller, remoteReadFloorSql } from '../search/private-visibility.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { ignoredPrivacyLabelSql, NOTICE_READ_TIMEOUT_MS, privacyLabelKeySql, SCAN_CAP } from '../search/ignored-privacy-labels.ts';
 
 /**
  * The page policy a retirement hop applies to the page it reads (alias `p`), rendered in the caller's access record:
@@ -7,3 +9,43 @@ import { callerAccessAllowedSql, privatePagesFilterForCaller, remoteReadFloorSql
  * member access alone (`callerAccessAllowedSql`).
  */
 export type RetirementPrivacy = 'none' | 'caller' | 'floor' | 'member_access';
+
+/**
+ * Live pages of one source, by slug (`slugs`) or updated since a database timestamp (`since`), that carry a privacy
+ * label gbrain does not recognize and no visibility key (ignored-privacy-labels.ts `ignoredPrivacyLabelSql`), at most
+ * `limit` (default SCAN_CAP) of them, in no particular order.
+ */
+export async function readIgnoredPrivacyLabelPages(exec: TimedRawRead, sourceId: string,
+  scope: { slugs: readonly string[] } | { since: string }, opts: { limit?: number; timeoutMs?: number } = {}): Promise<IgnoredLabelPageRow[]> {
+  const bySlug = 'slugs' in scope;
+  const limit = Math.max(0, Math.floor(opts.limit ?? SCAN_CAP));
+  const within = bySlug ? sqlFragment`p.slug = ANY(${[...new Set(scope.slugs)]}::text[])` : sqlFragment`p.updated_at >= ${scope.since}::timestamptz`;
+  const { text, params } = renderFragment(sqlFragment`SELECT p.type, p.frontmatter FROM pages p
+      WHERE p.source_id = ${sourceId} AND ${within} AND p.deleted_at IS NULL
+        AND NOT (p.frontmatter ? 'readable_by') AND p.folder_rule_ids IS NULL
+        AND ${trustedSql(privacyLabelKeySql('p'))} AND ${trustedSql(ignoredPrivacyLabelSql('p'))}
+      LIMIT ${limit}`);
+  return exec.executeRaw<IgnoredLabelPageRow>(text, params, { timeoutMs: opts.timeoutMs ?? NOTICE_READ_TIMEOUT_MS });
+}
+
+/**
+ * The type and frontmatter of the live page at `slug` in the source, or null (put_page's ignored-label notice reads the
+ * page it stored back, so the stored frontmatter decides). `timeoutMs` bounds the Postgres statement.
+ */
+export async function readLivePageFrontmatter(exec: TimedRawRead, sourceId: string, slug: string,
+  opts: { timeoutMs?: number } = {}): Promise<IgnoredLabelPageRow | null> {
+  const [page] = await exec.executeRaw<IgnoredLabelPageRow>(
+    'SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, slug],
+    { timeoutMs: opts.timeoutMs ?? NOTICE_READ_TIMEOUT_MS });
+  return page ?? null;
+}
+
+export interface IgnoredLabelPageRow { type: string | null; frontmatter: Record<string, unknown> | null }
+
+/**
+ * An engine's own `executeRaw`, for the reads whose call sites bound them with `timeoutMs` (a transaction-local
+ * `statement_timeout` on Postgres; PGLite ignores it). The engine passes itself so the bound holds as before.
+ */
+export interface TimedRawRead {
+  executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { timeoutMs?: number }): Promise<R[]>;
+}

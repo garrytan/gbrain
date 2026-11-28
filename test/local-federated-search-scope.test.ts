@@ -28,6 +28,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { localFederatedSourceIds } from '../src/core/source-resolver.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 import {
   federatedSearchScope,
   operations,
@@ -102,23 +103,23 @@ describe('localFederatedSourceIds — CLI-side scope computation', () => {
   });
 
   test('single federated source (the resolved one) keeps the scalar fast path', async () => {
-    const solo = { executeRaw: async () => [{ id: 'default', config: { federated: true } }] } as any;
+    const solo = stubSourceMembers([{ id: 'default', config: { federated: true } }]) as any;
     expect(await localFederatedSourceIds(solo, 'default', 'seed_default')).toBeUndefined();
   });
 
   test('historical string and array config shapes remain federated', async () => {
-    const historical = {
-      executeRaw: async () => [
-        { id: 'default', config: { federated: true }, archived: false },
-        { id: 'nested', config: JSON.stringify(JSON.stringify({ federated: true })), archived: false },
-        { id: 'array', config: ['{"remote_url":"x"}', { federated: true }], archived: false },
-        { id: 'archived', config: ['{}', { federated: true }], archived: true },
-      ],
-    } as any;
+    // (ids sort in the order listed: the source read is ORDER BY id.)
+    // Config shapes a brain once stored: a JSON string scalar, and an array holding a string and an object.
+    const historical = stubSourceMembers([
+      { id: 'default', config: { federated: true } },
+      { id: 'a-nested', config: JSON.stringify(JSON.stringify({ federated: true })) as never },
+      { id: 'b-array', config: ['{"remote_url":"x"}', { federated: true }] as never },
+      { id: 'archived', config: ['{}', { federated: true }] as never, archived: true },
+    ]) as any;
     expect(await localFederatedSourceIds(historical, 'default', 'seed_default')).toEqual([
       'default',
-      'nested',
-      'array',
+      'a-nested',
+      'b-array',
     ]);
   });
 });

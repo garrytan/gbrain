@@ -43,7 +43,7 @@ export async function unregisteredClientWriters(engine: Pick<BrainEngine, 'execu
 
 export interface GuestSource { source_id: string; writers: string[]; trust_ceiling: string }
 
-export const readGuestSource = (engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<GuestSource | null> => lookupGuestSource(engine, sourceId);
+export const readGuestSource = (engine: Pick<BrainEngine, 'executeRaw' | 'readGuestSourceRow' | 'ownsSchemaTables'>, sourceId: string): Promise<GuestSource | null> => lookupGuestSource(engine, sourceId);
 
 export interface GuestSourcePlan { sourceId: string; exists: boolean; localPath: string | null; guest: GuestSource | null; writers: string[];
   /** Its config already says guest: true, so its pages read as guest notes and init repairs it whatever it holds. */

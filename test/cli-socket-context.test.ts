@@ -82,10 +82,12 @@ describe('cliRequestContext mirrors makeContext', () => {
     installOutputCapture();
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
+    // Source resolution reads `sources` through typed members: the proxy hands them out bound to the real engine, so a gate on executeRaw alone no longer holds them. They wait on the gate too.
+    const gatedSourceReads = ['listLocalPathSources', 'listSourceRoutingRows', 'listAllSources', 'listSourceRecords', 'listActiveSourceConfigs', 'readSourceRow', 'countDefaultSourceSplit', 'getSource'];
     const gated = new Proxy(engine, {
       get(target, key) {
         const value = Reflect.get(target, key, target);
-        if (key === 'getConfig' || key === 'getAllConfig' || key === 'executeRaw') return async (...args: unknown[]) => { await gate; return (value as (...a: unknown[]) => unknown).apply(target, args); };
+        if (key === 'getConfig' || key === 'getAllConfig' || key === 'executeRaw' || (typeof key === 'string' && gatedSourceReads.includes(key))) return async (...args: unknown[]) => { await gate; return (value as (...a: unknown[]) => unknown).apply(target, args); };
         return typeof value === 'function' ? value.bind(target) : value;
       },
     });

@@ -247,9 +247,11 @@ export async function ownerGateInput(engine: Pick<BrainEngine, 'executeRaw'>, ro
  * The write-gate input of an unmanaged owner file import (direct sync / import of a source's files): the source default
  * lowered by markers. `sourceUri` (the file's source path) lets an owner allow rule scoped by URI prefix apply.
  */
-export async function ownerSourceGateInput(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, frontmatter: Record<string, unknown> | null | undefined, sourceUri?: string | null) {
-  const [source] = await engine.executeRaw<{ config: Record<string, unknown> | string | null }>('SELECT config FROM sources WHERE id = $1', [sourceId]);
-  const config = typeof source?.config === 'string' ? JSON.parse(source.config) as Record<string, unknown> : source?.config ?? null;
+export async function ownerSourceGateInput(engine: Pick<BrainEngine, 'readSourceRow'>, sourceId: string, frontmatter: Record<string, unknown> | null | undefined, sourceUri?: string | null) {
+  // `readSourceRow` selects the columns master's statement read (config included), so a brain older than the contextual-retrieval and trust-override columns still imports.
+  const source = await engine.readSourceRow(sourceId);
+  const raw = source?.config as Record<string, unknown> | string | null | undefined;
+  const config = typeof raw === 'string' ? JSON.parse(raw) as Record<string, unknown> : raw ?? null;
   const trust = ownerPageTrust({ frontmatter, sourceConfig: config, channel: 'import' });
   return { tier: trust.tier, origin: { channel: 'import', ...(sourceUri ? { source_uri: sourceUri } : {}) }, requestId: null };
 }

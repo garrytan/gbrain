@@ -26,20 +26,13 @@ import {
   type OperationContext,
 } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 // Stub engine: registered sources + no local_path rows + no default config.
 function makeStub(registeredSources: string[]): BrainEngine {
   return {
     kind: 'pglite',
-    executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
-      if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
-        const target = params?.[0];
-        return registeredSources.includes(target as string)
-          ? [{ id: target } as unknown as T]
-          : [];
-      }
-      return [];
-    },
+    ...stubSourceMembers(registeredSources.map(id => ({ id }))),
     getConfig: async () => null,
   } as unknown as BrainEngine;
 }
@@ -216,7 +209,7 @@ describe('cli makeContext — no silent default fallback for explicit --source',
     const { makeContext } = await import('../src/cli/main.ts');
     const broken = {
       kind: 'pglite',
-      executeRaw: async () => { throw new Error('relation "sources" does not exist'); },
+      ...stubSourceMembers([], { fail: () => new Error('relation "sources" does not exist') }),
       getConfig: async () => { throw new Error('relation "config" does not exist'); },
     } as unknown as BrainEngine;
     const ctx = await makeContext(broken, {});
