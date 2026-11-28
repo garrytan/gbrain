@@ -25,10 +25,11 @@
  *    server refuses it (resetting one table's counters moves the statistics epoch too: `stats_reset_changed`, pinned
  *    by test/e2e/shadow-seal-token.test.ts). Counters only prove what the server has flushed (a backend flushes at most about a minute
  *    after a write, and at exit), so the check also refuses while another connection to this database, of a login that
- *    can write a copied relation itself or through a role it can SET ROLE to, is not idle, went idle less than a minute ago, or cannot be seen by the reading role
+ *    can write a copied relation itself or through a role it can SET ROLE to, is not idle, went idle less than 61 s ago (`SETTLE_SECONDS`), or cannot be seen by the reading role
  *    (a read-only role, such as a monitoring agent, is never waited on), while a prepared transaction exists, while another connection
  *    has a write transaction open, and while a connection the hooks recorded is still connected (the cost: a writer
- *    still connected during the seal check is refused until it commits or disconnects). The same activity checks run
+ *    with a write transaction open is refused until it commits or disconnects, and a writer the hooks recorded is
+ *    refused until it disconnects, even after it commits: `other_writer_live`). The same activity checks run
  *    at close. The sealing process's own pool connections are left out of the activity checks (the open-write check
  *    only at close), not the counters: what it commits is published to the follower, and a write published after the
  *    follower closed is recorded as lost (follower.ts `close`), which voids the seal; its own writes after the token
