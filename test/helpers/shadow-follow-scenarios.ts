@@ -15,6 +15,7 @@ import { nextGeneration } from '../../src/shadow/follower.ts';
 import type { ShadowState } from '../../src/shadow/state.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
 import { Reconciler } from '../../src/shadow/reconcile.ts';
+import { planAsWrittenSource } from '../../src/shadow/writer-coverage.ts';
 import { openFollowRig, type FollowRig } from './follow-rig.ts';
 import { snapshotPersistence, snapshotTree } from './primary-snapshot.ts';
 import { linkEntityIdentity } from '../../src/core/entity-identity.ts';
@@ -310,6 +311,49 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         const fresh = await new Reconciler({ dir: r.dir, reads: base, rpc: async <T>(method: string, args?: Record<string, unknown>): Promise<T> => { if (method === 'relationDigest') freshDigests++; return r.rpc<T>(method, args); }, follower: r.follower, intervalRows: 2 }).run('full', undefined, { resume: true });
         expect(fresh.id).not.toBe(stopped.id);
         expect(resumedDigests).toBeLessThan(freshDigests);
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
+    test('a process stopped right after the last interval of a relation repaired a row keeps that repair: the resumed pass reports it and is not clean', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      try {
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBeGreaterThanOrEqual(1);
+        const since = new Date(Date.now() - 1_000);
+        const unknownBefore = planAsWrittenSource(r.dir).unknownPaths(since);
+        // One interval larger than the page count: all of pages is one short interval, its last, which no interval
+        // checkpoint follows. The drifted row is in it.
+        const [{ n }] = await ctx.primary().executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages`);
+        const size = Number(n) + 1;
+        await ctx.primary().executeRaw(`UPDATE pages SET title = 'Changed In The Last Interval' WHERE id = (SELECT max(id) FROM pages)`);
+        let small: Reconciler;
+        let cutAt: number | null = null;
+        const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+          const out = await r.rpc<T>(method, args);
+          // The cut: the store already took the repair, and the reconciler has not read again.
+          if (method === 'replaceInterval' && args?.relation === 'pages' && args?.hi === null && cutAt === null) { cutAt = Date.now(); small.stop(); }
+          return out;
+        };
+        small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: size });
+        const stopped = await small.run('full', undefined, { resume: true });
+        expect(cutAt).not.toBeNull();
+        expect(stopped.error).toBe('stopped');
+        expect(stopped.repaired_by_relation).toEqual({ pages: 1 });
+        // The store holds the repaired row now, so a pass that reads that interval again finds nothing to repair.
+        const resumed = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full', undefined, { resume: true });
+        expect(resumed.error).toBeUndefined();
+        expect(resumed.id).toBe(stopped.id);
+        expect(resumed.repaired_rows).toBeGreaterThanOrEqual(1);
+        expect(resumed.repaired_by_relation.pages).toBeGreaterThanOrEqual(1);
+        expect(resumed.follower_misses).toBeGreaterThanOrEqual(1);
+        const passes = readPasses(r.dir).filter((p) => p.id === stopped.id);
+        expect(passes).toHaveLength(1);
+        expect(passes[0]!.repaired_rows).toBeGreaterThanOrEqual(1);
+        // A repaired pass ends the clean streak, and criterion 1 has no clean pass to read until the next one.
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBe(0);
+        expect(status(r).reconcile.last_clean_full_pass_at).toBeNull();
+        // The repair is writer-coverage evidence: a path the plan as written did not account for.
+        expect(planAsWrittenSource(r.dir).unknownPaths(since)).toBe(unknownBefore + 1);
       } finally { await base.close(); await r.close(); }
     }, 90_000);
 
