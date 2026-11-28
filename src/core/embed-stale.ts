@@ -23,6 +23,7 @@ import { readContentChunksEmbeddingDim } from './embedding-dim-check.ts';
 import type { BrainEngine } from './engine.ts';
 import type { Chunk, ChunkInput, StaleChunkRow } from './types.ts';
 import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from './embed-retry.ts';
+import { isAIInvocationPolicyError } from './ai/invocation-guard.ts';
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import { healOversizedPageChunks, healedChunksToStaleRows } from './embed-oversize-heal.ts';
 import { healAndReportOverLength } from './embed-overlength-heal.ts';
@@ -416,7 +417,8 @@ export async function embedStaleForSource(
   };
   if (await embeddingSendBlocked(engine)) return await embeddingsDisabled(engine) ? { ...result, done: true } : { ...result, done: true, complete: false };
   const signature = opts.embeddingSignature;
-  const stopped = () => !!signal?.aborted || Date.now() >= (opts.deadline ?? Infinity);
+  let refused: unknown;
+  const stopped = () => refused !== undefined || !!signal?.aborted || Date.now() >= (opts.deadline ?? Infinity);
   if (stopped()) return { ...result, aborted: true };
   await opts.assertOwned?.();
   if (stopped()) return { ...result, aborted: true };
@@ -636,6 +638,7 @@ export async function embedStaleForSource(
         result.embedded += install.installed;
         if (install.complete || install.installed > 0) result.pagesProcessed += 1;
       } catch (e: unknown) {
+        if (isAIInvocationPolicyError(e)) { refused ??= e; return; }
         result.failures = (result.failures ?? 0) + stale.length;
         // Aborted mid-fetch is expected; treat as graceful exit.
         if (stopped()) return;
@@ -654,9 +657,8 @@ export async function embedStaleForSource(
       while (nextIdx < keys.length && !stopped()) {
         const idx = nextIdx++;
         await embedOneKey(keys[idx]);
-        // Cooperative DB-contention pace between keys (no-op when unpaced).
-        // pace() throws AbortError on cancel — treat as graceful worker exit;
-        // the for(;;) loop sees signal.aborted and returns aborted next tick.
+        // Cooperative DB-contention pace between keys (no-op when unpaced); its AbortError
+        // on cancel is a graceful worker exit, and the for(;;) loop returns aborted next tick.
         try {
           await pacer.pace(signal);
         } catch (e) {
@@ -668,6 +670,7 @@ export async function embedStaleForSource(
 
     const numWorkers = Math.min(concurrency, keys.length);
     await Promise.all(Array.from({ length: numWorkers }, () => worker()));
+    if (refused !== undefined) throw refused;
     if (stopped()) return { ...result, aborted: true };
 
     if (opts.onProgress) {
