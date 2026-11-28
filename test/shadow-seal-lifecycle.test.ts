@@ -51,9 +51,9 @@ async function open(dataDir: string, init = false): Promise<PGLiteEngine> {
 }
 
 /** One serving session on the brain: valid, then whatever `during` does, then a clean disconnect. */
-async function serve(dir: string, dataDir: string, during: (rig: Rig, primary: PGLiteEngine) => Promise<void> = async () => {}, init = false): Promise<void> {
+async function serve(dir: string, dataDir: string, during: (rig: Rig, primary: PGLiteEngine) => Promise<void> = async () => {}, init = false, checks: typeof sealChecks = sealChecks): Promise<void> {
   const primary = await open(dataDir, init);
-  const rig = await startRig({ primary, dir, state: STATE as never, attach: { sealChecks } });
+  const rig = await startRig({ primary, dir, state: STATE as never, attach: { sealChecks: checks } });
   cleanups.push(() => { rig.attached.supervisor.stop(); rig.attached.reconciler?.stop(); });
   await rig.settled();
   await rig.engine.putPage('open/a', { type: 'note', title: 'A', compiled_truth: 'a', timeline: '' });
@@ -92,6 +92,19 @@ describe('the seal across a serving-process lifecycle (PGLite, seal checks stubb
     expect(wrote).toBe(true);
     const outcome = await restart(dir, dataDir);
     expect(outcome).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+  }, 60_000);
+
+  // The confirmation's second read (seal.ts) is what catches a write by someone else that began after its first read.
+  // A close that seals before that read finished takes its mark after such a write, so the next session's check
+  // would match it and carry the watermark on over a write this session never followed.
+  test('a close while the seal confirmation is still running does not seal over it (seal_confirm_pending)', async () => {
+    const { dir, dataDir } = await brain();
+    let asked = false;
+    const pending = { ...sealChecks, confirm: () => { asked = true; return new Promise<never>(() => {}); } };
+    await serve(dir, dataDir, undefined, true, pending as unknown as typeof sealChecks);
+    expect(asked).toBe(true);
+    expect(readFollowerFile(dir)!.seal).toBeUndefined();
+    expect(readFollowerFile(dir)!.seal_outcome).toMatchObject({ outcome: 'not_sealed', reason: 'seal_confirm_pending' });
   }, 60_000);
 
   test('a close while a lost-write line still cannot be written does not seal (lost_write_unrecorded)', async () => {
