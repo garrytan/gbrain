@@ -7,7 +7,8 @@
  * Carrying evidence over must fail closed: a write the follower never saw between two sessions (a line another
  * process left in follower-invalidations.jsonl, or a direct SQL write the writer hooks recorded) must not be trusted.
  *
- * Every session here is about 10 s long, well under the 60 s the reconciler used to wait before its first check.
+ * Every session here is about 10 s long, well under the 60 s the reconciler used to wait before its first check. A manual
+ * `engine shadow reconcile` that finishes quickly seals too, though its own pool connection was used moments ago.
  * Needs DATABASE_URL and the addon `bun run rust:build` writes; skips without either
  * (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes a missing addon an error).
  */
@@ -36,7 +37,7 @@ if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
 const SESSION_MS = 10_000;
 
 interface Pass { kind: string; started_at: string; finished_at?: string; repaired_rows?: number; error?: unknown }
-interface Snapshot { valid: boolean; reason: string | null; through: string | null; clean: number; passes: Pass[] }
+interface Snapshot { valid: boolean; reason: string | null; through: string | null; clean: number; passes: Pass[]; seal: { outcome: string; reason: string | null } | null }
 
 let home = '';
 let dir = '';
@@ -50,12 +51,12 @@ const cli = (args: string[], input?: string) => spawnSync('bun', ['--no-env-file
 function snapshot(): Snapshot {
   const r = cli(['engine', 'shadow', 'status', '--json']);
   expect(r.status).toBe(0);
-  const s = JSON.parse(r.stdout) as { directory: string; follower?: { coverage_watermark?: { valid: boolean; through: string | null; invalidated_reason: string | null } }; reconcile?: { consecutive_clean_full_passes?: number } };
+  const s = JSON.parse(r.stdout) as { directory: string; follower?: { coverage_watermark?: { valid: boolean; through: string | null; invalidated_reason: string | null }; seal?: { outcome: string; reason: string | null } }; reconcile?: { consecutive_clean_full_passes?: number } };
   dir = s.directory;
   let passes: Pass[] = [];
   try { passes = readFileSync(join(dir, 'reconcile', 'passes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Pass); } catch { /* no pass yet */ }
   const w = s.follower?.coverage_watermark;
-  return { valid: w?.valid === true, reason: w?.invalidated_reason ?? null, through: w?.through ?? null, clean: s.reconcile?.consecutive_clean_full_passes ?? 0, passes };
+  return { valid: w?.valid === true, reason: w?.invalidated_reason ?? null, through: w?.through ?? null, clean: s.reconcile?.consecutive_clean_full_passes ?? 0, passes, seal: s.follower?.seal ? { outcome: s.follower.seal.outcome, reason: s.follower.seal.reason } : null };
 }
 
 /** Full passes that started inside [from, to]. */
@@ -181,4 +182,22 @@ describeIf('short MCP serve sessions on Postgres', () => {
     expect((passes[0] as Pass & { repaired_by_relation?: Record<string, number> }).repaired_by_relation?.page_aliases ?? 0).toBeGreaterThanOrEqual(1);
     expect(after.clean).toBe(0);
   }, 60_000);
+
+  test('a quick clean manual reconcile seals, and the next quiet session confirms it without a full pass', async () => {
+    // The command opens the primary (a startup query on its pool) and finishes its pass well inside the pool's idle
+    // timeout, so that connection is still open and was used moments ago when it seals. It is the command's own, so
+    // it must not refuse the seal as another writer (other_backend_recent).
+    const from = Date.now();
+    const r = cli(['engine', 'shadow', 'reconcile', '--json']);
+    expect(r.status).toBe(0);
+    expect(Date.now() - from).toBeLessThan(20_000);
+    const sealed = snapshot();
+    expect(sealed.seal).toEqual({ outcome: 'sealed', reason: null });
+    expect(sealed.clean).toBeGreaterThanOrEqual(1);
+    const s = await serve('six');
+    const after = snapshot();
+    expect({ valid: after.valid, reason: after.reason }).toEqual({ valid: true, reason: null });
+    expect(fullPassesIn(after, s.from, s.to)).toEqual([]);
+    expect(after.clean).toBe(sealed.clean);
+  }, 90_000);
 });
