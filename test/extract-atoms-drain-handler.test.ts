@@ -79,6 +79,16 @@ describe('extract-atoms-drain handler', () => {
     expect(formatDrainProviderFailure({ ...result, last_error: null })).not.toContain('last error');
   });
 
+  // #10474: the batch result counts item failures, which include a page-state write that failed or an input that
+  // changed during the call, so the text must not claim every provider call failed; last_error says where.
+  test('the provider_failure text does not blame provider calls for item failures', () => {
+    const lastError = 'notes/fixture: The atom generation was not activated because its input changed.';
+    const msg = formatDrainProviderFailure({ batches: 1, remaining: 1, last_error: lastError }, { final: true });
+    expect(msg).toStartWith('extract-atoms-drain: every item attempted this batch failed (batches=1, remaining=1)');
+    expect(msg).not.toContain('provider calls');
+    expect(msg).toContain(lastError);
+  });
+
   // The handler's own contract text: a deadline failure is final, so the
   // dead-lettered job's error must not promise a retry.
   test('the final provider_failure text drops "retrying"', () => {

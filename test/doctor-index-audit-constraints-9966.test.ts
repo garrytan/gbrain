@@ -67,4 +67,25 @@ for (const kind of testBackends()) describe(`index_audit and constraint indexes 
       await bare.close();
     }
   }, 60_000);
+
+  // #10512: the list keeps 20 indexes, largest first. A failed build is tiny, so on a brain with more than 20 larger
+  // unread indexes the size cap buried it; unusable indexes now sort first and are marked as such.
+  test.skipIf(kind !== 'postgres')('a failed index build stays listed and marked when more than 20 larger unread indexes exist', async () => {
+    const bare = await encodedPostgres(process.env.DATABASE_URL!, 'UTF8');
+    try {
+      await bare.engine.executeRaw(`CREATE TABLE dup_fixture (k integer)`);
+      await bare.engine.executeRaw(`INSERT INTO dup_fixture VALUES (7), (7)`);
+      await bare.engine.executeRaw(`CREATE UNIQUE INDEX CONCURRENTLY dup_fixture_k_idx ON dup_fixture (k)`).catch(() => undefined);
+      await bare.engine.executeRaw(`CREATE TABLE wide_fixture AS SELECT n FROM generate_series(1, 12000) AS n`);
+      for (let n = 1; n <= 24; n++) await bare.engine.executeRaw(`CREATE INDEX wide_fixture_${n}_idx ON wide_fixture ((n + ${n}))`);
+      const [check] = await indexAuditEntry.run({ engine: bare.engine, args: ['--index-audit'], progress } as unknown as DoctorContext) as Check[];
+      expect(check).toMatchObject({ name: 'index_audit', status: 'warn', details: { exact: false } });
+      expect(check!.message).toContain('dup_fixture_k_idx(');
+      expect(check!.message).toMatch(/dup_fixture_k_idx\([^)]*, not usable: invalid, not ready or being dropped\)/);
+      expect(check!.message).toContain('wide_fixture_');
+      expect(check!.message).not.toMatch(/wide_fixture_\d+_idx\([^)]*not usable/);
+    } finally {
+      await bare.close();
+    }
+  }, 60_000);
 });

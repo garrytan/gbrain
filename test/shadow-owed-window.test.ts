@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { spawn as spawnChild, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { chmodSync, cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1374,5 +1374,60 @@ describe('A child that writes its journal and exits while the orphan pass runs i
     ownerPass(dir, epoch); ownerPass(dir, epoch);
     expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
     expect(readOwed(dir, SES)).toBeNull();
+  });
+});
+
+describe('A stale marker judged orphaned while the orphan pass runs is not counted twice', () => {
+  // Protects: the swap write check's counts. A marker more than 10 minutes old is orphaned when it was closed or its serving process is gone. If the orphan pass decides that only after it reads the client
+  // journals, a child that journals its samples in between is booked from its marker in full and its journal is folded as well (more counted than owed). Fails if `obligations()` reads the journals before
+  // it judges stale markers. No production seam: the liveness probe (`process.kill(pid, 0)`) is observed through a spy, and the child's journal is written from inside the first probe of the serving process.
+  const SES = 'f2s';
+  const STALE_AGO = (Date.now() - 11 * 60_000) / 1000; // older than the 10-minute limit
+  const aged = (dir: string): void => { utimesSync(owedPath(dir, SES), STALE_AGO, STALE_AGO); };
+  test('the child journals all three samples between the pass reading the journals and the pass finding the serving process gone: the count is 3 for 3 owed, the window once', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    const child = deadPid(); const serving = deadPid();
+    writeOwed(dir, { v: 2, session: SES, serving_pid: serving, child_pid: child, owed: 3, closed: false, child_exited: false, open_until: 1 } as OwedRecord); aged(dir);
+    const client = new WriteTally(dir, () => null, () => true, process.pid, SES);
+    const realKill = process.kill.bind(process); let flushed = false;
+    const spy = spyOn(process, 'kill').mockImplementation(((pid: number, sig?: string | number) => {
+      if (pid === child && sig === 0) return true; // the child stays alive: only the stale-marker rule can settle this session
+      if (pid === serving && sig === 0 && !flushed && (new Error().stack ?? '').includes('obligations')) { flushed = true; client.missing(3, 0, 1); if (!client.flush()) throw new Error('flush failed'); } // the child journals its three samples, the window last
+      return realKill(pid, sig as never);
+    }) as never);
+    try {
+      const owner = new WriteTally(dir, () => epoch, () => true, process.pid);
+      owner.save(); owner.save(); owner.save();
+      expect(flushed).toBe(true);
+      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
+      expect(stat(dir)).toMatchObject({ state: 'capability_missing', write_windows_lost: 1 });
+    } finally { spy.mockRestore(); }
+  });
+  test('control: a stale marker whose serving process is alive is not settled from its marker: the fold counts the journalled lines once and the marker stays', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    const child = deadPid();
+    writeOwed(dir, { v: 2, session: SES, serving_pid: process.pid, child_pid: child, owed: 3, closed: false, child_exited: false, open_until: 1 } as OwedRecord); aged(dir);
+    const client = new WriteTally(dir, () => null, () => true, process.pid, SES); client.missing(3, 0, 1); expect(client.flush()).toBe(true);
+    const realKill = process.kill.bind(process);
+    const spy = spyOn(process, 'kill').mockImplementation(((pid: number, sig?: string | number) => (pid === child && sig === 0 ? true : realKill(pid, sig as never))) as never); // the child stays alive
+    try {
+      const owner = new WriteTally(dir, () => epoch, () => true, process.pid);
+      owner.save(); owner.save(); owner.save();
+      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
+      expect(readOwed(dir, SES)).not.toBeNull();
+    } finally { spy.mockRestore(); }
+  });
+  test('control: a stale closed marker whose child journalled all three samples before the pass is counted 3 for 3 owed and removed', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    const child = deadPid();
+    writeOwed(dir, { v: 2, session: SES, serving_pid: process.pid, child_pid: child, owed: 3, closed: true, child_exited: false, open_until: 1 } as OwedRecord); aged(dir);
+    const client = new WriteTally(dir, () => null, () => true, process.pid, SES); client.missing(3, 0, 1); expect(client.flush()).toBe(true);
+    const realKill = process.kill.bind(process);
+    const spy = spyOn(process, 'kill').mockImplementation(((pid: number, sig?: string | number) => (pid === child && sig === 0 ? true : realKill(pid, sig as never))) as never); // the child stays alive
+    try {
+      ownerPass(dir, epoch); ownerPass(dir, epoch);
+      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
+      expect(readOwed(dir, SES)).toBeNull();
+    } finally { spy.mockRestore(); }
   });
 });

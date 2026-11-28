@@ -594,9 +594,22 @@ export class WriteTally {
   private failingSince: number | null = null;
   private readonly id: string;
   private readonly key: string;
-  constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid, session = '', private readonly now: () => number = Date.now) {
+  private saveQueued = false;
+  /**
+   * `defer`: when given, `note` does not save at once; it asks `defer` to run one save later (the child passes `setImmediate`), and every outcome noted before that save runs goes into it. Without it every `note` saves at once.
+   * The child reads a burst of write samples far faster than one locked, flushed rename per sample allows (about 6 ms each): saving once per event-loop turn removes that bottleneck; the measured bursts through 1,000 page writes left no pipe backlog at exit. Slow or failing saves and other bottlenecks can still leave samples unsettled.
+   * An outcome not yet saved when the child dies is a deficit the next owner books as `receipt_orphaned`, as for any unsaved outcome; a replay's in-flight mark stays on disk until the save that ends it.
+   */
+  constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid, session = '', private readonly now: () => number = Date.now, private readonly defer?: (save: () => void) => void) {
     this.id = `${pid}.${randomBytes(4).toString('hex')}`;
     this.key = session ? sessionKey(session) : '';
+  }
+  /** Saves now, or once later for everything noted until then (see `defer`). */
+  private saveSoon(): void {
+    if (!this.defer) { this.update(); return; }
+    if (this.saveQueued) return;
+    this.saveQueued = true;
+    this.defer(() => { this.saveQueued = false; this.update(); });
   }
   private journalSize(): number { let n = 0; for (const v of this.journal.values()) n += v; return n; }
   private holding(): boolean { return this.pending.length > 0 || this.journal.size > 0; }
@@ -742,7 +755,7 @@ export class WriteTally {
    * The obligations and receipts of sessions that are gone, settled by an owner worker (one with an epoch). A session's owed file is orphaned when its child was seen to exit, its child pid is not running, it was closed more than 10 minutes ago, or its serving pid is gone and it is older than
    * that. What it never settled (`owed` less `settled` and the lines no tally has folded yet) becomes `uncomparable` `receipt_orphaned` lines tagged with the session, and the file is removed only once a tally read back from disk shows the session settled: a closed file
    * whose samples are all settled is removed whoever settled them. A worker whose own epoch is no longer the manifest's settles nothing (what it booked would be another epoch's lines, and what it removed would be gone). Write receipts of older versions are settled the same way, by
-   * their whole sent count. Cost: one listing of the shadow directory per call (at start, at each save and every 10 s), and up to two reads per owed file found (one to judge its child before the journals are read).
+   * their whole sent count. Cost: one listing of the shadow directory per call (at start, at each save and every 10 s), and up to two reads per owed file found (one to judge it before the journals are read).
    */
   private obligations(): void {
     const epoch = this.epoch();
@@ -752,11 +765,14 @@ export class WriteTally {
       const pending = listPending(this.dir); if (pending.failed) return; // a marker that cannot be listed settles nothing
       let booked = false; const removable: string[] = []; const stale: string[] = [];
       let tally: WriteTallyFile | null = null; try { tally = loadTally(this.dir); } catch { return; } // silent-read-ok: a tally that cannot be read settles nothing now
-      const gone = new Set<string>(); // children seen exited before the journals are read: a child that exits later may have journalled after the read, so it waits for the next pass
+      const gone = new Set<string>(); // sessions judged orphaned before the journals are read (child seen exited, or a marker over 10 minutes old that was closed or whose serving process is gone): one judged later may have journalled after the read, so it waits for the next pass
       for (const name of names) {
         const key = OWED_NAME.exec(name)?.[1]; if (key === undefined || isBlockerKey(key)) continue;
-        const rec = parseOwed(join(this.dir, name));
-        if (rec !== null && rec !== 'unreadable' && (rec.child_exited || (rec.child_pid !== undefined && rec.child_pid > 1 && !running(rec.child_pid)))) gone.add(key);
+        const path = join(this.dir, name); const rec = parseOwed(path);
+        if (rec === null || rec === 'unreadable') continue;
+        if (rec.child_exited || (rec.child_pid !== undefined && rec.child_pid > 1 && !running(rec.child_pid))) { gone.add(key); continue; }
+        let age: number; try { age = Date.now() - statSync(path).mtimeMs; } catch { continue; } // silent-read-ok: a marker removed since the listing is judged on the next pass
+        if (age > STALE_RECEIPT_MS && (rec.closed || (rec.serving_pid > 1 && !running(rec.serving_pid)))) gone.add(key);
       }
       const lines = unfoldedLines(this.dir, epoch, tally?.lost_applied, tally?.line_seq);
       if (lines.unreadable) return; // a journal that cannot be read settles nothing now (booking from the rest would count its samples twice); the pass is retried
@@ -772,8 +788,7 @@ export class WriteTally {
           if (more > 0 && this.bookOrphan(rec, key, more, epoch, (tally?.settled_qualifying?.[key] ?? 0) + (lines.qualifyingBySession[key] ?? 0), 0)) booked = true;
           continue;
         }
-        const age = Date.now() - statSync(path).mtimeMs;
-        const orphaned = gone.has(key) || (rec.closed && age > STALE_RECEIPT_MS) || (rec.serving_pid > 1 && !running(rec.serving_pid) && age > STALE_RECEIPT_MS);
+        const orphaned = gone.has(key); // judged before the journals were read
         if (!orphaned && !rec.closed) continue;
         const prior = parseOwed(blockerPath(this.dir, key)); if (prior === 'unreadable') continue; // the window blocker of this session, of whatever epoch: its credit anchor settles the session either way, and a window it booked is that epoch's, never this one's
         const settled = settledOf(tally?.settled?.[key] ?? 0, lines.bySession[key] ?? 0, anchorOf(tally, prior, key)); // the credit banked before the entry restarted outlives the tally's own entry
@@ -830,7 +845,7 @@ export class WriteTally {
     batch.credit += credit; batch.creditQualifying += Math.min(credit, creditQualifying);
     if (key === WINDOW_LOST_REASON) batch.windowCredit += credit; // the window's own credit is kept apart: a batch that never saved before its epoch was retired must not stand for a booked window
     batch.ending ||= ends;
-    this.update();
+    this.saveSoon();
   }
   /**
    * `n` samples the pipe never delivered (the serving process owed them, the child never read them), settling that many: `nonqualifying` of them were writes the shadow never compares (`capability_missing` `pipe_unflushed_nonqualifying`),
@@ -845,11 +860,13 @@ export class WriteTally {
       for (const [reason, k] of [['pipe_unflushed', plain], ['pipe_unflushed_nonqualifying', other], [WINDOW_LOST_REASON, win]] as const) { if (k > 0) { this.addJournal(reason, true, k * settles); this.addJournal(reason, false, k * (1 - settles)); } }
       return;
     }
-    if (plain > 0) this.note('uncomparable', 'pipe_unflushed', plain, false, plain, plain);
-    if (other > 0) this.note('capability_missing', 'pipe_unflushed_nonqualifying', other, false, other, 0);
+    // Each part is saved on its own, at once, even when `note` defers its saves: the window's one must be saved after the others, in a save of its own.
+    if (plain > 0) { this.note('uncomparable', 'pipe_unflushed', plain, false, plain, plain); if (this.defer) this.update(); }
+    if (other > 0) { this.note('capability_missing', 'pipe_unflushed_nonqualifying', other, false, other, 0); if (this.defer) this.update(); }
     if (win > 0) { // the window's one is booked LAST (as `obligations` does), and only once its blocker is on disk: a save that only partly lands leaves a deficit the next owner books as the window, exactly once
       if (!this.retired && (!this.key || holdBlocker(this.dir, this.key, this.epoch()!) === null)) return; // no blocker held (no marker any more, a lock that stayed held): the pass books the rest
       this.note('uncomparable', WINDOW_LOST_REASON, win, false, win, win);
+      if (this.defer) this.update();
     }
   }
   /**

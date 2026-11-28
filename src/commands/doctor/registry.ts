@@ -50,6 +50,7 @@ import { ownerOnlyMarksTriggersEntry } from './checks/owner-only-marks-triggers.
 import { postgresTlsEntry } from './checks/postgres-tls.ts';
 import { databaseEncodingEntry } from './checks/database-encoding.ts';
 import { schemaFunctionBodiesEntry } from './checks/schema-function-bodies.ts';
+import { schemaPackActiveEntry } from './checks/schema-pack-active.ts';
 import {
   pgvectorEntry,
   rlsEntry,
@@ -290,6 +291,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   databaseEncodingEntry,
   schemaVersionEntry,
   schemaFunctionBodiesEntry,
+  schemaPackActiveEntry,
   rlsEventTriggerEntry,
   embeddingsEntry,
   embeddingProviderEntry,
