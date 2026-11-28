@@ -38,7 +38,6 @@ import {
   type LoopType,
   type OpenLoopRow,
 } from '../loops/loops-store.ts';
-import { sourceRecordsRawConfig } from '../source-rows.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 const STALE_AFTER_MS = 24 * 3_600_000;
@@ -70,7 +69,9 @@ async function googleSourceFreshness(
   scope: { sourceId?: string; sourceIds?: string[] },
 ): Promise<{ sources: GoogleSourceFreshness[]; stale: boolean; staleSources: string[]; failed?: true }> {
   try {
-    const rows = (await sourceRecordsRawConfig(ctx.engine)).map((r) => ({
+    // listAllSources, not listSourceRecords: it reads the same live rows (default first, then by id) and a served remote
+    // caller may send it, so a remote open_loops on a multi-user server reads its freshness instead of failing toward stale.
+    const rows = (await ctx.engine.listAllSources()).map((r) => ({
       id: r.id,
       last_sync_at: r.last_sync_at == null ? null : new Date(r.last_sync_at).toISOString(),
       config: r.config as unknown,

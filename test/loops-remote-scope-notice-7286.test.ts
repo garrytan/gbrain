@@ -82,7 +82,7 @@ describe('#7286 open_loops for a remote caller bound to a non-google source', ()
   test('a failed google-source read carries no such notice (it is not a grant problem)', async () => {
     const notices: Notice[] = [];
     const failing = new Proxy(engine, { get(t, k, r) {
-      if (k === 'listSourceRecords') return () => Promise.reject(new Error('connection reset'));
+      if (k === 'listAllSources') return () => Promise.reject(new Error('connection reset'));
       const v = Reflect.get(t, k, r); return typeof v === 'function' ? v.bind(t) : v;
     } });
     const ctx = { engine: failing, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true, sourceId: 'source-a',

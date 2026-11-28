@@ -24,7 +24,7 @@ afterAll(async () => { await engine.disconnect(); });
 
 function failingSources(base: BrainEngine): BrainEngine {
   return new Proxy(base, { get(t, k, r) {
-    if (k === 'listSourceRecords') return () => Promise.reject(new Error('connection reset by peer at db-host-example'));
+    if (k === 'listAllSources') return () => Promise.reject(new Error('connection reset by peer at db-host-example'));
     const v = Reflect.get(t, k, r); return typeof v === 'function' ? v.bind(t) : v;
   } });
 }
