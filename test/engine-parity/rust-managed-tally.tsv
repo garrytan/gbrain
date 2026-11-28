@@ -436,6 +436,7 @@ test/engine-parity/sync-run.test.ts	1	0
 test/engine-parity/sync-stamp.test.ts	2	0
 test/engine-parity/sync-status-reads.test.ts	10	0
 test/engine-parity/sync-swap-reads.test.ts	6	0
+test/engine-parity/sync-txn-rerun.test.ts	4	0
 test/engine-parity/sync20-trust-a.test.ts	2	0
 test/engine-parity/take-held-rows.test.ts	2	0
 test/engine-parity/take-proposals.test.ts	9	0

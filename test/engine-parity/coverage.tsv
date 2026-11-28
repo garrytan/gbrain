@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2526/2561
+# covered: 2529/2561
 # lifecycle: 21/22
 # pages: 141/142
 # search: 8/8
@@ -79,7 +79,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 23/23
 # wanted_links: 2/2
-# write_misc: 132/149
+# write_misc: 135/149
 # repair_bookkeeping: 59/59
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -173,7 +173,7 @@ pauseManagedPersistence	lifecycle	yes	1	no	yes	yes	serves
 restoreManagedPersistence	lifecycle	no	0	no	-	-	-
 withManagedPersistencePaused	lifecycle	yes	7	no	yes	yes	serves
 getPage	pages	yes	309	yes	yes	yes	serves
-readPageSnapshot	pages	yes	133	no	yes	yes	serves
+readPageSnapshot	pages	yes	134	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
 lockPageKeys	pages	yes	20	no	yes	yes	serves
 putPage	pages	yes	1451	yes	yes	yes	serves
@@ -186,7 +186,7 @@ softDeletePage	pages	yes	356	yes	yes	yes	serves
 softDeletePages	pages	yes	8	yes	yes	yes	serves
 restorePage	pages	yes	22	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	12	no	yes	yes	serves
-listPages	pages	yes	34	yes	yes	yes	serves
+listPages	pages	yes	36	yes	yes	yes	serves
 findPages	pages	yes	5	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 pageTypeTotals	pages	yes	2	no	yes	yes	serves
@@ -1289,16 +1289,16 @@ reclaimStalledJobs	minion_jobs	yes	3	no	yes	yes	serves
 readActiveAccessTokenGrant	minion_queue	yes	3	no	yes	yes	serves
 accessTokenLive	minion_queue	yes	2	no	yes	yes	serves
 oauthClientLive	minion_queue	yes	10	no	yes	yes	serves
-readOauthClientColumns	minion_queue	yes	4	no	yes	yes	serves
+readOauthClientColumns	minion_queue	yes	5	no	yes	yes	serves
 setOauthClientTokenTtl	minion_queue	yes	4	no	yes	yes	serves
 insertOauthClientGrant	minion_queue	yes	7	no	yes	yes	serves
 readTokenLifetimeClampedClients	minion_queue	yes	1	no	yes	yes	serves
 readScopeSourceConfigs	minion_queue	yes	6	no	yes	yes	serves
 readOauthClientForUpdate	minion_queue	yes	19	no	yes	yes	serves
-readLiveOauthClients	minion_queue	yes	2	no	yes	yes	serves
+readLiveOauthClients	minion_queue	yes	3	no	yes	yes	serves
 readLiveAccessTokenRows	minion_queue	yes	1	no	yes	yes	serves
 listAccessTokenRows	minion_queue	yes	1	no	yes	yes	serves
-lockOauthClientName	minion_queue	yes	2	no	yes	yes	serves
+lockOauthClientName	minion_queue	yes	3	no	yes	yes	serves
 oauthClientHoldsAuthorization	minion_queue	yes	3	no	yes	yes	serves
 readSourceArchivedForShare	minion_queue	yes	1	no	yes	yes	serves
 readSourceAttestState	minion_queue	yes	3	no	yes	yes	serves
@@ -2092,7 +2092,7 @@ listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listHostRepositoryRoots	write_misc	yes	1	no	yes	yes	serves
 listPendingGitEffectPaths	write_misc	no	0	no	-	-	-
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	85	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	87	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	20	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	5	no	yes	yes	serves
 writerAdminStore	write_misc	yes	7	no	yes	yes	serves
@@ -2212,13 +2212,13 @@ readRetrievalEvent	write_misc	yes	3	no	yes	yes	serves
 readPageFeedbackWeights	write_misc	yes	1	no	yes	yes	serves
 applyRetrievalRatings	write_misc	yes	5	no	yes	yes	serves
 readGitGapSourceRow	write_misc	no	0	no	-	-	-
-countGitGapLivePages	write_misc	no	0	no	-	-	-
+countGitGapLivePages	write_misc	yes	1	no	yes	yes	serves
 markTransactionReadOnly	write_misc	no	0	no	-	-	-
 listGitGapNewestPages	write_misc	no	0	no	-	-	-
 countGitGapUnreadFacts	write_misc	no	0	no	-	-	-
-readGitGapPageBatch	write_misc	no	0	no	-	-	-
+readGitGapPageBatch	write_misc	yes	1	no	yes	yes	serves
 countGitGapFactsOnPages	write_misc	no	0	no	-	-	-
-countGitGapTimelineOnPages	write_misc	no	0	no	-	-	-
+countGitGapTimelineOnPages	write_misc	yes	1	no	yes	yes	serves
 readGitGapSourceRows	write_misc	no	0	no	-	-	-
 revokeAccessTokensNamed	write_misc	yes	4	no	yes	yes	serves
 revokeAccessToken	write_misc	yes	13	no	yes	yes	serves
