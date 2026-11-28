@@ -180,8 +180,10 @@ export async function performFullSync(
       includeHidden: opts.includeHidden, metafilePages }).map(abs => relative(holdRoot, abs)));
     await settleFullSyncHolds(engine, holds, { root: holdRoot, walked, failed: fullFailureSet });
   }
+  // #10454: the re-import re-anchors the source at headCommit, so an open `<head>` (history rewrite) sentinel is
+  // resolved too, as the incremental path resolves it once pin ancestry verifies (#2734).
   const fullSucceeded = loadSyncFailures()
-    .filter(e => e.source_id === fullSourceId && isSkippablePath(e.path) && !fullFailureSet.has(e.path))
+    .filter(e => e.source_id === fullSourceId && (isSkippablePath(e.path) || e.path === '<head>') && !fullFailureSet.has(e.path))
     .map(e => e.path);
   const advanceFull = async (): Promise<void> => {
     // Persist sync state so the next sync is incremental. Routed through
