@@ -94,6 +94,7 @@ test/concept-rebuild-holds-unmanaged-9653.test.ts
 test/concept-rebuild-purge-9653.test.ts
 test/concept-rebuild-races-9653.test.ts
 test/concept-rename-history-gst2687.test.ts
+test/connector-replacement-retire.test.ts
 test/consolidate-fenced-close-reimport.test.ts
 test/consolidate-same-instant-6023.test.ts
 test/contact-rows-drift-8109.test.ts

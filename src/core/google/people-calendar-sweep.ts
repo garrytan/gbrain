@@ -198,8 +198,9 @@ async function applyContact(deps: GoogleSyncDeps, c: ContactData,
       contactsDir,
     ),
     write: async (relPath, markdown) => {
-      await importRendered(deps, relPath, markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
-      sweep.touched.add(slugifyPath(relPath));
+      const landed = await importRendered(deps, relPath, markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
+      if (landed !== null) sweep.touched.add(landed);
+      return landed;
     },
     remove: async (relPath) => {
       await unlinkGoogleContactPage(deps.engine, deps.sourceId, slugifyPath(relPath));
@@ -463,8 +464,10 @@ async function applyEvent(deps: GoogleSyncDeps, ev: CalendarEventData, range: Ca
   const change = planCalendarPage(side, page?.relPath ?? null, await calendarPageRelPathByEventId(deps, ev.id), calendarRelPath(ev));
   if (change.kind === 'remove') await deletePageByRelPath(deps, change.relPath, ctx.summary);
   if (change.kind !== 'write' || !page) return;
-  if (change.removeFirst) await deletePageByRelPath(deps, change.removeFirst, ctx.summary);
-  await importRendered(deps, page.relPath, page.markdown, ctx.activePack, ctx.summary, ctx.countedSlugs);
+  const landed = await importRendered(deps, page.relPath, page.markdown, ctx.activePack, ctx.summary, ctx.countedSlugs);
+  if (change.retireAfter && landed !== null && landed !== slugifyPath(change.retireAfter)) {
+    await deletePageByRelPath(deps, change.retireAfter, ctx.summary);
+  }
   deps.tick(`event ${ev.id}`);
 }
 
