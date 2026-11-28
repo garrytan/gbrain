@@ -206,6 +206,7 @@ async function runConformanceCommand(args: string[]): Promise<void> {
         console.log(`  ${mark} ${r.name}${r.detail ? ` — ${r.detail}` : ''}`);
       }
       console.log(`\n${report.passed} passed, ${report.failed} failed, ${report.skipped} skipped`);
+      if (report.cleanup.page === 'failed') console.log(`Cleanup: could not delete the synthetic conformance page (${report.cleanup.detail}); delete it with gbrain delete.`);
       console.log(report.ok ? 'CONFORMANT' : 'NOT CONFORMANT');
     }
     // [ship P1.3] non-conformant target MUST exit non-zero so CI fails. The
