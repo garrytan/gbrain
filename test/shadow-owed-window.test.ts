@@ -17,7 +17,7 @@ import { writeSeedRecord } from '../src/shadow/seed.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { closeAllOwedAtExit, OWED_WINDOW_MS, OWED_WINDOW_SAMPLES, ShadowSupervisor } from '../src/shadow/supervisor.ts';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
-import { carriesKnownLoss, holdBlocker, owedPath, readOwed, readWriteSnapshot, readWriteTally, unfoldedLines, WINDOW_BLOCKER_PREFIX, WINDOW_LOST_REASON, writeOwed, writeTallyPath, WriteTally, type OwedRecord } from '../src/shadow/write-compare.ts';
+import { carriesKnownLoss, holdBlocker, owedPath, pendingPath, readOwed, readWriteSnapshot, readWriteTally, unfoldedLines, WINDOW_BLOCKER_PREFIX, WINDOW_LOST_REASON, writeOwed, writeTallyPath, WriteTally, type OwedRecord } from '../src/shadow/write-compare.ts';
 import { tallyOn } from './helpers/shadow-write-compare-scenarios.ts';
 import * as writeCompare from '../src/shadow/write-compare.ts';
 import * as fsm from 'node:fs';
@@ -996,5 +996,104 @@ describe('D3: the blocker\'s own rules (written before the booking, read from th
     const r = rig(); try { for (let i = 0; i < 3; i++) r.sup.send(sample(i)); const key = r.sessions[0]!; expect(ownerPass(r.dir, r.epoch)).toEqual({ write_window_lost: 1 });
       r.sup.stop(); r.children[0]!.emit('exit', 1, null); expect(r.written.every((w) => !w.session.startsWith(WINDOW_BLOCKER_PREFIX))).toBe(true); expect(blockerOf(r.dir, key)).toMatchObject({ booked_epoch: r.epoch }); // nothing the supervisor wrote carries the blocker's name
     } finally { r.done(); }
+  });
+});
+
+// ---- D3, review round 2: five defects of the first blocker code, one test each (each red on bc0ce045da) ----
+describe('D3 round 2: the blocker\'s credit, its epoch and its listing', () => {
+  const marker = (dir: string, key: string, over: Partial<OwedRecord> = {}): void => writeOwed(dir, { v: 2, session: key, serving_pid: deadPid(), child_pid: deadPid(), owed: 1, closed: false, child_exited: false, open_until: 1, ...over } as OwedRecord);
+  const late = (dir: string, key: string, owed: number): void => writeOwed(dir, { v: 1, session: key, serving_pid: deadPid(), child_pid: deadPid(), owed, closed: false, child_exited: true } as OwedRecord);
+  const rotate = (dir: string): string => ensureEpoch(dir, { ...readEpoch(dir)!.inputs, rust_addon_sha256: `${Date.now()}`.padEnd(64, 'c') }, NOW.getTime() + 60_000).epoch_id;
+
+  test('R1: a client-journal fold whose tally save fails publishes no credit: the retry credits the journal once (settled 3, not 6), and a later higher record books exactly its extra samples', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch); marker(dir, 'r1', { owed: 3 });
+    const client = new WriteTally(dir, () => null, () => true, process.pid, 'r1'); client.missing(3, 0, 1); expect(client.flush()).toBe(true); // plain, plain, window (last): three lost lines tagged with the session
+    const owner = new WriteTally(dir, () => epoch, () => true, process.pid, 'r1'); // keyed to the session: its own pass books nothing for it
+    const tmpPath = `${writeTallyPath(dir)}.${process.pid}.tmp`; fsm.mkdirSync(tmpPath); // the tally's temp file cannot be written: the save fails after the fold wrote the blocker
+    owner.recover(); fsm.rmSync(tmpPath, { recursive: true });
+    expect(owner.save()).toBe(true);
+    expect(readWriteTally(dir, epoch)!.settled?.r1).toBe(3); expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 }); // was 6 settled
+    late(dir, 'r1', 5);
+    expect(ownerPass(dir, epoch)).toEqual({ pipe_unflushed: 2, receipt_orphaned: 2, write_window_lost: 1 }); // the two extra samples are booked (was: the file was removed with them unbooked)
+    expect(readOwed(dir, 'r1')).toBeNull();
+  });
+
+  test('R2: a settled marker nothing accounts for moves to the blocker file while a status read is between its listing and its reading: the read is repeated, never measured', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch, { uncomparable: 64, uncomparable_by_reason: Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`reason_${i}`, 1])) });
+    marker(dir, 'r2', { owed: 3 });
+    const older = new WriteTally(dir, () => epoch, () => true, process.pid, 'r2'); older.note('uncomparable', 'other', 3, false, 3); older.save(); // an older owner folded the window into other: the settled marker is the only record of it
+    let cleaned = false;
+    const snap = readWriteSnapshot(dir, epoch, (stage) => { if (stage === 'owed' && !cleaned) { cleaned = true; ownerPass(dir, epoch); } }); // the pass claims the marker for the blocker file after the listing
+    expect(cleaned).toBe(true); expect(blockerOf(dir, 'r2')).toMatchObject({ v: 2, booked_epoch: epoch });
+    expect(snap.windowFiles).toBe(1); expect(snap.unstable).toBe(false); // was windowFiles 0, outstanding [], stable: measured
+  });
+
+  test('R3: after an older build pruned the settled entry and the epoch rotated, a late record books only what is still owed (2 of 5), the credit anchor of the earlier epoch\'s blocker counted', () => {
+    const dir = tmp(); const { epoch: e1 } = tallyOn(dir); passing(dir, e1); marker(dir, 'r3', { owed: 3 });
+    ownerPass(dir, e1); expect(blockerOf(dir, 'r3')).toMatchObject({ booked_epoch: e1, booked_through: 3 });
+    late(dir, 'r3', 5); const e2 = rotate(dir);
+    { const tp = writeTallyPath(dir); const t = JSON.parse(readFileSync(tp, 'utf8')); Object.assign(t, { epoch_id: e2, comparable: 1000, uncomparable: 0, uncomparable_by_reason: {} }); delete t.settled; delete t.settled_qualifying; writeFileSync(tp, JSON.stringify(t) + '\n'); } // epoch 2's tally keeps the journal cursors; an older build's prune took the settled entry of a session whose file was gone
+    expect(ownerPass(dir, e2)).toEqual({ receipt_orphaned: 2 }); // was 5
+    expect(readWriteTally(dir, e2)!.settled?.r3).toBe(5); // the pruned entry is made whole from the earlier epoch's anchor (3) before the 2 are credited
+    expect(readOwed(dir, 'r3')).toBeNull(); expect(stat(dir).write_windows_lost).toBeUndefined();
+  });
+
+  test('R4: the stale blocker of an earlier epoch stays while the session has a pending marker (the marker is named for the session, not for the blocker file)', () => {
+    const dir = tmp(); const { epoch: e1 } = tallyOn(dir); passing(dir, e1);
+    writeOwed(dir, { v: 2, session: 'window-lost-r4', serving_pid: 1, owed: 0, closed: true, child_exited: true, open_until: 0, booked_epoch: e1, window_target: 1, booked_through: 1, booked_qualifying: 1 });
+    const e2 = rotate(dir); passing(dir, e2);
+    writeFileSync(join(dir, 'child.log'), 'x'); fsm.linkSync(join(dir, 'child.log'), pendingPath(dir, 'r4')); // the serving process could not make its record durable: a marker for the session
+    ownerPass(dir, e2);
+    expect(blockerOf(dir, 'r4')).toMatchObject({ booked_epoch: e1 }); // was removed
+    fsm.rmSync(pendingPath(dir, 'r4')); ownerPass(dir, e2); expect(blockerOf(dir, 'r4')).toBeNull(); // with the marker gone the pass removes it
+  });
+
+  test('D3/D5 (R5): a crash inside a window booked in epoch 1, a late higher record, then an epoch rotation before cleanup: epoch 2 books the 2 late samples once as receipt_orphaned, epoch 1 holds the one write_window_lost, and the window is never booked a second time (epoch 1\'s blocker is not overwritten)', () => {
+    const dir = tmp(); const { epoch: e1 } = tallyOn(dir); passing(dir, e1); marker(dir, 'r5', { owed: 3 });
+    { const w = new WriteTally(dir, () => e1, () => true, process.pid, 'r5'); w.missing(3, 0, 1); w.save(); } // epoch 1: the worker books its window (blocker held, 3 settled) and dies before its cleanup
+    expect(readWriteTally(dir, e1)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
+    const e1Blocker = blockerOf(dir, 'r5'); expect(e1Blocker).toMatchObject({ booked_epoch: e1, window_target: 3, booked_through: 0 });
+    marker(dir, 'r5', { owed: 5 }); // the serving process republishes a higher open marker for the session: 2 more samples owed
+    const e2 = rotate(dir); { const t = new WriteTally(dir, () => e2, () => true, process.pid); t.note('comparable', undefined, 1000); t.save(); } // epoch 2 opens and its first save carries the settlement ledger
+    const writes: string[] = []; const realWrite = fsm.writeFileSync; // every file the owner writes while it runs: no blocker may name epoch 2
+    const spy = spyOn(fsm, 'writeFileSync').mockImplementation(((path: unknown, data: unknown, ...rest: unknown[]) => { if (String(path).includes('window-lost-r5')) writes.push(String(data)); return (realWrite as (...a: unknown[]) => void)(path, data, ...rest); }) as never);
+    let e2Reasons: Record<string, number>; try { e2Reasons = ownerPass(dir, e2); } finally { spy.mockRestore(); }
+    expect(e2Reasons).toEqual({ receipt_orphaned: 2 }); // exactly the 2 late samples, and no write_window_lost in epoch 2 (was: 1 receipt_orphaned and a second write_window_lost; on 424b0fa0cf: nothing)
+    expect(writes.filter((w) => w.includes(`"booked_epoch":"${e2}"`))).toEqual([]); // epoch 1's blocker is never overwritten for epoch 2
+    expect(stat(dir)).toMatchObject({ state: 'measured', uncomparable: 2, uncomparable_by_reason: { receipt_orphaned: 2 } }); // the status document shows it per reason (write_comparisons.uncomparable_by_reason.receipt_orphaned)
+    expect(stat(dir).write_windows_lost).toBeUndefined(); expect(readOwed(dir, 'r5')).toBeNull(); expect(blockerOf(dir, 'r5')).toBeNull(); // epoch 1's blocker goes with its epoch, once the session is settled
+  });
+  test('R6: an earlier epoch\'s blocker whose window was never booked (an intent only) is taken over by the next epoch: the open marker\'s window is booked there, once, and the files go', () => {
+    const dir = tmp(); const { epoch: e1 } = tallyOn(dir); passing(dir, e1); marker(dir, 'r6', { owed: 3 });
+    writeOwed(dir, { v: 2, session: 'window-lost-r6', serving_pid: 1, owed: 0, closed: true, child_exited: true, open_until: 0, booked_epoch: e1, window_target: 3, booked_through: 0, booked_qualifying: 0 }); // epoch 1 held the intent and never booked
+    const e2 = rotate(dir); passing(dir, e2);
+    expect(ownerPass(dir, e2)).toEqual({ receipt_orphaned: 2, write_window_lost: 1 }); // was nothing: the window was never booked and the files stayed
+    expect(readOwed(dir, 'r6')).toBeNull(); expect(blockerOf(dir, 'r6')).toMatchObject({ booked_epoch: e2, window_target: 3, booked_through: 3 }); // held for epoch 2 and settled there
+  });
+
+  test('R7: a late record is made whole from an earlier epoch\'s credit anchor when the new epoch\'s tally has no entry: its file goes, nothing is booked twice', () => {
+    const dir = tmp(); const { epoch: e1 } = tallyOn(dir); passing(dir, e1);
+    writeOwed(dir, { v: 2, session: 'window-lost-r7', serving_pid: 1, owed: 0, closed: true, child_exited: true, open_until: 0, booked_epoch: e1, window_target: 3, booked_through: 3, booked_qualifying: 3 });
+    late(dir, 'r7', 3); const e2 = rotate(dir); passing(dir, e2);
+    expect(ownerPass(dir, e2)).toEqual({}); // 3 owed, 3 credited by the anchor: nothing is missing
+    expect(readOwed(dir, 'r7')).toBeNull(); // the file is removed: it is settled by the anchor (was: it stayed)
+  });
+
+  test('R8: the stale blocker of an earlier epoch stays while the session\'s own file still stands (a live serving process)', () => {
+    const dir = tmp(); const { epoch: e1 } = tallyOn(dir); passing(dir, e1);
+    writeOwed(dir, { v: 2, session: 'window-lost-r8', serving_pid: 1, owed: 0, closed: true, child_exited: true, open_until: 0, booked_epoch: e1, window_target: 3, booked_through: 3, booked_qualifying: 3 });
+    writeOwed(dir, { v: 1, session: 'r8', serving_pid: process.pid, child_pid: process.pid, owed: 5, closed: false, child_exited: false });
+    const e2 = rotate(dir); passing(dir, e2);
+    ownerPass(dir, e2);
+    expect(readOwed(dir, 'r8')).not.toBeNull(); expect(blockerOf(dir, 'r8')).toMatchObject({ booked_epoch: e1, booked_through: 3 }); // was: the blocker was removed while the file stood, losing the anchor
+  });
+
+  test('R9: holdBlocker never takes a window an earlier epoch\'s blocker already booked: it returns null and leaves that blocker as it is', () => {
+    const dir = tmp(); const { epoch: e1 } = tallyOn(dir); passing(dir, e1); marker(dir, 'r9', { owed: 3 });
+    { const w = new WriteTally(dir, () => e1, () => true, process.pid, 'r9'); w.missing(3, 0, 1); w.save(); } // epoch 1 books its window: settled 3
+    const before = blockerOf(dir, 'r9'); expect(before).toMatchObject({ booked_epoch: e1, window_target: 3 });
+    const e2 = rotate(dir); // the epoch moved before the new owner ran: a hold for epoch 2 is asked for a window that is epoch 1's
+    expect(holdBlocker(dir, 'r9', e2)).toBeNull();
+    expect(blockerOf(dir, 'r9')).toEqual(before);
   });
 });
