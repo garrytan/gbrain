@@ -395,6 +395,10 @@ test/engine-parity/segmented-ledger-reads.test.ts	5	0
 test/engine-parity/segmented-mirror-effects.test.ts	2	0
 test/engine-parity/segmented-purge-writes.test.ts	7	0
 test/engine-parity/segmented-rewrite.test.ts	4	0
+test/engine-parity/served-arg-reads-entity.test.ts	2	0
+test/engine-parity/served-arg-reads-facts.test.ts	1	0
+test/engine-parity/served-arg-reads-relaxed.test.ts	1	0
+test/engine-parity/served-arg-reads-search.test.ts	3	0
 test/engine-parity/served-remote-doctor.test.ts	1	0
 test/engine-parity/served-remote-entity-context.test.ts	2	0
 test/engine-parity/served-remote-feedback-record.test.ts	2	0

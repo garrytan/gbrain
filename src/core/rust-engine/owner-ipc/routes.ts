@@ -186,6 +186,14 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // served/remote-member-policy.ts refuses the list and email forms). The operation also needs listActiveAccessMembers (brainServes),
   // which no group serves yet.
   'readAccessMembers',
+  // served-arg-reads-entity, served-arg-reads-facts, served-arg-reads-search, served-arg-reads-relaxed (served, both routes):
+  // the reads whose scope comes from arguments the client chose: the entity card and identity list, the fact recall and
+  // dedup reads, the exact-phrase rescan, the relational name lookups, open loops, pinned questions and the page-lead
+  // overlay's global purges. Each answers at in-process parity; none is server-guarded yet (test/fixtures/served-member-lists/a1-arg-guards.tsv).
+  'countInboundLinks', 'countUncomparableFacts', 'countWorldFacts', 'findExactBasenameCandidates', 'listCallOffCueFacts',
+  'listCorePageRows', 'listEntityIdentityRows', 'listExactRescanChunks', 'listFactHoldingRefs', 'listFactSourcePages',
+  'listGlobalPurgeWithdrawals', 'listLivePageTitles', 'listNameVariantCandidates', 'listNearestFacts', 'listOpenLoops',
+  'listPageAliasNames', 'listPendingCoreEditNotices', 'listPinnedQuestions',
 ];
 
 /**
@@ -217,6 +225,14 @@ export const OWNER_IPC_REMOTE_DENY: Readonly<Record<string, string>> = {
     'listDecideProposals', 'getDecideReviewProposal', 'listDecideCalibrations', 'getDecideCalibration'].map(m => [m, DECIDE])),
   readSharedSourceRows: 'every live source\'s config, guest flag and owner list across all callers; the remote grant and personal-source checks need a server-side scoped form',
   listSourceRecords: 'every source\'s local_path and config across all callers, with no caller filter; sources_list filters its listing in the client after the whole registry crossed, and the remote rank_entities coverage read takes every source id; a caller-scoped listing must exist before this is served',
+  // Lane L3 slice S4, args-scoped and unscoped reads that carry no privacy argument at all: the server cannot narrow them to what the caller may read.
+  countMentionDueSince: 'counts the pages changed since the last mention count over the whole source, private pages included, with no privacy predicate',
+  countPagesDueForMentions: 'counts every live page due for mention scanning, private pages included, with no privacy predicate',
+  countSourcePages: 'the page count of a source includes the private pages of an allowed source, so it reveals how many exist',
+  findFuzzyEntityCandidates: 'returns the five live pages of a source nearest a title, private ones included, with no privacy argument',
+  getJob: 'returns the whole job row, the private queue owner token included, before the owner fence and the redaction',
+  hasChunkImageVectors: 'an existence test over every chunk of the brain, private pages included, with no privacy argument',
+  listGoogleSourceMembers: 'the Google account of every source and bound member ids across the brain, with no scope',
 };
 
 /**
