@@ -22,11 +22,12 @@ import { closeSync, existsSync, openSync, readSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { openclawStateDir } from '../core/setup/brain-first.ts';
-import { chosenBrainEnv, companySourceFirst, COMPANY_SOURCE, labelsInCompany, mintedKeysReadCalls, type BrainShape, type LayoutOutcome } from './setup-brain-layout.ts';
+import { chosenBrainEnv, companySourceFirst, COMPANY_SOURCE, labelsInCompany, mintedKeysReadCalls, shapeArgv, type BrainShape, type LayoutOutcome } from './setup-brain-layout.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { ACCESS_ID_RE } from '../core/access/principals.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
 import { loadConfig } from '../core/config.ts';
+import { getCliOptions } from '../core/cli-options.ts';
 import { companyRuleLines, readRoster, readsLines, rosterEmpty, type ServesReceipt, type ServesStatus, receiptLines, receiptOk } from './access-serves.ts';
 
 /** `source`: the source the members are labelled in, the harness's pinned source (--source, GBRAIN_SOURCE or a Codex receipt); unset, the labelling child resolves the brain's own (sources.default). `brain` and `team` are the run's --shape, so a pin on the company source adds it before labelling. */
@@ -102,8 +103,8 @@ export const PGLITE_SEVERAL_NOTE = 'PGLite lets one process at a time open this 
  * GST-4043: a gbrain child on the brain setup was run against (chosenBrainEnv: an explicit --brain, else what the harness
  * resolves); a thin client ignores the variable, where an explicit --brain refuses.
  */
-function child(launcher: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
-  const r = bunSpawnSync([launcher, ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: { ...process.env, ...chosenBrainEnv() } });
+function child(launcher: string, args: string[], env: Record<string, string> = {}): { ok: boolean; stdout: string; stderr: string } {
+  const r = bunSpawnSync([launcher, ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: { ...process.env, ...chosenBrainEnv(), ...env } });
   return { ok: r.exitCode === 0, stdout: r.stdout?.toString() ?? '', stderr: r.stderr?.toString() ?? '' };
 }
 
@@ -166,7 +167,9 @@ export function historyRefusal(status: ServesStatus | null, preview: ServesRecei
   const ownerId = status.owner ?? owner?.id;
   const labelled = roster.filter(m => m !== ownerId);
   const pin = owner && (owner.from === 'flag' || (owner.id === ownerId && labelled.length < roster.length)) ? ['--owner', owner.id] : [];
-  const argvFor = (members: string[]) => ['gbrain', 'setup', harness, '--serves', 'several', '--members', members.join(','), ...(flags.source ? ['--source', flags.source] : []), ...pin];
+  const brain = getCliOptions().brain;
+  const at = brain ? ['--brain', brain] : [];
+  const argvFor = (members: string[]) => ['gbrain', ...at, 'setup', harness, ...shapeArgv(flags.brain, !!flags.team), '--serves', 'several', '--members', members.join(','), ...(flags.source ? ['--source', flags.source] : []), ...pin];
   const keep = [...argvFor(labelled.length ? labelled : roster), '--labelled-only'];
   const share = [...argvFor(roster), '--open-history'];
   const ownerOut = ownerId && labelled.length && labelled.length < roster.length ? `; the owner ${ownerId} reads the whole brain, so it is never labelled-only and stays out of that run's --members` : '';
@@ -175,7 +178,7 @@ export function historyRefusal(status: ServesStatus | null, preview: ServesRecei
     `Pick one: ${keep.join(' ')} keeps that history private (each member reads only pages labelled for them; with the company shape, setup adds one company/ rule so they read the company pages${ownerOut}), or ${share.join(' ')} lets every member read it.`,
     { fix: { argv: keep, consent: ['credentials'], actor: 'user', ask_user: true, requires_exclusive: false,
       why: 'Keeps the existing pages from the members; ask the user, who may instead choose --open-history so the members read them.',
-      verify: { argv: ['gbrain', 'access', 'serves', '--json'] } } });
+      verify: { argv: ['gbrain', ...at, 'access', 'serves', '--json'] } } });
 }
 
 /** --serves several: the labelling child (preview on a dry run) and, when applied, one bound read per member. */
@@ -215,6 +218,8 @@ export interface ServesPlan { roster: string[]; status: ServesStatus | null; own
 /**
  * Before setup writes anything: the roster (an empty one refuses), the brain's serves view (none for a brain setup is
  * about to create, or while this registration's own stdio serve holds a PGLite brain), and the one-person refusal.
+ * The history question's preview runs on the brain's default source when this run adds the company source it labels
+ * in (GST-4043), which does not exist yet and holds none of that history.
  */
 export function servesPreflight(flags: ServesFlags, launcher: string, harness: string, hasBrain: boolean, liveOurs: boolean, entry: EntryBinding = { member: null, previous: null }): ServesPlan | OperationError {
   const roster = servesRoster(flags, harness);
@@ -232,7 +237,10 @@ export function servesPreflight(flags: ServesFlags, launcher: string, harness: s
   if (flags.serves === 'several') {
     const owner = servesOwner(flags, harness, roster);
     if (owner instanceof OperationError) return owner;
-    const run = status?.serves === 'one' && !flags.labelledOnly && !flags.openHistory ? child(launcher, servesArgv(roster, flags, owner, false)) : null;
+    const ask = status?.serves === 'one' && !flags.labelledOnly && !flags.openHistory;
+    const companyFirst = ask && labelsInCompany(flags.brain, !!flags.team, flags.source) && companySourceFirst(launcher, true).action === 'created';
+    const run = !ask ? null : companyFirst ? child(launcher, servesArgv(roster, { ...flags, source: undefined }, owner, false), { GBRAIN_SOURCE: '' })
+      : child(launcher, servesArgv(roster, flags, owner, false));
     const preview = run ? parsed<ServesReceipt>(run.stdout) : null;
     const said = run ? `${run.stdout}\n${run.stderr}` : '';
     const previewError = said.match(/"code"\s*:\s*"([a-z0-9_]+)"/)?.[1] ?? run?.stderr.trim().split('\n')[0]?.slice(0, 200);

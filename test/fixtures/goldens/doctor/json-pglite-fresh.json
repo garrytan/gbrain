@@ -1329,6 +1329,13 @@
           "status": "ok"
         },
         {
+          "category": "meta",
+          "elapsed_ms": "<volatile>",
+          "message": "Active pack: gbrain-base-v2 v1.7.0 (28 types, 17 link verbs)",
+          "name": "schema_pack_active",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "elapsed_ms": "<volatile>",
           "message": "Skipped (PGLite — no event trigger support)",
