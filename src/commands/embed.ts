@@ -50,6 +50,7 @@ import {
 import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
 import { embedBackfillLockId } from '../core/embed-backfill-lock.ts';
 import { AITransientError } from '../core/ai/errors.ts';
+import { isAIInvocationPolicyError } from '../core/ai/invocation-guard.ts';
 import { resolveEmbedConcurrency } from '../core/embed-concurrency.ts';
 export { resolveEmbedConcurrency, _resetEmbedConcurrencyClampWarningForTest } from '../core/embed-concurrency.ts';
 import { isEmbeddingZeroNormError } from '../core/ai/embedding-guard.ts';
@@ -492,9 +493,9 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
         await embedPage(engine, s, !!opts.dryRun, result, opts.sourceId, opts.signal, opts.quiet, opts.approvedPageCapUsd);
       } catch (e: unknown) {
         if (isAborted(opts.signal)) break; // shutdown, not a failure
-        // #3037: a page-level error (not found, DB write) must not exit 0.
-        // Chunk-level embed failures are counted inside embedPage; this
-        // counts the page itself (chunk count unknown at this site).
+        if (isAIInvocationPolicyError(e)) throw e;
+        // #3037: a page-level error (not found, DB write) must not exit 0; chunk
+        // failures are counted inside embedPage, this counts the page itself.
         recordFailure(result, 1, s, e);
         serr(`  Error embedding ${s}: ${e instanceof Error ? e.message : e}`);
       }
@@ -1223,7 +1224,7 @@ async function embedPage(
       signal ? { abortSignal: signal } : {},
     )));
   } catch (e: unknown) {
-    if (isAborted(signal)) throw e;
+    if (isAborted(signal) || isAIInvocationPolicyError(e)) throw e;
     recordFailure(result, toEmbed.length, slug, e);
     result.pages_processed++;
     serr(`  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
@@ -1459,6 +1460,7 @@ async function embedAll(
         await healAndReportOverLength(engine, page.slug, pageSourceId, firstError, toEmbed.map(c => c.chunk_text), serr);
       }
     } catch (e: unknown) {
+      if (isAIInvocationPolicyError(e)) throw e;
       // #3037: count the darkened page so the run can't exit 0 (abort is a
       // shutdown, not a failure).
       if (!isAborted(signal)) recordFailure(result, toEmbed.length, page.slug, e);
@@ -1486,6 +1488,7 @@ async function embedAll(
     onItem: (page) => embedOnePage(page),
     failureLabel: (page) => page.slug,
     onError: (e, page) => {
+      if (isAIInvocationPolicyError(e)) throw e;
       if (isAborted(signal)) return 'continue';
       recordFailure(result, 1, page.slug, e);
       serr(`\n  Error embedding ${page.slug}: ${e instanceof Error ? e.message : e}`);
@@ -2169,6 +2172,7 @@ async function embedAllStale(
           // Budget/abort-fired cancellations are expected on the way out; don't
           // spam per-page "Error embedding" lines when we're shutting down.
           if (effectiveSignal.aborted) return;
+          if (isAIInvocationPolicyError(e)) throw e;
           recordFailure(result, stale.length, slug, e);
           serr(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
           noteEmbedQuarantineFailure(key, slug); await healAndReportOverLength(engine, slug, keySourceId, e, stale.map(c => c.chunk_text), serr);
@@ -2190,17 +2194,16 @@ async function embedAllStale(
         }
       }
 
-      // v0.41.15.0: migrated to shared runSlidingPool. The pool checks
-      // its `signal` argument before each claim (mirrors the pre-migration
-      // `!budgetSignal.aborted` gate) AND threads abort into in-flight
-      // onItem via the local-abort composition for D13. embedOneKey
-      // already handles its own per-key errors via try/catch + stderr.
+      // The pool checks `signal` before each claim and threads abort into
+      // in-flight onItem (D13). embedOneKey handles its own per-key errors;
+      // a spend refusal ends the run.
       await runSlidingPool({
         items: keys,
         workers: CONCURRENCY,
         signal: effectiveSignal,
         onItem: (key) => embedOneKey(key),
         failureLabel: (key) => key,
+        onError: (e) => { if (isAIInvocationPolicyError(e)) throw e; return 'continue'; },
       });
 
       // E-4: extend the work budget by any paced-sleep time accrued this batch.
@@ -2277,7 +2280,7 @@ async function embedPageTexts(
     const { vectors, refused } = await embedBatchKeepingUsable(texts, opts);
     return { embeddings: vectors, failed: refused?.failures.length ?? 0, firstError: refused };
   } catch (e: unknown) {
-    if (opts.abortSignal?.aborted) throw e; // shutdown, not a chunk problem
+    if (opts.abortSignal?.aborted || isAIInvocationPolicyError(e)) throw e; // shutdown or a spend refusal, not a chunk problem
     if (isEmbeddingZeroNormError(e)) throw e; // nothing usable: fanning out would re-send the same inputs
     if (texts.length <= 1) throw e; // nothing to isolate
     // #3374 — network-transient exhaustion isn't chunk-specific either:
@@ -2295,7 +2298,7 @@ async function embedPageTexts(
         embeddings.push(single[0] ?? null);
         if (single[0] === undefined) { failed++; firstError ??= e; }
       } catch (chunkErr: unknown) {
-        if (opts.abortSignal?.aborted) throw chunkErr;
+        if (opts.abortSignal?.aborted || isAIInvocationPolicyError(chunkErr)) throw chunkErr;
         embeddings.push(null);
         failed++;
         firstError ??= chunkErr;

@@ -27,7 +27,7 @@ import type { OperationContext } from '../src/core/operations.ts';
 import type { Notice } from '../src/core/agent-output.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { resetGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
 
 let engine: PGLiteEngine;
@@ -120,6 +120,39 @@ describe('CLI jobs submit on PGLite', () => {
       expect(await waitingRows()).toBe(1);
     } finally {
       log.mockRestore();
+    }
+  }));
+
+  test('an approved embedding job carries its spend cap to the worker', () => inHome(async () => {
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    const err = spyOn(process.stderr, 'write').mockImplementation(() => true);
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'sk-fake' } });
+    try {
+      await runJobsSubmit({ args: ['submit', 'embed', '--params', '{"sourceId":"default"}', '--queue-only', '--max-usd', '1'], engine, queue: new MinionQueue(engine) } as never);
+      const [row] = await engine.executeRaw<{ spend_authorization: { kind: string; cap_usd: number; cap_source: string } | null }>(
+        `SELECT spend_authorization FROM minion_jobs WHERE name = 'embed' ORDER BY id DESC LIMIT 1`);
+      expect(row?.spend_authorization).toMatchObject({ kind: 'authorized', cap_usd: 1, cap_source: 'user' });
+    } finally {
+      log.mockRestore();
+      err.mockRestore();
+      resetGateway();
+    }
+  }));
+
+  test('an embedding job approved with --yes and no cap stays uncapped', () => inHome(async () => {
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    const err = spyOn(process.stderr, 'write').mockImplementation(() => true);
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'sk-fake' } });
+    try {
+      await runJobsSubmit({ args: ['submit', 'embed', '--params', '{"sourceId":"default"}', '--queue-only', '--yes'], engine, queue: new MinionQueue(engine) } as never);
+      const rows = await engine.executeRaw<{ spend_authorization: unknown }>(
+        `SELECT spend_authorization FROM minion_jobs WHERE name = 'embed' ORDER BY id DESC LIMIT 1`);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].spend_authorization).toBeNull();
+    } finally {
+      log.mockRestore();
+      err.mockRestore();
+      resetGateway();
     }
   }));
 });
