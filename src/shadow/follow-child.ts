@@ -46,29 +46,55 @@ const FOREIGN_LEASE_MS = 1_000;
  * A serving process lost a write on its way to its child (the child is gone, refused the line, or the process closed):
  * leave a line for the owner, as a non-owner child does, so the owner and the next session's seal check see it.
  */
-export function noteLostWrite(dir: string, reason: string, at: number = Date.now()): void {
-  try { appendFileSync(join(dir, FOREIGN_FILE), `${JSON.stringify({ at, pid: process.pid, reason })}\n`); } catch { /* the next full pass repairs it */ }
+export function noteLostWrite(dir: string, reason: string, at: number = Date.now()): boolean {
+  try { appendFileSync(join(dir, FOREIGN_FILE), `${JSON.stringify({ at, pid: process.pid, reason })}\n`); return true; } catch { return false; /* the caller keeps the loss and retries (lostWriteRecorder) */ }
 }
 
 /** The serving process's record of writes its child will never hear of (attach.ts `onLost`). */
 export interface LostWriteRecorder {
   /** A write was lost: leave a line for the owner (one a second is enough: the owner reads any line as "a write was lost"). */
   note(reason: string): void;
-  /** Before a seal: false when a loss is still unrecorded (the close must not seal). */
+  /** Before a seal: tries a loss not yet recorded again; false when it is still unrecorded (the close must not seal). */
   flush(): boolean;
   /** The loss still waiting to be recorded, or null. */
   pending(): string | null;
   stop(): void;
 }
 
-export function lostWriteRecorder(o: { dir: string; now?: () => number }): LostWriteRecorder {
+export const LOST_WRITE_UNRECORDED = 'lost_write_unrecorded';
+
+/**
+ * Only a line that was written starts the one-second throttle. A line that failed is kept as an obligation: retried on
+ * an unref timer (and by the next loss, throttle or not), told at once to a live child (`invalidate`, which revokes a
+ * seal it holds: follow-child.ts `revokeSeal`), and a close that cannot record it refuses to seal. A process that exits
+ * while the storage still fails loses it (the residual a full pass covers).
+ */
+export function lostWriteRecorder(o: { dir: string; now?: () => number; retryMs?: number; invalidate?: (reason: string) => void }): LostWriteRecorder {
   const now = o.now ?? Date.now;
   let lostAt = 0;
+  let pending: string | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const attempt = (reason: string): boolean => {
+    const at = now();
+    if (noteLostWrite(o.dir, reason, at)) { lostAt = at; pending = null; return true; }
+    pending = reason;
+    return false;
+  };
+  const retry = (): void => {
+    if (timer || pending === null) return;
+    timer = setTimeout(() => { timer = null; if (pending !== null && !attempt(pending)) retry(); }, o.retryMs ?? 1_000);
+    (timer as { unref?: () => void }).unref?.();
+  };
   return {
-    note(reason) { const at = now(); if (at - lostAt < 1_000) return; lostAt = at; try { noteLostWrite(o.dir, reason, at); } catch { lostAt = 0; } },
-    flush: () => true,
-    pending: () => null,
-    stop() {},
+    note(reason) {
+      if (pending === null && now() - lostAt < 1_000) return;
+      if (attempt(reason)) return;
+      try { o.invalidate?.(LOST_WRITE_UNRECORDED); } catch { /* no live child: the close refuses to seal */ }
+      retry();
+    },
+    flush: () => pending === null || attempt(pending),
+    pending: () => pending,
+    stop() { if (timer) { clearTimeout(timer); timer = null; } },
   };
 }
 
