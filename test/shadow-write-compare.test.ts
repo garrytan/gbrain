@@ -1411,6 +1411,23 @@ describe('S2c: a durable per-session obligation for write samples', () => {
     expect(existsSync(owedPath(dir, 'cq'))).toBe(false);
   });
 
+  test('a live client\'s qualifying line, folded before its worker exits, stays in settled_qualifying: the later orphaned addTag is still receipt_orphaned_nonqualifying', () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch);
+    owe(dir, 'cf', 2, { child_pid: process.pid, owed_qualifying: 1 } as never); // a putPage and an addTag owed; the worker is alive
+    const client = new WriteTally(dir, () => null, () => true, process.pid, 'cf');
+    client.note('comparable', undefined, 1, false, 1, 1); client.flush(); // the putPage's verdict reaches the file
+    const owner = worker(dir, epoch, 'o'); owner.save(); // the owner folds it while the worker still runs
+    const folded = readWriteTally(dir, epoch) as { settled?: Record<string, number>; settled_qualifying?: Record<string, number> };
+    expect(folded.settled?.cf).toBe(1);
+    expect(folded.settled_qualifying?.cf).toBe(1); // the line's q bit is saved, not only its reason
+    owe(dir, 'cf', 2, { child_pid: deadPid(), child_exited: true, owed_qualifying: 1 } as never); // then the worker exits without the addTag
+    owner.recover();
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.uncomparable_by_reason.receipt_orphaned).toBeUndefined();
+    expect(t.capability_missing_by_family.receipt_orphaned_nonqualifying).toBe(1);
+    expect(existsSync(owedPath(dir, 'cf'))).toBe(false);
+  });
+
   test('a retired-epoch worker\'s settled page and link writes ride its epoch_retired lines as qualifying, both the batch it held when it saw the new epoch and a verdict after: the orphaned addTag is receipt_orphaned_nonqualifying', () => {
     const dir = tmp(); const oldEpoch = epochOf(dir);
     const dead = deadPid(); const old = worker(dir, oldEpoch, 'rq'); owe(dir, 'rq', 3, { child_pid: dead, owed_qualifying: 2 } as never); // two putPages and an addTag owed
