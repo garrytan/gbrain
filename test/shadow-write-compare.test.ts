@@ -33,7 +33,7 @@ import { newMirrorCounters } from '../src/shadow/mirror.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
 import { faultsPath, readFaults } from '../src/shadow/ledger.ts';
 import { sampleWeight } from '../src/shadow/supervisor.ts';
-import { droppedWeight, MAX_DROPPED, lostPath, movedOutsideFootprint, owedPath, pageRefs, readOwed, readWriteSnapshot, readWriteTally, recordLost, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { droppedWeight, MAX_DROPPED, lostPath, movedOutsideFootprint, owedPath, pageRefs, readOwed, readWriteSnapshot, readWriteTally, recordLost, sampleQualifyingWeight, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -1499,7 +1499,8 @@ describe('S2c: the shadow child settles its session', () => {
       input.write('{"t":"write","op":"putPage"}\n'); input.write('{"t":"write","op":"putPage","pad":"torn\n'); input.write('{"t":"write","bad":,"dropped":1}\n'); input.write('{"t":"write","op":"putPage"}\n');
       input.end(); await done;
       const t = readWriteTally(dir, readEpoch(dir)!.epoch_id)!;
-      expect(t.uncomparable_by_reason).toMatchObject({ no_sample: 2, line_unreadable: 3 });
+      expect(t.uncomparable_by_reason).toMatchObject({ no_sample: 2, line_unreadable: 2 }); // the cut-short putPage line, and the earlier loss the other one carries
+      expect(t.capability_missing_by_family).toMatchObject({ line_unreadable_nonqualifying: 1 }); // that line's own sample: its op cannot be read, so it is no page or link write (as the serving process counted it)
       expect(t.uncomparable_by_reason.pipe_unflushed).toBeUndefined(); // every owed sample was read (the unreadable lines too), so nothing is booked as lost
       expect(t.settled).toEqual({ cu: 5 });
       expect(existsSync(owedPath(dir, 'cu'))).toBe(false);
@@ -1516,7 +1517,7 @@ describe('S2c: the shadow child settles its session', () => {
       input.write('{"t":"write","op":"addTag","bad":,"dropped":2}\n'); // 1 + 2: the two earlier losses count as page and link writes (which they were is not known)
       input.end(); await done;
       const t = readWriteTally(dir, readEpoch(dir)!.epoch_id)!;
-      expect(t.uncomparable_by_reason.line_unreadable).toBe(2); // was 4
+      expect(t.uncomparable_by_reason.line_unreadable).toBe(2); // only the two earlier losses, not all four samples
       expect(t.capability_missing_by_family.line_unreadable_nonqualifying).toBe(2);
       expect(t.settled).toEqual({ cn: 4 });
       expect(existsSync(owedPath(dir, 'cn'))).toBe(false);
@@ -1711,7 +1712,7 @@ describe('S2c: every credit site settles exactly the weight it stands for', () =
   });
 
   test('an unreadable write line credits the weight its text states, once: a plain line is 1, one that still ends in its dropped count is 1 + that', async () => {
-    const r = rig(); r.owe(1 + 6); r.c.unreadable(sampleWeight('{"t":"write","op":"putPage","pad":"cut')); r.c.unreadable(sampleWeight('{"t":"write","op":"putPage","x":1,"dropped":5}\n'));
+    const r = rig(); r.owe(1 + 6); for (const l of ['{"t":"write","op":"putPage","pad":"cut', '{"t":"write","op":"putPage","x":1,"dropped":5}\n']) r.c.unreadable(sampleWeight(l), sampleQualifyingWeight(l));
     await r.c.idle();
     expect(r.settled()).toBe(7);
     expect(readWriteTally(r.dir, r.epoch)!.uncomparable_by_reason).toMatchObject({ line_unreadable: 7 });

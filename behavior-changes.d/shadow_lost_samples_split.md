@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+Shadow mode, the sampled comparison of the Rust engine against your brain, no longer counts tag and other non-page writes as uncomparable page and link writes in two cases: a write sample line that reached the shadow child cut short, and the samples a shadow worker without its own evidence epoch hands to the owner when its session ends early. Those writes now count as capability_missing (a cut-short line's under the new name line_unreadable_nonqualifying, an ended session's under receipt_orphaned_nonqualifying). The totals and the rule swap criterion 5 passes on do not change; line_unreadable_nonqualifying is a new name in the capability_missing breakdown that shadow status and the swap report show. Lines an older gbrain wrote are still counted the old, stricter way. Nothing you run changes.
