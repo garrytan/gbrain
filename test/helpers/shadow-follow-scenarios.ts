@@ -359,8 +359,10 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect(status(r).reconcile.consecutive_clean_full_passes).toBe(0);
         expect(status(r).reconcile.last_clean_full_pass_at).toBeNull();
         expectRepairOnRecord(r, stopped.id, since, unknownBefore);
-        // A stopped full pass did not finish, so a full pass is due at the next check whatever its age.
+        // A stopped full pass did not finish, so a full pass is due at the next check whatever its age, and the status
+        // says so: due since the stop, not a day later.
         expect(fullPassDue(readPasses(r.dir).filter((p) => p.kind === 'full').at(-1))).toBe(true);
+        expect(status(r).reconcile.next_full_pass_due).toBe(stopped.finished_at);
         // A fresh full pass (what `engine shadow reconcile` and the nightly tick run) reads the healed rows clean. It is
         // a new pass, it counts as one clean pass, and the stopped pass's repair stays on record.
         const fresh = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full');
