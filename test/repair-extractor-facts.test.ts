@@ -409,10 +409,11 @@ for (const backend of testBackends()) {
         const other = await writeSingleFact(engine, 'default', { fact: CLAIM, provenance: 'fixture', entity: 'Carol Absent', kind: 'commitment' });
         expect(other).toMatchObject({ status: 'inserted', entity_slug: 'carol-absent' });
 
-        // A forced re-extraction replaces the restored batch, active, with nothing expired left behind on the page.
+        // A forced re-extraction replaces the restored batch: the new copy is active, the prior one stays on the page expired (#10443)
+        // with its row number, so it is history, not a repair candidate.
         const rerun = await runExtractConversationFactsCore(engine, { sourceId: 'default', overrideDisabled: true, extractor, types: ['conversation'], force: true });
         expect([rerun.facts_inserted, rerun.orphan_facts_cleaned]).toEqual([1, 2]);
-        expect((await rows()).map(row => [row.fact, row.active])).toEqual([[CLAIM, true], ['EXTRACTION_COMPLETE', true]]);
+        expect((await rows()).map(row => [row.fact, row.active])).toEqual([[CLAIM, false], [CLAIM, true], ['EXTRACTION_COMPLETE', true]]);
         expect((await extractorFactsCheck(engine)).status).toBe('ok');
         expect((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM facts WHERE entity_slug='carol-absent' AND expired_at IS NULL"))[0].n).toBe(1);
       }, { databaseUrl, setup: async ({ engine, root }) => {

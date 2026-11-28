@@ -1,6 +1,7 @@
 ---
 name: cold-start
 version: 1.0.0
+audience: owner
 description: |
   Day-one data bootstrapping for a new brain. Sequences the highest-leverage
   data sources to go from empty brain to useful brain in one session. The

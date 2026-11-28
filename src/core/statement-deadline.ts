@@ -121,7 +121,9 @@ const DOCTOR_PATH_TYPED_READS: readonly string[] = [
 ];
 /** The typed reads (engine-sql/decide-store.ts) that replaced statements this wrapper bounded through executeRaw: decide_health. */
 export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'readSegmentedGateEvidence', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations',
-  'countSegmentedTimelinePages', 'listCoveredSources', 'listExportWithdrawals', 'listPrivateQueueHealth', 'listQueueWedgeCounts', 'listStuckActiveJobsByName', 'listWaitingByQueue', 'hasNotifierCoverage', 'readExportWithdrawalLedgerBytes', 'readMaxTimelineEntryId', 'readOldestWaitingAge', 'readQueueDivergence', 'readQueueHealthSignals', 'readWedgeSignals', 'storedTimelineRowsByPageIds', 'getWorktreeBinding']);
+  'countSegmentedTimelinePages', 'listCoveredSources', 'listExportWithdrawals', 'listPrivateQueueHealth', 'listQueueWedgeCounts', 'listStuckActiveJobsByName', 'listWaitingByQueue', 'hasNotifierCoverage', 'readExportWithdrawalLedgerBytes', 'readMaxTimelineEntryId', 'readOldestWaitingAge', 'readQueueDivergence', 'readQueueHealthSignals', 'readWedgeSignals', 'storedTimelineRowsByPageIds', 'getWorktreeBinding',
+  // Part A: the source reads source resolution makes inside a doctor check, each a statement the doctor bounded through executeRaw on master.
+  'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'readSourceRow', 'listActiveSourceConfigs', 'listSourceRecords']);
 /** The write-journal reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`), the liveness round trip (engine-sql/health.ts `pingStore`) and the doctor reads (engine-sql/doctor-*.ts), which also replaced bounded statements. */
 const DOCTOR_BOUNDED_READS: ReadonlySet<string> = new Set([
   ...JOURNAL_TYPED_READS, 'getWorktreeBinding', 'pingStore', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_TALLY_MEMBERS, ...DOCTOR_SEARCH_MEMBERS, ...DOCTOR_ACC_MEMBERS, ...DOCTOR_JOIN_MEMBERS,
@@ -167,13 +169,12 @@ export function deadlineBoundEngine<E extends object>(engine: E): E {
       }
       // A typed read that replaced an executeRaw statement keeps that statement's bound: the engine ends it at the deadline.
       const deadlineAt = scope.deadlineAt;
-      // A decide read runs on the raw engine, and the signal discards its connection when the deadline passes with the read
-      // unanswered (as executeRaw's did). Any other typed read runs with this wrapper as `this`, so a member built on
+      // A decide read runs on the raw engine. Any other typed read runs with this wrapper as `this`, so a member built on
       // `this.executeRaw` sends its statement through the bounded executeRaw above; the raw engine's executeRaw does not
-      // read the ambient read deadline.
-      return (BOUNDED_TYPED_READS.has(key)
-        ? withReadDeadline(deadlineAt, () => Reflect.apply(fn, target, args) as Promise<unknown>, AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())))
-        : withReadDeadline(deadlineAt, () => Reflect.apply(fn, wrapper, args) as Promise<unknown>))
+      // read the ambient read deadline. Both carry the deadline's signal: a native read (preparationRead, runDeadlineRead)
+      // has its reserved connection discarded when the deadline passes with the read unanswered (as executeRaw's was).
+      const self = BOUNDED_TYPED_READS.has(key) ? target : wrapper;
+      return withReadDeadline(deadlineAt, () => Reflect.apply(fn, self, args) as Promise<unknown>, AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())))
         .catch((error: unknown) => {
           if (error instanceof ReadDeadlineError) refuse(scope);
           if (cancelled(error) && Date.now() >= deadlineAt - 100) scope.expired = true;

@@ -28,6 +28,25 @@ const OTHER_WRITER = 'a0000000-0000-4000-8000-0000000000a2';
 const HASH = 'f'.repeat(64);
 
 describe('engine parity: import path guards', () => {
+  parityTest('markSourceSynced stamps only the selected source and answers false for an unknown one', { methods: ['markSourceSynced', 'getSource'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await createSource(engine, backend, 'shelf');
+    const before = (await engine.getSource('work'))?.last_sync_at ?? null;
+    const stamped = await engine.markSourceSynced('work');
+    const unknown = await engine.markSourceSynced('no-such-source');
+    const after = (await engine.getSource('work'))?.last_sync_at ?? null;
+    const untouched = (await engine.getSource('shelf'))?.last_sync_at ?? null;
+    const defaultRow = (await engine.getSource('default'))?.last_sync_at ?? null;
+    expect(before).toBeNull();
+    expect(stamped).toBe(true);
+    expect(unknown).toBe(false);
+    expect(after).toBeInstanceOf(Date);
+    expect(untouched).toBeNull();
+    expect(defaultRow).toBeNull();
+    expect(await engine.getSource('no-such-source')).toBeNull();
+    return { before, stamped, unknown, stampedIsDate: after instanceof Date, untouched, defaultRow };
+  });
+
   parityTest('getSource returns one source row with its import columns; an unknown id is null', { methods: ['getSource'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work', { keep: 1 });
     const work = await engine.getSource('work');

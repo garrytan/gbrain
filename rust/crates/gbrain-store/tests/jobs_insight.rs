@@ -1,5 +1,6 @@
 //! `readJobInsight` (the reads behind `describeJobs`) on the store: submitter, queue position, slot holders,
-//! live children, live leases with their beacon, and the tokens of other owners' completed children.
+//! live children, live leases with their beacon, whether the caller owns each (GST-4010), and the tokens of
+//! completed descendants the caller does not own.
 
 mod memory_env;
 
@@ -47,6 +48,11 @@ fn spec(extra: Value) -> InsightSpec {
         base[k] = v.clone();
     }
     serde_json::from_value(base).unwrap()
+}
+
+/// A fenced caller: the OAuth client that owns rows by their `__owner_client_id` stamp (these rows record no principal).
+fn client(id: &str) -> Value {
+    json!({ "principal": {"kind": "oauth_client", "id": id}, "clientId": id, "actor": ["", "", "", ""] })
 }
 
 fn ids(rows: &Value) -> Vec<i64> {
@@ -99,20 +105,72 @@ fn meta_position_holders_and_children() {
             (
                 m["id"].as_i64().unwrap(),
                 m["submitter"].clone(),
-                m["parent_owner"].clone(),
+                m["parent_owned"].clone(),
             )
         })
         .collect();
     assert_eq!(meta.len(), 10, "a missing id has no row");
-    assert!(meta.contains(&(first, json!("cli"), Value::Null)));
+    // Unfenced, the caller owns everything, a missing parent included.
+    assert!(meta.contains(&(first, json!("cli"), json!(true))));
     assert!(
-        meta.contains(&(remote, Value::Null, Value::Null)),
+        meta.contains(&(remote, Value::Null, json!(true))),
         "only an application authority shows its submitter"
     );
     assert!(
-        meta.contains(&(live, Value::Null, json!("a"))),
-        "the parent's owner"
+        out["meta"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["owned"] == true)
     );
+    assert!(
+        out["holders"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|h| h["owned"] == true)
+    );
+    assert!(
+        out["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["owned"] == true)
+    );
+
+    // Fenced as client `a`: it owns the jobs stamped `a` and the parent of `live`, not `live` or a job with no parent.
+    let fenced = b
+        .read_job_insight(&spec(json!({
+            "jobIds": all, "waitingIds": [late], "waitingQueues": ["default"], "parentIds": [parent],
+            "owner": client("a"),
+        })))
+        .unwrap();
+    let owned: Vec<_> = fenced["meta"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            (
+                m["id"].as_i64().unwrap(),
+                m["owned"].as_bool().unwrap(),
+                m["parent_owned"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert!(owned.contains(&(h1, true, false)), "stamped `a`, no parent");
+    assert!(
+        owned.contains(&(live, false, true)),
+        "the parent is the caller's"
+    );
+    assert!(owned.contains(&(first, false, false)));
+    let holders: Vec<_> = fenced["holders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| (h["id"].as_i64().unwrap(), h["owned"].as_bool().unwrap()))
+        .collect();
+    assert_eq!(holders, vec![(h1, true), (h2, false)]);
+    assert_eq!(fenced["children"][0]["owned"], false);
     // `first` and `remote` are ahead of `late` (priority 5), `late` is behind the three priority-0 waiting rows of its queue; `h1` is active, so it counts the whole queue.
     let ahead: Vec<_> = out["ahead"]
         .as_array()
@@ -179,20 +237,24 @@ fn foreign_tokens_skip_the_callers_own_children() {
     };
     assert!(b.add_job_tokens(midway, "w:midway", &delta).unwrap());
     let out = b
-        .read_job_insight(&spec(json!({ "jobIds": [parent], "owner": "client-a" })))
+        .read_job_insight(&spec(
+            json!({ "jobIds": [parent], "owner": client("client-a") }),
+        ))
         .unwrap();
     assert_eq!(
         out["foreign_tokens"],
         json!([{ "parent_job_id": parent, "i": 11, "o": 22, "c": 33 }])
     );
     let all = b
-        .read_job_insight(&spec(json!({ "jobIds": [parent], "owner": "nobody" })))
+        .read_job_insight(&spec(
+            json!({ "jobIds": [parent], "owner": client("nobody") }),
+        ))
         .unwrap();
     assert_eq!(all["foreign_tokens"][0]["i"], 111);
 }
 
 #[test]
-fn live_leases_carry_their_beacon_and_holder_owner() {
+fn live_leases_carry_their_beacon_and_whether_the_caller_owns_the_holder() {
     let b = brain("insight-locks");
     let holder = add(
         &b,
@@ -245,18 +307,95 @@ fn live_leases_carry_their_beacon_and_holder_owner() {
     assert_eq!(locks[0]["id"], "proc");
     assert_eq!(locks[0]["beacon"]["kind"], "process");
     assert_eq!(
-        locks[0]["holder_owner"],
-        Value::Null,
-        "only a job beacon names a holder"
+        locks[0]["holder_owned"], true,
+        "unfenced, the caller owns every holder"
     );
     assert_eq!(locks[1]["id"], "src1");
     assert_eq!(
         locks[1]["beacon"],
         json!({"kind": "job", "id": holder.to_string()})
     );
-    assert_eq!(locks[1]["holder_owner"], "client-a");
+    assert_eq!(locks[1]["holder_owned"], true);
     assert_eq!(locks[1]["holder_pid"], 1);
     assert_eq!(locks[2]["id"], "src2");
     assert_eq!(locks[2]["beacon"], Value::Null);
-    assert_eq!(locks[2]["holder_owner"], Value::Null);
+    assert_eq!(locks[2]["holder_owned"], true);
+
+    // Fenced as `client-a`: only the lease whose beacon names a job it owns reads as its own; a process beacon and a
+    // lease with no beacon name no holder.
+    let fenced = b
+        .read_job_insight(&spec(json!({
+            "jobIds": [holder], "lockIds": ["src1", "src2", "proc"], "owner": client("client-a"),
+        })))
+        .unwrap();
+    let owned: Vec<_> = fenced["locks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            (
+                l["id"].as_str().unwrap().to_string(),
+                l["holder_owned"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        owned,
+        vec![
+            ("proc".to_string(), false),
+            ("src1".to_string(), true),
+            ("src2".to_string(), false)
+        ]
+    );
+}
+
+#[test]
+fn foreign_tokens_walk_through_the_callers_completed_children() {
+    let b = brain("insight-walk");
+    let parent = add(&b, "parent", json!({}));
+    // A finished job takes no new children, so the whole tree is admitted first and then finished bottom-up.
+    let child = |name: &str, parent: i64, owner: &str| -> i64 {
+        add(
+            &b,
+            name,
+            json!({ "parent_job_id": parent, "data": {"__owner_client_id": owner} }),
+        )
+    };
+    let finish = |name: &str, id: i64, n: i32| {
+        claim(&b, &format!("w:{name}"), "default", name);
+        let delta = TokenDelta {
+            input: n.into(),
+            output: 0,
+            cache_read: 0,
+        };
+        assert!(b.add_job_tokens(id, &format!("w:{name}"), &delta).unwrap());
+        b.complete_job(id, &format!("w:{name}"), None)
+            .unwrap()
+            .unwrap();
+    };
+    let mine = child("mine", parent, "client-a");
+    let theirs_under_mine = child("theirs-under-mine", mine, "client-b");
+    let theirs = child("theirs", parent, "client-b");
+    let mine_under_theirs = child("mine-under-theirs", theirs, "client-b");
+    // Under the caller's completed child: another owner's completed grandchild is foreign.
+    finish("theirs-under-mine", theirs_under_mine, 10);
+    finish("mine", mine, 1);
+    // Under another owner's completed child: never reached. A finished child's tokens roll up into its parent, so its 1000
+    // already sit in `theirs` and the walk must not add them a second time.
+    finish("mine-under-theirs", mine_under_theirs, 1000);
+    finish("theirs", theirs, 100);
+    let out = b
+        .read_job_insight(&spec(
+            json!({ "jobIds": [parent], "owner": client("client-a") }),
+        ))
+        .unwrap();
+    let dbg = b.read_job_insight(&spec(json!({ "jobIds": [parent, mine, theirs_under_mine, theirs, mine_under_theirs], "owner": client("client-a") }))).unwrap();
+    eprintln!(
+        "DBG ids={:?} meta={}",
+        [parent, mine, theirs_under_mine, theirs, mine_under_theirs],
+        dbg["meta"]
+    );
+    // The walk reaches `parent` and `mine`; foreign children of those are `theirs` (100 and the 1000 rolled up from its
+    // child) and `theirs-under-mine` (10).
+    assert_eq!(out["foreign_tokens"][0]["i"], 1110);
 }

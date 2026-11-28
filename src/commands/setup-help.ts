@@ -47,7 +47,8 @@ Flags:
                        proves it. A one-person setup on a brain that already serves several
                        people (2+ enabled members) refuses rather than write a connection bound
                        to nobody, unless this harness's entry or config mcp.stdio_member binds it.
-  --members IDS        The people of --serves several, comma-separated (e.g. alice-example,bob-example).
+  --members IDS        The people the brain serves, comma-separated (e.g. alice-example,bob-example).
+                       Naming them turns on per-member access (--serves several is implied).
   --labelled-only      With --serves several: each member's key reads only pages labelled for
                        that member (readable_by or a rule), never the owner's. Opt-in.
   --open-history       With --serves several on a brain that serves one person and already holds

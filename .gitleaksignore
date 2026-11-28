@@ -115,3 +115,7 @@ a7bad7a1284c432d21ecd52bcabcc11ccb4e2b4b:rust/crates/gbrain-store/tests/cli_read
 # GST-3849 PR 2: a synthetic minted Google access token literal in test/google-socket.test.ts (commit d9c7d3d) read as
 # generic-api-key; the tree now builds it with a join. This history-only fingerprint is not a secret.
 d9c7d3d9371298b996d7de93f28ce9ab0875d827:test/google-socket.test.ts:generic-api-key:251
+# GST-4011 (#9389): a synthetic sign-in link token in the Gmail redaction tests (commit 28a48ea) read as generic-api-key;
+# the tree now builds it with a join. These history-only fingerprints are not secrets.
+28a48ea5ee365b662e5c17f719e0a4116b6434af:test/google-gmail-redact-ingest-9389.test.ts:generic-api-key:30
+28a48ea5ee365b662e5c17f719e0a4116b6434af:test/google-gmail-redact-9389.test.ts:generic-api-key:73

@@ -89,7 +89,7 @@ export interface TurnContextFact {
   entity_slug: string | null;
   /** #5888: every entity of a collapsed duplicate group (representative first). */
   entity_slugs?: string[];
-  valid_from?: string;
+  valid_from?: string | null;
   /** Recording time (v0.45.7) — delta's "new since" filter prefers this over valid_from. */
   created_at?: string;
   /** #4206: provenance context (e.g. extract_facts' source_slug). */
@@ -834,7 +834,7 @@ async function assembleDelta(
             notability: r.notability,
             entity_slug: r.entity_slug,
             ...(r.entity_slugs ? { entity_slugs: r.entity_slugs } : {}),
-            valid_from: r.valid_from.toISOString(),
+            valid_from: r.valid_from?.toISOString() ?? null,
             created_at: r.created_at.toISOString(),
             // #4206: provenance context rides delta like the other projections.
             context: r.context ?? null,

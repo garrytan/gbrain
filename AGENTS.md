@@ -85,6 +85,8 @@ and read a degraded notice before concluding the brain has nothing.
 
 Recall relevant saved context before answering. Resolve a person (an email sender, an attendee) only by an exact match (`gbrain whois <email or name>`), never a search's top hit ([identity rule](skills/conventions/brain-first.md#identity-exact-match)). Save explicit requests to remember with provenance; confirm corrections against the stored record. Automatic capture requires opt-in; the [conversation archive](docs/guides/conversation-archive.md) (one redacted page per conversation per day) is on by default on a personal brain and off with `gbrain transcripts archive off`. Withdrawal (`forget`) removes a fact from active memory; history, source material, and private backups may remain. Never promise physical erasure. Verify changes with actual GBrain calls and distinguish a local test from a new-conversation test in the harness.
 
+Usage telemetry is off until the person answers. Relay the question `gbrain init` or `gbrain setup` prints, run `gbrain telemetry anonymous|community|off` only with the answer they gave, and never choose one yourself, including on `--yes` or unattended installs ([telemetry](docs/guides/telemetry.md)).
+
 Durable preferences and facts belong in shared memory when the user wants them
 recalled later. Transient task state, credentials, local configuration, and harness
 activation state do not. Remote `put_page` saves references as text without inline

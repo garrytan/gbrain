@@ -236,7 +236,7 @@ impl Store {
             b.matched
                 .len()
                 .cmp(&a.matched.len())
-                .then(b.row.valid_from_us.cmp(&a.row.valid_from_us))
+                .then(b.row.at_us().cmp(&a.row.at_us()))
                 .then(b.row.id.cmp(&a.row.id))
         };
         found.sort_by(order);
@@ -349,7 +349,7 @@ fn newest_row_json(row: &FactRecord) -> Value {
         "fact": row.fact,
         "entity_slug": row.entity_slug,
         "kind": row.kind,
-        "valid_from": timestamptz_text(row.valid_from_us),
+        "valid_from": row.valid_from().map(timestamptz_text),
         "source": row.source,
         "source_id": row.source_id,
         "visibility": row.visibility,
@@ -367,9 +367,9 @@ fn row_json(c: &Candidate, need: usize, pool_rank: usize) -> Value {
         "fact": row.fact,
         "entity_slug": row.entity_slug,
         "kind": row.kind,
-        "valid_from": timestamptz_text(row.valid_from_us),
+        "valid_from": row.valid_from().map(timestamptz_text),
         "source": row.source,
-        "at": iso(row.valid_from_us),
+        "at": iso(row.at_us()),
         "dimension": row.dimension,
         "source_id": row.source_id,
         "visibility": row.visibility,

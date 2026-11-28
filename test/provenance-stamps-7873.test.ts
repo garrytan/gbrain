@@ -126,6 +126,22 @@ for (const kind of testBackends()) {
         }
       });
 
+      // Value: protects=#10330 a remote edit_page keeps the page's first-ingest columns (channel and microsecond timestamp) as stored; fails_when=the edit's own mcp:edit_page channel or its time reaches source_kind / ingested_via / ingested_at; why_new=the row above checks only the frontmatter stamps; seam=none; no_claim=segmented bodies (same option, other write path)
+      test('a remote edit_page keeps the first-ingest database columns as stored (#10330)', async () => {
+        const slug = 'inbox/edit-columns';
+        await seed(slug, STORED, 'unknown');
+        await engine.executeRaw(`UPDATE pages SET ingested_at = '2026-01-02T03:04:05.123456Z'::timestamptz WHERE source_id = $1 AND slug = $2`, ['default', slug]);
+        const columns = () => engine.executeRaw<{ source_kind: string | null; ingested_via: string | null; micros: string }>(
+          `SELECT source_kind, ingested_via, to_char(ingested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS micros
+             FROM pages WHERE source_id = 'default' AND slug = $1`, [slug]);
+        const before = await columns();
+        expect(before).toEqual([{ source_kind: 'webhook', ingested_via: 'webhook', micros: '2026-01-02T03:04:05.123456' }]);
+        const result = await edit(slug, [['Captured body', 'Captured body, edited']]);
+        expect(result.noop).toBe(false);
+        expect((await page(slug)).page.compiled_truth).toContain('edited');
+        expect(await columns()).toEqual(before);
+      });
+
       test('a remote edit_page that only forges stamps is a no-op', async () => {
         const slug = 'inbox/edit-noop';
         const before = await seed(slug, STORED, 'external_untrusted');
@@ -176,6 +192,44 @@ for (const kind of testBackends()) {
         expect(after.page.compiled_truth).toContain('replaced');
         expect(stampsOf(after.page.frontmatter)).toEqual(STORED);
         if (repo) expect(stampsOf(fileFrontmatter(slug))).toEqual(STORED);
+      });
+
+      // Value: protects=GST-4056 a remote put_page over a live page whose first-ingest columns are empty leaves them empty; fails_when=the replacement request's mcp:put_page channel or its time fills source_kind / ingested_via / ingested_at; why_new=the row above seeds every column; seam=none; no_claim=edit_page (covered by #10330 above)
+      test('a remote put_page does not fill the empty first-ingest columns of an existing page (GST-4056)', async () => {
+        const slug = 'inbox/put-empty-columns';
+        const before = await seed(slug, STORED, 'external_untrusted');
+        await engine.executeRaw('UPDATE pages SET source_kind = NULL, ingested_via = NULL, ingested_at = NULL WHERE source_id = $1 AND slug = $2', ['default', slug]);
+        const current = await read(slug);
+        const replaced = serializePageToMarkdown({ ...before.page, compiled_truth: 'Captured body, replaced' }, before.tags);
+        await call('put_page', { slug, content: replaced, expected_revision: current.revision });
+        expect((await page(slug)).page.compiled_truth).toContain('replaced');
+        expect(await engine.executeRaw('SELECT source_kind, ingested_via, ingested_at FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]))
+          .toEqual([{ source_kind: null, ingested_via: null, ingested_at: null }]);
+      });
+
+      // Value: protects=GST-4056 a remote put_page that revives a soft-deleted page keeps its empty first-ingest columns empty; fails_when=the tombstone is treated as a new page and the request's channel or time fills source_kind / ingested_via / ingested_at; why_new=the row above covers a live page; seam=none; no_claim=a purged page (a new id)
+      test('a remote put_page that revives a soft-deleted page does not fill its empty first-ingest columns (GST-4056)', async () => {
+        const slug = 'inbox/put-revive-empty-columns';
+        const before = await seed(slug, STORED, 'external_untrusted');
+        await engine.executeRaw('UPDATE pages SET source_kind = NULL, ingested_via = NULL, ingested_at = NULL, deleted_at = now() WHERE source_id = $1 AND slug = $2', ['default', slug]);
+        const replaced = serializePageToMarkdown({ ...before.page, compiled_truth: 'Captured body, revived' }, before.tags);
+        const tombstone = (await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true }))!;
+        await call('put_page', { slug, content: replaced, expected_revision: tombstone.revision });
+        const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT id, deleted_at, compiled_truth, source_kind, ingested_via, ingested_at FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]);
+        expect(row).toMatchObject({ id: before.page.id, deleted_at: null, source_kind: null, ingested_via: null, ingested_at: null });
+        expect(String(row!.compiled_truth)).toContain('revived');
+      });
+
+      // Value: protects=GST-4037 D a remote capture over an existing page keeps its first-ingest columns; fails_when=mcp:capture or the capture's time reaches source_kind / ingested_via / ingested_at; why_new=the put_page row above; seam=none; no_claim=a capture that creates the page
+      test('a remote capture over an existing page keeps its first-ingest columns', async () => {
+        const slug = 'inbox/capture-existing';
+        const before = await seed(slug, STORED, 'external_untrusted');
+        const columns = () => engine.executeRaw('SELECT source_kind, ingested_via, ingested_at::text AS ingested_at FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]);
+        const stored = await columns();
+        const current = await read(slug);
+        await call('capture', { slug, expected_revision: current.revision, content: serializePageToMarkdown({ ...before.page, compiled_truth: 'Captured body, recaptured' }, before.tags) });
+        expect((await page(slug)).page.compiled_truth).toContain('recaptured');
+        expect(await columns()).toEqual(stored);
       });
 
       // Value: protects=remote append_page on an unclassified captured page keeps stored stamps and the lowering marker; fails_when=append re-derives the page higher or drops stamps; why_new=prior rows cover edit_page/put_page/capture only; seam=none; no_claim=segmented splice path (inline page only)

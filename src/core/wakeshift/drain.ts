@@ -27,9 +27,14 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { memberIdentityFor } from '../access/caller.ts';
+import { grantFromTokenRow, type TokenGrantRow } from '../grants/model.ts';
+import { tokenReadSources } from '../grants/read-shared.ts';
+import { NO_SOURCES } from '../source-id.ts';
+import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
+import { hasScope, parseScopeString } from '../scope.ts';
 import { WakeshiftError, type WakeshiftApi } from './client.ts';
 import { wakeshiftRuntime, type WakeshiftRuntime } from './config.ts';
-import { CRON_FINISHED, WRITE_SETTLED, cronMarker, cronWake, jobMarker, jobWake, wakeEmitId, writeMarker, writeWake, type JobSnapshot, type WriteSnapshot } from './events.ts';
+import { CRON_FINISHED, JOB_FINISHED, WRITE_SETTLED, cronMarker, cronWake, jobMarker, jobWake, wakeEmitId, writeMarker, writeWake, type JobSnapshot, type WriteSnapshot } from './events.ts';
 import { operatorTerms, termsAccepted, type OperatorTerms } from './terms.ts';
 import { ingestCronSpool } from './spool.ts';
 import { managedFilesystemDatastorePath } from '../persistence/filesystem-guard.ts';
@@ -85,6 +90,37 @@ export async function principalLive(engine: BrainEngine, row: Pick<WakeRow, 'pri
   return identity.includes(`member:${row.member_id}`);
 }
 
+/**
+ * GST-4023: agentOwnerFence's whole-queue rule, read live at delivery: the watch is bound to the brain owner now
+ * (config access.owner_member) and its credential still holds admin scope and a live source grant (GST-4045): an OAuth
+ * client without the explicit no-source grant whose granted sources are not all archived, or a legacy token whose
+ * grant still resolves to a source the way a request resolves it (tokenReadSources), so a token narrowed to no source
+ * or whose write source was archived reads nothing.
+ */
+async function ownerReadsWholeQueue(engine: BrainEngine, row: Pick<WakeRow, 'principal_kind' | 'principal_id' | 'member_id'>): Promise<boolean> {
+  if (!row.member_id) return false;
+  if (await engine.readStoredConfigValue(OWNER_MEMBER_KEY) !== row.member_id) return false;
+  if (row.principal_kind === 'oauth_client') {
+    const client = await engine.readOauthClient(row.principal_id);
+    if (!client || client.deleted_at != null) return false;
+    const stored = client as unknown as Record<string, unknown>;
+    if (stored.source_grant === 'none') return false;
+    // The client's sources through the engine's active-source list: the write source is live, and a named read set reaches a live source.
+    const active = new Set((await engine.listAllSources({ includeArchived: false })).map(source => String(source.id)));
+    const sourceId = typeof stored.source_id === 'string' ? stored.source_id : null;
+    if (sourceId !== null && !active.has(sourceId)) return false;
+    const named = Array.isArray(stored.federated_read) ? stored.federated_read.map(String) : sourceId === null ? [] : [sourceId];
+    if (named.length > 0 && !named.some(id => active.has(id))) return false;
+    return hasScope(parseScopeString(client.scope), 'admin');
+  }
+  const token = await engine.readAccessTokenMemberGrant(row.principal_id, { lock: false });
+  if (!token) return false;
+  const grant = grantFromTokenRow(token as unknown as TokenGrantRow);
+  if (!hasScope(grant.scopes, 'admin')) return false;
+  const sources = await tokenReadSources(engine, grant, async () => row.member_id);
+  return sources.sourceId !== NO_SOURCES;
+}
+
 /** End a watch at Wakeshift once (best effort: the conversation is told; a failure leaves Wakeshift's own ttl to end it). */
 export async function endAtWakeshift(api: WakeshiftApi, row: Pick<WakeRow, 'wake_user' | 'ws_subscription_id'>): Promise<boolean> {
   try { return (await api.end({ user: row.wake_user, id: row.ws_subscription_id })).ended === true; } catch { return false; }
@@ -137,6 +173,11 @@ async function deliver(engine: BrainEngine, api: WakeshiftApi, row: WakeRow, rep
     if (terms.shared && !(await termsAccepted(engine, row, terms.current))) {
       await endAtWakeshift(api, row);
       if (await settle(engine, row.id, lease, 'ended', { error: 'terms_not_accepted' })) report.ended++;
+      return;
+    }
+    if (row.event === JOB_FINISHED && row.job_id != null && row.job_visible !== true && !(await ownerReadsWholeQueue(engine, row))) {
+      await endAtWakeshift(api, row);
+      if (await settle(engine, row.id, lease, 'ended', { error: 'job_not_visible' })) report.ended++;
       return;
     }
     const { marker, args, payload, text } = wakeFor(row);

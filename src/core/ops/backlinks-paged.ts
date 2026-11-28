@@ -21,6 +21,7 @@ import { mentionCoverageNotice, readMentionCoverage, type MentionCoverage } from
 import { readEntityReferencesConfig, readRowPageStatus } from '../entity-references-config.ts';
 import { visiblePageTypes } from './stats-by.ts';
 import { readPolicyOf } from '../search/read-policy-sql.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 
 export interface BacklinkPage {
   rows: ReferenceRow[];
@@ -46,9 +47,18 @@ async function scopeSources(ctx: OperationContext, policy: PageReadPolicy): Prom
   return ctx.engine.listSourceIds();
 }
 
-/** The entity page's source: the first source in scope holding a live page with this slug. */
-async function targetSource(ctx: OperationContext, slug: string, sources: string[]): Promise<string | null> {
-  const found = new Set(await ctx.engine.listReferrerTargetSources(slug, sources));
+/**
+ * The entity page's source: the first source in scope holding a live page with this slug that the caller may read.
+ * A page the caller cannot read resolves like a missing one, so every later step (the type check, its refusal) answers
+ * the same for both. Where the read policy excludes private pages the target is read with the caller's private-page filter
+ * (`privatePagesFilterForCaller`, text built for the caller in context, which only a SQL engine can run: the Rust store refuses
+ * it with `engine_capability_missing`, the same for every target); a trusted read keeps the typed member.
+ */
+async function targetSource(ctx: OperationContext, slug: string, sources: string[], excludePrivate: boolean): Promise<string | null> {
+  const found = excludePrivate
+    ? new Set((await ctx.engine.executeRaw<{ source_id: string }>(
+      `SELECT p.source_id FROM pages p WHERE p.slug = $1 AND p.source_id = ANY($2::text[]) AND p.deleted_at IS NULL AND ${privatePagesFilterForCaller('p')}`, [slug, sources])).map(r => r.source_id))
+    : new Set(await ctx.engine.listReferrerTargetSources(slug, sources));
   return sources.find(s => found.has(s)) ?? null;
 }
 
@@ -56,10 +66,10 @@ async function referrerScope(ctx: OperationContext, slug: string, policy: PageRe
   // Only the page read policy reaches the reads, never the wider options object.
   const read = readPolicyOf(policy) ?? {};
   const sources = await scopeSources(ctx, read);
-  const sourceId = await targetSource(ctx, slug, sources);
+  const excludePrivate = read.excludePrivate === true;
+  const sourceId = await targetSource(ctx, slug, sources, excludePrivate);
   if (!sourceId) return null;
   const pack = await loadSourcePack(ctx.engine, sourceId);
-  const excludePrivate = read.excludePrivate === true;
   return { sources, scope: { slug, sourceId, referrerSources: sources, excludePrivate, pack, keepVisibility: excludePrivate ? ['world'] : ['private', 'world'] } };
 }
 
@@ -91,7 +101,7 @@ async function assertKnownType(ctx: OperationContext, scope: ReferrerScope, type
 
 /**
  * `group: "page"`: one page of referring pages. A slug with no live page in
- * scope answers like an empty read (no rows, total 0).
+ * scope, or only pages the caller cannot read, answers like an empty read (no rows, total 0).
  */
 export async function readBacklinkPage(ctx: OperationContext, p: Record<string, unknown>, policy: PageReadPolicy): Promise<BacklinkPage> {
   if (p.group !== 'page') {

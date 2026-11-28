@@ -168,7 +168,10 @@ for their own subtree. This costs nothing when the working directory has no
   `GBRAIN_HOME`, `GBRAIN_MOUNTS_PATH`; the brain connection string
   `GBRAIN_DATABASE_URL` (a cwd `.env` would retarget every hook, query and
   write at a database it names — the `DATABASE_URL` value guard covers only
-  the bare name) and the OAuth relay `GBRAIN_OAUTH_RELAY_URL`; posture-widening
+  the bare name), the OAuth relay `GBRAIN_OAUTH_RELAY_URL`, and the opt-in
+  telemetry endpoint `GBRAIN_TELEMETRY_URL` with its key `GBRAIN_TELEMETRY_KEY`
+  (a planted endpoint would receive the install id, forge the public pulse and
+  fake a `forget` confirmation); posture-widening
   `GBRAIN_ALLOW_SHELL_JOBS`, `GBRAIN_ALLOW_PRIVATE_REMOTES`,
   `GBRAIN_ALLOW_UNVERIFIED_REMOTE`, `GBRAIN_GIT_ALLOW_FILE_TRANSPORT`,
   `GBRAIN_ALLOW_MASS_RECONCILE`, `GBRAIN_ALLOW_DEFAULT_WRITE`,

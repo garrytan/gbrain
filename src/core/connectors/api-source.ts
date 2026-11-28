@@ -32,6 +32,7 @@ import { slugifyPath } from '../sync.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { connectorFactsSession, retireFactsFromPage } from '../facts/retire.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { CONNECTOR_AUTHOR_PREFIX } from '../persistence/content-author-schema.ts';
 
 export const DAY_MS = 86_400_000;
 
@@ -156,6 +157,7 @@ export async function publishConnectorPage(ctx: ConnectorPublishCtx, page: Conne
     }
     const { importFromContent } = await import('../import-file.ts');
     const result = await importFromContent(engine, slug, markdown, { noEmbed: true, sourceId, sourcePath: relPath, preserveGateMarkers: true, holdNoncanonicalPrivate: true,
+      content_author: `${CONNECTOR_AUTHOR_PREFIX}${ctx.tag}`,
       ...(ctx.gated ? { writeGate: { tier: 'external_untrusted' as const, origin: { channel: `connector:${ctx.tag}`, connector: ctx.tag, source_uri: relPath }, requestId: null } } : {}) });
     if (result.status === 'error' || result.error) throw new Error(result.error ?? `Import failed for ${relPath}`);
     status = result.status === 'imported' ? 'imported' : 'skipped';

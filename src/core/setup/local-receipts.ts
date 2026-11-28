@@ -10,8 +10,9 @@
  *     contacting a provider it was not asked to use (model discovery, doctor),
  *     even when provider keys sit in the environment. Opt-outs win: one live
  *     receipt that declines is enough.
- *   - the SessionStart hook: a Claude Code receipt means the harness starts a
- *     stdio serve for every new session, so the hook may wait briefly for it.
+ *   - the SessionStart hook: a Claude Code or Codex receipt means the harness
+ *     starts a stdio serve for every new session, so the hook may wait
+ *     briefly for it.
  *
  * File reads only (engine-free, no harness code imported) so the hook and the
  * gateway can call it. A receipt that is unreadable, hosted (no
@@ -90,4 +91,13 @@ export function providerDeclineRecord(home?: string): LocalSetupRecord | null {
 export function claudeCodeSpawnsServe(cwd: string, home?: string): boolean {
   return localSetupRecords(home).some((r) => r.harness === 'claude-code' && r.status === 'installed'
     && (r.scope !== 'project' || r.projectDir === cwd));
+}
+
+/**
+ * True when an installed `gbrain setup codex` registration makes Codex spawn a
+ * stdio serve for every session: its `[mcp_servers]` table lives in the
+ * user-wide `$CODEX_HOME/config.toml`, so no directory narrows it.
+ */
+export function codexSpawnsServe(home?: string): boolean {
+  return localSetupRecords(home).some((r) => r.harness === 'codex' && r.status === 'installed');
 }

@@ -155,15 +155,16 @@ describe('rankOpenAIChatModels — newest PRICED family, tier ladder', () => {
     expect(tiers?.deep).toBe('openai:gpt-5.6');
   });
 
-  test('gpt-6.1-sol is priced for metering only: it never becomes a discovered tier default', () => {
-    const { tiers } = rankOpenAIChatModels(['gpt-6.1-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
-    expect(tiers).toMatchObject({ utility: 'openai:gpt-5.6-luna', reasoning: 'openai:gpt-5.6-terra', deep: 'openai:gpt-5.6-sol' });
+  test('#9609: the gpt-6 family names each tier on its own release, so each tier takes the newest of its generation', () => {
+    const { tiers, newestUnpriced } = rankOpenAIChatModels(['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
+    expect(tiers).toEqual({ utility: 'openai:gpt-6-luna', reasoning: 'openai:gpt-6.2-sol', deep: 'openai:gpt-6.2-sol', subagent: 'openai:gpt-6.2-sol' });
+    expect(newestUnpriced).toBeUndefined();
+    // A family with a bare alias still keeps every tier inside itself.
+    expect(rankOpenAIChatModels(['gpt-5.6', 'gpt-5.6-sol', 'gpt-5-mini'], () => true).tiers?.utility).toBe('openai:gpt-5.6');
   });
 
-  test('a metered-only id has a price, so discovery never reports it as unpriced', () => {
-    const { tiers, newestUnpriced } = rankOpenAIChatModels(['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
-    expect(tiers?.deep).toBe('openai:gpt-5.6-sol');
-    expect(newestUnpriced).toBeUndefined();
+  test('the static floor is the gpt-6 family the recipe lists', () => {
+    expect(openaiStaticTierFallback()).toEqual({ utility: 'openai:gpt-6-luna', reasoning: 'openai:gpt-6.2-sol', deep: 'openai:gpt-6.2-sol', subagent: 'openai:gpt-6.2-sol' });
   });
 });
 
@@ -179,7 +180,7 @@ describe('refresh + cache + resolution overlay', () => {
     expect(resolveTierDefault('deep', { OPENAI_API_KEY: 'sk-test' })).toBe('openai:gpt-5.6-sol');
     // Anthropic-first is untouched by the overlay.
     expect(resolveTierDefault('reasoning', { ANTHROPIC_API_KEY: 'sk-ant', OPENAI_API_KEY: 'sk-test' }))
-      .toBe('anthropic:claude-sonnet-4-6');
+      .toBe('anthropic:claude-sonnet-5-5');
   });
 
   test('no cache → static recipe-ranked fallback', () => {

@@ -1309,3 +1309,6 @@ src/core/policy/store.ts	load_config	1	W6: settings plane out of the core (GST-3
 src/core/rules/admission.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-3827 C2: the rule-writer scope of the correct verb and gbrain rules)
 src/core/rules/correct.ts	load_config	1	W6: settings plane out of the core (GST-3827 C2: the trusted local write context of gbrain rules approve and retire, as in policy/store.ts)
 src/core/setup/brain-first-upgrade-notice.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3824 L1: rewrites installed brain-first blocks when the policy line setting changes)
+src/core/telemetry/client.ts	fs_import	1	opt-in telemetry is per machine, not per brain: its consent, queue and counts live under GBRAIN_HOME/telemetry and work with no brain or engine open (docs/guides/telemetry.md); stays
+src/core/telemetry/client.ts	process_env	4	opt-in telemetry reads the person's machine settings, GBRAIN_TELEMETRY (force off) and GBRAIN_TELEMETRY_SOURCE, plus the runtime's NODE_ENV and CI to label test and CI traffic; no brain or engine is open; stays
+src/core/telemetry/endpoint.ts	process_env	2	opt-in telemetry's address override, GBRAIN_TELEMETRY_URL and GBRAIN_TELEMETRY_KEY, used by tests and the deploy check; no brain or engine is open; stays

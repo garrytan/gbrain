@@ -224,15 +224,15 @@ describe('DRIFT GUARD — derived views stay equal to canonical (re-hardcode tri
     }
   });
 
-  test('openai recipe expansion cost equals canonical gpt-5.6-luna input price', async () => {
+  test('openai recipe expansion cost equals canonical gpt-6-luna input price', async () => {
     // The recipe's expansion touchpoint hardcodes a per-1M cost with a
-    // "gpt-5.6-luna baseline" comment; the canonical table is the single
+    // "gpt-6-luna baseline" comment; the canonical table is the single
     // home for that number. Keyed pin (luna is the declared baseline) so a
     // price refresh that touches only one of the two homes fails here.
     const { openai } = await import('../src/core/ai/recipes/openai.ts');
-    const canonical = CANONICAL_PRICING['openai:gpt-5.6-luna'];
+    const canonical = CANONICAL_PRICING['openai:gpt-6-luna'];
     expect(canonical).toBeDefined();
-    expect(openai.touchpoints?.expansion?.models?.[0]).toBe('gpt-5.6-luna');
+    expect(openai.touchpoints?.expansion?.models?.[0]).toBe('gpt-6-luna');
     expect(openai.touchpoints?.expansion?.cost_per_1m_tokens_usd).toBe(canonical.input);
   });
 

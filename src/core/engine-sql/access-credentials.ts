@@ -469,6 +469,9 @@ export const OAUTH_TOKEN_SQL = {
           VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7), $8)`,
   insert_plain: `INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at)
           VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7))`,
+  // v338: a token of a refresh family (OAuthGrants.issue, #9364) carries the family id the replay of a rotated token revokes by.
+  insert_family: `INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at, grant_type, family_id)
+          VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7), $8, $9)`,
 } as const;
 
 const OAUTH_TOKEN_COUNT_SQL = {
@@ -498,6 +501,8 @@ export interface OauthTokenInsert {
   /** Epoch seconds (the issue time, `to_timestamp`). */
   created_at: number;
   grant_type?: 'authorization_code' | 'refresh_token' | 'client_credentials';
+  /** The sign-in family (v338 `oauth_tokens.family_id`); set only with `grant_type`, and only on a brain with raw SQL (the Rust store keeps no families). */
+  family_id?: string;
 }
 
 /**
@@ -519,6 +524,8 @@ export interface OauthTokenRow {
   resource: string | null;
   created_at: Date;
   grant_type?: string | null;
+  /** v338: the sign-in family; absent on a schema without it. */
+  family_id?: string | null;
 }
 
 /** The row with each engine's `timestamptz` and `bigint` spelling brought to one: a `Date` and a number. */
@@ -543,7 +550,8 @@ export async function deleteOauthRefreshToken(tx: Raw, tokenHash: string, client
 /** Insert one OAuth token. A repeated hash is 23505 (`oauth_tokens_pkey`), a client with no row 23503 (`oauth_tokens_client_id_fkey`). */
 export async function insertOauthToken(tx: Raw, row: OauthTokenInsert): Promise<void> {
   const common = [row.token_hash, row.token_type, row.client_id, oauthPgArray(row.scopes), row.expires_at, row.resource, row.created_at];
-  if (row.grant_type === undefined) await tx.executeRaw(OAUTH_TOKEN_SQL.insert_plain, common);
+  if (row.family_id !== undefined) await tx.executeRaw(OAUTH_TOKEN_SQL.insert_family, [...common, row.grant_type ?? null, row.family_id]);
+  else if (row.grant_type === undefined) await tx.executeRaw(OAUTH_TOKEN_SQL.insert_plain, common);
   else await tx.executeRaw(OAUTH_TOKEN_SQL.insert_grant, [...common, row.grant_type]);
 }
 

@@ -50,6 +50,8 @@ export interface FactPoolFilters {
   sessionId?: string;
   /** Event time, COALESCE(valid_from, created_at). */
   since?: Date;
+  /** With `since`: also facts with no event date saved in the window (recall's `include_undated`). */
+  includeUndated?: boolean;
   grep?: string;
   /** Also pool expired, superseded and lapsed facts (recall's `include_expired`). */
   includeExpired?: boolean;
@@ -89,7 +91,9 @@ export function poolWhere(scope: FactPoolScope, filters: FactPoolFilters | undef
     clauses.push(sqlFragment`(f.source_id, f.entity_slug) IN (SELECT * FROM unnest(${filters.entities.map(e => e.sourceId)}::text[], ${filters.entities.map(e => e.slug)}::text[]))`);
   }
   if (filters?.sessionId) clauses.push(sqlFragment`f.source_session = ${filters.sessionId}`);
-  if (filters?.since) clauses.push(sqlFragment`COALESCE(f.valid_from, f.created_at) >= ${filters.since.toISOString()}::text::timestamptz`);
+  if (filters?.since) clauses.push(filters.includeUndated
+    ? sqlFragment`COALESCE(f.valid_from, f.created_at) >= ${filters.since.toISOString()}::text::timestamptz`
+    : sqlFragment`f.valid_from IS NOT NULL AND COALESCE(f.valid_from, f.created_at) >= ${filters.since.toISOString()}::text::timestamptz`);
   if (filters?.grep?.trim()) clauses.push(sqlFragment`f.fact ILIKE ${`%${escapeLikePattern(filters.grep.trim())}%`} ESCAPE '\\'`);
   return joinFragments(clauses, ' AND ');
 }
@@ -137,7 +141,7 @@ export interface FactRelevanceQuery {
 
 export interface FactRelevanceRow {
   id: number; fact: string; kind: string; entity_slug: string | null; source_id: string; source: string;
-  valid_from: Date | string; valid_until: Date | string | null; created_at: Date | string | null;
+  valid_from: Date | string | null; valid_until: Date | string | null; created_at: Date | string | null;
   claim_metric: string | null; claim_period: string | null; source_markdown_slug: string | null; visibility: string;
   attributed_to: unknown; dimension: string | null; value_hash: string | null;
   similarity: number | null;
@@ -174,16 +178,18 @@ export async function listFactsForRelevance(raw: EngineRawRead, transaction: Eng
   if (q.arm === 'keyword') {
     const doc = trustedSql(factsFtsDocument('f'));
     const tsq = sqlFragment`NULLIF(replace(plainto_tsquery('${trustedSql(getFtsLanguage())}'::regconfig, ${q.terms ?? ''})::text, ' & ', ' | '), '')::tsquery`;
+    // A fact holding every searched word is pooled ahead of any partial match, however many partial matches rank higher.
     return customPlan<FactRelevanceRow>(transaction, sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, q.filters)} AND ${doc} @@ ${tsq}
-       ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT ${q.limit}`);
+       ORDER BY (${doc} @@ plainto_tsquery('${trustedSql(getFtsLanguage())}'::regconfig, ${q.terms ?? ''})) DESC, ts_rank_cd(${doc}, ${tsq}) DESC, COALESCE(f.valid_from, f.created_at) DESC, f.id DESC LIMIT ${q.limit}`);
   }
   const named = q.entity!;
-  // GST-3170: a future-dated fact ranks as of when it was written; each active branch keeps an index-ordered scan.
-  const ranked = trustedSql('(CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC');
+  // GST-3170: a future-dated fact ranks as of when it was written, and #10288 an undated one as of when it was saved;
+  // each active branch keeps an index-ordered scan.
+  const ranked = trustedSql('(CASE WHEN f.valid_from IS NULL OR f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC');
   const branch = (order: ReturnType<typeof trustedSql>, from: ReturnType<typeof trustedSql>) => sqlFragment`(SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, q.filters)}
        AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug} AND ${from} ORDER BY ${order} DESC, f.id DESC LIMIT ${q.limit})`;
   const { text, params } = renderFragment(q.arm === 'entity'
-    ? sqlFragment`SELECT * FROM (${branch(trustedSql('f.valid_from'), trustedSql('f.valid_from <= now()'))} UNION ALL ${branch(trustedSql('f.created_at'), trustedSql('f.valid_from > now()'))}) f
+    ? sqlFragment`SELECT * FROM (${branch(trustedSql('f.valid_from'), trustedSql('f.valid_from <= now()'))} UNION ALL ${branch(trustedSql('f.created_at'), trustedSql('(f.valid_from > now() OR f.valid_from IS NULL)'))}) f
        ORDER BY ${ranked} LIMIT ${q.limit}`
     : sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, { ...q.filters, includeExpired: true })} AND ${endedFactSql()} AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug}
        ORDER BY ${ranked} LIMIT ${q.limit}`);
@@ -265,7 +271,7 @@ export async function matchSavedFacts(raw: EngineRawRead, q: SavedFactsMatchQuer
          FROM w
        )
        SELECT * FROM (SELECT m.*, row_number() OVER (PARTITION BY m.cue AND cardinality(m.matched) < m.need ORDER BY cardinality(m.matched) DESC, m.at DESC, m.id DESC) AS pool_rank FROM (
-         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at, f.dimension, ${trustedSql(savedFactCollapseColumns())},
+         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, COALESCE(f.valid_from, f.created_at) AS at, f.dimension, ${trustedSql(savedFactCollapseColumns())},
            ARRAY(SELECT w.i FROM w, (SELECT ${doc} AS d OFFSET 0) x WHERE CASE WHEN w.pat IS NOT NULL THEN lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE w.pat
              ELSE x.d @@ w.tq END ORDER BY w.i) AS matched,
            LEAST(4, GREATEST(LEAST(2, k.n), ceil(k.n * 0.75)::int)) AS need,
@@ -311,7 +317,7 @@ export async function readEntityNewestFacts(raw: EngineRawRead, q: EntityNewestF
         AND f.source != ALL(${factsAuditSources()}::text[])
         ${trustedSql(visibility)}
         AND ${trustedSql(projectionEligibleSql('facts', 'f', { floor: q.minTrust }))}
-      ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC
+      ORDER BY (CASE WHEN f.valid_from IS NULL OR f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC
       LIMIT ${trustedSql(COLLAPSE_WINDOW_SQL)}`);
   return raw<EntityNewestFactRow>(text, params);
 }
@@ -446,7 +452,7 @@ export async function readFactEntitySlugById(raw: EngineRawRead, id: number): Pr
 }
 
 export interface SupersessionReplacementRow {
-  row_num: number | null; same_page: boolean; valid_from: Date | string; old_from: Date | string; old_until: Date | string | null;
+  row_num: number | null; same_page: boolean; valid_from: Date | string | null; old_from: Date | string | null; old_until: Date | string | null;
 }
 
 /** The replacement fact's fence row, whether both facts sit on one page, and both validity starts and the old end; null when either id is gone. */
@@ -506,7 +512,7 @@ export async function computeFactFingerprints(raw: EngineRawRead, texts: string[
 }
 
 const ACTIVE_CLAIMS_HEAD = `WITH f AS (
-  SELECT id, entity_slug, visibility, claim_metric, claim_value, claim_unit, claim_period, valid_from, source_markdown_slug, `;
+  SELECT id, entity_slug, visibility, claim_metric, claim_value, claim_unit, claim_period, COALESCE(valid_from, created_at) AS at, source_markdown_slug, `;
 const ACTIVE_CLAIMS_TAIL = ` AS bucket
     FROM facts
    WHERE source_id = $1 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())
@@ -519,7 +525,7 @@ FROM f n JOIN f o
    AND o.bucket = n.bucket AND o.claim_value <> n.claim_value
    AND (NOT (`;
 const PAIR_JOIN_TAIL = `) OR o.source_markdown_slug = n.source_markdown_slug)
-   AND (o.valid_from < n.valid_from OR (o.valid_from = n.valid_from AND o.id < n.id))
+   AND (o.at < n.at OR (o.at = n.at AND o.id < n.id))
  WHERE NOT EXISTS (SELECT 1 FROM decide_proposals p WHERE p.source_id = $1
          AND LEAST(p.new_fact_id, p.old_fact_id) = LEAST(n.id, o.id) AND GREATEST(p.new_fact_id, p.old_fact_id) = GREATEST(n.id, o.id))
    AND NOT EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.action = 'supersede_fact'

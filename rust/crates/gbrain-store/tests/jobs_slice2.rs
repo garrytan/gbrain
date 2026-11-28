@@ -1271,6 +1271,7 @@ fn actor_matching_follows_job_actor_sql() {
                 status: None,
                 queue: None,
                 name: None,
+                owner: None,
                 owner_client_id: Some("c".into()),
                 owner_actor: Some(actor.map(String::from)),
                 limit: 50,

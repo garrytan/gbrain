@@ -87,15 +87,15 @@ describe('resolveNightlyProbeModelRoutes', () => {
   test('a built-in alias in a slot key expands like other models.* keys', async () => {
     await withEnv(KEYLESS, async () => {
       const routes = await resolveNightlyProbeModelRoutes(stubBrain({ 'models.eval.cross_modal.slot_c': 'sonnet' }));
-      expect(routes.slots).toEqual({ C: 'anthropic:claude-sonnet-4-6' });
+      expect(routes.slots).toEqual({ C: 'anthropic:claude-sonnet-5-5' });
     });
   });
 
   test('empty brain on an Anthropic-keyed install: the key-aware defaults, today\'s models', async () => {
     await withEnv({ ...KEYLESS, ANTHROPIC_API_KEY: 'sk-ant-fake' }, async () => {
       const routes = await resolveNightlyProbeModelRoutes(stubBrain({}));
-      expect(routes.reader).toEqual({ model: 'anthropic:claude-sonnet-4-6', source: 'tier_default' });
-      expect(routes.extractor).toEqual({ model: 'anthropic:claude-haiku-4-5-20251001', source: 'tier_default' });
+      expect(routes.reader).toEqual({ model: 'anthropic:claude-sonnet-5-5', source: 'tier_default' });
+      expect(routes.extractor).toEqual({ model: 'anthropic:claude-haiku-5-5', source: 'tier_default' });
       expect(routes.slots).toEqual({});
     });
   });

@@ -13,11 +13,12 @@
  * by the 2026-09 lane-move pilot (PGLite-only, no DATABASE_URL); see
  * docs/test-audit/2026-09-29/implementation/lane-pilot.md.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { parseIngestArgs, runTranscripts } from '../src/commands/transcripts.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
 import { runIngestFacts } from '../src/core/transcripts/ingest-facts.ts';
@@ -30,6 +31,7 @@ import type { HarnessRoot } from '../src/core/transcripts/detect.ts';
 import { buildTranscriptSlug } from '../src/core/transcripts/types.ts';
 import { buildHermesFixture } from './fixtures/transcripts/hermes-fixture-builder.ts';
 import { PROVIDER_KEY_SHAPES } from './helpers/provider-keys.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const CODEX_SLUG = buildTranscriptSlug('codex', '2026-08-02T09:00:00.000Z', {
   sessionId: 'rollout-1', // payload.id — the per-thread id (#4981)
@@ -97,6 +99,83 @@ const PLANTED_KEY = ['AKIA', 'ABCDEFGHIJKLMNOP'].join('');
 function baseOpts(paths: string[], extra: Record<string, unknown> = {}) {
   return { paths, sourceId: 'default', ...NO_PATTERNS, ...extra };
 }
+
+describe('transcript provider provenance', () => {
+  async function ingest(...args: string[]) {
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await withEnv({ GBRAIN_HOME: tmp, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, () =>
+        runTranscripts(engine, ['ingest', CLAUDE_EXPORT_FIXTURE, '--format', 'claude-export', '--source-id', 'default', '--quiet', '--json', ...args]));
+      return JSON.parse(log.mock.calls.at(-1)?.[0] as string) as Awaited<ReturnType<typeof runTranscriptsIngest>>;
+    } finally {
+      log.mockRestore();
+    }
+  }
+
+  test('keeps the legacy Claude export identity without a provider', async () => {
+    const result = await ingest();
+    const slug = 'conversations/claude/2026-08-07-deal-memo-review-bc0aa6c8b6bf';
+    expect(result.slugsTouched).toEqual([slug]);
+    const page = await engine.getPage(slug, { sourceId: 'default' });
+    expect(page).toMatchObject({
+      type: 'conversation',
+      source_kind: 'transcript:claude-export',
+      frontmatter: { id: 'claude-export-bc0aa6c8b6bf892c-p1' },
+    });
+    expect(page!.frontmatter.transcript_import).toEqual({
+      harness: 'claude-export', session_id: 'claude-conv-0001', version: 1, part: 1, of: 1,
+    });
+    expect(page!.compiled_truth).toContain('**User** (2026-08-07 12:00 PM): Review the acme-seed memo intro paragraph.');
+  });
+
+  test('uses the provider for the slug, page ID, harness and source kind', async () => {
+    const result = await ingest('--provider', 'muse-example');
+    expect(result.files[0]?.format).toBe('claude-export');
+    expect(result.files[0]?.sessions[0]?.harness).toBe('muse-example');
+    const [slug] = result.slugsTouched;
+    expect(slug).toMatch(/^conversations\/muse-example\/2026-08-07-deal-memo-review-[a-f0-9]{12}$/);
+    const page = await engine.getPage(slug!, { sourceId: 'default' });
+    expect(page).toMatchObject({
+      type: 'conversation',
+      source_kind: 'transcript:muse-example',
+      frontmatter: {
+        transcript_import: { harness: 'muse-example', session_id: 'claude-conv-0001', format: 'claude-export' },
+        trust_tier: 'external_untrusted',
+      },
+    });
+    expect(page!.frontmatter.id).toMatch(/^muse-example-[a-f0-9]{16}-p1$/);
+    expect(await engine.getRawData(slug!, 'transcript:muse-example', { sourceId: 'default' })).toHaveLength(1);
+  });
+
+  test('refuses an invalid or missing provider slug', () => {
+    for (const provider of [[], [''], ['../muse'], ['Muse'], ['muse\n'], ['muse-'], ['muse--example'], ['m'.repeat(41)]]) {
+      expect(parseIngestArgs(['--provider', ...provider])).toMatchObject({
+        error: expect.stringMatching(/provider.*lowercase/i),
+      });
+    }
+  });
+
+  test('keeps the same provider re-import idempotent and its checkpoint separate', async () => {
+    const original = await ingest();
+    const first = await ingest('--provider', 'muse-example', '--since', 'last');
+    expect(first.pages.imported).toBe(1);
+    expect(first.slugsTouched).not.toEqual(original.slugsTouched);
+    const second = await ingest('--provider', 'muse-example');
+    expect(second.pages).toMatchObject({ imported: 0, skipped: 1 });
+    expect(second.slugsTouched).toEqual(first.slugsTouched);
+    const checkpointed = await ingest('--provider', 'muse-example', '--since', 'last');
+    expect(checkpointed.sessionsFiltered).toBe(1);
+    expect(await engine.listPages({ type: 'conversation', sourceId: 'default' })).toHaveLength(2);
+  });
+
+  test('does not adopt the legacy slug when a provider label equals the format', async () => {
+    const original = await ingest();
+    const labeled = await ingest('--provider', 'claude-export');
+    expect(labeled.slugsTouched[0]).toMatch(/^conversations\/claude-export\//);
+    expect(await engine.getPage(original.slugsTouched[0]!, { sourceId: 'default' })).not.toBeNull();
+    expect(await engine.listPages({ type: 'conversation', sourceId: 'default' })).toHaveLength(2);
+  });
+});
 
 /** Synthetic openclaw-format session with N large messages. */
 function writeBigAgentSession(dir: string, id: string, messageCount: number): string {
