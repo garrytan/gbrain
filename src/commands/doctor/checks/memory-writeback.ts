@@ -20,7 +20,7 @@
  * integrations-memorable convention: a disabled opt-in is never a warn).
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
@@ -40,8 +40,8 @@ import { classifyBrainAudience } from '../../../core/facts/writeback-audience.ts
 import { readVerbUsage } from '../../../core/verbs/usage-log.ts';
 import { readClientOpUsage } from '../../../core/mcp-usage.ts';
 import { OPENCLAW_COMPACT_EVENT, readHeartbeatTail } from '../../../core/context/hook-heartbeat.ts';
-import { CORPUS_UNINGESTED_RETENTION_FACTOR, CORPUS_WINDOW_FAILURE_CAP, corpusBacklog, corpusFailureHeld, corpusSpoolDir, listCorpusFailures } from '../../../core/context/corpus-segments.ts';
-import { listCorpusSourceHolds } from '../../../core/context/corpus-source.ts';
+import { CORPUS_UNINGESTED_RETENTION_FACTOR, CORPUS_WINDOW_FAILURE_CAP, corpusBacklog, corpusFileAwaitsExtraction, corpusFailureHeld, corpusSpoolDir, listCorpusFailures } from '../../../core/context/corpus-segments.ts';
+import { listCorpusSourceHolds, resolveCorpusFileSource } from '../../../core/context/corpus-source.ts';
 import { readHarnessReceiptState } from '../../../core/bootstrap/format.ts';
 import { mutedFirstRunDecisionsNotice } from '../../../core/onboard/mcp-onboarding.ts';
 import {
@@ -160,22 +160,48 @@ async function openclawCompactionProblem(details: Record<string, unknown>): Prom
     + 'compaction-time facts are not being captured. Upgrade gbrain on the OpenClaw host and restart the gateway, then check again: gbrain doctor --json';
 }
 
+/**
+ * Pending corpus files whose named source is no longer in the brain: a sweep
+ * skips them (corpus_source_missing), so they are not an extractable backlog.
+ */
+async function missingSourceFiles(engine: BrainEngine, dir: string, location: 'spool' | 'legacy', retentionMs: number, now: number): Promise<{ names: Set<string>; pastRetention: number }> {
+  const out = { names: new Set<string>(), pastRetention: 0 };
+  const scan = location === 'spool' ? corpusSpoolDir(dir) : dir;
+  let names: string[];
+  try { names = readdirSync(scan); } catch { return out; }
+  for (const name of names) {
+    if (!name.endsWith('.txt') || names.includes(name + '.ingested') && !corpusFileAwaitsExtraction(join(scan, name), name)) continue;
+    // silent-read-ok: an unresolvable file stays in the normal backlog count (not excluded)
+    const r = await resolveCorpusFileSource(engine, dir, name, location, { readOnly: true }).catch(() => null);
+    if (!r || r.ok || r.reason !== 'corpus_source_missing') continue;
+    out.names.add(name);
+    try { if (statSync(join(scan, name)).mtimeMs < now - retentionMs) out.pastRetention++; } catch { /* vanished */ }
+  }
+  return out;
+}
+
 async function corpusBacklogProblem(engine: BrainEngine, fileCfg: ReturnType<typeof loadConfig>, details: Record<string, unknown>): Promise<string | null> {
   const synth = fileCfg?.dream?.synthesize as Record<string, unknown> | undefined;
   const dir = await sessionCorpusDir(engine, fileCfg);
   const days = typeof synth?.corpus_retention_days === 'number' && synth.corpus_retention_days > 0 ? synth.corpus_retention_days : 30;
   const now = Date.now();
-  const top = corpusBacklog(dir, days * DAY_MS, now);
-  const spool = corpusBacklog(corpusSpoolDir(dir), days * DAY_MS, now);
+  const spoolDir = corpusSpoolDir(dir);
+  const topGone = await missingSourceFiles(engine, dir, 'legacy', days * DAY_MS, now);
+  const spoolGone = await missingSourceFiles(engine, dir, 'spool', days * DAY_MS, now);
+  const top = corpusBacklog(dir, days * DAY_MS, now, topGone.names);
+  const spool = corpusBacklog(spoolDir, days * DAY_MS, now, spoolGone.names);
+  const sourceMissing = topGone.pastRetention + spoolGone.pastRetention;
   const oldest = [top.oldestPendingMtimeMs, spool.oldestPendingMtimeMs].filter((m): m is number => m !== null);
   const backlog = { pending: top.pending + spool.pending, pastRetention: top.pastRetention + spool.pastRetention, held: top.held + spool.held, oldestPendingMtimeMs: oldest.length ? Math.min(...oldest) : null };
   const oldestDays = backlog.oldestPendingMtimeMs === null ? null : Math.floor((now - backlog.oldestPendingMtimeMs) / DAY_MS);
   const purgeDays = days * CORPUS_UNINGESTED_RETENTION_FACTOR;
-  details.corpus_backlog = { pending: backlog.pending, oldest_pending_days: oldestDays, past_retention: backlog.pastRetention, held: backlog.held, retention_days: days, deleted_after_days: purgeDays };
-  if (backlog.pastRetention === 0) return null;
+  details.corpus_backlog = { pending: backlog.pending, oldest_pending_days: oldestDays, past_retention: backlog.pastRetention, held: backlog.held, source_missing: sourceMissing, retention_days: days, deleted_after_days: purgeDays };
+  const gone = sourceMissing ? `${sourceMissing} captured session file(s) older than the ${days}-day corpus retention name a source that is no longer in this brain (corpus_source_missing): a sweep skips them and nothing re-maps them, so they are deleted at ${purgeDays}d`  : '';
+  if (backlog.pastRetention === 0) return gone || null;
   const kept = backlog.held ? ` (${backlog.held} held by a refusal that retrying cannot change are kept until extracted)` : '';
   return `${backlog.pastRetention} of ${backlog.pending} captured session file(s) are older than the ${days}-day corpus retention and were never extracted `
-    + `(oldest ${oldestDays}d); they are deleted at ${purgeDays}d${kept}. Extract them now: gbrain sweep --once --budget-ms 600000`;
+    + `(oldest ${oldestDays}d); they are deleted at ${purgeDays}d${kept}. Extract them now: gbrain sweep --once --budget-ms 600000`
+    + (gone ? `. Separately, ${gone}` : '');
 }
 
 /** #6785: the problem text a stopped corpus window carries; the check's fix keys on it. */
