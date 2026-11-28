@@ -10,7 +10,9 @@
  *    terminal one is left); the health facts of two pending writes of one source say the second waits on the first
  *    and nothing needs recovery; a source scan reads the next page after its cursor in slug order and none past the
  *    last; a skipped target is added to the effect's `skipped` list; a Git attempt that failed on a replaced source fails
- *    `source_changed`, and one that failed on its own is queued again with its failure counted.
+ *    `source_changed`, and one that failed on its own is queued again with its failure counted and is claimable again
+ *    once its backoff passes. The case reads the running mirror through the mirror gate and never stamps a live claim
+ *    again: Postgres still allows that, and the multi-user Rust store refuses it on purpose.
  *  - Regression: each step ran raw SQL, which the Rust engine refuses: on a Rust brain a stalled preparation was never
  *    charged, a write receipt silently lost its health facts (the read's refusal was caught and dropped), a source scan
  *    stopped at its first page, and an effect's failure could not be recorded.
@@ -83,11 +85,24 @@ async function claim(engine: BrainEngine): Promise<PersistenceEffect> {
   return effect;
 }
 
-/** The effect's stored data, read by claiming it again under a fresh token. */
-async function dataOf(engine: BrainEngine, effect: PersistenceEffect): Promise<Record<string, unknown>> {
-  const token = randomUUID();
-  const again = await engine.stampEffectClaim<PersistenceEffect>({ id: String(effect.id), token, ownerJson: JSON.stringify({ token, owner: 'parity' }) });
-  return (again?.data ?? {}) as Record<string, unknown>;
+/**
+ * A running withdrawal mirror's stored data, read through the mirror gate (`readMirrorGateRows` lists a request's
+ * mirror while it is not committed). It does not stamp the live claim again: Postgres allows that, and the multi-user
+ * Rust store refuses it on purpose (a store that takes over a live claim lets two hosts run one effect).
+ */
+async function mirrorDataOf(engine: BrainEngine, mirror: PersistenceEffect): Promise<Record<string, unknown>> {
+  const gate = (await engine.readMirrorGateRows([String(mirror.request_id)])).find(r => r.state === 'running');
+  return (gate?.data ?? {}) as Record<string, unknown>;
+}
+
+/** The next effect that becomes claimable within `withinMs` (an effect queued again waits out its backoff first). */
+async function claimWhenDue(engine: BrainEngine, withinMs: number): Promise<PersistenceEffect | null> {
+  const deadline = Date.now() + withinMs;
+  for (;;) {
+    const effect = await claimPersistenceEffect(engine, localHostId());
+    if (effect || Date.now() >= deadline) return effect;
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
 }
 
 describe('engine parity: the write journal upkeep steps', () => {
@@ -159,16 +174,16 @@ describe('engine parity: the write journal upkeep steps', () => {
 
   parityTest('a skipped target is added to the effect, a replaced source fails it and its own failure queues it again', {
     methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'insertWithdrawalEffects', 'transactionDirect',
-      'declarePersistence', 'stampWriteClaim', 'completeWriteRow', 'selectClaimableEffect', 'stampEffectClaim', 'completeEffectRow',
-      'readRequestEffects', 'failEffectRow'],
-    timeout: 60_000,
+      'declarePersistence', 'stampWriteClaim', 'completeWriteRow', 'selectClaimableEffect', 'stampEffectClaim', 'readMirrorGateRows',
+      'completeEffectRow', 'readRequestEffects', 'failEffectRow'],
+    // The own failure queues the effect again behind a 30-second backoff, which the last step waits out on each arm.
+    timeout: 240_000,
   }, async (engine) => {
     const id = await withdrawal(engine, 'b0000000-0000-4000-8000-0000000000e4');
     const mirror = await claim(engine);
     await __effectFailureStepsForTests.recordSkippedTarget(engine, mirror, { slug: 'notes/upkeep-example', reason: 'metafile' });
-    const skipped = (await dataOf(engine, mirror)).skipped ?? null;
-    const reclaimed = (await engine.stampEffectClaim<PersistenceEffect>({ id: String(mirror.id), token: TOKEN, ownerJson: JSON.stringify({ token: TOKEN, owner: 'parity' }) }))!;
-    await engine.completeEffectRow({ id: reclaimed.id, token: reclaimed.execution_token, outcomeJson: '{}' });
+    const skipped = (await mirrorDataOf(engine, mirror)).skipped ?? null;
+    await engine.completeEffectRow({ id: mirror.id, token: mirror.execution_token, outcomeJson: '{}' });
     const git = await claim(engine);
     const replaced = await outcome(() => __effectFailureStepsForTests.recordFailure(engine, { ...git, source_incarnation: 'f0000000-0000-4000-8000-0000000000f0' },
       opError('source_changed', 'The source changed.', 'parity')));
@@ -176,7 +191,9 @@ describe('engine parity: the write journal upkeep steps', () => {
     const own = await outcome(() => __effectFailureStepsForTests.recordFailure(engine, { ...embedding, kind: 'git' as never },
       opError('git_commit_failed' as never, 'The commit failed.', 'parity')));
     const effects = (await engine.readRequestEffects(id)).map(e => ({ kind: e.kind, state: e.state, error_code: e.error_code }));
-    const out = { skipped, replaced: replaced ?? 'ok', own: own ?? 'ok', effects };
+    // The effect its own failure queued again is claimable once its backoff passes, and nothing else is.
+    const again = await claimWhenDue(engine, 60_000);
+    const out = { skipped, replaced: replaced ?? 'ok', own: own ?? 'ok', effects, claimableAgain: again?.id === embedding.id };
     expect(out).toEqual({
       skipped: [{ slug: 'notes/upkeep-example', reason: 'metafile' }], replaced: 'ok', own: 'ok',
       effects: [
@@ -184,6 +201,7 @@ describe('engine parity: the write journal upkeep steps', () => {
         { kind: 'git', state: 'failed', error_code: 'source_changed' },
         { kind: 'withdrawal-mirror', state: 'committed', error_code: null },
       ],
+      claimableAgain: true,
     });
     return out;
   });

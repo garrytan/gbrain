@@ -1114,7 +1114,7 @@ retryBusyEffectRow	persistence_journal	yes	3	no	yes	yes	serves
 requeueEffectRow	persistence_journal	yes	6	no	yes	yes	serves
 parkEffectRow	persistence_journal	yes	10	no	yes	yes	serves
 failEffectRow	persistence_journal	yes	6	no	yes	yes	serves
-readMirrorGateRows	persistence_journal	yes	2	no	yes	yes	serves
+readMirrorGateRows	persistence_journal	yes	3	no	yes	yes	serves
 lockEffectGuard	persistence_journal	yes	1	no	yes	yes	serves
 hasRearmableTargets	persistence_journal	yes	1	no	yes	yes	serves
 probeIdleWork	persistence_journal	yes	2	no	yes	yes	serves
