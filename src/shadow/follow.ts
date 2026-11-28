@@ -59,6 +59,12 @@ export function journalItems(name: string): Invalidation[] | null {
 
 export interface FollowOptions {
   sink: InvalidationSink;
+  /**
+   * Whether writes are captured; default the shadow sink's `active()`. attach.ts keeps capture on through the close, after
+   * the supervisor stopped, so a write a later before-disconnect callback makes still reaches the closed follower and is
+   * recorded as lost (no seal is taken over it).
+   */
+  active?: () => boolean;
 }
 
 /** Items collected inside one open transaction (or reserved connection). */

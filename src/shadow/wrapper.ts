@@ -339,7 +339,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
 
   const follow = opts.follow;
   const followCtx = (target: unknown, at: Frame | null, inTx: boolean): FollowContext =>
-    ({ follow: follow!, shadowActive: () => sink.active(), engine: target, frame: at, inTransaction: inTx, lane: inTx ? txWrites?.lane : undefined });
+    ({ follow: follow!, shadowActive: () => (follow!.active ? follow!.active() : sink.active()), engine: target, frame: at, inTransaction: inTx, lane: inTx ? txWrites?.lane : undefined });
 
   const wrapTransaction = (fn: Function): Function => function shadowTransaction(this: unknown, callback: unknown, ...rest: unknown[]) {
     if (typeof callback !== 'function') return fn.apply(engine, [callback, ...rest]);

@@ -144,7 +144,9 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     enabled: () => readShadowState(dir)?.enabled === true,
     ...(primaryTakesWriterHooks(state.primary_engine) ? { beforeFirstNote: () => ensureWriterHooks(engine, dir) } : {}),
   });
+  let closing = false;
   engine.registerBeforeDisconnect(async () => {
+    closing = true; // from here a followed write is captured even after the supervisor stops (a later callback's write): the closed follower records it as lost
     observer.stop();
     let settled = false;
     try {
@@ -184,7 +186,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
       if (askReads !== reads) await askReads.close().catch(() => undefined);
     }
   });
-  const follow = follower ? { sink: follower } : deps.follow;
+  const follow = follower ? { sink: follower, active: () => closing || supervisor.active() } : deps.follow;
   const onCommittedWrite = () => observer.note();
   // Write comparisons need the seeded store's epoch to count under (a brain that was never seeded samples no writes), a recorder for their outcomes (the child's locked tally) and a read the
   // serving process can bound: Postgres stops it with a server-side statement timeout; PGLite has one connection and a running statement cannot be cancelled, so a PGLite brain samples no writes.
