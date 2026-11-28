@@ -75,6 +75,7 @@ test/engine-parity/credential-grant-writes.test.ts	6	0
 test/engine-parity/cycle-locks.test.ts	11	0
 test/engine-parity/cycle-reads.test.ts	3	0
 test/engine-parity/cycle-source-window.test.ts	1	0
+test/engine-parity/cycle-txn-rerun.test.ts	4	0
 test/engine-parity/decide-proposals.test.ts	8	0
 test/engine-parity/decide-store.test.ts	44	0
 test/engine-parity/delegated-grant.test.ts	2	0
@@ -155,6 +156,7 @@ test/engine-parity/facts-rest-sites.test.ts	28	1
 test/engine-parity/facts-superseded-claims.test.ts	1	0
 test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	13	0
+test/engine-parity/facts-txn-rerun.test.ts	4	0
 test/engine-parity/facts-unique-violation.test.ts	3	0
 test/engine-parity/facts.test.ts	37	0
 test/engine-parity/family-tail-sites.test.ts	12	0
@@ -275,6 +277,7 @@ test/engine-parity/page-purge-holds.test.ts	4	0
 test/engine-parity/page-purge-journal.test.ts	7	0
 test/engine-parity/page-purge-probes.test.ts	7	0
 test/engine-parity/page-purge-reads.test.ts	10	0
+test/engine-parity/page-purge-rerun.test.ts	1	1
 test/engine-parity/page-purge-scrubs.test.ts	4	0
 test/engine-parity/page-purge-stores.test.ts	3	0
 test/engine-parity/page-purge-sweep.test.ts	8	0
@@ -447,6 +450,7 @@ test/engine-parity/take-trust-fields.test.ts	7	0
 test/engine-parity/take-trust-reads.test.ts	3	0
 test/engine-parity/take-vector-search.test.ts	3	0
 test/engine-parity/takes-prepare.test.ts	5	0
+test/engine-parity/takes-txn-rerun.test.ts	6	0
 test/engine-parity/takes.test.ts	32	0
 test/engine-parity/telemetry.test.ts	10	0
 test/engine-parity/think-gather-takes.test.ts	1	0

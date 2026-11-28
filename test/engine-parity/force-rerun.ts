@@ -32,8 +32,9 @@ export interface ForcedRerun {
  * `members`: tx members whose call marks the run by itself (no spy needed). `conflictAt`: tx members whose call, in a
  * transaction call not forced yet, throws the forced error in place of running: a read that met a key another transaction
  * holds, which on the multi-user Rust engine stops the run at once with write_conflict (occ_kv.rs, the retry-key row locks).
+ * `after`: read when a run's callback has returned; true marks the run (a run that published a file, say).
  */
-export function forceRerunOnHit(engine: BrainEngine, opts: { limit?: number; members?: readonly string[]; conflictAt?: readonly string[] } = {}): ForcedRerun {
+export function forceRerunOnHit(engine: BrainEngine, opts: { limit?: number; members?: readonly string[]; conflictAt?: readonly string[]; after?: () => boolean } = {}): ForcedRerun {
   const members = new Set(opts.members ?? []);
   const conflictAt = new Set(opts.conflictAt ?? []);
   const fail = () => seen.multiuser ? Object.assign(new Error(FORCED_RERUN), { code: 'write_conflict' }) : new Error(FORCED_RERUN);
@@ -65,7 +66,8 @@ export function forceRerunOnHit(engine: BrainEngine, opts: { limit?: number; mem
   };
   const run = async <T>(fn: (tx: BrainEngine) => Promise<T>, tx: BrainEngine, call: Run['call']): Promise<{ value: T; hit: boolean }> => {
     const state: Run = { hit: false, call };
-    return { value: await fn(watch(tx, state)), hit: state.hit };
+    const value = await fn(watch(tx, state));
+    return { value, hit: state.hit || opts.after?.() === true };
   };
   const transaction = async function (this: unknown, fn: (tx: BrainEngine) => Promise<unknown>, ...rest: unknown[]) {
     const call = (cb: (tx: BrainEngine) => Promise<unknown>) => original.call(this, cb, ...rest);
