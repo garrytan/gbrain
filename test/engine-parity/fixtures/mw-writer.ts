@@ -26,7 +26,7 @@ async function connect(c: WriterConfig): Promise<BrainEngine> {
   if (c.muRoute === 'env') process.env.GBRAIN_RUST_MULTIUSER = '1';
   // The commit log is on for the whole rust-mu view (both routes); a brain that keeps a log must be written with it on.
   if (c.muRoute !== undefined) process.env.GBRAIN_RUST_COMMIT_LOG = '1';
-  const { openRustBrainAt, openServedClientAt, resolvedMultiuser } = await import('../rust-arm.ts');
+  const { openRustBrainAt, openServedClientAt, resolvedMultiuser, rustMultiuserResolution } = await import('../rust-arm.ts');
   // The served arm: this process is one more served v3 client of the brain server (the parent asserted the owner's mode).
   if (c.served !== undefined) {
     const served = await openServedClientAt(c.databasePath!, c.served);
@@ -41,12 +41,15 @@ async function connect(c: WriterConfig): Promise<BrainEngine> {
     await engine.disconnect().catch(() => undefined);
     throw new Error('mw-writer: the store resolved multi-user mode for a plain Rust brain');
   }
-  // An ambient multi-user run: the switch came from the environment the process started with, and the store must have it on.
-  if (c.muRoute === undefined && c.ambient === true && resolved !== true) {
+  // An ambient multi-user run: the switch came from the environment the process started with. The store must have it on, or this
+  // process is an owner-socket client of the brain (C18's writers are: the parent owns the brain and asserted its mode), the two
+  // answers assertRustMultiuserResolved accepts on a route.
+  const resolution = rustMultiuserResolution(engine);
+  if (c.muRoute === undefined && c.ambient === true && resolution !== 'on' && resolution !== 'client') {
     await engine.disconnect().catch(() => undefined);
-    throw new Error('mw-writer: the process started with GBRAIN_RUST_MULTIUSER=1 but its store did not resolve multi-user mode');
+    throw new Error(`mw-writer: the process started with GBRAIN_RUST_MULTIUSER=1 but its store resolved multi-user mode ${resolution}, not on or client`);
   }
-  process.stdout.write(`RESOLVED ${String(resolved)}\n`);
+  process.stdout.write(`RESOLVED ${c.ambient === true && resolution === 'client' ? 'client' : String(resolved)}\n`);
   return engine as unknown as BrainEngine;
 }
 
@@ -79,7 +82,11 @@ async function awaitGo(): Promise<void> {
   }
 }
 
-const engine = await connect(config);
+// A failed connect prints its own message first, so the parent's cut of stderr always names the check that fired.
+const engine = await connect(config).catch((error: unknown) => {
+  process.stderr.write(`mw-writer: connect failed: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(1);
+});
 process.stdout.write('READY\n');
 try {
   if (config.startOnGo) await awaitGo();
