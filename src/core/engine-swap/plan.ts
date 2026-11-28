@@ -13,7 +13,7 @@ import { readManagedMode } from '../persistence/managed-mode.ts';
 import { activeWorktreeRefreshes } from '../persistence/worktree-refresh.ts';
 import { usableDestination, type DestinationOptions } from './destination.ts';
 import { servedCapabilities, storeCapabilities } from '../rust-engine/store-capabilities.ts';
-import { rustMultiuserFromEnv } from '../rust-engine/multiuser-switch.ts';
+import { rustMultiuserOfBrain } from '../rust-engine/multiuser-switch.ts';
 import { evaluateReadiness, type ReadinessVerdict, type ShadowStatus } from './readiness.ts';
 import { managedStorageError, refreshUnsettledError, type SwapRefusalReason, type UnsettledRefresh } from './refusals.ts';
 
@@ -64,7 +64,10 @@ export interface SwapPlanInputs {
   services?: ServiceDefinition[];
   disk?: { path: string; free_bytes: number | null };
   now?: Date;
-  /** The destination evidence and the resolved multi-user switch (destination.ts); none keeps the plan as it always was. */
+  /**
+   * The destination evidence and the resolved multi-user switch (destination.ts). With no switch answer, planEngineSwap
+   * resolves it from the environment or the brain's config row; with no evidence the plan stays as it always was.
+   */
   destination?: DestinationOptions;
 }
 
@@ -98,8 +101,8 @@ export async function assertRefreshesSettled(engine: BrainEngine): Promise<void>
  */
 export function rustHoldsManagedStorage(destination: DestinationOptions | undefined): boolean {
   if (!servedCapabilities().has('managed_persistence')) return false;
-  // Environment switch only without evidence: the destination store is not open before the cutover (destination.ts).
-  return storeCapabilities({ multiuser: destination?.multiuser ?? rustMultiuserFromEnv() }).has('managed_persistence');
+  // The resolved switch (planEngineSwap resolves it when the caller did not); an absent answer counts as off.
+  return storeCapabilities({ multiuser: destination?.multiuser === true }).has('managed_persistence');
 }
 
 /** Throws `engine_swap_refused` / `managed_storage` when the brain uses managed storage and the Rust destination cannot
@@ -140,10 +143,13 @@ function planHash(p: Omit<SwapPlan, 'plan_hash'>, dest: DestinationOptions | und
 /** Builds the read-only plan. Throws `engine_swap_refused` (`managed_storage` when the destination cannot hold a managed brain,
  * `refresh_unsettled`) before reading any criterion. */
 export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs = {}): Promise<SwapPlan> {
-  const managed = await assertNotManaged(engine, deps.destination);
+  // One switch answer: a caller that resolved none gets the environment OR this brain's config row (rustMultiuserOfBrain).
+  const destination: DestinationOptions = deps.destination?.multiuser !== undefined ? deps.destination
+    : { ...deps.destination, multiuser: await rustMultiuserOfBrain(engine) };
+  const managed = await assertNotManaged(engine, destination);
   await assertRefreshesSettled(engine);
   const status = deps.readShadowStatus ? await deps.readShadowStatus(engine) : null;
-  const readiness = evaluateReadiness(status, deps.now ?? new Date(), deps.destination);
+  const readiness = evaluateReadiness(status, deps.now ?? new Date(), destination);
   const base: Omit<SwapPlan, 'plan_hash'> = {
     schema_version: 1,
     to: 'rust',
@@ -159,5 +165,5 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
     deferred: DEFERRED_TO_S5B,
     ...(managed ? { managed_known_losses: [...MANAGED_RUST_LOSSES] } : {}),
   };
-  return { ...base, plan_hash: planHash(base, deps.destination) };
+  return { ...base, plan_hash: planHash(base, destination) };
 }

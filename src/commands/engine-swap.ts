@@ -21,7 +21,7 @@ import { opError } from '../core/ops/contract.ts';
 import { ENGINE_SELECTING_ENV, planEngineSwap, type ServiceDefinition, type SwapPlan, type SwapPlanInputs } from '../core/engine-swap/plan.ts';
 import { configDestination, resolveSwapDestination, type SwapDestinationProbe } from '../core/engine-swap/destination.ts';
 import { readStoreBrainId, swapStoreDir } from '../shadow/store-identity.ts';
-import { rustMultiuserFromEnv } from '../core/rust-engine/multiuser-switch.ts';
+import { rustMultiuserOfBrain } from '../core/rust-engine/multiuser-switch.ts';
 import { mountedBrainError, SWAP_RECOVERY } from '../core/engine-swap/refusals.ts';
 import { HOST_BRAIN_ID } from '../core/brain-registry.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
@@ -184,12 +184,14 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     const env = deps.env ?? process.env;
     const home = deps.home ?? env.HOME ?? '';
     const dataDir = deps.dataDir ?? home;
-    // The destination is read from the destination, never from `engine`; with the switch off nothing is read at all.
-    const multiuser = rustMultiuserFromEnv(deps.env);
+    // The switch is the environment OR the brain's config row, read through the engine it runs on now (the shadow
+    // replays that row into the destination store). The destination itself is read from the destination, never from
+    // `engine`; with the switch off nothing about it is read at all.
+    const multiuser = await rustMultiuserOfBrain(engine, env);
     // With the switch off, `{ multiuser: false }` carries only the switch (no evidence counts; managed_storage reads it).
     const evidence = !multiuser ? null : deps.resolveDestination
       ? await resolveSwapDestination(brainId, deps.resolveDestination)
-      : configDestination(brainId, { env, rustServerUrl: (deps.rustServerUrl ?? configuredRustServerUrl)(), storeBrainId: deps.storeBrainId ?? configuredStoreBrainId });
+      : configDestination(brainId, { env, multiuser, rustServerUrl: (deps.rustServerUrl ?? configuredRustServerUrl)(), storeBrainId: deps.storeBrainId ?? configuredStoreBrainId });
     const destination = evidence ? { multiuser, expectedBrainId: brainId, destination: evidence } : { multiuser: false };
     const plan = await planEngineSwap(engine, {
       readShadowStatus: deps.readShadowStatus, now: deps.now,

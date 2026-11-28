@@ -12,7 +12,6 @@
  * state and restores authority to the old engine when the server does not answer as a served multi-user Rust brain.
  * Tests may inject a probe instead (`resolveSwapDestination`).
  */
-import { rustMultiuserFromEnv } from '../rust-engine/multiuser-switch.ts';
 import { isLoopbackHost, parseListenAddress, RUST_SERVER_LISTEN_ENV, RUST_SERVER_TLS_CERT_ENV, RUST_SERVER_TLS_KEY_ENV } from '../rust-engine/served/listener.ts';
 
 export interface SwapDestinationEvidence {
@@ -63,7 +62,10 @@ export interface DestinationOptions {
   destination?: SwapDestinationEvidence | null;
   /** The brain being swapped; the destination must serve this one. Missing refuses. */
   expectedBrainId?: string;
-  /** The resolved switch; default: the environment's `GBRAIN_RUST_MULTIUSER`. Off forces every destination to "no". */
+  /**
+   * The resolved switch: the environment OR the brain's config row (multiuser-switch.ts rustMultiuserOfBrain). Off, or
+   * absent, forces every destination to "no".
+   */
   multiuser?: boolean;
 }
 
@@ -71,8 +73,9 @@ export interface DestinationOptions {
 export function usableDestination(opts: DestinationOptions | undefined): SwapDestinationEvidence | null {
   const d = opts?.destination;
   if (!d || (d.source !== 'probe' && d.source !== 'config')) return null;
-  // Environment switch only: the destination store is not open before the cutover, so it has no config row to read.
-  if (!(opts.multiuser ?? rustMultiuserFromEnv())) return null;
+  // The caller resolved the switch through the brain it runs on now (the destination store is not open before the
+  // cutover); an absent answer counts as off.
+  if (opts.multiuser !== true) return null;
   return d;
 }
 
@@ -86,8 +89,10 @@ export function destinationAllowsManyWriters(opts: DestinationOptions | undefine
 
 /** What this host's configuration says about serving the brain it swaps (`configDestination`'s inputs). */
 export interface ConfigDestinationInputs {
-  /** The environment the command runs with: the switch, the listen address and the TLS files are read from it. */
+  /** The environment the command runs with: the listen address and the TLS files are read from it. */
   env: Readonly<Record<string, string | undefined>>;
+  /** The resolved switch (multiuser-switch.ts rustMultiuserOfBrain): the environment OR the brain's config row. */
+  multiuser: boolean;
   /** `rust_server.url` from this host's gbrain config, when set. */
   rustServerUrl?: string | null;
   /** The brain id of the Rust store the swap moves to (src/shadow/store-identity.ts); asked only when everything else counts. */
@@ -97,7 +102,8 @@ export interface ConfigDestinationInputs {
 /**
  * The destination as this host's configuration describes it, never a server reached (no server can serve the shadow
  * store before the cutover). It counts as a served multi-user Rust brain for `brainId` only when all of these hold:
- *   - the switch is on (`GBRAIN_RUST_MULTIUSER=1`): a brain server runs only with it (serve-listen.ts);
+ *   - the switch is on (`GBRAIN_RUST_MULTIUSER=1` or the brain's config row): a brain server runs only with it
+ *     (serve-listen.ts reads the store's answer, which counts the row);
  *   - this host will serve the brain: `GBRAIN_RUST_SERVER_LISTEN` is a valid host:port, the setting `gbrain serve`
  *     listens on (serve.ts, listener.ts);
  *   - the other writer hosts can reach it: not a loopback address, and both TLS files are named, which the listener
@@ -111,7 +117,7 @@ export interface ConfigDestinationInputs {
  */
 export function configDestination(brainId: string, inputs: ConfigDestinationInputs): SwapDestinationEvidence {
   const { env } = inputs;
-  const base: SwapDestinationEvidence = { engine: 'rust', brain_id: brainId, served: false, multiuser: rustMultiuserFromEnv(env), source: 'config' };
+  const base: SwapDestinationEvidence = { engine: 'rust', brain_id: brainId, served: false, multiuser: inputs.multiuser, source: 'config' };
   const refuse = (refused: string, listen?: string): SwapDestinationEvidence => ({ ...base, ...(listen ? { listen } : {}), refused });
   if (!base.multiuser) return refuse('GBRAIN_RUST_MULTIUSER is not 1, so no brain server can run');
   // A client host first: with a server named, a Rust engine here connects to it instead of opening the store.

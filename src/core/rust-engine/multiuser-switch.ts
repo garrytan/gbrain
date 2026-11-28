@@ -47,6 +47,16 @@ export function rustMultiuserConfigOn(value: string | null | undefined): boolean
 }
 
 /**
+ * The switch for a brain whose Rust store is not open yet, read through the engine the brain runs on now: the
+ * environment switch OR that brain's own config row. The engine swap reads it this way (engine-swap.ts, plan.ts): its
+ * destination is the shadow store, which no process opens before the cutover, and the shadow replays the source brain's
+ * `config` rows into it (src/shadow/write-map.ts), so the source's row is the destination's row as of the last replay.
+ */
+export async function rustMultiuserOfBrain(engine: { getConfig(key: string): Promise<string | null> }, env: Env = processEnv()): Promise<boolean> {
+  return rustMultiuserFromEnv(env) || rustMultiuserConfigOn(await engine.getConfig(RUST_MULTIUSER_CONFIG_KEY));
+}
+
+/**
  * A lane sub-switch (`GBRAIN_RUST_COMMIT_LOG`, ...), read only while the brain runs in multi-user mode, else always
  * false. `store` is the store's resolved answer (`RustStore.multiuser`: the environment switch OR the brain's config
  * row), so a brain that is on only through its config row gets its sub-switches too (I-0.v2).

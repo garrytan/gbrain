@@ -98,10 +98,10 @@ describe.skipIf(!HAVE_TWO_HOST_ADDON || !ADDRESS)('the probe against a real serv
 
   test('the run probes what the plan bound: the right store id passes, a store id from a stale plan is wrong_brain', async () => {
     const env = { GBRAIN_RUST_MULTIUSER: '1', GBRAIN_RUST_SERVER_LISTEN: brain.listen, GBRAIN_RUST_SERVER_TLS_CERT: brain.tls.cert, GBRAIN_RUST_SERVER_TLS_KEY: brain.tls.key };
-    const bound = plannedProbeTarget(configDestination('host', { env, storeBrainId: () => readStoreBrainId(join(brain.root, 'server', 'db')) }))!;
+    const bound = plannedProbeTarget(configDestination('host', { env, multiuser: true, storeBrainId: () => readStoreBrainId(join(brain.root, 'server', 'db')) }))!;
     expect(bound).toEqual({ listen: brain.listen, expectedBrainId: brain.brainId });
     expect(await probe(bound)).toMatchObject({ ok: true, brain_id: brain.brainId });
-    const stale = plannedProbeTarget(configDestination('host', { env, storeBrainId: () => OTHER_BRAIN }))!;
+    const stale = plannedProbeTarget(configDestination('host', { env, multiuser: true, storeBrainId: () => OTHER_BRAIN }))!;
     const v = await probe(stale);
     expect(v).toMatchObject({ ok: false, reason: 'wrong_brain', brain_id: brain.brainId });
     if (v.ok) throw new Error('stale plan passed');

@@ -20,6 +20,9 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { renderCliError } from '../src/core/agent-output.ts';
 import { runEngineSwap } from '../src/commands/engine-swap.ts';
+import { planEngineSwap } from '../src/core/engine-swap/plan.ts';
+import { RUST_MULTIUSER_CONFIG_KEY } from '../src/core/rust-engine/multiuser-switch.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -138,6 +141,33 @@ describe(`engine swap refuses a managed brain only where Rust cannot hold it (${
     expect(JSON.parse(run.stdout).from).toBe(kind);
     expect('managed_known_losses' in JSON.parse(run.stdout)).toBe(false);
     expect((await swapPlan(engine, false)).stdout).not.toContain('known loss');
+  });
+
+  // One switch answer before the store opens (multiuser-switch.ts rustMultiuserOfBrain): the brain's config row alone
+  // gives the managed_storage answer the environment switch gives.
+  test('with multi-user mode on only through the config row, a store that withholds managed mode refuses as with the switch', async () => {
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const byEnv = await withheld(() => swapPlan(engine));
+    expect(JSON.parse(byEnv.error).reason).toBe('managed_storage');
+    await engine.setConfig(RUST_MULTIUSER_CONFIG_KEY, 'true');
+    try {
+      const byRow = await withheld(() => swapPlan(engine, true, {}));
+      expect({ code: byRow.code, stdout: byRow.stdout, error: byRow.error, statusReads: byRow.statusReads })
+        .toEqual({ code: byEnv.code, stdout: '', error: byEnv.error, statusReads: 0 });
+    } finally { await engine.unsetConfig(RUST_MULTIUSER_CONFIG_KEY); }
+  });
+
+  test('planEngineSwap with no destination reads the config row for the managed_storage answer', async () => {
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    await withEnv({ GBRAIN_RUST_MULTIUSER: undefined }, async () => {
+      // Row off, switch off: a single-user Rust store holds managed storage, so the plan is built.
+      expect((await withheld(() => planEngineSwap(engine, { now: new Date('2026-11-22T00:00:00Z') }))).to).toBe('rust');
+      await engine.setConfig(RUST_MULTIUSER_CONFIG_KEY, '1');
+      try {
+        const refused = await withheld(() => planEngineSwap(engine, { now: new Date('2026-11-22T00:00:00Z') })).then(() => null, (e: { code?: string; reason?: string }) => ({ code: e.code, reason: e.reason }));
+        expect(refused).toEqual({ code: 'engine_swap_refused', reason: 'managed_storage' });
+      } finally { await engine.unsetConfig(RUST_MULTIUSER_CONFIG_KEY); }
+    });
   });
 });
 }

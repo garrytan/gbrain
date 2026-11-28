@@ -27,6 +27,7 @@ import { plannedProbeTarget } from '../src/core/engine-swap/served-probe.ts';
 import { readStoreBrainId, swapStoreDir } from '../src/shadow/store-identity.ts';
 import type { ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { RUST_MULTIUSER_CONFIG_KEY } from '../src/core/rust-engine/multiuser-switch.ts';
 
 const NOW = new Date('2026-12-01T00:00:00Z');
 const SWITCH = 'GBRAIN_RUST_MULTIUSER';
@@ -340,11 +341,11 @@ describe('engine swap --plan reads the destination from this host\'s configurati
 
   test('the run probes the address and the store brain id the plan bound, and nothing for evidence that does not count', () => {
     const env = serving();
-    const counted = configDestination('host', { env, storeBrainId: () => STORE_ID });
+    const counted = configDestination('host', { env, multiuser: true, storeBrainId: () => STORE_ID });
     expect(counted.store_brain_id).toBe(STORE_ID);
     expect(plannedProbeTarget(counted)).toEqual({ listen: at, expectedBrainId: STORE_ID });
-    expect(plannedProbeTarget(configDestination('host', { env, storeBrainId: () => null }))).toBeNull();
-    expect(plannedProbeTarget(configDestination('host', { env: serving({ [LISTEN]: '127.0.0.1:7443' }), storeBrainId: () => STORE_ID }))).toBeNull();
+    expect(plannedProbeTarget(configDestination('host', { env, multiuser: true, storeBrainId: () => null }))).toBeNull();
+    expect(plannedProbeTarget(configDestination('host', { env: serving({ [LISTEN]: '127.0.0.1:7443' }), multiuser: true, storeBrainId: () => STORE_ID }))).toBeNull();
     expect(plannedProbeTarget({ engine: 'rust', brain_id: 'host', served: true, multiuser: true, source: 'probe' })).toBeNull();
     expect(plannedProbeTarget(null)).toBeNull();
   });
@@ -382,5 +383,65 @@ describe('engine swap --plan reads the destination from this host\'s configurati
     diskMoves();
     const refused = await run({ hosts: 1, env: serving({ [LISTEN]: undefined }) });
     expect(refused.stdout).toBe(off.stdout);
+  });
+});
+
+/**
+ * One switch answer before the store opens (I-0, multiuser-switch.ts rustMultiuserOfBrain): a brain switched on only by
+ * its config row `engine.rust.multiuser` gets the plan a brain switched on by GBRAIN_RUST_MULTIUSER=1 gets. The row read
+ * is the source brain's (the open engine), which the shadow replays into the destination store's config relation.
+ */
+describe('engine swap --plan with the switch on only through the brain\'s config row', () => {
+  const at = '10.0.0.5:7443';
+  const tls = { cert: '/etc/gbrain/tls/cert.pem', key: '/etc/gbrain/tls/key.pem' };
+  const serving = (over: Record<string, string | undefined> = {}) => ({ HOME: home, [LISTEN]: at, [CERT]: tls.cert, [KEY]: tls.key, ...over });
+  /** Runs `body` with the row set to `value` on the source brain, and removes the row after. */
+  const withRow = async <T>(value: string, body: () => Promise<T>): Promise<T> => {
+    await engine.setConfig(RUST_MULTIUSER_CONFIG_KEY, value);
+    try { return await body(); } finally { await engine.unsetConfig(RUST_MULTIUSER_CONFIG_KEY); }
+  };
+
+  test('a served multi-user destination lifts multiple_writer_hosts, byte for byte as with the environment switch', async () => {
+    const byEnv = await withEnv({ [SWITCH]: '1' }, () => run({ resolveDestination: served }));
+    expect(byEnv.plan.reason).toBeNull();
+    for (const value of ['true', '1']) {
+      const byRow = await withEnv({ [SWITCH]: undefined }, () => withRow(value, () => run({ resolveDestination: served })));
+      expect(byRow.plan.verdict).toBe('READY');
+      expect(byRow.stdout.replace(/"free_bytes": \d+/, '')).toBe(byEnv.stdout.replace(/"free_bytes": \d+/, ''));
+    }
+  });
+
+  test('a host set to serve the brain counts on config, byte for byte as with the environment switch', async () => {
+    const byEnv = await run({ env: serving({ [SWITCH]: '1' }) });
+    expect(elig(byEnv.plan).detail).toContain('accepted on config only');
+    const byRow = await withRow('true', () => run({ env: serving() }));
+    expect(byRow.stdout).toBe(byEnv.stdout);
+  });
+
+  test('configDestination takes the resolved answer: on counts without the environment switch, off keeps the switch-off refusal text', () => {
+    const on = configDestination('host', { env: serving(), multiuser: true, storeBrainId: () => STORE_ID });
+    expect({ served: on.served, multiuser: on.multiuser, refused: on.refused }).toEqual({ served: true, multiuser: true, refused: undefined });
+    const off = configDestination('host', { env: serving({ [SWITCH]: '1' }), multiuser: false, storeBrainId: () => STORE_ID });
+    expect({ served: off.served, multiuser: off.multiuser, refused: off.refused })
+      .toEqual({ served: false, multiuser: false, refused: 'GBRAIN_RUST_MULTIUSER is not 1, so no brain server can run' });
+  });
+
+  test('neither the switch nor the row: the plan hash is the one the build before the row read printed', async () => {
+    // Printed by e39124ba6e for these exact plans: the answer resolves false, no destination counts and none is bound.
+    const PINNED: Record<string, string> = { 1: '4aae8744e6ccba44', 2: '2415bdbe00862a83', null: '491ee166a11011db' };
+    for (const hosts of [1, 2, null]) {
+      // An injected environment: engine-selecting variables of the machine running the test (DATABASE_URL) are bound too.
+      const r = await run({ hosts, resolveDestination: served, env: { HOME: home } });
+      expect({ hosts, hash: r.plan.plan_hash }).toEqual({ hosts, hash: PINNED[String(hosts)] });
+    }
+  });
+
+  test('a row value that does not turn the switch on keeps the switch-off plan', async () => {
+    const off = await withEnv({ [SWITCH]: undefined }, () => run({ resolveDestination: served }));
+    expect(off.plan.reason).toBe('multiple_writer_hosts');
+    for (const value of ['false', '0', 'yes', '']) {
+      const r = await withEnv({ [SWITCH]: undefined }, () => withRow(value, () => run({ resolveDestination: served })));
+      expect(r.stdout.replace(/"free_bytes": \d+/, '')).toBe(off.stdout.replace(/"free_bytes": \d+/, ''));
+    }
   });
 });

@@ -430,10 +430,20 @@ store resolves both at open (`RustStore.multiuser`). Every site that runs after 
 brain on through its config row alone behaves as one on through the environment: the owner and the next owner it
 elects run multi-user, a brain server listens (`GBRAIN_RUST_SERVER_LISTEN`), and a client on the owner socket takes the
 owner's answer from its hello (`remote_check` is listed exactly when the owner's store is multi-user;
-`rustMultiuserOfOwner`, `RustEngine.brainMultiuser`). Its own environment switch still counts. The sites that run before
-any store exists read the environment only, each named with its reason in `test/rust-multiuser-switch-callers.test.ts`:
-a client host of a brain server (`rust_server.url`) still needs `GBRAIN_RUST_MULTIUSER=1`, because the config row lives
-in the server's store, and an engine swap reads the switch because the destination store is not open before the cutover.
+`rustMultiuserOfOwner`, `RustEngine.brainMultiuser`). Its own environment switch still counts.
+
+An engine swap gives the same answer before its destination store opens. The destination is the shadow store, which no
+process opens before the cutover. The shadow replays the source brain's `config` rows into it, so the swap reads the
+switch as the environment OR the source brain's own row, through the engine the brain runs on now
+(`rustMultiuserOfBrain`). The plan (`gbrain engine swap --to rust --plan`), the config-only destination and the managed
+storage check all take that one answer. A row the shadow has not replayed yet is fail-safe: the swap run checks the
+live server after its switch and restores the old engine when it does not answer as multi-user. With neither half on,
+the plan and its hash are as they were. The store open sends the environment half and adds its own row
+(`Store::open_dir_in`).
+
+The sites that still read the environment only are each named with their reason in
+`test/rust-multiuser-switch-callers.test.ts`. For example, a client host of a brain server (`rust_server.url`) still
+needs `GBRAIN_RUST_MULTIUSER=1`, because the config row lives in the server's store.
 
 ## M2: per-user access
 

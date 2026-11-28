@@ -23,7 +23,7 @@ brain is refused with `engine_swap_refused` (reason `team_brain`); only your own
 a store that already exists: a PGLite store with no `PG_VERSION` file is refused with `no_brain` before any connection,
 because connecting would otherwise initialize a new, empty brain. With a store in place, it opens the brain without
 migrating it and reads whether the brain uses managed storage. The Rust engine holds managed storage on one host and, since lane LM slice 3, on a multi-user store
-(`GBRAIN_RUST_MULTIUSER=1`, where its checkout locks are leases). A managed brain is refused with `engine_swap_refused`
+(`GBRAIN_RUST_MULTIUSER=1` or the brain's config row `engine.rust.multiuser`, where its checkout locks are leases). A managed brain is refused with `engine_swap_refused`
 (reason `managed_storage`) only when the build's Rust engine does not serve managed mode. A managed brain gets its
 plan with a `managed_known_losses` list (one "known loss" line in the text plan): today a failing Git effect on a Rust
 brain, single-host or multi-user, refuses `raw_sql` instead of parking ([RUST_ENGINE.md](../designs/RUST_ENGINE.md)
@@ -187,12 +187,13 @@ again when the report changes. Never retried on a timer, and there is no overrid
 Writers on more than one machine in the last 7 days (the plan needs exactly one observed writer host). Such a brain stays on Postgres until the Rust server phase
 passes the D17 bar (D19). Needs the user's topology decision.
 
-This row stops refusing only with `GBRAIN_RUST_MULTIUSER=1` and a destination that is a served multi-user Rust brain (the multi-user Rust build, default off); every other criterion still applies.
+This row stops refusing only with multi-user mode on (`GBRAIN_RUST_MULTIUSER=1`, or the brain's config row
+`engine.rust.multiuser` set to `true` or `1`, which the shadow copies to the Rust store) and a destination that is a served multi-user Rust brain (the multi-user Rust build, default off); every other criterion still applies.
 
 The plan reads that destination from this host's configuration only, because no server can serve the brain before the
 swap. The host that swaps becomes the brain server, so its configuration counts only when all of these hold:
 
-- `GBRAIN_RUST_MULTIUSER=1`.
+- Multi-user mode is on: `GBRAIN_RUST_MULTIUSER=1`, or the brain's config row `engine.rust.multiuser` is `true` or `1`.
 - `GBRAIN_RUST_SERVER_LISTEN` is the `host:port` you serve on. A server started with only the `--rust-listen` flag does
   not count, because the plan cannot see that flag: set `GBRAIN_RUST_SERVER_LISTEN` to the address you serve on.
 - The address is not a loopback address, and `GBRAIN_RUST_SERVER_TLS_CERT` and `GBRAIN_RUST_SERVER_TLS_KEY` are set

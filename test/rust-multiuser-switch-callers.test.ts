@@ -19,7 +19,7 @@ const READ = /\brustMultiuserFromEnv\(|\.GBRAIN_RUST_MULTIUSER\b|\[\s*['"]GBRAIN
 
 /** Each file that keeps an environment-only read, how many, and why it cannot read the store's answer. */
 const ALLOWED: Record<string, { reads: number; why: string }> = {
-  'src/core/rust-engine/multiuser-switch.ts': { reads: 3, why: 'the definition, and rustMultiuserOfOwner: the owner\'s hello answer, or this process\'s own switch' },
+  'src/core/rust-engine/multiuser-switch.ts': { reads: 4, why: 'the definition; rustMultiuserOfOwner: the owner\'s hello answer, or this process\'s own switch; rustMultiuserOfBrain: the environment half, OR the brain\'s config row read through its open engine (the engine swap, whose destination store is not open)' },
   'src/core/rust-engine/store.ts': { reads: 1, why: 'the environment half sent to the store open; the store adds its own config row and reports the answer' },
   'src/core/rust-engine.ts': { reads: 1, why: 'the host id is minted before the open; a brain on by its config row mints it on the store\'s HOST_ID_REQUIRED answer' },
   'src/core/rust-engine/access-self-check.ts': { reads: 1, why: 'storeMultiuser: the fallback for a store that reports no answer of its own' },
@@ -28,9 +28,6 @@ const ALLOWED: Record<string, { reads: number; why: string }> = {
   'src/core/rust-engine/served/engine.ts': { reads: 1, why: 'servedTargetFor: a served client holds no store; the config row lives in the server\'s store' },
   'src/commands/auth-rust-server-owner.ts': { reads: 1, why: 'the fallback when no store is open' },
   'src/core/engine-capabilities.ts': { reads: 1, why: 'the SQL engines (PGLite, Postgres) have no Rust store and no Rust config row' },
-  'src/commands/engine-swap.ts': { reads: 1, why: 'the swap destination store is not open before the cutover, so only the switch can say the destination is multi-user (refusing fails closed)' },
-  'src/core/engine-swap/destination.ts': { reads: 2, why: 'the swap destination store is not open before the cutover (as engine-swap.ts)' },
-  'src/core/engine-swap/plan.ts': { reads: 1, why: 'the swap destination store is not open before the cutover (as engine-swap.ts)' },
 };
 
 const strip = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/([^:'"`])\/\/.*$/gm, '$1');
