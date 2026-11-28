@@ -116,22 +116,24 @@ async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
         // #9966: an index backing a PRIMARY KEY or UNIQUE constraint enforces it on every write, which
         // pg_stat_user_indexes never counts as a scan, so it is not a zero-read candidate. #10413: only one ready for writes
         // enforces it; a CREATE UNIQUE INDEX CONCURRENTLY that failed before then keeps indisunique, enforces nothing and is listed.
-        const rows = await engine.executeRaw<{ index: string; size: string }>(`
+        // #10512: an unusable index (a failed or dropping build) is usually tiny, so it sorts first and is marked; the size cap must not bury it.
+        const rows = await engine.executeRaw<{ index: string; size: string; usable: boolean }>(`
           SELECT s.schemaname, s.relname AS table, s.indexrelname AS index,
-                 s.idx_scan, pg_size_pretty(pg_relation_size(s.indexrelid)) AS size
+                 s.idx_scan, pg_size_pretty(pg_relation_size(s.indexrelid)) AS size,
+                 (i.indisvalid AND i.indisready AND i.indislive) AS usable
             FROM pg_stat_user_indexes s
             JOIN pg_index i ON i.indexrelid = s.indexrelid
            WHERE s.schemaname = 'public'
              AND s.idx_scan = 0
              AND NOT ((i.indisprimary OR i.indisunique) AND i.indisready AND i.indislive)
-           ORDER BY pg_relation_size(s.indexrelid) DESC
+           ORDER BY (i.indisvalid AND i.indisready AND i.indislive), pg_relation_size(s.indexrelid) DESC
            LIMIT 21
         `);
         if (rows.length === 0) {
           checks.push({ name: 'index_audit', status: 'ok', message: 'All public indexes have recorded scans (indexes backing PRIMARY KEY or UNIQUE constraints are not listed)' });
         } else {
           // #7145: 21 rows means more than the 20 listed.
-          const list = rows.slice(0, 20).map(r => `${r.index}(${r.size})`).join(', ');
+          const list = rows.slice(0, 20).map(r => `${r.index}(${r.size}${r.usable ? '' : ', not usable: invalid, not ready or being dropped'})`).join(', ');
           checks.push({
             name: 'index_audit',
             status: 'warn',

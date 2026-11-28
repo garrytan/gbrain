@@ -117,6 +117,7 @@
       "  [OK] schema_columns: 1417 column(s) verified against live schema",
       "  [OK] schema_missing_tables: All 198 table(s) the applied migrations create exist.",
       "  [OK] schema_function_bodies: Every function this gbrain's schema defines has its body",
+      "  [OK] schema_pack_active: Active pack: gbrain-base-v2 v1.7.0 (28 types, 17 link verbs)",
       "  [OK] rls_event_trigger: Skipped (PGLite — no event trigger support)",
       "  [INFO] embeddings: Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
       "  [INFO] embedding_provider: Not probed: embeddings are disabled on this brain by choice (keyword search keeps working).",
