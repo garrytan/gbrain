@@ -187,6 +187,32 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(inbox.map((e) => [e.outcome, e.reason])).toEqual([['uncomparable', 'preimage_timeout']]);
       expect((await tallyOf(inbox)).comparable).toBe(0);
     }, 60_000);
+
+    (ctx.kind === 'postgres' ? test : test.skip)('the page-id lookup of an id-named write is stopped by the database at the read deadline, not left waiting on a pool connection behind a lock', async () => {
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      const [row] = await primary().executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1', ['companies/acme-example']);
+      const [{ d }] = await primary().executeRaw<{ d: string }>('SELECT current_database() AS d');
+      if (!d.startsWith('gbrain_test_')) throw new Error('refusing to lock a database that is not a test clone');
+      const url = new URL(process.env.DATABASE_URL!); url.pathname = `/${d}`;
+      // Another process holds the pages table (as a migration would) for longer than the read deadline.
+      const holder = Bun.spawn([process.execPath, '-e', "import postgres from '#postgres'; const s = postgres(process.env.OTHER_URL, { max: 1, prepare: false }); await s.begin(async (t) => { await t.unsafe('LOCK TABLE pages IN ACCESS EXCLUSIVE MODE'); await t.unsafe('SELECT pg_sleep(8)'); }); await s.end();"], {
+        cwd: join(import.meta.dir, '..', '..'), env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', OTHER_URL: url.toString() }, stdout: 'ignore', stderr: 'pipe',
+      });
+      const count = async (sql: string): Promise<number> => Number((await primary().executeRaw<{ n: string }>(sql))[0]!.n);
+      const poll = async (sql: string, want: number, ms: number): Promise<void> => { const end = Date.now() + ms; while (await count(sql) !== want) { if (Date.now() > end) throw new Error(`timed out waiting for ${want}`); await new Promise((r) => setTimeout(r, 50)); } };
+      await poll("SELECT count(*)::text AS n FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE c.relname = 'pages' AND l.mode = 'AccessExclusiveLock' AND l.granted", 1, 15_000);
+      const { inbox, wrapped } = rig();
+      const write = wrapped.stripStaleFrontmatterKeys({ sourceId: 'default', ids: [Number(row!.id)] });
+      const lookups = "SELECT count(*)::text AS n FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND state = 'active' AND query LIKE '/* shadow write targets */%'";
+      await poll(lookups, 1, 5_000); // the lookup waits behind the lock
+      await poll(lookups, 0, 4_000); // and the database ends it at the read deadline (2 s), while the lock is still held
+      expect(holder.exitCode).toBeNull();
+      expect(await holder.exited).toBe(0);
+      await write;
+      await until(() => inbox.length >= 1);
+      expect(inbox.map((e) => [e.op, e.outcome])).toEqual([['stripStaleFrontmatterKeys', 'uncomparable']]);
+    }, 60_000);
   });
 
   (ctx.addon ? describe : describe.skip)('a sampled page or link write replayed on a scratch Rust store', () => {

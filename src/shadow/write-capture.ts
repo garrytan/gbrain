@@ -255,7 +255,11 @@ async function targetsOf(engine: BrainEngine, op: string, args: unknown[]): Prom
   const wanted = Array.isArray(ids) ? [...new Set(ids)] : [];
   if (typeof sourceId !== 'string' || !sourceId || !wanted.length || !wanted.every((id) => Number.isInteger(id))) throw new Error('target_unresolved');
   if (wanted.length > MAX_PRE_PAGES) throw new Error('preimage_too_large');
-  const rows = await engine.executeRaw<{ source_id: string; slug: string }>('/* shadow write targets */ SELECT source_id::text AS source_id, slug::text AS slug FROM pages WHERE source_id = $1 AND id = ANY($2::int[]) AND deleted_at IS NULL', [sourceId, wanted]);
+  // Bounded like the preimage read: the caller's deadline only stops waiting, so on Postgres the database ends the lookup itself (a lock held by a migration would otherwise keep a pool connection).
+  const rows = await engine.transaction(async (tx) => {
+    if (hasCapability(engine, 'postgres_admin')) await digestQuery(tx)(`SET LOCAL statement_timeout = ${PREIMAGE_TIMEOUT_MS}`);
+    return tx.executeRaw<{ source_id: string; slug: string }>('/* shadow write targets */ SELECT source_id::text AS source_id, slug::text AS slug FROM pages WHERE source_id = $1 AND id = ANY($2::int[]) AND deleted_at IS NULL', [sourceId, wanted]);
+  }, { readOnly: true });
   if (rows.length !== wanted.length) throw new Error('target_unresolved');
   return rows.map((r) => ({ source: r.source_id, slug: r.slug }));
 }
