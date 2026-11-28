@@ -186,10 +186,11 @@ previews made before the swap must be run again: a preview's list order, and so 
 ### Remote callers after a swap
 
 A brain with remote callers (access tokens, OAuth clients or remote MCP) does not swap yet (`remote_access_unserved`).
-Once it can, one named loss stays: a remote read by the brain owner on a Rust brain refuses by name
-(`engine_capability_missing`, "the owner lineage read") until the Rust store models the owner's lineage read. Other
-remote callers, and the local CLI, read what they read on the old engine. The swap plan lists it under "Named loss for
-remote callers".
+Once it can, a remote caller on a Rust brain, the brain owner included, reads through the store's own privacy policy
+and sees what it sees on the old engine; the brain owner's lineage read is served (RUST_ENGINE.md row RA-1, closed). One
+named loss stays: the remote fact floors of a labelled-only member, and of any caller whose record holds a pending folder
+prefix, refuse by name (`engine_capability_missing`, RUST_ENGINE.md row 32e-b-5). The local CLI reads what it reads on
+the old engine. The swap plan lists it under "Named loss for remote callers".
 
 <a id="policy"></a>
 ## The readiness policy

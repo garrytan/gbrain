@@ -24,7 +24,7 @@ The census comes from reading the code. It was not built or run against `cd8eac4
   An audience of several identities for a labelled-only member stops too.
 - `storePrivacyPolicy` (fact policy) stops at `private-provenance.ts:166`. `storePageTextPolicy` and `storePagePolicy`
   stop at `:271` after `judgeWidenedCaller` (`:293`).
-- `storeFloorPolicy` (the remote provenance floor) stops at `:179` for a labelled-only grant or an owner read.
+- `storeFloorPolicy` (the remote provenance floor) stops at `:179` for a labelled-only grant or a caller record that holds a pending folder prefix (row 32e-b-5); an owner read is served.
 - `storeMemberReadPolicy` stops at `:192` when the member whose page a save lands on meets a folder rule, and at
   `:201` for any other policy it does not model. `storeOwnerReadPolicy` stops at `:219`.
 
@@ -47,9 +47,9 @@ grant. On the plain CLI none of them is asked for a policy.
 
 | Store member | File:line (cd8eac4d0c) | Reached from | Stops when |
 | --- | --- | --- | --- |
-| `readReplacementTarget` | `facts-remember.ts:106`, policy `facts-remember.ts:108` | a remote fact save that replaces a fact (`src/core/facts/single-prepare.ts:202`), only with `excludePrivate` | a labelled-only grant or an owner read (`private-provenance.ts:179`) |
-| `readClaimWithdrawal` | `facts-remember.ts:120`, policy `facts-remember.ts:121` | a remote save that meets a withdrawal (`src/core/facts/single-prepare.ts:102`), only with `excludePrivate` | a labelled-only grant or an owner read (`private-provenance.ts:179`) |
-| `findActiveSingleFact` | `facts-purge.ts:75`, policy `facts-purge.ts:76` | a remote fact save with no page slug (`src/core/facts/single-prepare.ts:141-142`) | a labelled-only grant or an owner read (`private-provenance.ts:179`) |
+| `readReplacementTarget` | `facts-remember.ts:106`, policy `facts-remember.ts:108` | a remote fact save that replaces a fact (`src/core/facts/single-prepare.ts:202`), only with `excludePrivate` | a labelled-only grant or a caller record that holds a pending folder prefix (row 32e-b-5; `private-provenance.ts:179`) |
+| `readClaimWithdrawal` | `facts-remember.ts:120`, policy `facts-remember.ts:121` | a remote save that meets a withdrawal (`src/core/facts/single-prepare.ts:102`), only with `excludePrivate` | a labelled-only grant or a caller record that holds a pending folder prefix (row 32e-b-5; `private-provenance.ts:179`) |
+| `findActiveSingleFact` | `facts-purge.ts:75`, policy `facts-purge.ts:76` | a remote fact save with no page slug (`src/core/facts/single-prepare.ts:141-142`) | a labelled-only grant or a caller record that holds a pending folder prefix (row 32e-b-5; `private-provenance.ts:179`) |
 | `readLiveFactEntityPage` | `facts-rest.ts:31`, policy `facts-rest.ts:33` (remote read floor, no `callerReaders`) | subject inference for a remote save (`src/core/facts/subject-infer.ts:254`) | a remote page-floor rendering that matches none of `storePageTextPolicy`'s reference forms; supported labelled-only callers are served, with the caller record's pending prefixes forwarded (`private-provenance.ts:395-412`) |
 | `readMemberPageWithdrawal` | `facts-remember.ts:114`, policy `facts-remember.ts:115` | a remote save onto a member page (`src/core/facts/single-prepare.ts:64` and `:92`) | the page's member (not the caller) meets a folder rule (`private-provenance.ts:192`), or an owner read the store does not model (`:201`, `:219`) |
 

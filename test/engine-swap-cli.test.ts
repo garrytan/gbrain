@@ -105,7 +105,7 @@ describe('engine swap --plan', () => {
     const json = JSON.parse((await run(['--to', 'rust', '--plan', '--json'])).stdout);
     expect(json.way_back.losses.not_carried_tables).toContain('page_versions');
     expect(json.way_back.known_limits.length).toBe(3);
-    expect(r.stdout).toContain('Named loss for remote callers: A remote read by the brain owner on a Rust brain refuses by name');
+    expect(r.stdout).toContain('Named loss for remote callers: On a Rust brain the remote fact floors of a labelled-only member, and of any caller whose record holds a pending folder prefix, refuse by name');
     expect(json.way_back.remote_limits.length).toBe(1);
   });
 

@@ -42,10 +42,11 @@ export const FAILBACK_KNOWN_LIMITS = [
 
 /**
  * Stated in the swap plan: what a remote caller loses on the Rust engine. A brain with remote callers does not swap yet
- * (remote_access_unserved); once it can, the owner's remote read is the named loss (RUST_ENGINE.md row RA-1).
+ * (remote_access_unserved); once it can, the remote fact floors the store does not model are the named loss
+ * (RUST_ENGINE.md row 32e-b-5). The owner's remote read is served (row RA-1, closed).
  */
 export const RUST_REMOTE_LIMITS = [
-  'A remote read by the brain owner on a Rust brain refuses by name (engine_capability_missing, "the owner lineage read") until the store models the owner\'s lineage read; other remote callers and the local CLI read as on the old engine.',
+  'On a Rust brain the remote fact floors of a labelled-only member, and of any caller whose record holds a pending folder prefix, refuse by name (engine_capability_missing, RUST_ENGINE.md row 32e-b-5); the brain owner, other remote callers and the local CLI read as on the old engine.',
 ] as const;
 
 /** The fingerprint guard's rule, in plain words, for the swap and failback plans and the guide. */
