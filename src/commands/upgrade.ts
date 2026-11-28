@@ -434,7 +434,7 @@ async function installStableRelease(method: string, target: { version: string; c
       try { bun(['remove', '-g', 'gbrain']); removed = true; } catch { /* the failed add may have registered nothing */ }
       if (removed || !shimLinked(shimDir)) moveAsideOrphanedShim(shimDir);
       bun(['add', '-g', BUN_BACKEND, `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]);
-      if (installedVersion(method) !== ctx.oldVersion) throw new Error('restored version not observed');
+      if (installedVersion(method) !== ctx.oldVersion || (process.platform === 'win32' && !shimLinked(shimDir))) throw new Error('restored version or launcher not observed');
       console.error(`Restored gbrain ${ctx.oldVersion}.`);
     } catch { console.error('Restore failed. Reinstall by hand:'); for (const line of hint) console.error(`  ${line}`); }
     recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${BUN_BACKEND} ${spec} failed`, recover: process.platform === 'win32' ? `${hint[0]} ${hint.slice(1).map((line, i) => `(${i + 1}) ${line}`).join(' ')}` : hint[0] });

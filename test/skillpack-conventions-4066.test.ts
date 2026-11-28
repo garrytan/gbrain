@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
 import { bundledSkills } from '../src/core/skills/bundled.ts';
+import { writeIfAbsent } from '../src/commands/skillpack/conventions.ts';
+import { readdirSync } from 'node:fs';
 
 const roots: string[] = [];
 afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
@@ -56,5 +58,17 @@ describe('gbrain skillpack conventions', () => {
     const extra = await cli(home, [join(home, 'a'), join(home, 'b')]);
     expect(extra.exitCode).not.toBe(0);
     expect(existsSync(join(home, 'a'))).toBe(false);
+  });
+
+  test('a convention that appears after the existence check is never replaced, and no temporary file is left', () => {
+    const dir = join(emptyHome(), 'conventions');
+    mkdirSync(dir, { recursive: true });
+    const target = join(dir, 'quality.md');
+    writeFileSync(target, 'written by someone else meanwhile\n');
+    expect(writeIfAbsent(target, 'gbrain copy\n')).toBe(false);
+    expect(readFileSync(target, 'utf8')).toBe('written by someone else meanwhile\n');
+    expect(writeIfAbsent(join(dir, 'fresh.md'), 'gbrain copy\n')).toBe(true);
+    expect(readFileSync(join(dir, 'fresh.md'), 'utf8')).toBe('gbrain copy\n');
+    expect(readdirSync(dir).sort()).toEqual(['fresh.md', 'quality.md']);
   });
 });

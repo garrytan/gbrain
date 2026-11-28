@@ -560,7 +560,7 @@ export async function runSetup(argv: string[], deps: { openclaw?: { bin?: string
     const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && (found.mcp.state === 'current' || found.mcp.state === 'owned'));
     const target: Target = {
       brain: { ...(!cfg ? { kind: 'new-local-pglite' as const, path: gbrainPath('brain.pglite') } : cfg.engine === 'pglite' ? { kind: 'local-pglite' as const, path: dataDir } : { kind: 'local-postgres' as const }),
-        config_dir: brainHome, ...(brainId ? { id: brainId } : {}) },
+        config_dir: brainHome, ...(brainId && !pluginOwner ? { id: brainId } : {}) },
       source: { id: sourceId, pinned: sourceId !== null, from: flags.source ? 'flag' : sourceId ? 'env' : 'brain-default' },
       transport: 'local-stdio', launcher, surface, ...(plan.advertise ? { advertise: plan.advertise } : {}), ...(plan.stdioMember ? { stdio_member: plan.stdioMember } : {}),
       registration_owner: pluginOwner ? 'plugin' : prior ? 'setup' : 'none',
@@ -831,7 +831,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && (found.mcp.state === 'current' || found.mcp.state === 'owned'));
     const target: Target = {
       brain: { ...(!cfg ? { kind: 'new-local-pglite' as const, path: gbrainPath('brain.pglite') } : cfg.engine === 'pglite' ? { kind: 'local-pglite' as const, path: dataDir } : { kind: 'local-postgres' as const }),
-        config_dir: brainHome, ...(brainId ? { id: brainId } : {}) },
+        config_dir: brainHome, ...(brainId && !pluginOwner ? { id: brainId } : {}) },
       source: { id: sourceId, pinned: sourceId !== null, from: flags.source ? 'flag' : sourceId && sourceId === process.env.GBRAIN_SOURCE ? 'env' : sourceId ? 'receipt' : 'brain-default' },
       transport: 'local-stdio', launcher, surface: plan.surface, ...(plan.surfaceOrigin ? { surface_origin: plan.surfaceOrigin } : {}), ...(plan.advertise ? { advertise: plan.advertise } : {}), ...(plan.stdioMember ? { stdio_member: plan.stdioMember } : {}),
       registration_owner: pluginOwner ? 'plugin' : prior ? 'setup' : 'none',

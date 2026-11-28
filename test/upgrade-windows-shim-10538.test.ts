@@ -140,9 +140,10 @@ describe('#10538 reinstall hint', () => {
  * `bun remove` leaves gbrain.exe, and the fake `bun add` refuses with EEXIST while it exists. failAdd 'target' makes
  * the target's add write a partial launcher and fail (the restore then meets that launcher); 'all' fails every add.
  * Like Bun 1.4, an add over a package the global package.json still lists exits 0 without swapping; 'register' makes
- * the target's add list itself there before its link fails, and 'silent-restore' fails the target's add like 'target' and makes the restore's add exit 0 unchanged.
+ * the target's add list itself there before its link fails, and 'silent-restore' fails the target's add like 'target' and makes the restore's add exit 0 unchanged; 'unlinked-restore' fails the target's add like 'target' and makes the restore install the package
+ * without linking gbrain.exe or gbrain.bunx.
  */
-async function windowsUpgrade(failAdd: 'none' | 'target' | 'all' | 'link' | 'register' | 'silent-restore' = 'none', opts: { bunfigBinDir?: boolean; removeExit?: number } = {}) {
+async function windowsUpgrade(failAdd: 'none' | 'target' | 'all' | 'link' | 'register' | 'silent-restore' | 'unlinked-restore' = 'none', opts: { bunfigBinDir?: boolean; removeExit?: number } = {}) {
   const home = tempDir('upgrade');
   const bunInstall = join(home, '.bun');
   const bin = join(home, 'path-bin');
@@ -170,10 +171,11 @@ async function windowsUpgrade(failAdd: 'none' | 'target' | 'all' | 'link' | 'reg
     '    if [ -e "$B/gbrain.exe" ]; then echo "error: failed to link gbrain: EEXIST" >&2; exit 1; fi',
     '    if grep -q \'"gbrain"\' "$G/package.json"; then exit 0; fi',
     `    if [ "${failAdd}" = silent-restore ] && [ "$ver" != "${TARGET}" ]; then exit 0; fi`,
-    `    if [ "${failAdd}" = all ] || { { [ "${failAdd}" = target ] || [ "${failAdd}" = silent-restore ]; } && [ "$ver" = "${TARGET}" ]; }; then echo partial > "$B/gbrain.exe"; echo "error: install failed" >&2; exit 1; fi`,
+    `    if [ "${failAdd}" = all ] || { { [ "${failAdd}" = target ] || [ "${failAdd}" = silent-restore ] || [ "${failAdd}" = unlinked-restore ]; } && [ "$ver" = "${TARGET}" ]; }; then echo partial > "$B/gbrain.exe"; echo "error: install failed" >&2; exit 1; fi`,
     '    mkdir -p "$G/node_modules/gbrain/src"',
     '    echo \'{"name":"gbrain","repository":"github:garrytan/gbrain"}\' > "$G/node_modules/gbrain/package.json"',
     '    echo "if (process.argv[2] === \'--version\') console.log(\'gbrain $ver\');" > "$G/node_modules/gbrain/src/cli.ts"',
+    `    if [ "${failAdd}" = unlinked-restore ] && [ "$ver" != "${TARGET}" ]; then printf '{"dependencies":{"gbrain":"%s"}}' "$4" > "$G/package.json"; exit 0; fi`,
     `    if [ "${failAdd}" = register ] && [ "$ver" = "${TARGET}" ]; then printf '{"dependencies":{"gbrain":"%s"}}' "$4" > "$G/package.json"; fi`,
     `    if { [ "${failAdd}" = link ] || [ "${failAdd}" = register ]; } && [ "$ver" = "${TARGET}" ]; then echo "error: failed to link gbrain" >&2; exit 1; fi`,
     '    echo "launcher $ver" > "$B/gbrain.exe"; echo meta > "$B/gbrain.bunx"',
@@ -257,6 +259,14 @@ describe.skipIf(process.platform === 'win32')('#10538 Windows upgrade with a hel
 
   test('GST-4070: a restore add that exits 0 without installing the old version is reported as failed, not restored', async () => {
     const r = await windowsUpgrade('silent-restore');
+    expect(r.stderr).not.toContain('Restored gbrain');
+    expect(r.stderr).toContain('Restore failed. Reinstall by hand:');
+  }, 60_000);
+
+  test('GST-4070: a restore that reinstalls the old package but links no gbrain.exe launcher is reported as failed, with the manual steps', async () => {
+    const r = await windowsUpgrade('unlinked-restore');
+    expect(r.globalSpec).toBe(`github:garrytan/gbrain#v${VERSION}`);
+    expect(r.shimFiles).not.toContain('gbrain.bunx');
     expect(r.stderr).not.toContain('Restored gbrain');
     expect(r.stderr).toContain('Restore failed. Reinstall by hand:');
   }, 60_000);

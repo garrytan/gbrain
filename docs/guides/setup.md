@@ -231,7 +231,8 @@ is skipped with the `gbrain auth rescope` command that moves it and keeps what i
 The people are labelled on the brain this run opens (`--brain`, `GBRAIN_BRAIN_ID`, else
 the one setup's directory resolves, a `.gbrain-mount` included), and the Claude Code or
 Codex entry pins that brain with `GBRAIN_BRAIN_ID`, so a session started in any other
-directory opens the same brain. A later run keeps the pin; an entry that labels nobody
+directory opens the same brain through MCP. The hooks still read the install's own config,
+and an entry the gbrain plugin owns is not pinned. A later run keeps the pin; an entry that labels nobody
 and names no brain stays unpinned, and its sessions' directory picks the brain.
 Keys minted before this (the default grant) are never changed. When the same run
 adds the `company` source (`--shape company`), setup labels the people first and then

@@ -338,7 +338,7 @@ export async function applyCodexSetup(
     const mcpDone = opts.pluginOwner !== null || found.mcp.state === 'current';
     const consentSame = prior?.consent !== undefined && consentValues(prior.consent) === consentValues(consent);
     const originSame = prior?.surface_origin === plan.surfaceOrigin;
-    const brainSame = (prior?.brain_id ?? null) === (plan.brainId ?? null);
+    const brainSame = (prior?.brain_id ?? null) === (opts.pluginOwner ? null : plan.brainId ?? null);
     if (prior?.status === 'installed' && consentSame && originSame && brainSame && mcpDone && found.hooksCurrent && found.trustCurrent && found.grace.state !== 'absent' && !opts.brainCreated) {
       steps.push({ step: 'receipt', action: 'keep', detail: `${paths.receiptPath} already records this install` });
       steps.push({ step: 'mcp', action: opts.pluginOwner ? 'skip' : 'keep', detail: opts.pluginOwner ? `the '${opts.pluginOwner}' plugin serves '${plan.name}'` : `[mcp_servers.${plan.name}] in ${paths.configPath} is current` });
@@ -351,7 +351,7 @@ export async function applyCodexSetup(
     const receipt: CodexSetupReceipt = {
       harness: 'codex', connection: 'local-stdio', setup_receipt_version: CODEX_SETUP_RECEIPT_VERSION, status: 'prepared',
       name: plan.name, gbrain_home: plan.brainHome, ...(plan.gbrainHomeEnv ? { gbrain_home_env: plan.gbrainHomeEnv } : {}),
-      launcher: plan.launcher, source_id: plan.sourceId, ...(plan.brainId ? { brain_id: plan.brainId } : {}), surface: plan.surface, ...(plan.surfaceOrigin ? { surface_origin: plan.surfaceOrigin } : {}),
+      launcher: plan.launcher, source_id: plan.sourceId, ...(plan.brainId && !opts.pluginOwner ? { brain_id: plan.brainId } : {}), surface: plan.surface, ...(plan.surfaceOrigin ? { surface_origin: plan.surfaceOrigin } : {}),
       ...(plan.advertise ? { advertise: plan.advertise } : {}),
       config_path: paths.configPath, hooks_path: paths.hooksPath,
       entry_hash: prior?.entry_hash ?? null, pending_entry_hash: opts.pluginOwner ? null : desiredHash,

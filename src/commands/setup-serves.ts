@@ -27,6 +27,7 @@ import { opError, OperationError } from '../core/ops/contract.ts';
 import { ACCESS_ID_RE } from '../core/access/principals.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
 import { loadConfig } from '../core/config.ts';
+import { getCliOptions } from '../core/cli-options.ts';
 import { companyRuleLines, readRoster, readsLines, rosterEmpty, type ServesReceipt, type ServesStatus, receiptLines, receiptOk } from './access-serves.ts';
 
 /** `source`: the source the members are labelled in, the harness's pinned source (--source, GBRAIN_SOURCE or a Codex receipt); unset, the labelling child resolves the brain's own (sources.default). `brain` and `team` are the run's --shape, so a pin on the company source adds it before labelling. */
@@ -166,7 +167,9 @@ export function historyRefusal(status: ServesStatus | null, preview: ServesRecei
   const ownerId = status.owner ?? owner?.id;
   const labelled = roster.filter(m => m !== ownerId);
   const pin = owner && (owner.from === 'flag' || (owner.id === ownerId && labelled.length < roster.length)) ? ['--owner', owner.id] : [];
-  const argvFor = (members: string[]) => ['gbrain', 'setup', harness, ...shapeArgv(flags.brain, !!flags.team), '--serves', 'several', '--members', members.join(','), ...(flags.source ? ['--source', flags.source] : []), ...pin];
+  const brain = getCliOptions().brain;
+  const at = brain ? ['--brain', brain] : [];
+  const argvFor = (members: string[]) => ['gbrain', ...at, 'setup', harness, ...shapeArgv(flags.brain, !!flags.team), '--serves', 'several', '--members', members.join(','), ...(flags.source ? ['--source', flags.source] : []), ...pin];
   const keep = [...argvFor(labelled.length ? labelled : roster), '--labelled-only'];
   const share = [...argvFor(roster), '--open-history'];
   const ownerOut = ownerId && labelled.length && labelled.length < roster.length ? `; the owner ${ownerId} reads the whole brain, so it is never labelled-only and stays out of that run's --members` : '';
@@ -175,7 +178,7 @@ export function historyRefusal(status: ServesStatus | null, preview: ServesRecei
     `Pick one: ${keep.join(' ')} keeps that history private (each member reads only pages labelled for them; with the company shape, setup adds one company/ rule so they read the company pages${ownerOut}), or ${share.join(' ')} lets every member read it.`,
     { fix: { argv: keep, consent: ['credentials'], actor: 'user', ask_user: true, requires_exclusive: false,
       why: 'Keeps the existing pages from the members; ask the user, who may instead choose --open-history so the members read them.',
-      verify: { argv: ['gbrain', 'access', 'serves', '--json'] } } });
+      verify: { argv: ['gbrain', ...at, 'access', 'serves', '--json'] } } });
 }
 
 /** --serves several: the labelling child (preview on a dry run) and, when applied, one bound read per member. */

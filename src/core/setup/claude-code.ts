@@ -299,7 +299,7 @@ export async function applyClaudeSetup(
     const writeEvents = plan.events.filter((e) => !found.edited[e]);
     const prior = found.prior;
     const consentSame = prior?.consent !== undefined && consentValues(prior.consent) === consentValues(consent);
-    const brainSame = (prior?.brain_id ?? null) === (plan.brainId ?? null);
+    const brainSame = (prior?.brain_id ?? null) === (opts.pluginOwner ? null : plan.brainId ?? null);
     const mcpDone = opts.pluginOwner !== null || found.mcp.state === 'current';
     const steps: SetupStep[] = [];
     if (prior?.status === 'installed' && consentSame && brainSame && mcpDone && found.hooksCurrent && !opts.brainCreated) {
@@ -312,7 +312,7 @@ export async function applyClaudeSetup(
       harness: 'claude-code', connection: 'local-stdio', setup_receipt_version: 1, status: 'prepared',
       name: plan.name, gbrain_home: plan.brainHome, launcher: plan.launcher, scope: plan.scope,
       ...(plan.projectDir ? { project_dir: plan.projectDir } : {}),
-      source_id: plan.sourceId, ...(plan.brainId ? { brain_id: plan.brainId } : {}), surface: plan.surface, ...(plan.advertise ? { advertise: plan.advertise } : {}), config_path: paths.configPath,
+      source_id: plan.sourceId, ...(plan.brainId && !opts.pluginOwner ? { brain_id: plan.brainId } : {}), surface: plan.surface, ...(plan.advertise ? { advertise: plan.advertise } : {}), config_path: paths.configPath,
       entry_hash: prior?.entry_hash ?? null, pending_entry_hash: opts.pluginOwner ? null : desiredHash,
       ...(prior?.mcp_adopted ? { mcp_adopted: true } : {}),
       ...(opts.pluginOwner ? { mcp_plugin: opts.pluginOwner } : {}),
