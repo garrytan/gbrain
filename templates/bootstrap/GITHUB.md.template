@@ -11,7 +11,7 @@ remain private.
 - **How it syncs:** `gbrain sources push` — a secret-scan-gated commit + push that
   refuses public remotes. On Claude Code it runs automatically per turn
   (debounced) and at session end via hooks; on Codex or opencode (no wired hook
-  system) run it at natural stopping points (the AGENTS.md gate reminds you). If background
+  system) run it at natural stopping points (the AGENTS.md gate reminds you). On a managed canonical worktree it is refused (`writer_coordinator_required`); there, pages go through gbrain and are published by the persistence owner — do not retry it. If background
   persistence is enabled, a git post-commit hook auto-pushes each commit and a
   30-minute pull job keeps multi-machine checkouts fresh. Run it by hand after
   meaningful changes on any harness.
