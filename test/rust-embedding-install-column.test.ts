@@ -4,14 +4,15 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: `installChunkEmbeddings` refuses, before writing anything, a `halfvec` descriptor
  *    (`engine_capability_missing`), and a batch with a vector whose length differs from the width upsertChunks takes (the
- *    config `embedding_dimensions`, else 1536) (`invalid_argument`, as upsertChunks
- *    refuses it). A refused batch leaves every chunk without a
+ *    config `embedding_dimensions`, else 1536) or with a component that is not a finite 32-bit float
+ *    (`invalid_argument`, as upsertChunks refuses them; PGLite refuses the same batch with 22003). A refused batch leaves every chunk without a
  *    vector, so `readEmbeddingCompletion` never reports one complete. The default descriptor (a 1536 placeholder on
  *    every brain) is not read: the configured width is the check.
  *  - Regression: the member read only the column's name, so a short vector or a `halfvec` column's vector was forwarded
  *    as float32 and the chunk was marked complete, where Postgres rejects the length and rounds `halfvec`. Later, with no
  *    width configured, a first batch of width 3 installed and fixed the store at 3 while upsertChunks kept writing 1536,
- *    so both writes succeeded and every vector search then failed on mixed widths.
+ *    so both writes succeeded and every vector search then failed on mixed widths; and a component of 1e40 was stored
+ *    as 0 with the chunk marked complete.
  *  - Why existing coverage misses it: the landing test for the member runs on PGLite, whose column has a fixed width.
  *  - Seam: none. The engine is the real addon.
  */
@@ -118,5 +119,18 @@ describe.skipIf(!rustArmRequested())('Rust engine: installChunkEmbeddings width 
     const refused = await refusal(() => engine.installChunkEmbeddings(pageId, column(), batch(1536, 3)));
     expect(refused?.code).toBe('invalid_argument');
     await nothingInstalled(null);
+  });
+
+  // PGLite refuses each of these with 22003 (`... is out of range for type vector`).
+  test.each(['1e40', '-1e40', '3.5e38'])('a component of %s, not finite as a 32-bit float, refuses the batch; nothing is stored or marked complete', async (big) => {
+    await engine.setConfig('embedding_dimensions', '3');
+    const refused = await refusal(() => engine.installChunkEmbeddings(pageId, column(), JSON.stringify([
+      { id: chunks[0]!.id, chunk_text: chunks[0]!.text, embedding: vector(3), image: null, model: 'test:model', input_hash: 'h0' },
+      { id: chunks[1]!.id, chunk_text: chunks[1]!.text, embedding: `[${big},0.5,0.25]`, image: null, model: 'test:model', input_hash: 'h1' },
+    ])));
+    expect(refused?.code).toBe('invalid_argument');
+    expect((refused as { message?: string }).message).toContain('finite');
+    await nothingInstalled(3);
+    expect((await engine.getChunks('embed/install', { includeEmbedding: true, includeUnsealed: true })).map(c => c.embedding ?? null)).toEqual([null, null]);
   });
 });
