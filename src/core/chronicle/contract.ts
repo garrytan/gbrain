@@ -28,8 +28,9 @@ import type { ChronicleDropCounts } from './extract-events.ts';
  * discovery re-decides pages changed since activation (unmanaged brains judge the recent ones under
  * the daily limit; managed brains record `no_write_decision`) and backfill re-queues the rest on request.
  * 2: same-day event slug disambiguation (event-identity.ts) and ended-invite projection (invite-projection.ts).
+ * 3: source-grounded conversation speaker attribution in event pages and timeline summaries (#7937).
  */
-export const CHRONICLE_EXTRACTOR_VERSION = 2;
+export const CHRONICLE_EXTRACTOR_VERSION = 3;
 
 /** Ledger table and its columns (migration `chronicle_page_state`). */
 export const CHRONICLE_LEDGER_TABLE = 'chronicle_page_state';

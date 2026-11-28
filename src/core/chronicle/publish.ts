@@ -74,18 +74,24 @@ export interface BuiltChronicleEvent {
 export function buildChronicleEvent(ev: ChronicleEventProposal, ctx: {
   depthSlug: string; attendees: string[]; effectiveDate: string | null; tz: string; visibility: Visibility; depthHash: string;
   isoDay: (when: string, tz: string) => string; normalizeKind: (kind: string) => string;
+  attribution?: { speaker: string | null; quote?: string };
 }): BuiltChronicleEvent {
   const who = ev.who.length ? ev.who : ctx.attendees;
   const when = ev.when || ctx.effectiveDate || ctx.isoDay(new Date(0).toISOString(), ctx.tz);
   const day = ctx.isoDay(when, ctx.tz);
   const hash = computeContentHash(`${who.join(',')}|${ev.what}|${ctx.depthSlug}`).slice(0, 8);
-  const event = { when, who, what: ev.what, where: ev.where ?? null, kind: ctx.normalizeKind(ev.kind), depth: ctx.depthSlug };
+  const summary = ctx.attribution
+    ? `${ctx.attribution.speaker ? `${ctx.attribution.speaker} said` : 'Conversation report (speaker unverified)'}: ${ev.what}`
+    : ev.what;
+  const event = { when, who, what: ev.what, where: ev.where ?? null, kind: ctx.normalizeKind(ev.kind), depth: ctx.depthSlug,
+    ...(ctx.attribution ? { attributed_to: ctx.attribution.speaker,
+      ...(ctx.attribution.quote ? { evidence_quote: ctx.attribution.quote } : {}) } : {}) };
   return {
     slug: `life/events/${day}-${hash}`,
-    title: ev.what.slice(0, 120),
-    compiledTruth: `${ev.what} — see [[${ctx.depthSlug}]].`,
+    title: summary.slice(0, 120),
+    compiledTruth: `${summary} — see [[${ctx.depthSlug}]].`,
     frontmatter: { event, event_date: when, captured_via: CHRONICLE_CAPTURED_VIA, visibility: ctx.visibility, chronicle_depth_hash: ctx.depthHash },
-    when, day, summary: ev.what,
+    when, day, summary,
   };
 }
 
