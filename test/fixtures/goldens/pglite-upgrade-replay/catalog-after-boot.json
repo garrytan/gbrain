@@ -679,6 +679,7 @@
       "gbrain_forget_page_retrievals()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=b35125db2179fb90ea092804d0acd61b60e58434d7fbf937413324b681ab416c",
       "gbrain_fts_input(t text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, pg_temp] body_sha256=c73d0dbc333c6dccc9714a6b8d1b7785f48170556b9024002ddca1c80b25d87d",
       "gbrain_graduation_fence()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=cd4642fe8deee2a3c14ef41f53862f0a449b2d8a10e47177bd4f5d2e05ce8803",
+      "gbrain_guard_content_author()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=dca85f9ec75cebeae9aa7b48b1b4100f513be578996375d9a0fd6196cee5b9c6",
       "gbrain_guard_deferred_request()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=edf066d51ee76d4037663393271883a12d7fdf4f0f01b7d1faa9e979d552c6c6",
       "gbrain_guard_effect_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=aa01528006dd7029eac6808e0233991524c9de9dc14aaf41f44160d67a747042",
       "gbrain_guard_guest_records()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=2d055da8535efc1d03d9e4e1b6ebaff581577f2b20726617821434266fb27597",
@@ -2894,7 +2895,8 @@
           "4 fail_count integer/int4 NOT NULL DEFAULT 0",
           "5 tombstoned boolean/bool NOT NULL DEFAULT false",
           "6 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "7 partial_input_chars integer/int4 NULL"
+          "7 partial_input_chars integer/int4 NULL",
+          "8 input_sha256 text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -3993,7 +3995,9 @@
           "54 withheld_source_path text/text NULL",
           "55 page_readers ARRAY/_text NULL",
           "56 folder_rule_ids ARRAY/_text NULL",
-          "57 version_history_gap_at timestamp with time zone/timestamptz NULL"
+          "57 version_history_gap_at timestamp with time zone/timestamptz NULL",
+          "58 content_author text/text NULL",
+          "59 content_author_hash text/text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -5183,6 +5187,7 @@
       "pages.pages_access_mark_restricted": "CREATE TRIGGER pages_access_mark_restricted AFTER INSERT OR UPDATE OF frontmatter ON public.pages FOR EACH ROW WHEN ((new.frontmatter ? 'readable_by'::text)) EXECUTE FUNCTION gbrain_access_mark_restricted()",
       "pages.pages_access_stamp_folder_rules": "CREATE TRIGGER pages_access_stamp_folder_rules BEFORE INSERT OR UPDATE OF slug, source_id, folder_rule_ids ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_access_stamp_folder_rules()",
       "pages.pages_clear_atom_scan_state": "CREATE TRIGGER pages_clear_atom_scan_state AFTER UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_clear_atom_page_state()",
+      "pages.pages_content_author": "CREATE TRIGGER pages_content_author BEFORE UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_guard_content_author()",
       "pages.pages_derivation_scope_delete": "CREATE TRIGGER pages_derivation_scope_delete AFTER UPDATE OF deleted_at ON public.pages FOR EACH ROW WHEN (((old.deleted_at IS NULL) AND (new.deleted_at IS NOT NULL))) EXECUTE FUNCTION gbrain_mark_derivation_scope_entry()",
       "pages.pages_forget_retrievals": "CREATE TRIGGER pages_forget_retrievals AFTER DELETE ON public.pages REFERENCING OLD TABLE AS gbrain_deleted_pages FOR EACH STATEMENT EXECUTE FUNCTION gbrain_forget_page_retrievals()",
       "pages.pages_knowledge_revision": "CREATE TRIGGER pages_knowledge_revision BEFORE UPDATE ON public.pages FOR EACH ROW EXECUTE FUNCTION gbrain_advance_page_revision()",

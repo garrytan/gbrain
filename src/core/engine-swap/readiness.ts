@@ -36,6 +36,11 @@ export interface ShadowStatus {
     capability_missing_by_family?: Record<string, number>;
     /** Sessions with an owed sample still unsettled, replays with no verdict and lost samples no tally has taken (shadow/follow-status.ts); the swap check waits for it to be absent. */
     unresolved_replays?: number;
+    /** Write windows a crash of the serving process lost, of unknown sample count (shadow/follow-status.ts): no evidence for the rest of the epoch, never counted toward the write bar. */
+    write_windows_lost?: number;
+    uncomparable_by_reason?: Record<string, number>;
+    /** Paths of pending markers (`write-pending.<session>.json`, at most 8): the serving process could not make an owed record durable; status reads no evidence until the step in `PENDING_MARKER_STEP` is done. */
+    pending_markers?: string[];
   };
   fingerprints?: {
     checked_rows?: number;
@@ -143,6 +148,8 @@ export const WRITE_CLIENT_LIMIT = 'client shadow children record no write compar
 export const WRITE_SETTLE_LIMIT = 'the child keeps up only below ~19 samples/s on this VM; a brain that writes faster has no moment with all samples settled, so the swap check refuses';
 /** What criterion 5 says when the swap check waited 60 s (`SWAP_SETTLE_WAIT_MS`, plan.ts) and never read a moment with every sample settled. */
 export const BRAIN_BUSY = 'brain busy: no 60 s lull with all samples settled; retry when idle';
+/** What an operator does about a pending marker (`write-pending.<session>.json` in the shadow state directory): the serving process could not write an owed record down, so no one knows how many samples it holds. Nothing clears it automatically. */
+export const PENDING_MARKER_STEP = "confirm the disk is healthy, then delete the marker file, then restart shadow; on a managed or owner-operated brain, this step goes through Capy Workflow Improver, never to the brain's owner by hand";
 
 const DAY_MS = 86_400_000;
 
@@ -286,7 +293,11 @@ function writeComparisons(r: Reader): Check {
     if (state === undefined || comparable === undefined || unexplained === undefined) return { state: 'missing', detail: '' };
     // A shadow that cannot compare writes never passes (S3 rule: capability_missing refuses, like a missing field).
     if (state === 'capability_missing') {
+      const lostWindows = r.peek<number>('write_comparisons.write_windows_lost');
+      if (num(lostWindows) && lostWindows > 0) return { state: 'missing', detail: `no evidence: ${lostWindows} write window(s) lost in a crash, sample count unknown; no evidence for the rest of this epoch; never counted toward the write bar` };
       const unsettled = r.peek<number>('write_comparisons.unresolved_replays');
+      const markers = r.peek<string[]>('write_comparisons.pending_markers');
+      if (Array.isArray(markers) && markers.length) return { state: 'missing', detail: `no evidence: a pending marker holds the write count closed (${markers.join(', ')}); ${PENDING_MARKER_STEP}` };
       if (num(unsettled) && unsettled > 0) return { state: 'missing', detail: BRAIN_BUSY }; // the swap check already waited for a lull (plan.ts)
       return { state: 'missing', detail: 'no evidence: write_comparisons.state is capability_missing' };
     }

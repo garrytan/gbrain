@@ -25,6 +25,7 @@ const EXEMPT: Record<string, string> = {
   'src/commands/sync/rename-collision.ts': 'moves a page between slugs (updateSlug, tombstone re-key, source_path repair) and writes no content; the renamed body still imports through importFile, which passes the owner gate input (import-file.ts)',
   'src/core/calibration/undo-wave.ts': 'restores prior take lifecycle fields; no new text',
   'src/core/company-brain/profile.ts': 'company profile publication of an owner-approved company source (operator_curated, never gated)',
+  'src/core/cycle/extract-atoms-page-state.ts': 'unchanged-input atom reuse moves existing atoms onto the page\'s new content hash under withTrustKeep; it writes no text',
   'src/core/cycle/dream-provenance.ts': 'stamps provenance frontmatter; no new text',
   'src/core/cycle/grade-takes.ts': 'writes resolution fields on existing takes; no new claim text',
   'src/core/cycle/phantom-redirect.ts': 'slug redirect (placement only)',

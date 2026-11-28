@@ -10,7 +10,7 @@
  * (GBRAIN_TEST_REQUIRE_RUST_ADDON=1 or GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes that an error; the Rust engine workflow runs it that way through its rust-store receipt lane); everything else uses fake engines or no engine.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -26,12 +26,14 @@ import { ensureEpoch, epochPath, readEpoch, withLock } from '../src/shadow/evide
 import { buildFollowStatus, renderFollowStatus } from '../src/shadow/follow-status.ts';
 import { encodeArgs } from '../src/shadow/codec.ts';
 import { configDir } from '../src/core/config.ts';
-import { shadowRoot } from '../src/shadow/state.ts';
+import { shadowRoot, wrapShadowSibling } from '../src/shadow/state.ts';
+import { wrapShadowEngine } from '../src/shadow/wrapper.ts';
+import { createWriteSampler } from '../src/shadow/write-capture.ts';
+import { newMirrorCounters } from '../src/shadow/mirror.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
 import { faultsPath, readFaults } from '../src/shadow/ledger.ts';
 import { sampleWeight } from '../src/shadow/supervisor.ts';
-import { createWriteSampler } from '../src/shadow/write-capture.ts';
-import { droppedWeight, MAX_DROPPED, lostPath, movedOutsideFootprint, owedPath, pageRefs, readWriteSnapshot, readWriteTally, recordLost, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { droppedWeight, MAX_DROPPED, lostPath, movedOutsideFootprint, owedPath, pageRefs, readOwed, readWriteSnapshot, readWriteTally, recordLost, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -658,6 +660,33 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
     });
   }
 
+  test('a lost sample counts against the share only when it was a page or link write: the rest is booked capability_missing pipe_unflushed_nonqualifying, still counted, visible and settled', async () => {
+    const other = '{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"}\n';
+    const { dir, epoch } = await childWithOwed(10, ['{"t":"write","op":"putPage"}\n', '{"t":"write","op":"putPage"}\n', other], undefined, { owed_qualifying: 6 } as never);
+    const t = readWriteTally(dir, epoch)!;
+    // 10 owed, 6 of them page and link writes; 3 read, 2 of them page and link writes: 4 such writes and 3 other samples were lost.
+    expect(t.uncomparable_by_reason).toMatchObject({ no_sample: 2, pipe_unflushed: 4 }); // before: pipe_unflushed 7
+    expect(t.capability_missing_by_family).toMatchObject({ 'pages:updatePageContextualRetrievalState': 1, pipe_unflushed_nonqualifying: 3 });
+    expect(t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing).toBe(10);
+    expect(t.settled).toEqual({ 'sess-3': 10 }); // every owed sample settled once
+    expect(existsSync(owedPath(dir, 'sess-3'))).toBe(false);
+  }, 60_000);
+
+  test('an owed record with no qualifying count (an older serving process) books every lost sample pipe_unflushed, as before: never fewer against the share', async () => {
+    const other = '{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"}\n';
+    const { dir, epoch } = await childWithOwed(10, ['{"t":"write","op":"putPage"}\n', other]);
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.uncomparable_by_reason).toMatchObject({ no_sample: 1, pipe_unflushed: 8 });
+    expect(t.capability_missing_by_family.pipe_unflushed_nonqualifying).toBeUndefined();
+  }, 60_000);
+
+  test('a qualifying count from 0 to the owed count is read; any other value makes the owed record unreadable, never a guess', () => {
+    const dir = tmp();
+    const write = (q: unknown) => writeFileSync(owedPath(dir, 'sess-q'), JSON.stringify({ v: 1, session: 'sess-q', serving_pid: process.pid, owed: 5, owed_qualifying: q, closed: true, child_exited: false }) + '\n');
+    for (const q of [0, 3, 5]) { write(q); expect(readOwed(dir, 'sess-q')).toMatchObject({ owed: 5, owed_qualifying: q }); }
+    for (const q of [-1, 6, 2.5, null, '3']) { write(q); expect(readOwed(dir, 'sess-q')).toBe('unreadable'); }
+  });
+
   test('a deficit larger than 10,000 is counted whole, never cut (20,001 owed, 1 read: 20,000 counted pipe_unflushed)', async () => {
     const { dir, epoch } = await childWithOwed(20_001, ['{"t":"write","op":"putPage"}\n']);
     const t = readWriteTally(dir, epoch)!;
@@ -941,6 +970,84 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
   }, 30_000);
 });
 
+describe('worker engines opened beside a shadowed primary (sync and import workers)', () => {
+  const URL_A = 'postgresql://shadow@127.0.0.1:1/brain_a';
+  /** A stand-in engine: its disconnect hooks are kept, and its one write is recorded. */
+  const fakeEngine = (url: string | undefined) => {
+    const hooks: Array<() => Promise<void>> = []; const wrote: string[] = [];
+    return { hooks, wrote, kind: 'postgres', connectedDatabaseUrl: url, registerBeforeDisconnect(stop: () => Promise<void>) { hooks.push(stop); return () => {}; }, async addTag(slug: string, tag: string) { wrote.push(`${slug}:${tag}`); } };
+  };
+  const sink = () => ({ counters: newMirrorCounters(), offer: () => {}, active: () => true });
+
+  test('a worker of an engine that is not shadowed is returned as it is, and nothing is registered on it', () => {
+    const worker = fakeEngine(URL_A);
+    expect(wrapShadowSibling(primary, worker)).toBe(worker);
+    expect(worker.hooks).toEqual([]);
+  });
+
+  test('a worker of a shadowed primary is wrapped with the same sink and a sampler of its own, which settles when the worker disconnects', async () => {
+    const lines: string[] = [];
+    const sampler = createWriteSampler({ rate: 1, send: (line) => { lines.push(line); return true; }, active: () => true });
+    let noted = 0; // the writer observer (swap eligibility) now sees a worker's committed writes as this process's
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0, writes: sampler, onCommittedWrite: () => { noted++; } });
+    const worker = fakeEngine(URL_A);
+    const shadowed = wrapShadowSibling(wrapped, worker);
+    expect(shadowed).not.toBe(worker);
+    await shadowed.addTag('people/a-example', 'x'); // a sampled write outside the pilot: counted by family, through the worker's own sampler
+    expect(worker.wrote).toEqual(['people/a-example:x']); // the write itself is unchanged
+    expect(lines.map((l) => JSON.parse(l))).toEqual([{ t: 'write', op: 'addTag', outcome: 'capability_missing', family: 'tags' }]);
+    expect(noted).toBe(1);
+    expect(worker.hooks).toHaveLength(1); // the worker's read-backs settle before its pool closes
+    await worker.hooks[0]!();
+  });
+
+  test('a worker connected to another database (or one that names none) is left unwrapped: nothing of it reaches this brain\'s shadow', async () => {
+    const lines: string[] = [];
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0, writes: createWriteSampler({ rate: 1, send: (line) => { lines.push(line); return true; }, active: () => true }) });
+    for (const other of [fakeEngine('postgresql://shadow@127.0.0.1:1/brain_b'), fakeEngine(undefined)]) {
+      expect(wrapShadowSibling(wrapped, other)).toBe(other);
+      await other.addTag('people/a-example', 'x');
+      expect(other.hooks).toEqual([]);
+    }
+    expect(lines).toEqual([]);
+    const unnamed = wrapShadowEngine(fakeEngine(undefined) as never, sink(), { sampleRate: 0 }); // a primary that names no URL (PGLite) shadows no worker
+    const worker = fakeEngine(undefined);
+    expect(wrapShadowSibling(unnamed, worker)).toBe(worker);
+  });
+
+  test('without a write sampler (a brain that was never seeded) a worker is wrapped and nothing waits at its disconnect', () => {
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0 });
+    const worker = fakeEngine(URL_A);
+    expect(wrapShadowSibling(wrapped, worker)).not.toBe(worker);
+    expect(worker.hooks).toEqual([]);
+  });
+
+  test('a worker\'s sampler sends through the primary\'s supervisor and owes what it cannot send there too: one durable record covers every worker', async () => {
+    const lines: string[] = []; const owed: number[] = []; let acceptSamples = false;
+    const sampler = createWriteSampler({ rate: 1, active: () => true, lost: () => false, owe: (n) => { owed.push(n); return true; },
+      send: (line) => { const e = JSON.parse(line); if (acceptSamples && e.reason !== 'send_shed') { lines.push(line); return true; } return false; } }); // the pipe takes samples but refuses loss-only lines
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0, writes: sampler });
+    const worker = wrapShadowSibling(wrapped, fakeEngine(URL_A));
+    for (let i = 0; i < MAX_DROPPED + 5; i++) await worker.addTag('people/a-example', `t${i}`); // refused, and the loss journal is down: the losses wait in the shared list
+    acceptSamples = true;
+    await worker.addTag('people/a-example', 'last'); // taken, carrying MAX_DROPPED; the rest cannot go as a loss-only line, so it is owed
+    expect(JSON.parse(lines[0]!).dropped).toBe(MAX_DROPPED);
+    expect(owed).toEqual([5]); // owed through the same supervisor option the primary uses, never left only in the worker's memory
+  });
+
+  test('a loss a worker\'s sampler could not record is carried by the next line its primary sends, after the worker is gone', async () => {
+    const lines: string[] = []; let accept = false;
+    const sampler = createWriteSampler({ rate: 1, send: (line) => { if (!accept) return false; lines.push(line); return true; }, active: () => true, lost: () => false });
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0, writes: sampler });
+    const worker = fakeEngine(URL_A);
+    await wrapShadowSibling(wrapped, worker).addTag('people/a-example', 'x'); // refused by the pipe, and the loss journal is down
+    await worker.hooks[0]!(); // the worker disconnects with the loss still unrecorded
+    accept = true;
+    await (wrapped as unknown as { addTag(s: string, t: string): Promise<void> }).addTag('people/a-example', 'y');
+    expect(lines.map((l) => JSON.parse(l).dropped)).toEqual([1]); // master's fork kept it to itself and it was lost
+  });
+});
+
 // ---- S2c: a durable per-session obligation for write samples (design: the supervisor owes, the child settles) ----
 describe('S2c: a durable per-session obligation for write samples', () => {
   const STATE = { sample_rate: 0.1 } as never;
@@ -996,6 +1103,53 @@ describe('S2c: a durable per-session obligation for write samples', () => {
     const directory = spyOn(durable, 'flushDirectory').mockImplementationOnce(() => { throw new Error('EIO'); });
     expect(() => owe(dir, 'sf', 1)).toThrow(); directory.mockRestore(); // renamed, directory entry not known durable: the caller must not treat it as written
     expect(() => owe(dir, 'sf', 1)).not.toThrow();
+  });
+
+  test('an orphaned session is split by what was owed and settled: only lost page and link writes are receipt_orphaned, the rest capability_missing receipt_orphaned_nonqualifying', () => {
+    const dir = tmp(); const epoch = epochOf(dir);
+    // 25 owed, 4 of them page and link writes; 5 settled already, 3 of those page and link writes: 20 lost, 1 of them a page or link write.
+    passing(dir, epoch, { settled: { sq: 5 }, settled_qualifying: { sq: 3 } });
+    owe(dir, 'sq', 25, { child_pid: deadPid(), owed_qualifying: 4 } as never);
+    worker(dir, epoch, 'owner-q').recover();
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.uncomparable_by_reason).toMatchObject({ receipt_orphaned: 1 }); // before: 20
+    expect(t.capability_missing_by_family).toMatchObject({ receipt_orphaned_nonqualifying: 19 });
+    expect(existsSync(owedPath(dir, 'sq'))).toBe(false);
+  });
+
+  test('an orphan split whose second append fails books each part once on the retry (the session-tagged lines settle it), so nothing is counted twice', async () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch);
+    owe(dir, 'sr', 25, { child_pid: deadPid(), owed_qualifying: 4 } as never);
+    const durable = await import('../src/core/fs-durable.ts');
+    const original = durable.flushFile; let lostFlushes = 0;
+    const spy = spyOn(durable, 'flushFile').mockImplementation((path: string) => { if (path.includes('write-lost.') && ++lostFlushes === 2) throw new Error('ENOSPC'); return original(path); });
+    try { worker(dir, epoch, 'owner-r1').recover(); } finally { spy.mockRestore(); }
+    worker(dir, epoch, 'owner-r2').recover();
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.uncomparable_by_reason.receipt_orphaned).toBe(4);
+    expect(t.capability_missing_by_family.receipt_orphaned_nonqualifying).toBe(21);
+    expect(existsSync(owedPath(dir, 'sr'))).toBe(false);
+  });
+
+  test('a verdict settles its page or link write in settled_qualifying, in the same save as settled; a capability_missing verdict settles only settled', () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch); owe(dir, 'ss', 3, { owed_qualifying: 2 } as never);
+    const w = worker(dir, epoch, 'ss');
+    w.note('comparable', undefined, 1, false, 1, 1);
+    w.note('capability_missing', 'pages:updatePageContextualRetrievalState', 1, false, 1, 0);
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.settled).toEqual({ ss: 2 });
+    expect((t as { settled_qualifying?: Record<string, number> }).settled_qualifying).toEqual({ ss: 1 });
+  });
+
+  test('a client worker books its lost other writes as lines the owner folds into capability_missing pipe_unflushed_nonqualifying, settling the session', () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch); owe(dir, 'sc2', 5, { closed: true, owed_qualifying: 2 } as never);
+    const client = new WriteTally(dir, () => null, () => true, process.pid, 'sc2');
+    (client as unknown as { missing(n: number, nonqualifying?: number): void }).missing(5, 3); client.save();
+    worker(dir, epoch, 'owner-c').save();
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.uncomparable_by_reason.pipe_unflushed).toBe(2);
+    expect(t.capability_missing_by_family.pipe_unflushed_nonqualifying).toBe(3);
+    expect(t.settled?.sc2).toBe(5);
   });
 
   test('D: a client worker that dies with buffered verdicts credits none of them: its session stays owed, and the next owner books the whole deficit once as receipt_orphaned', () => {
@@ -1559,5 +1713,98 @@ describe('S2c: every credit site settles exactly the weight it stands for', () =
     expect(t.settled?.['old-session']).toBe(4); // credited once, with the booking
     tally.note('capability_missing', 'tags', 1, false, 0); // a later save
     expect(readWriteTally(dir, epoch)!.settled?.['old-session']).toBeUndefined(); // no owed file stands for it: pruned
+  });
+});
+
+// ---- S2d: a pending marker, and one commit/delete protocol for every owed-file remover ----
+describe('S2d: a pending marker blocks status, and every owed-file remover re-reads the record and the marker under the tally lock', () => {
+  const STATE = { sample_rate: 0.1 } as never;
+  const stat = (dir: string) => buildFollowStatus(dir, STATE, NOW).write_comparisons;
+  const INPUTS = { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' } as const;
+  const epochOf = (dir: string): string => ensureEpoch(dir, INPUTS, NOW.getTime()).epoch_id;
+  const owe = (dir: string, session: string, owed: number, over: Partial<OwedRecord> = {}): void => writeOwed(dir, { v: 1, session, serving_pid: process.pid, owed, closed: false, child_exited: false, ...over });
+  const passing = (dir: string, epoch: string, extra: Record<string, unknown> = {}): void => writeFileSync(writeTallyPath(dir), JSON.stringify({ version: 1, epoch_id: epoch, updated_at: '', comparable: 1000, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {}, in_flight: [], ...extra }) + '\n');
+  const worker = (dir: string, epoch: string, session: string): WriteTally => new WriteTally(dir, () => epoch, () => true, process.pid, session);
+  const deadPid = (): number => spawnSync(process.execPath, ['-e', '0']).pid!;
+  const marker = (dir: string, session: string): string => join(dir, `write-pending.${session}.json`);
+
+  test('D1-F2: an owner pass that judged an old record settled cannot remove the higher record a republish put in its place meanwhile', async () => {
+    const dir = tmp(); const epoch = epochOf(dir); const dead = deadPid();
+    owe(dir, 'sp', 1, { child_pid: dead }); passing(dir, epoch);
+    const durable = await import('../src/core/fs-durable.ts'); const real = durable.flushDirectory; let swapped = false;
+    const spy = spyOn(durable, 'flushDirectory').mockImplementation(((path: string, options?: unknown) => {
+      (real as (p: string, o?: unknown) => void)(path, options);
+      if (!swapped) { swapped = true; owe(dir, 'sp', 2, { child_pid: dead, child_exited: true }); } // the supervisor republishes while the pass is between judging and removing
+    }) as never);
+    try { worker(dir, epoch, 'owner').recover(); } finally { spy.mockRestore(); }
+    expect(swapped).toBe(true);
+    expect(readOwed(dir, 'sp')).toMatchObject({ owed: 2 }); // was removed on its cached count of 1
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 1 });
+  });
+
+  test('D1-F2: the worker\'s own finish() cannot remove a higher record that replaced the one it judged settled', async () => {
+    const dir = tmp(); const epoch = epochOf(dir); owe(dir, 'sf2', 1, { closed: true }); passing(dir, epoch, { settled: { sf2: 1 } });
+    const fs = await import('node:fs'); const realRead = fs.readFileSync; let swapped = false;
+    const spy = spyOn(fs, 'readFileSync').mockImplementation(((p: unknown, ...rest: unknown[]) => {
+      const out = (realRead as (...a: unknown[]) => unknown)(p, ...rest);
+      if (!swapped && String(p) === writeTallyPath(dir)) { swapped = true; owe(dir, 'sf2', 2, { closed: true }); } // a republish lands right after finish() read the tally
+      return out;
+    }) as never);
+    let done: boolean;
+    try { done = worker(dir, epoch, 'sf2').finish(); } finally { spy.mockRestore(); }
+    expect(swapped).toBe(true);
+    expect(done).toBe(false);
+    expect(readOwed(dir, 'sf2')).toMatchObject({ owed: 2 });
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', outstanding_sessions: ['write-owed.sf2.json'] });
+  });
+
+  test('D1-F2: a remover that cannot take the tally lock defers and deletes nothing', () => {
+    const dir = tmp(); const epoch = epochOf(dir); owe(dir, 'sl', 1, { closed: true }); passing(dir, epoch, { settled: { sl: 1 } });
+    let done = true;
+    withLock(join(dir, 'write-comparisons.lock'), () => { done = worker(dir, epoch, 'sl').finish(); }); // another process holds the lock
+    expect(done).toBe(false);
+    expect(readOwed(dir, 'sl')).toMatchObject({ owed: 1 });
+    expect(worker(dir, epoch, 'sl').finish()).toBe(true); // the next pass, with the lock free, removes it
+  }, 15_000);
+
+  test('D1-F2: the orphan pass that cannot take the tally lock defers: a settled, dead session\'s record is not removed until the lock is free', () => {
+    const dir = tmp(); const epoch = epochOf(dir);
+    owe(dir, 'so', 1, { child_exited: true }); passing(dir, epoch, { settled: { so: 1 } });
+    withLock(join(dir, 'write-comparisons.lock'), () => { worker(dir, epoch, 'owner').recover(); }); // another process holds the lock
+    expect(readOwed(dir, 'so')).toMatchObject({ owed: 1 });
+    worker(dir, epoch, 'owner').recover();
+    expect(readOwed(dir, 'so')).toBeNull();
+  }, 15_000);
+
+  test('a pending marker keeps its session out of every remover and out of the pruning, and status blocks on it by name (counted once)', () => {
+    const dir = tmp(); const epoch = epochOf(dir);
+    owe(dir, 'sm', 1, { child_exited: true }); passing(dir, epoch, { settled: { sm: 1 } });
+    linkSync(owedPath(dir, 'sm'), marker(dir, 'sm')); // what the supervisor makes when a record write fails
+    worker(dir, epoch, 'owner').recover(); // the orphan pass: its child exited and everything is settled, which would remove the file
+    expect(existsSync(owedPath(dir, 'sm'))).toBe(true);
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 1, outstanding_sessions: ['write-pending.sm.json'] });
+    rmSync(owedPath(dir, 'sm')); // the worker removed its own file: the marker keeps the credit
+    worker(dir, epoch, 'other').note('comparable', undefined, 1, false, 0); // an unrelated owner save runs the pruning
+    expect(readWriteTally(dir, epoch)!.settled?.sm).toBe(1); // was pruned: no owed file stood for it
+    rmSync(marker(dir, 'sm'));
+    expect(stat(dir)).toMatchObject({ state: 'measured' });
+  });
+
+  test('the orphan pass books nothing for a marked session: the stale record\'s count is not the obligation, so it is neither booked nor removed', () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch);
+    owe(dir, 'sb', 1, { child_exited: true }); linkSync(owedPath(dir, 'sb'), marker(dir, 'sb'));
+    worker(dir, epoch, 'owner').recover();
+    expect(readWriteTally(dir, epoch)!.uncomparable).toBe(0); // nothing booked on the stale count
+    expect(readOwed(dir, 'sb')).toMatchObject({ owed: 1 });
+    rmSync(marker(dir, 'sb')); // the marker is cleared (the full record is durable): now the pass books what is unsettled, once
+    worker(dir, epoch, 'owner').recover();
+    expect(readWriteTally(dir, epoch)!.uncomparable).toBe(1);
+  });
+
+  test('a marker that cannot be listed blocks status; it never reads as no markers', async () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch); owe(dir, 'sq', 0);
+    const fs = await import('node:fs'); const realList = fs.readdirSync;
+    const spy = spyOn(fs, 'readdirSync').mockImplementation(((p: unknown, ...rest: unknown[]) => { if (String(p) === dir) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return (realList as (...a: unknown[]) => unknown)(p, ...rest); }) as never);
+    try { expect(stat(dir)).toMatchObject({ state: 'capability_missing' }); } finally { spy.mockRestore(); }
   });
 });

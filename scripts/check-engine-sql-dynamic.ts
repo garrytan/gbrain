@@ -58,6 +58,7 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   UNVERIFIED_ARCHIVE_SQL: 'src/core/engine-sql/sources.ts: constant missing-or-epoch archive-time predicate over sources (no input)',
   TRUST_CLAIMED_COLUMN_SQL: 'src/core/engine-sql/doctor-facts-trust.ts: a module constant built only from code constants (as on the main branch); no values',
   TRUST_NOT_CONNECTOR_SQL: 'src/core/engine-sql/doctor-facts-trust.ts: a module constant built only from code constants (as on the main branch); no values',
+  NON_TEXT_FRONTMATTER_KEYS_SQL: 'src/core/persistence/content-author-schema.ts: constant text[] literal of the code-constant NON_TEXT_FRONTMATTER_KEYS (GST-4056); no values',
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
@@ -124,6 +125,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   renderWriterReadPolicy: 'src/core/engine-sql/remote-links.ts: readPolicyFragment over a code-provided alias, ANDed (labelled-only writer) with labelledOnlyForSql, whose identities pass validIdentity and rule ids validQualifiedRuleId before they are quoted in; no values',
   privacyPartSql: 'src/core/search/private-visibility.ts: the constant privacy part (snapshot, derived-origin and declared-lineage tests) over a code-provided page alias; no values',
   activationSuppressedSql: 'src/core/eligibility/sql.ts: constant activation-suppression predicate over a caller alias; tier ranks and reason families come from constant tables',
+  textFrontmatterSql: 'src/core/persistence/content-author-schema.ts: constant CASE removing NON_TEXT_FRONTMATTER_KEYS_SQL from a code-provided frontmatter expression (GST-4056); no values',
   edgeTrimSql: 'src/core/edge-whitespace.ts: btrim of a code-provided constant expression over the constant EDGE_WHITESPACE set; no values',
   precedenceSql: 'src/core/eligibility/precedence.ts: constant source-precedence CASE over caller-given constant aliases and the vetted guest predicate (no input)',
   guestSourceSql: 'src/core/guests/note.ts: constant guest-source predicate over caller-given constant aliases (no input)',

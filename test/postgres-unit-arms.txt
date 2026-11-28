@@ -148,6 +148,7 @@ test/enforced-member-writes-setting.serial.test.ts
 test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
+test/engine-parity/backlinks-hidden-target.test.ts
 test/engine-parity/chunk-page-segmented.test.ts
 test/engine-parity/chunk-safe-fence.test.ts
 test/engine-parity/chunk-vector-overflow.test.ts
@@ -219,6 +220,7 @@ test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-concurrent-run-7923.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
 test/extract-atoms-raised-cap-drain-7391.test.ts
+test/extract-atoms-scan-input-gst4020.test.ts
 test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
@@ -327,6 +329,7 @@ test/import-frontmatter-key-order-5158.test.ts
 test/import-inline-chunk-keep.test.ts
 test/import-revision-concurrency.test.ts
 test/import-write-barrier.test.ts
+test/importer-trust-spoof-gst4056.test.ts
 test/ingest-capture-keeps-readers.test.ts
 test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
@@ -817,7 +820,9 @@ test/setup-serves-several.test.ts
 test/share-about-member-gst2897.test.ts
 test/shared-content-freshness.test.ts
 test/shared-skills-adoption-keeps-files.test.ts
+test/shared-skills-case-collisions.test.ts
 test/shared-skills-catalog.test.ts
+test/shared-skills-import-closure.test.ts
 test/shared-skills-retention-capacity.test.ts
 test/shared-skills-source-opt-out.test.ts
 test/shared-skills-writer-boundary.test.ts

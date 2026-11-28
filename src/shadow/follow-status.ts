@@ -12,7 +12,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_PGLITE_LIMIT } from '../core/engine-swap/readiness.ts';
+import { PENDING_MARKER_STEP, WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_PGLITE_LIMIT } from '../core/engine-swap/readiness.ts';
 import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord, RESEED_STEPS } from './seed.ts';
 import { writeSampleRate, type ShadowState } from './state.ts';
@@ -145,10 +145,14 @@ export interface FollowStatus {
     outstanding_receipts?: string[];
     /** `write_samples_unrecorded` faults of this epoch that name a sample count no file holds (`sent_count n=`, `no_epoch n=`), counted in `unresolved_replays`: no evidence for the rest of the epoch. Only an older writer writes them. */
     unrecorded_sample_faults?: number;
+    /** Paths of pending markers (`write-pending.<session>.json`, at most 8): the serving process could not make an owed record durable, so the count is closed (no evidence) until an operator does the step status names. Each also counts once in `unresolved_replays`. */
+    pending_markers?: string[];
     /** Sessions whose owed samples (`write-owed.<session>.json`) are not all settled yet, or whose owed file cannot be read, by file name (at most 8); each counts once in `unresolved_replays`. A session that owes nothing more blocks nothing. */
     outstanding_sessions?: string[];
     /** Lost lines of this epoch that name no session (an older writer's) were folded: their obligation is unknown, so there is no evidence for the rest of the epoch (counted in `unresolved_replays`). */
     legacy_lines?: number;
+    /** Write windows a crash of the serving process lost (`write_window_lost`): the samples they held are of unknown number, booked as one loss each and never compared or counted toward the write bar. State stays `capability_missing` for the rest of the epoch. */
+    write_windows_lost?: number;
   };
   fingerprints: { checked_rows: number; mismatches: number; probe: ProbeRecord };
   seed: { seed_id: string | null; finished_at: string | null; unseeded_gap_rows_total: number | null };
@@ -174,6 +178,8 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
   // A sample count only a fault line names (a command that could not publish its sent count, a client worker that could not write its count down) is a deficit nobody recorded: it blocks measured for the rest of this epoch (a new epoch clears it), even if the count was written down afterwards.
   const unrecorded = epoch ? readFaults(dir, Infinity).filter((f) => f.kind === 'write_samples_unrecorded' && /^(sent_count|no_epoch) n=/.test(f.detail) && (f.epoch_id === epoch.epoch_id || (f.epoch_id === undefined && Date.parse(f.ts) >= Date.parse(epoch.started_at)))).length : 0;
   const legacy = writes?.legacy_lines ?? 0;
+  const windowsLost = Math.max(writes?.uncomparable_by_reason?.write_window_lost ?? 0, snapshot.windowFiles); // windows a crash lost, of unknown size: no evidence for the rest of this epoch (not in `unresolved`: nothing will ever settle them, so the swap's wait must not wait for them)
+  const pendingMarkers = snapshot.outstanding.filter((n) => /^write-pending\.[A-Za-z0-9_-]+\.json$/.test(n)).map((n) => join(dir, n)); // by path: the operator step names the file
   const unresolved = (writes?.in_flight.length ?? 0) + snapshot.unfolded + receipts.length + unrecorded + snapshot.outstanding.length + (snapshot.unstable ? 1 : 0) + legacy; // a lost sample no tally has taken yet reads as no evidence, like a replay with no verdict
   const everyPass = readPasses(dir);
   const passes = epoch ? everyPass.filter((p) => p.epoch_id === epoch.epoch_id && Date.parse(p.started_at) >= Date.parse(epoch.started_at)) : everyPass;
@@ -210,13 +216,15 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
       next_full_pass_due: lastFull ? new Date(Date.parse(lastFull.finished_at) + NIGHTLY_MS).toISOString() : null,
     },
     write_comparisons: {
-      state: writes && !unresolved && writes.comparable + writes.unexplained_difference > 0 ? 'measured' : 'capability_missing', sample_rate: state ? writeSampleRate(state) : null,
+      state: writes && !unresolved && !windowsLost && writes.comparable + writes.unexplained_difference > 0 ? 'measured' : 'capability_missing', sample_rate: state ? writeSampleRate(state) : null,
       comparable: writes?.comparable ?? 0, unexplained_difference: writes?.unexplained_difference ?? 0, uncomparable: writes?.uncomparable ?? 0, capability_missing: writes?.capability_missing ?? 0,
       ...(unresolved ? { unresolved_replays: unresolved } : {}),
       ...(receipts.length ? { outstanding_receipts: receipts.slice(0, 8) } : {}),
       ...(unrecorded ? { unrecorded_sample_faults: unrecorded } : {}),
       ...(snapshot.outstanding.length ? { outstanding_sessions: snapshot.outstanding.slice(0, 8) } : {}),
+      ...(pendingMarkers.length ? { pending_markers: pendingMarkers.slice(0, 8) } : {}),
       ...(legacy ? { legacy_lines: legacy } : {}),
+      ...(windowsLost ? { write_windows_lost: windowsLost } : {}),
       ...(writes ? { capability_missing_by_family: writes.capability_missing_by_family, uncomparable_by_reason: writes.uncomparable_by_reason } : {}),
     },
     fingerprints: { checked_rows: counted?.fingerprints.checked_rows ?? 0, mismatches: counted?.fingerprints.mismatches ?? 0, probe: counted?.probe ?? NOT_RUN_PROBE },
@@ -239,6 +247,6 @@ export function renderFollowStatus(s: FollowStatus): string[] {
   const wc = s.write_comparisons;
   const families = Object.entries(wc.capability_missing_by_family ?? {}).map(([name, n]) => `${name} ${n}`).join(', ');
   lines.push(`  allocators: ${s.allocators.verified ? `verified ${s.allocators.checked_at}` : 'not verified'}; write comparisons: ${wc.state}`);
-  lines.push(`    writes (epoch): comparable ${wc.comparable}, unexplained ${wc.unexplained_difference}, uncomparable ${wc.uncomparable}; capability_missing ${wc.capability_missing}${families ? ` (by family: ${families})` : ''}${wc.unresolved_replays ? `; ${wc.unresolved_replays} replay(s) with no verdict written yet, so no evidence` : ''}${wc.outstanding_receipts?.length ? `; sent count(s) still on disk: ${wc.outstanding_receipts.join(', ')}` : ''}${wc.outstanding_sessions?.length ? `; owed sample(s) not settled yet: ${wc.outstanding_sessions.join(', ')}` : ''}${wc.legacy_lines ? '; lost samples with no session named (an older writer), so no evidence for this epoch' : ''}; ${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}`);
+  lines.push(`    writes (epoch): comparable ${wc.comparable}, unexplained ${wc.unexplained_difference}, uncomparable ${wc.uncomparable}; capability_missing ${wc.capability_missing}${families ? ` (by family: ${families})` : ''}${wc.unresolved_replays ? `; ${wc.unresolved_replays} replay(s) with no verdict written yet, so no evidence` : ''}${wc.outstanding_receipts?.length ? `; sent count(s) still on disk: ${wc.outstanding_receipts.join(', ')}` : ''}${wc.outstanding_sessions?.length ? `; owed sample(s) not settled yet: ${wc.outstanding_sessions.join(', ')}` : ''}${wc.pending_markers?.length ? `; pending marker(s) hold the write count closed: ${wc.pending_markers.join(', ')}; ${PENDING_MARKER_STEP}` : ''}${wc.legacy_lines ? '; lost samples with no session named (an older writer), so no evidence for this epoch' : ''}${wc.write_windows_lost ? `; ${wc.write_windows_lost} write window(s) lost in a crash (sample count unknown, never compared or counted toward the write bar), so no evidence for the rest of this epoch` : ''}; ${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}`);
   return lines;
 }

@@ -1553,6 +1553,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/troubleshooting.md#consumers-without-heartbeat](../../docs/guides/troubleshooting.md#consumers-without-heartbeat)
 
+### contact_page_owned
+
+<a id="contact_page_owned"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A contact's page path belongs to another contact, so the contact was refused and nothing was written or removed; it is held after repeated refusals. | Two contacts rendered to the same page path (a contact-id path or a disambiguated name path another contact already owns); writing would overwrite the other contact's page. | Show the user the held contact in gbrain sources status <id> --json. A retry gets the same refusal: the user renames one of the two contacts (in Google or Apple Contacts) or removes the other page, then the next sync writes it. Run: gbrain sources status '{source_id}' --json | user | `gbrain sources status '{source_id}' --json` | 1 | no |
+
+More: [docs/guides/google-connect.md#contact_page_owned](../../docs/guides/google-connect.md#contact_page_owned)
+
 ### content_filter_owned
 
 <a id="content_filter_owned"></a>
@@ -6192,6 +6202,16 @@ More: [docs/guides/write-refusals.md#segmented_mirror_writer_gate](../../docs/gu
 | A live `serve` or resident worker on this host runs an older gbrain build than this checkout: its `persistence_consumers` heartbeat `version` is below this binary's VERSION. | Upgrading or pulling the checkout does not restart the processes already running from it, so one-shot commands from the checkout (`gbrain sync`, `bun run src/cli.ts`) run newer code against the older consumer until serve and its workers restart. A serve older than the heartbeat table writes no row; `consumers_without_heartbeat` names it. | Restart serve with the command the check prints (`systemctl --user restart gbrain-serve.service`, `launchctl kickstart -k gui/<uid>/com.gbrain.serve`, or stop the named pid and start it again), then restart each other listed worker; nothing restarts automatically. Run: gbrain sources writer status --json | agent | `gbrain doctor --only serve_build_drift --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#serve-build-drift](../../docs/guides/troubleshooting.md#serve-build-drift)
+
+### serve_build_skew
+
+<a id="serve_build_skew"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A `gbrain sync` delegated to a live `gbrain serve` failed inside it because the serve's code no longer matches the gbrain installed on disk: the serve still runs the build it started with, and an upgrade replaced the files under it. | A long-running serve keeps the modules it loaded at start but loads others lazily from disk, so after an upgrade a lazy import mixes the new files into the old module graph and fails on a missing export. On Postgres a serve whose heartbeat shows an older build is not handed the run at all; this error covers a serve whose build is not recorded or a skew the version check cannot see. | Restart the serve onto the installed build with gbrain upgrade --restart-only (add --stop-mcp for a serve an agent harness started, then reconnect gbrain there). On Postgres, GBRAIN_SYNC_NO_DELEGATE=1 runs the sync beside the serve meanwhile. Run: gbrain doctor --only runtime_build_skew --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/troubleshooting.md#runtime-build-skew](../../docs/guides/troubleshooting.md#runtime-build-skew)
 
 ### serve_port_in_use
 

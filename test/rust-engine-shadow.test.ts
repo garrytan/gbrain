@@ -4,9 +4,9 @@
  * fake engines, the report and the doctor check. CLI, engine-factory and real-child coverage live in
  * rust-engine-shadow.serial.test.ts (they set GBRAIN_HOME).
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -27,7 +27,7 @@ import { closeAllOwedAtExit, sampleWeight, ShadowSupervisor } from '../src/shado
 import { createWriteSampler } from '../src/shadow/write-capture.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { buildFollowStatus } from '../src/shadow/follow-status.ts';
-import { owedPath, readOwed, writeOwed, type OwedRecord } from '../src/shadow/write-compare.ts';
+import { owedPath, readOwed, sampleQualifyingWeight, writeOwed, type OwedRecord } from '../src/shadow/write-compare.ts';
 import { wrapShadowEngine, type ShadowSink } from '../src/shadow/wrapper.ts';
 import { shadowChildArgv } from '../src/shadow/attach.ts';
 import { parseBenchmarkEngineKind, createBenchmarkBrain, RustEngineAddonUnavailableError } from '../src/eval/longmemeval/harness.ts';
@@ -152,17 +152,21 @@ describe('wrapper', () => {
     expect(q.counters.shed_too_large).toBe(2);
   });
 
-  test('a function-valued accessor such as the Postgres sql client keeps its identity and properties, on the engine and in a transaction', async () => {
-    const client = Object.assign(() => 'tag', { unsafe: async () => [], options: { max: 7 }, reserve: async () => ({}) });
+  test('a function-valued accessor such as the Postgres sql client keeps its identity on the engine, and its properties in a transaction', async () => {
+    const reserved = {};
+    const client = Object.assign(() => 'tag', { unsafe: async (_text: string) => ['row'], options: { max: 7 }, reserve: async () => reserved });
     const primary = fakePrimary();
     Object.defineProperty(primary, 'sql', { get: () => client });
     const engine = wrapShadowEngine(primary, sink(), { sampleRate: 1 });
     expect((engine as unknown as { sql: unknown }).sql).toBe(client);
     await engine.transaction(async (tx) => {
+      // In a transaction the handle is the shadow's view of it (its statements are seen like executeRaw): one object for every read, with the client's own members.
       const inner = (tx as unknown as { sql: typeof client }).sql;
-      expect(inner).toBe(client);
-      expect(inner.options.max).toBe(7);
-      expect(typeof inner.unsafe).toBe('function');
+      expect((tx as unknown as { sql: typeof client }).sql).toBe(inner);
+      expect(typeof inner).toBe('function');
+      expect(inner.options).toBe(client.options);
+      expect(await inner.reserve()).toBe(reserved);
+      expect(await inner.unsafe('SELECT 1')).toEqual(['row']);
     });
   });
 
@@ -755,7 +759,7 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
     const sup = new ShadowSupervisor({
       dir, argv: ['g'], spawn: ((_cmd: string, _args: string[], options: { env: Record<string, string> }) => { const c = new HeldPipeChild(); c.onWrite = () => { c.owedAtWrite.push((readOwed(dir, sessions[children.indexOf(c)]!) as { owed: number } | null)?.owed ?? -1); }; children.push(c); sessions.push(options.env.GBRAIN_SHADOW_SESSION!); return c; }) as never,
       recordFault: (f: ShadowFault) => faults.push(f), stillEnabled: () => true, maxBufferedBytes: 1_000, drainMs: 60, retryMs: 10,
-      writeOwed: (d: string, rec: OwedRecord) => { owedWrites.push(rec.owed); writeOwed(d, rec); }, ...overrides,
+      writeOwed: (d: string, rec: OwedRecord) => { owedWrites.push(rec.owed); writeOwed(d, rec); }, owedWindowMs: 0, ...overrides,
     } as never);
     return { sup, children, sessions, faults, dir, owedWrites, owed: (i = 0) => readOwed(dir, sessions[i]!), done: () => { sup.stop(); rmSync(dir, { recursive: true, force: true }); } };
   }
@@ -771,6 +775,28 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
     expect(h.children[0]!.writes.map((l) => /"i":(\d)|"n":(\d)/.exec(l)!.slice(1).find(Boolean))).toEqual(['0', '1', '1', '2']);
     expect(h.owed()).toMatchObject({ v: 1, owed: 2, closed: false, child_exited: false, serving_pid: process.pid });
     h.done();
+  });
+
+  test('the owed record also states how many owed samples were page and link writes (owed_qualifying), so a lost sample of any other write is not counted against the share', async () => {
+    const h = harness({ maxBufferedBytes: 1_000_000 });
+    const other = (extra = ''): string => `{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"${extra}}\n`;
+    for (const line of [sample(0, 10), sample(1, 10), other(), other(), other(',"dropped":2')]) expect(h.sup.send(line)).toBe(true);
+    h.sup.send('{"t":"read","op":"putPage"}\n'); // not a write sample: in neither count
+    await turn();
+    // 2 putPage + 2 other writes + 1 other write carrying 2 earlier refusals = 7 owed. Qualifying: the 2 putPage, and the 2 refusals (which write they were is not known, so they count as qualifying, never as fewer).
+    expect(h.owed()).toMatchObject({ owed: 7, owed_qualifying: 4 });
+    expect(h.sup.owe(3)).toBe(true); await turn(); // owed with no line behind them: which write is not known, so qualifying
+    expect(h.owed()).toMatchObject({ owed: 10, owed_qualifying: 7 });
+    h.done();
+  });
+
+  test('a sample is qualifying only by the op the sampler wrote as its second key, never by text inside the page', () => {
+    expect(sampleQualifyingWeight('{"t":"write","op":"putPage","args":[]}\n')).toBe(1);
+    for (const op of ['deletePage', 'addLink', 'addLinksBatch', 'removeLink']) expect(sampleQualifyingWeight(`{"t":"write","op":"${op}"}\n`)).toBe(1);
+    expect(sampleQualifyingWeight('{"t":"write","op":"softDeletePages","outcome":"capability_missing"}\n')).toBe(0);
+    expect(sampleQualifyingWeight('{"t":"write","op":"softDeletePages","args":[{"op":"putPage"}],"dropped":3}\n')).toBe(3); // the refusals it carries only
+    expect(sampleQualifyingWeight('{"t":"read","op":"putPage"}\n')).toBe(0);
+    expect(sampleQualifyingWeight('{"t":"write","x":{"op":"putPage"}}\n')).toBe(0);
   });
 
   test('a read with nothing staged goes to the pipe at once, as before', () => {
@@ -936,6 +962,393 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
     h.done();
   });
 
+  // S2d: an owed record that could not be written is the only copy of an obligation the sampler already let go of (`owe(n)`, or lines staged behind the record). It must survive the worker's exit and the respawn.
+  describe('S2d: a failed owed-record write is kept in the serving process and retried until it is durable', () => {
+    const NOW_S2D = new Date('2026-12-01T00:00:00Z');
+    const INPUTS_S2D = { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' } as const;
+    const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+    /** A disk that refuses the owed record while `disk.failing` is set (what ENOSPC or EIO does), through the supervisor's own writer seam. */
+    function flakyHarness(overrides: Record<string, unknown> = {}) {
+      const disk = { failing: false }; let clock = 1_000_000; const okWrites: number[] = []; const attempts: number[] = [];
+      const h = harness({ maxBufferedBytes: 1_000_000, now: () => clock, minBackoffMs: 10, maxBackoffMs: 10, writeOwed: (d: string, rec: OwedRecord) => { attempts.push(Date.now()); if (disk.failing) throw new Error('ENOSPC'); writeOwed(d, rec); okWrites.push(rec.owed); }, ...overrides });
+      const epoch = ensureEpoch(h.dir, INPUTS_S2D, NOW_S2D.getTime()).epoch_id;
+      /** The worker's tally: 1,000 passing comparisons and the samples it settled per session, so only an unsettled obligation can keep status from reading measured. */
+      const settle = (settled: Record<string, number>): void => writeFileSync(join(h.dir, 'write-comparisons.json'), JSON.stringify({ version: 1, epoch_id: epoch, updated_at: '', comparable: 1000, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {}, in_flight: [], settled }) + '\n');
+      const status = () => buildFollowStatus(h.dir, { sample_rate: 0.1 } as never, NOW_S2D).write_comparisons!;
+      const respawn = async (i: number): Promise<void> => { h.children[i]!.emit('exit', 1, null); clock += 100; };
+      return { ...h, disk, okWrites, attempts, settle, status, respawn, clockBack: () => { clock -= 100; }, clockAdvance: (ms: number) => { clock += ms; } };
+    }
+
+    test('the reader\'s case: owe(1) cannot be written, the worker exits, the disk recovers and the worker respawns: the old session\'s sample stays outstanding, never measured', async () => {
+      const h = flakyHarness();
+      h.sup.send(sample(0)); await turn(); const old = h.sessions[0]!;
+      expect(h.owed(0)).toMatchObject({ owed: 1 });
+      h.settle({ [old]: 1 });
+      expect(h.status()).toMatchObject({ state: 'measured' }); // the first sample is settled: nothing is owed
+      h.disk.failing = true;
+      expect(h.sup.owe(1)).toBe(true); // the sampler's backlog is gone: this process holds the only copy of the obligation
+      await turn(); await wait(40); // the flush and its retries fail
+      await h.respawn(0); // the worker exits while the disk still refuses the record
+      await wait(40);
+      h.disk.failing = false; // the disk recovers
+      expect(h.sup.send(sample(1))).toBe(true); expect(h.children).toHaveLength(2); // a new worker, a new session
+      await turn(); await wait(60);
+      h.settle({ [old]: 1, [h.sessions[1]!]: 1 }); // the old worker settled one sample; the new one settled its own
+      expect(h.status()).toMatchObject({ state: 'capability_missing', unresolved_replays: 1, outstanding_sessions: [`write-owed.${old}.json`] }); // was measured, with the second sample in no file
+      expect(h.owed(0)).toMatchObject({ owed: 2, child_exited: true }); // was owed: 1, and nothing ever published the second
+      h.done();
+    });
+
+    test('with no respawn at all, the kept record is published as soon as the disk recovers (a retry, not the next send)', async () => {
+      const h = flakyHarness();
+      h.sup.send(sample(0)); await turn(); const old = h.sessions[0]!; h.settle({ [old]: 1 });
+      h.disk.failing = true; h.sup.owe(2); await turn(); await wait(30);
+      await h.respawn(0); await wait(30);
+      expect(h.owed(0)).toMatchObject({ owed: 1 }); // still the old record: the disk refuses
+      expect(h.status()).toMatchObject({ state: 'capability_missing', outstanding_sessions: [`write-pending.${old}.json`] }); // the marker holds status closed while the disk refuses (was measured: nothing could say otherwise)
+      h.disk.failing = false; await wait(80);
+      expect(h.owed(0)).toMatchObject({ owed: 3, child_exited: true });
+      expect(existsSync(join(h.dir, `write-pending.${old}.json`))).toBe(false); // cleared in the same lock hold as the publish
+      expect(h.status()).toMatchObject({ state: 'capability_missing', outstanding_sessions: [`write-owed.${old}.json`] });
+      h.done();
+    });
+
+    test('every old session that could not publish is kept, each with its own count, through two worker exits', async () => {
+      const h = flakyHarness();
+      h.sup.send(sample(0)); await turn(); const first = h.sessions[0]!;
+      h.disk.failing = true; h.sup.owe(1); await turn(); await h.respawn(0);
+      h.sup.send(sample(1)); await turn(); await wait(30); const second = h.sessions[1]!; // the second worker's first record cannot be written either
+      expect(h.sup.owe(3)).toBe(true); await turn(); await h.respawn(1);
+      h.disk.failing = false; await wait(80);
+      expect(h.owed(0)).toMatchObject({ owed: 2, child_exited: true });
+      expect(h.owed(1)).toMatchObject({ owed: 4, child_exited: true }); // its own sample (staged behind the record that was never written) and the 3 owed
+      expect(first).not.toBe(second);
+      h.done();
+    });
+
+    test('a kept record states its page and link writes too (owed_qualifying): published after the disk recovers, its lost non page writes are not counted against the share', async () => {
+      const h = flakyHarness();
+      const other = `{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"}\n`;
+      h.sup.send(sample(0)); await turn();
+      expect(h.owed(0)).toMatchObject({ owed: 1, owed_qualifying: 1 });
+      h.disk.failing = true;
+      expect(h.sup.send(other)).toBe(true); expect(h.sup.send(other)).toBe(true); await turn(); await wait(30); // the record for 3 samples (1 page write) cannot be written: it is kept
+      await h.respawn(0); await wait(30);
+      expect(h.owed(0)).toMatchObject({ owed: 1, owed_qualifying: 1 }); // still the old record: the disk refuses
+      h.disk.failing = false; await wait(80);
+      expect(h.owed(0)).toMatchObject({ owed: 3, owed_qualifying: 1, child_exited: true }); // was owed: 3 with no owed_qualifying, which counts all 3 as page and link writes
+      h.done();
+    });
+
+    test('stop() with the record unwritable keeps the closed record too: the child ends its input on the older one, and the full count is published when the disk recovers', async () => {
+      const h = flakyHarness();
+      h.sup.send(sample(0)); await turn();
+      h.disk.failing = true; h.sup.owe(1); await turn();
+      h.sup.stop(); await wait(30);
+      expect(h.owed(0)).toMatchObject({ owed: 1 });
+      h.disk.failing = false; await wait(80);
+      expect(h.owed(0)).toMatchObject({ owed: 2, closed: true });
+      h.done();
+    });
+
+    test('ship-r2: stop() before the queued owe flush runs keeps the close: the queued flush (writes still failing) rebuilds the record with no worker, and the kept record still publishes closed', async () => {
+      const h = flakyHarness({ retryMs: 60_000 });
+      try {
+        h.sup.send(sample(0)); await turn();
+        h.disk.failing = true; h.sup.owe(1); h.sup.stop(); // stop() leaves the owe-only flush queued; its closed record cannot be written and is kept
+        await turn(); // the queued flush runs with no worker and the disk still refusing
+        h.disk.failing = false; h.sup.publishKeptNow();
+        expect(h.owed(0)).toMatchObject({ owed: 2, closed: true });
+      } finally { h.done(); }
+    });
+
+    test('ship-r3: a remover paused under the tally lock after it read a settled owed:1 cannot delete the owed:2 that a stop()-path publication writes meanwhile: the record is kept and republished, and the extra sample is still owed', async () => {
+      const fsm = await import('node:fs');
+      const h = flakyHarness({ retryMs: 60_000 });
+      const { WriteTally } = await import('../src/shadow/write-compare.ts');
+      const epoch = (): string => ensureEpoch(h.dir, INPUTS_S2D, NOW_S2D.getTime()).epoch_id;
+      const lock = join(h.dir, 'write-comparisons.lock'); const tallyFile = join(h.dir, 'write-comparisons.json');
+      const realRead = fsm.readFileSync; let paused = false; let s0 = '';
+      // The seam is the one the D1-F2 tests use: the remover's last read, the tally's settled count, taken under the lock right before it unlinks. What the serving process does next happens "while the remover is paused".
+      const spy = spyOn(fsm, 'readFileSync').mockImplementation(((path: unknown, ...rest: unknown[]) => {
+        const out = (realRead as (...a: unknown[]) => unknown)(path, ...rest);
+        if (!paused && String(path) === tallyFile && existsSync(lock)) {
+          paused = true;
+          h.disk.failing = true; h.sup.owe(1); h.sup.stop(); // the close-time write fails: the record is kept and marked; stop() leaves the owe flush queued
+          h.disk.failing = false; (h.sup as unknown as { flushStaged(): boolean }).flushStaged(); // the disk is back and the queued flush runs, as it would in its own turn
+        }
+        return out;
+      }) as never);
+      try {
+        h.sup.send(sample(0)); await turn(); s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        writeOwed(h.dir, { v: 1, session: s0, serving_pid: process.pid, owed: 1, closed: true, child_exited: true }); // the record the remover judges: settled, its session over
+        new WriteTally(h.dir, epoch, () => true, process.pid, 'owner').recover(); // the owner's pass removes the settled record; the interleaving happens inside it
+        expect(paused).toBe(true);
+      } finally { spy.mockRestore(); }
+      try {
+        h.sup.publishKeptNow(); // the keeper's own try, with the disk fine and the lock free
+        expect(h.owed(0)).toMatchObject({ owed: 2, closed: true }); // was: gone (unlinked on the owed:1 it judged), and nothing kept to republish it
+        expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(false);
+        expect(h.status()).toMatchObject({ state: 'capability_missing', unresolved_replays: 1, outstanding_sessions: [`write-owed.${s0}.json`] }); // the second sample is owed, not measured
+        new WriteTally(h.dir, epoch, () => true, process.pid, 'owner').recover();
+        expect(h.owed(0)).toMatchObject({ owed: 2 }); // one settled of two: the file stays until the worker books the other
+        h.settle({ [s0]: 2 }); // booked once
+        expect(h.status()).toMatchObject({ state: 'measured' });
+      } finally { h.done(); }
+    });
+
+    // ---- D1 (second read of the plan): the marker's own durability, the live-worker window, refused samples ----
+    test('D1-F1: the marker\'s directory entry is flushed after the link; a failed flush leaves it unpublished and it is retried until the flush succeeds', async () => {
+      const durable = await import('../src/core/fs-durable.ts');
+      const h = flakyHarness();
+      h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+      const real = durable.flushDirectory; let linkFlushes = 0; let failOnce = true;
+      const spy = spyOn(durable, 'flushDirectory').mockImplementation(((path: string, options?: unknown) => {
+        if (existsSync(join(h.dir, `write-pending.${s0}.json`))) { linkFlushes++; if (failOnce) { failOnce = false; throw new Error('EIO'); } }
+        return (real as (p: string, o?: unknown) => void)(path, options);
+      }) as never);
+      try {
+        h.disk.failing = true; h.sup.owe(1); await turn(); await wait(80);
+        expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(true); // linked
+        expect(linkFlushes).toBeGreaterThanOrEqual(2); // the first flush failed, so the marker was not taken as published and was flushed again
+        expect(h.status()).toMatchObject({ state: 'capability_missing', outstanding_sessions: [`write-pending.${s0}.json`] });
+      } finally { spy.mockRestore(); h.done(); }
+    });
+
+    test('D1-F1: a live worker whose owed record cannot be written is covered at once (no exit needed): the marker blocks status while the worker runs', async () => {
+      const h = flakyHarness();
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        expect(h.status()).toMatchObject({ state: 'measured' });
+        h.disk.failing = true; h.sup.owe(2); await turn();
+        expect(h.status()).toMatchObject({ state: 'capability_missing', unresolved_replays: 1, outstanding_sessions: [`write-pending.${s0}.json`] });
+        h.disk.failing = false; await wait(80);
+        expect(h.owed(0)).toMatchObject({ owed: 3 });
+        expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(false);
+      } finally { h.done(); }
+    });
+
+    test('D1-F3: a sample refused while no worker runs, whose lost-line append also fails, is owed durably (kept, marked, retried) and blocks status after the disk recovers with no further send', async () => {
+      const h = flakyHarness();
+      const epoch = ensureEpoch(h.dir, INPUTS_S2D, NOW_S2D.getTime()).epoch_id;
+      const { recordLost, lostPath } = await import('../src/shadow/write-compare.ts');
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        await h.respawn(0); // the worker exits; the restart backoff refuses the next samples
+        mkdirSync(lostPath(h.dir, process.pid)); // lost-line appends fail; so does the owed writer
+        h.disk.failing = true;
+        const sampler = createWriteSampler({ rate: 1, random: () => 0, active: () => true, send: (line: string) => h.sup.send(line), owe: (n: number) => h.sup.owe(n),
+          lost: (reason: string) => recordLost(h.dir, epoch, reason), refuse: (n: number) => h.sup.oweRefused(n) });
+        const fn = async () => 1; const ctx = { engine: {}, inTransaction: false, mayWrite: () => true };
+        h.clockBack(); await (sampler.wrap('addTag', fn, ctx as never) as () => Promise<unknown>)(); await turn();
+        expect(h.children).toHaveLength(1); // refused: no new worker inside the backoff
+        h.disk.failing = false; rmSync(lostPath(h.dir, process.pid), { recursive: true }); // the disk recovers; nothing else is sent
+        await wait(120);
+        const names = readdirSync(h.dir).filter((n) => /^write-owed\.r/.test(n));
+        expect(names).toHaveLength(1); // the refused sample's own record
+        expect(h.status()).toMatchObject({ state: 'capability_missing', outstanding_sessions: [names[0]] }); // was measured: the count lived only in the sampler's memory
+      } finally { h.done(); }
+    });
+
+    test('D1-F3: the refused samples\' kept record is booked once by the next owner worker as uncomparable receipt_orphaned, and status returns to measured', async () => {
+      const h = flakyHarness();
+      const { WriteTally, readWriteTally } = await import('../src/shadow/write-compare.ts');
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        await h.respawn(0); h.clockBack();
+        expect(h.sup.oweRefused(3)).toBe(true); expect(h.sup.oweRefused(2)).toBe(true); // both ride one record
+        await wait(40);
+        const names = readdirSync(h.dir).filter((n) => /^write-owed\.r/.test(n)); expect(names).toHaveLength(1);
+        expect(readOwed(h.dir, names[0]!.slice('write-owed.'.length, -'.json'.length))).toMatchObject({ owed: 5, closed: true, child_exited: true });
+        expect(h.status()).toMatchObject({ state: 'capability_missing', outstanding_sessions: [names[0]] });
+        new WriteTally(h.dir, () => epoch(), () => true, process.pid, 'owner').recover(); // the next owner worker's pass
+        expect(readWriteTally(h.dir, epoch())!.uncomparable).toBe(5);
+        expect(readWriteTally(h.dir, epoch())!.uncomparable_by_reason).toMatchObject({ receipt_orphaned: 5 });
+        expect(readdirSync(h.dir).filter((n) => /^write-owed\.r/.test(n))).toEqual([]);
+        expect(h.status()).toMatchObject({ state: 'measured' });
+      } finally { h.done(); }
+      function epoch(): string { return ensureEpoch(h.dir, INPUTS_S2D, NOW_S2D.getTime()).epoch_id; }
+    });
+
+    test('D1-F4: nothing durable (no writer call, no link, no flush) runs inside send(), on a cold start or a respawn; the first writer call comes in a later turn', async () => {
+      const durable = await import('../src/core/fs-durable.ts');
+      const calls: string[] = []; const real = durable.flushDirectory;
+      const spy = spyOn(durable, 'flushDirectory').mockImplementation(((path: string, options?: unknown) => { calls.push('flush'); return (real as (p: string, o?: unknown) => void)(path, options); }) as never);
+      const h = flakyHarness({ writeOwed: (d: string, rec: OwedRecord) => { calls.push('write'); writeOwed(d, rec); } });
+      try {
+        calls.length = 0; // construction is not a request
+        expect(h.sup.send(sample(0))).toBe(true); expect(calls).toEqual([]); // cold start
+        await turn(); expect(calls).toContain('write');
+        await h.respawn(0); calls.length = 0;
+        expect(h.sup.send(sample(1))).toBe(true); expect(h.children).toHaveLength(2); expect(calls).toEqual([]); // respawn
+        await turn(); expect(calls).toContain('write');
+      } finally { spy.mockRestore(); h.done(); }
+    });
+
+    test('fallback chain: a session whose very first record cannot be written (no record yet) still gets a marker (child.log, else state.json) that blocks status and stays until the record is durable', async () => {
+      const h = flakyHarness({ retryMs: 60_000 }); // no retry inside the test: nothing but an operator or the retry would clear it
+      try {
+        h.disk.failing = true;
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!;
+        expect(existsSync(join(h.dir, `write-owed.${s0}.json`))).toBe(false); // no record yet
+        expect(statSync(join(h.dir, `write-pending.${s0}.json`)).ino).toBe(statSync(join(h.dir, 'child.log')).ino); // linked to child.log
+        expect(h.status()).toMatchObject({ state: 'capability_missing', unresolved_replays: 1, pending_markers: [join(h.dir, `write-pending.${s0}.json`)] });
+        await wait(30); expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(true); // nothing cleared it
+        // no child.log: the chain falls to state.json
+        rmSync(join(h.dir, `write-pending.${s0}.json`)); rmSync(join(h.dir, 'child.log')); writeFileSync(join(h.dir, 'state.json'), '{}');
+        expect((h.sup as unknown as { markPending(s: string): boolean }).markPending(s0)).toBe(true);
+        expect(statSync(join(h.dir, `write-pending.${s0}.json`)).ino).toBe(statSync(join(h.dir, 'state.json')).ino);
+      } finally { h.done(); }
+    });
+
+    test('named limit 1: when the hard-link call itself fails, the record is still kept and retried and is published after the disk recovers (status cannot see it meanwhile)', async () => {
+      const fs = await import('node:fs');
+      const h = flakyHarness();
+      const spy = spyOn(fs, 'linkSync').mockImplementation((() => { throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }); }) as never);
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        h.disk.failing = true; h.sup.owe(1); await turn(); await wait(40);
+        expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(false); // the limit: no marker
+        expect(h.status()).toMatchObject({ state: 'measured' }); // and so status cannot see it
+        h.disk.failing = false; spy.mockRestore(); await wait(150);
+        expect(h.owed(0)).toMatchObject({ owed: 2 }); // kept and retried: durable after recovery
+        expect(h.status()).toMatchObject({ state: 'capability_missing', outstanding_sessions: [`write-owed.${s0}.json`] });
+      } finally { spy.mockRestore(); h.done(); }
+    });
+
+    test('the exit hook publishes a kept record at once, for a supervisor with no worker, without waiting for the retry timer', async () => {
+      const h = flakyHarness({ retryMs: 60_000 });
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        h.disk.failing = true; h.sup.owe(2); await turn(); await h.respawn(0);
+        expect(h.owed(0)).toMatchObject({ owed: 1 });
+        h.disk.failing = false;
+        closeAllOwedAtExit(); // the process is exiting: the timer would be too late
+        expect(h.owed(0)).toMatchObject({ owed: 3, child_exited: true });
+        expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(false);
+      } finally { h.done(); }
+    });
+
+    test('a publish that cannot take the tally lock defers: nothing is written and nothing is removed until the lock is free', async () => {
+      const { withLock } = await import('../src/shadow/evidence-epoch.ts');
+      const h = flakyHarness({ retryMs: 60_000 });
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!;
+        h.disk.failing = true; h.sup.owe(1); await turn(); await h.respawn(0); h.disk.failing = false;
+        withLock(join(h.dir, 'write-comparisons.lock'), () => { closeAllOwedAtExit(); }); // another process holds the lock
+        expect(h.owed(0)).toMatchObject({ owed: 1 });
+        expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(true);
+        closeAllOwedAtExit();
+        expect(h.owed(0)).toMatchObject({ owed: 2 });
+        expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(false);
+      } finally { h.done(); }
+    }, 15_000);
+
+    test('a marker that cannot be cleared after the record is durable is retried alone: the record is never written again', async () => {
+      const fs = await import('node:fs');
+      const h = flakyHarness();
+      const realRm = fs.rmSync; let failClear = 0;
+      const spy = spyOn(fs, 'rmSync').mockImplementation(((p: unknown, ...rest: unknown[]) => { if (String(p).includes('write-pending.') && failClear > 0) { failClear--; throw new Error('EIO'); } return (realRm as (...a: unknown[]) => unknown)(p, ...rest); }) as never);
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!;
+        h.disk.failing = true; h.sup.owe(1); await turn(); failClear = 2;
+        h.disk.failing = false; await wait(150);
+        expect(h.owed(0)).toMatchObject({ owed: 2 });
+        expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(false); // cleared on a later try
+        expect(h.okWrites.filter((n) => n === 2)).toHaveLength(1); // written once, never again for the clean-up
+      } finally { spy.mockRestore(); h.done(); }
+    });
+
+    test('the retry backs off while it keeps failing and nothing is dropped: many kept sessions across restart-window rollovers are all published after recovery', async () => {
+      const h = flakyHarness({ restartWindowMs: 1_000, maxRestarts: 100 });
+      try {
+        h.sup.send(sample(0)); await turn(); h.disk.failing = true;
+        for (let i = 0; i < 8; i++) { h.sup.owe(1); await turn(); await h.respawn(i); h.clockAdvance(5_000); if (i < 7) { h.sup.send(sample(i + 1)); await turn(); } }
+        await wait(100); h.attempts.length = 0; await wait(400);
+        expect(h.attempts.length).toBeGreaterThanOrEqual(8); expect(h.attempts.length).toBeLessThan(60); // 8 kept sessions, each retried at a doubling delay (10 ms to 500 ms), not in a tight loop
+        h.disk.failing = false; await wait(1_200);
+        expect(readdirSync(h.dir).filter((n) => n.startsWith('write-pending.'))).toEqual([]);
+        for (let i = 0; i < 8; i++) expect(h.owed(i)).toMatchObject({ child_exited: true });
+      } finally { h.done(); }
+    }, 30_000);
+
+    // ---- /ship round 1: three findings on the keeper (the timer, the exit flags, the marker flag) ----
+    test('ship-r1 A: during a continuous burst of refused samples (never a pause near a retry interval) every status read taken after two retry intervals from the first refusal blocks, and the marker exists', async () => {
+      const h = flakyHarness({ retryMs: 40 });
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        await h.respawn(0); h.disk.failing = true; h.attempts.length = 0;
+        const t0 = Date.now(); let maxGap = 0; let last = t0; let reads = 0; const bad: string[] = [];
+        h.sup.oweRefused(1);
+        while (Date.now() - t0 < 400) {
+          await wait(10); const now = Date.now(); maxGap = Math.max(maxGap, now - last); last = now;
+          h.sup.oweRefused(1); // the burst: a refusal every ~10 ms, status read after each
+          if (now - t0 >= 80) { // two retry intervals after the first refusal (one interval, plus a timer's lateness)
+            reads++; const st = h.status().state; const markers = readdirSync(h.dir).filter((n) => /^write-pending\.r/.test(n)).length;
+            if (st === 'measured' || markers !== 1) bad.push(`${now - t0}ms:${st}:markers=${markers}`);
+          }
+        }
+        expect(maxGap).toBeLessThan(40); // the burst really was continuous: no gap as long as one retry interval
+        expect(reads).toBeGreaterThan(10);
+        expect(bad).toEqual([]);
+        expect(h.attempts.length).toBeGreaterThan(0);
+      } finally { h.done(); }
+    });
+
+    test('ship-r1 A: successful samples cannot postpone the clearing of a marker whose record is already durable', async () => {
+      const h = flakyHarness({ retryMs: 40 });
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        h.disk.failing = true; h.sup.owe(1); await turn();
+        expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(true);
+        h.disk.failing = false; h.settle({ [s0]: 2 });
+        const until = Date.now() + 400; let cleared = false;
+        while (Date.now() < until) { h.sup.owe(1); await wait(10); h.settle({ [s0]: (h.owed(0) as { owed: number }).owed }); if (!existsSync(join(h.dir, `write-pending.${s0}.json`))) { cleared = true; break; } } // traffic keeps arriving, each sample a flush
+        expect(cleared).toBe(true);
+      } finally { h.done(); }
+    });
+
+    test('ship-r1 B: a flush queued before the worker exited cannot downgrade the kept exit record: child_exited stays true and the next owner pass books the samples', async () => {
+      const h = flakyHarness({ retryMs: 60_000 });
+      const { WriteTally, readWriteTally } = await import('../src/shadow/write-compare.ts');
+      const epoch = (): string => ensureEpoch(h.dir, INPUTS_S2D, NOW_S2D.getTime()).epoch_id;
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        h.disk.failing = true;
+        h.sup.owe(1); // the owe-only flush is queued for the next turn ...
+        await h.respawn(0); // ... and the worker exits before it runs: the exit-time record cannot be written and is kept
+        const afterExit = h.attempts.length;
+        await turn(); // the queued flush runs now, with no worker
+        expect(h.attempts.length).toBe(afterExit); // and finds nothing left to write: no second attempt for a session whose worker is gone
+        h.disk.failing = false; h.sup.publishKeptNow();
+        expect(h.owed(0)).toMatchObject({ owed: 2, child_exited: true });
+        new WriteTally(h.dir, epoch, () => true, process.pid, 'owner').recover();
+        expect(readWriteTally(h.dir, epoch())!.uncomparable_by_reason).toMatchObject({ receipt_orphaned: 1 });
+        expect(readdirSync(h.dir).filter((n) => n.startsWith('write-owed.'))).toEqual([]);
+      } finally { h.done(); }
+    });
+
+    test('ship-r1 C: a marker removed whose directory flush then failed is not still counted as published: the next failed write makes its marker again', async () => {
+      const durable = await import('../src/core/fs-durable.ts');
+      const h = flakyHarness({ retryMs: 60_000 });
+      const real = durable.flushDirectory; let failOnce = true; let marker = '';
+      const spy = spyOn(durable, 'flushDirectory').mockImplementation(((path: string, options?: unknown) => {
+        if (marker && failOnce && !existsSync(marker)) { failOnce = false; throw new Error('EIO'); }
+        return (real as (p: string, o?: unknown) => void)(path, options);
+      }) as never);
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 }); marker = join(h.dir, `write-pending.${s0}.json`);
+        h.disk.failing = true; h.sup.owe(2); await turn();
+        expect(existsSync(marker)).toBe(true);
+        h.disk.failing = false; h.sup.publishKeptNow(); // the record is written and the marker unlinked, then the flush throws
+        expect(failOnce).toBe(false); expect(h.owed(0)).toMatchObject({ owed: 3 });
+        h.disk.failing = true; h.sup.owe(1); await turn(); // a later record fails too
+        expect(existsSync(marker)).toBe(true);
+        expect(h.status()).toMatchObject({ state: 'capability_missing', outstanding_sessions: [`write-pending.${s0}.json`] });
+      } finally { spy.mockRestore(); h.done(); }
+    });
+  });
+
   test('a sample weighs 1 plus the earlier losses it carries (its last field); a page key named dropped, nested or not, changes nothing', () => {
     expect(sampleWeight(sample(0, 10, ',"dropped":4'))).toBe(5);
     expect(sampleWeight(`{"t":"write","op":"putPage","args":[{"frontmatter":{"dropped":9}}],"pre":{"dropped":7}}\n`)).toBe(1);
@@ -950,6 +1363,57 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
     expect(h.owed()).toMatchObject({ owed: 5 + 1 });
     h.done();
   });
+
+  // OWC: the cost of the owed record. Every write sample used to cost its own durable record (a temp file written, flushed, renamed, then the directory flushed): about 37 per save at rate 1.0.
+  async function countDurable<T>(run: () => Promise<T>): Promise<{ result: T; fileFlushes: number; directoryFlushes: number }> {
+    const durable = await import('../src/core/fs-durable.ts');
+    let fileFlushes = 0; let directoryFlushes = 0;
+    const file = durable.flushFile; const directory = durable.flushDirectory;
+    const f = spyOn(durable, 'flushFile').mockImplementation((path: string) => { fileFlushes++; return file(path); });
+    const d = spyOn(durable, 'flushDirectory').mockImplementation(((path: string, options?: never) => { directoryFlushes++; return directory(path, options); }) as never);
+    try { const result = await run(); return { result, fileFlushes, directoryFlushes }; } finally { f.mockRestore(); d.mockRestore(); }
+  }
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+  test('OWC: a save of 37 write samples at rate 1.0 (one per event-loop turn) costs at most about two durable owed records (the window\'s open marker and its close), at most four flushes (two per record); the accounting and the order are unchanged', async () => {
+    const SAVES = 5; const PER_SAVE = 37;
+    const h = harness({ maxBufferedBytes: 1_000_000, owedWindowMs: 100 });
+    const { fileFlushes, directoryFlushes } = await countDurable(async () => {
+      let i = 0;
+      for (let save = 0; save < SAVES; save++) {
+        for (let n = 0; n < PER_SAVE; n++) { expect(h.sup.send(sample(i++))).toBe(true); await turn(); }
+        await sleep(250); // the next save comes after the window (a save is a burst, saves are apart)
+        h.children[0]!.flush();
+      }
+    });
+    expect(h.children[0]!.writes).toHaveLength(SAVES * PER_SAVE);
+    const durableOwedWrites = h.owedWrites.length; const fsyncs = fileFlushes + directoryFlushes;
+    expect({ durableOwedWrites, fsyncs }).toEqual({ durableOwedWrites: Math.min(durableOwedWrites, 2 * SAVES), fsyncs: Math.min(fsyncs, 4 * SAVES) }); // the lane owner's bar: at most about 2 durable records (4 flushes) per save, from 37 and 74
+    // unchanged: every sample is owed, the record states exactly what was accepted, and it was on disk (covering the line) before each line reached the pipe
+    expect(h.owedWrites.at(-1)).toBe(SAVES * PER_SAVE);
+    expect(h.owedWrites).toEqual([...h.owedWrites].sort((a, b) => a - b));
+    h.children[0]!.owedAtWrite.forEach((owed, k) => expect(owed).toBeGreaterThanOrEqual(k + 1));
+    expect(h.owed()).toMatchObject({ owed: SAVES * PER_SAVE, closed: false, child_exited: false });
+    expect((h.owed() as { open_until?: number }).open_until).toBeUndefined(); // the window is closed: the last record is the full one, not a marker
+    h.done();
+  }, 20_000);
+
+  test('OWC: a steady stream of samples (one every ~3 ms) costs at most two durable owed records (open marker, close) per flush window, however long it runs', async () => {
+    const WINDOW_MS = 60;
+    const h = harness({ maxBufferedBytes: 1_000_000, owedWindowMs: WINDOW_MS });
+    const started = performance.now();
+    const { fileFlushes, directoryFlushes } = await countDurable(async () => {
+      for (let i = 0; i < 80; i++) { expect(h.sup.send(sample(i))).toBe(true); await sleep(3); }
+      await sleep(2 * WINDOW_MS);
+    });
+    const elapsed = performance.now() - started;
+    const allowed = Math.ceil(elapsed / WINDOW_MS) + 1;
+    const durableOwedWrites = h.owedWrites.length; const fsyncs = fileFlushes + directoryFlushes;
+    expect({ durableOwedWrites, fsyncs }).toEqual({ durableOwedWrites: Math.min(durableOwedWrites, 2 * allowed), fsyncs: Math.min(fsyncs, 4 * allowed) }); // at most two durable records (four flushes) per window
+    expect(h.owedWrites.at(-1)).toBe(80);
+    expect(h.children[0]!.writes).toHaveLength(80);
+    h.done();
+  }, 20_000);
 });
 
 describe('Bun child stdin write callbacks (what the sample accounting stands on)', () => {

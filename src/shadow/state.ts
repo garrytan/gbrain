@@ -163,3 +163,17 @@ export function shadowStateFor(config: EngineConfig): { dir: string; state: Shad
   const state = readShadowState(dir);
   return state?.enabled ? { dir, state } : null;
 }
+
+/** Wraps a worker engine of the same brain as a shadowed primary is wrapped (wrapper.ts `wrapShadowEngine` registers one per primary). */
+export type ShadowSiblingWrap = <E extends object>(worker: E) => E;
+const siblings = new WeakMap<object, ShadowSiblingWrap>();
+/** Records how to shadow a worker engine opened beside `primary` (a shadowed engine, or a view the engine factory puts over one). */
+export function registerShadowSibling(primary: object, wrap: ShadowSiblingWrap): void { siblings.set(primary, wrap); }
+/** How `primary`'s workers are shadowed; undefined when `primary` is not a shadowed engine. */
+export function shadowSiblingOf(primary: object): ShadowSiblingWrap | undefined { return siblings.get(primary); }
+/**
+ * A worker engine a bulk import opens beside its primary (sync/imports.ts, commands/import.ts), shadowed as the primary is: the same mirror,
+ * follower and writer observer, and a write sampler of its own that settles before the worker disconnects. `worker` itself when `primary` is
+ * not shadowed. Kept here because this is the one shadow module a process without shadow mode loads.
+ */
+export function wrapShadowSibling<E extends object>(primary: object, worker: E): E { return siblings.get(primary)?.(worker) ?? worker; }

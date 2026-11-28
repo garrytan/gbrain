@@ -534,7 +534,10 @@ Fix it by binding first:
   person and bind its server with
   `gbrain setup claude-code --members <id,...>` or `gbrain setup codex --members <id,...>`
   (`--stdio-member <member>` when one person alone uses it); for another harness, preview
-  `gbrain access serves several --members <id,...>`, then apply it with `--yes`.
+  `gbrain access serves several --members <id,...>`, then apply it with `--yes`. For a
+  bot harness (OpenClaw, Hermes, Grok Bot, Muse), which setup cannot bind, set
+  `gbrain config set mcp.stdio_may_act_for <members>`; once it holds a valid list (not
+  `none`), doctor stops flagging those harnesses. A Claude Code channel plugin keeps its finding.
 - Narrowing only, which leaves the credential unbound: when the channels sit
   in different sources, grant one audience's source with
   `gbrain auth rescope --token <name> --sources <source>` (or for a new harness

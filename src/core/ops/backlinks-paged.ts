@@ -20,6 +20,7 @@ import {
 import { mentionCoverageNotice, readMentionCoverage, type MentionCoverage } from '../mentions/coverage.ts';
 import { readEntityReferencesConfig, readRowPageStatus } from '../entity-references-config.ts';
 import { visiblePageTypes } from './stats-by.ts';
+import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 
 export interface BacklinkPage {
   rows: ReferenceRow[];
@@ -45,20 +46,25 @@ async function scopeSources(ctx: OperationContext, policy: PageReadPolicy): Prom
   return (await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map(r => r.id);
 }
 
-/** The entity page's source: the first source in scope holding a live page with this slug. */
-async function targetSource(ctx: OperationContext, slug: string, sources: string[]): Promise<string | null> {
+/**
+ * The entity page's source: the first source in scope holding a live page with this slug that the caller may read.
+ * A page the caller cannot read resolves like a missing one, so every later step (the type check, its refusal) answers
+ * the same for both.
+ */
+async function targetSource(ctx: OperationContext, slug: string, sources: string[], excludePrivate: boolean): Promise<string | null> {
+  const readable = excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '';
   const rows = await ctx.engine.executeRaw<{ source_id: string }>(
-    'SELECT source_id FROM pages WHERE slug = $1 AND source_id = ANY($2::text[]) AND deleted_at IS NULL', [slug, sources]);
+    `SELECT p.source_id FROM pages p WHERE p.slug = $1 AND p.source_id = ANY($2::text[]) AND p.deleted_at IS NULL${readable}`, [slug, sources]);
   const found = new Set(rows.map(r => r.source_id));
   return sources.find(s => found.has(s)) ?? null;
 }
 
 async function referrerScope(ctx: OperationContext, slug: string, policy: PageReadPolicy): Promise<{ scope: ReferrerScope; sources: string[] } | null> {
   const sources = await scopeSources(ctx, policy);
-  const sourceId = await targetSource(ctx, slug, sources);
+  const excludePrivate = policy.excludePrivate === true;
+  const sourceId = await targetSource(ctx, slug, sources, excludePrivate);
   if (!sourceId) return null;
   const pack = await loadSourcePack(ctx.engine, sourceId);
-  const excludePrivate = policy.excludePrivate === true;
   return { sources, scope: { slug, sourceId, referrerSources: sources, excludePrivate, pack, keepVisibility: excludePrivate ? ['world'] : ['private', 'world'] } };
 }
 
@@ -90,7 +96,7 @@ async function assertKnownType(ctx: OperationContext, scope: ReferrerScope, type
 
 /**
  * `group: "page"`: one page of referring pages. A slug with no live page in
- * scope answers like an empty read (no rows, total 0).
+ * scope, or only pages the caller cannot read, answers like an empty read (no rows, total 0).
  */
 export async function readBacklinkPage(ctx: OperationContext, p: Record<string, unknown>, policy: PageReadPolicy): Promise<BacklinkPage> {
   if (p.group !== 'page') {
