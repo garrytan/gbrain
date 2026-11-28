@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { afterAll, beforeAll, expect, jest, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -52,13 +52,23 @@ test('simultaneous bounded waiters retain one unresolved receipt read until sett
   const consumer = startPersistenceConsumer(proxy, { engine: 'pglite' });
   (consumer as unknown as { doTick(): Promise<void> }).doTick = async () => {};
   const row = { id: randomUUID(), request_id: randomUUID(), state: 'queued' } as import('../src/core/persistence/model.ts').WriteRequest;
+  // The waits' polls, deadlines and read timers run on fake time, advanced 5 ms a step: a runner stalled past the first poll at 50 ms
+  // ended every wait at its deadline before any read (reads read 0), which no real waiter shares with a 100 ms budget.
+  jest.useFakeTimers();
+  const settle = async <T>(wait: Promise<T>): Promise<T> => {
+    let settled = false;
+    void wait.finally(() => { settled = true; });
+    while (!settled) { jest.advanceTimersByTime(5); await new Promise(resolve => setImmediate(resolve)); }
+    return wait;
+  };
   try {
-    const results = await Promise.all(Array.from({ length: 12 }, () => waitForWrite(proxy, row, { engine: 'pglite' }, 100)));
+    const results = await settle(Promise.all(Array.from({ length: 12 }, () => waitForWrite(proxy, row, { engine: 'pglite' }, 100))));
     expect(results.every(value => value === row)).toBe(true);
     expect(reads).toBe(1);
-    await waitForWrite(proxy, row, { engine: 'pglite' }, 100);
+    await settle(waitForWrite(proxy, row, { engine: 'pglite' }, 100));
     expect(reads).toBe(1);
   } finally {
+    jest.useRealTimers();
     release.resolve([]);
     await disposePersistenceConsumer(proxy);
   }

@@ -24,6 +24,10 @@
  *     Uses lane-specific weights. --fallback-on-error warns and uses uniform
  *     weights if the advisory file is malformed (serial runner compatibility).
  *
+ *   bun run scripts/sharding.ts <shard-index> <total-shards> --spread-memory-heavy
+ *     The unit lane (scripts/test-shard.sh): MEMORY_HEAVY_UNIT_FILES are
+ *     spread over test.yml's runners, UNIT_SHARDS_PER_JOB shards each.
+ *
  *   bun run scripts/sharding.ts --sum [--weights <path>]
  *     Read-only diagnostic: reads an already-partitioned file list from
  *     stdin and prints its predicted weight (the same per-file weights and
@@ -54,7 +58,7 @@ const DEFAULT_WEIGHTS_PATH = resolve(REPO_ROOT, "scripts/test-weights.json");
  * test.yml's unit matrix size, also e2e.yml's coverage-full-unit matrix;
  * test/scripts/unit-shard-budget.test.ts pins both workflows to it.
  */
-export const UNIT_SHARDS = 42;
+export const UNIT_SHARDS = 46;
 /** Unit shards each test.yml `test` job runs at once (scripts/test-shard-pack.sh); test/scripts/ci-gates.test.ts pins the matrix to it. */
 export const UNIT_SHARDS_PER_JOB = 2;
 /** test.yml's `test` job `timeout-minutes: 22`: the only bound on a unit shard, its setup steps included. */
@@ -77,6 +81,28 @@ export function unitShards(root: string, n: number = UNIT_SHARDS): string[][] {
     return r.stdout.split("\n").filter(Boolean);
   });
 }
+
+/**
+ * Unit files whose own `bun test` process peaks at 2.5 GB resident or more
+ * (`/usr/bin/time -f %M`, 4 vCPU and 16 GB, like a test.yml runner; 2026-11-28).
+ * A runner holds UNIT_SHARDS_PER_JOB shard processes in 16 GB. Packing by time
+ * alone put ten of these in shards 11 and 12, and that runner was killed twice
+ * (exit 143), so the unit lane spreads them over the runners first.
+ */
+export const MEMORY_HEAVY_UNIT_FILES: readonly string[] = [
+  "test/belief-ledger-restore.test.ts",
+  "test/concept-rebuild-holds-managed-9653.test.ts",
+  "test/contacts-relist-checkpoint-8906.slow.test.ts",
+  "test/large-pages/remote-get-page-privacy.test.ts",
+  "test/large-pages/remote-window-privacy.test.ts",
+  "test/large-pages/segmented-facts-reconcile.test.ts",
+  "test/large-pages/segmented-forced-cuts.test.ts",
+  "test/large-pages/segmented-semantic-writes-near-ceiling.slow.test.ts",
+  "test/large-pages/segmented-withdrawal-mirror.test.ts",
+  "test/large-pages/segmented-write-sweep-over-ceiling.slow.test.ts",
+  "test/large-pages/upload-over-ceiling.test.ts",
+  "test/purge-shared-origin-tombstone-7311.test.ts",
+];
 
 export type WeightMap = Map<string, number>;
 
@@ -167,6 +193,12 @@ export interface PartitionOpts {
    * Override mainly for tests; production callers should use the default.
    */
   fallbackWeight?: number;
+  /**
+   * Files to place before the rest, each in the group of `groupSize`
+   * consecutive shards holding the fewest of them (then the lightest group),
+   * so no group gets a second one before every group has one.
+   */
+  spread?: { files: ReadonlySet<string>; groupSize: number };
 }
 
 /**
@@ -191,6 +223,9 @@ export function partition(
 ): string[][] {
   if (!Number.isInteger(n) || n <= 0) {
     throw new RangeError(`shard count must be a positive integer, got ${n}`);
+  }
+  if (opts.spread && (!Number.isInteger(opts.spread.groupSize) || opts.spread.groupSize <= 0)) {
+    throw new RangeError(`spread group size must be a positive integer, got ${opts.spread.groupSize}`);
   }
   const shards: string[][] = Array.from({ length: n }, () => []);
   if (files.length === 0) return shards;
@@ -234,16 +269,41 @@ export function partition(
 
   // Equal loads prefer fewer files, then lowest index. In particular, measured
   // zero-duration files must not all collapse into the first shard.
+  // Spread files are placed first; every shard still lists its files in
+  // the sort order above.
   const totals = new Array<number>(n).fill(0);
-  for (const t of tuples) {
-    let minIdx = 0;
-    for (let i = 1; i < n; i++) {
+  const counts = new Array<number>(n).fill(0);
+  const assigned = new Array<number>(tuples.length);
+  const place = (k: number, from: number, to: number) => {
+    let minIdx = from;
+    for (let i = from + 1; i < to; i++) {
       if (totals[i]! < totals[minIdx]! ||
-          (totals[i] === totals[minIdx] && shards[i]!.length < shards[minIdx]!.length)) minIdx = i;
+          (totals[i] === totals[minIdx] && counts[i]! < counts[minIdx]!)) minIdx = i;
     }
-    shards[minIdx]!.push(t.path);
-    totals[minIdx] = totals[minIdx]! + t.weight;
+    assigned[k] = minIdx;
+    totals[minIdx] = totals[minIdx]! + tuples[k]!.weight;
+    counts[minIdx] = counts[minIdx]! + 1;
+  };
+  const spread = opts.spread;
+  if (spread) {
+    const size = spread.groupSize;
+    const groups = Math.ceil(n / size);
+    const held = new Array<number>(groups).fill(0);
+    const groupTotal = (g: number) => totals.slice(g * size, (g + 1) * size).reduce((a, b) => a + b, 0);
+    tuples.forEach((t, k) => {
+      if (!spread.files.has(t.path)) return;
+      let g = 0;
+      for (let j = 1; j < groups; j++) {
+        if (held[j]! < held[g]! || (held[j] === held[g] && groupTotal(j) < groupTotal(g))) g = j;
+      }
+      held[g] = held[g]! + 1;
+      place(k, g * size, Math.min(n, (g + 1) * size));
+    });
   }
+  tuples.forEach((t, k) => {
+    if (!spread?.files.has(t.path)) place(k, 0, n);
+  });
+  tuples.forEach((t, k) => shards[assigned[k]!]!.push(t.path));
   return shards;
 }
 
@@ -315,11 +375,13 @@ async function main(): Promise<number> {
   let weightsPath: string | undefined;
   let fallbackOnError = false;
   let sumOnly = false;
+  let spreadMemoryHeavy = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--weights" && argv[i + 1] && !argv[i + 1]!.startsWith("--")) weightsPath = argv[++i];
     else if (arg === "--fallback-on-error") fallbackOnError = true;
     else if (arg === "--sum") sumOnly = true;
+    else if (arg === "--spread-memory-heavy") spreadMemoryHeavy = true;
     else if (arg.startsWith("--")) {
       console.error(`error: unknown or incomplete option ${arg}`);
       return 2;
@@ -342,7 +404,7 @@ async function main(): Promise<number> {
     return 0;
   }
   if (positional.length !== 2) {
-    console.error("usage: bun run scripts/sharding.ts <shard-index> <total-shards> [--weights PATH] [--fallback-on-error]");
+    console.error("usage: bun run scripts/sharding.ts <shard-index> <total-shards> [--weights PATH] [--fallback-on-error] [--spread-memory-heavy]");
     console.error("       bun run scripts/sharding.ts --sum [--weights PATH]");
     console.error("       (reads file list from stdin, one path per line)");
     return 2;
@@ -369,7 +431,7 @@ async function main(): Promise<number> {
     if (!fallbackOnError) return 1;
     weights = new Map();
   }
-  const shards = partition(files, weights, total);
+  const shards = partition(files, weights, total, spreadMemoryHeavy ? { spread: { files: new Set(MEMORY_HEAVY_UNIT_FILES), groupSize: UNIT_SHARDS_PER_JOB } } : {});
   for (const f of shards[idx - 1]!) {
     process.stdout.write(`${f}\n`);
   }

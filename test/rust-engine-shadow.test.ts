@@ -4,7 +4,7 @@
  * fake engines, the report and the doctor check. CLI, engine-factory and real-child coverage live in
  * rust-engine-shadow.serial.test.ts (they set GBRAIN_HOME).
  */
-import { describe, expect, spyOn, test } from 'bun:test';
+import { describe, expect, jest, spyOn, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1278,10 +1278,11 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
       try {
         h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
         await h.respawn(0); h.disk.failing = true; h.attempts.length = 0;
+        jest.useFakeTimers(); // the burst's clock and the keeper's timer move only here, 10 ms a step: a stalled runner cannot open a gap as long as a retry interval (#10584: one wall-clock wait(10) took 46 ms)
         const t0 = Date.now(); let maxGap = 0; let last = t0; let reads = 0; const bad: string[] = [];
         h.sup.oweRefused(1);
         while (Date.now() - t0 < 400) {
-          await wait(10); const now = Date.now(); maxGap = Math.max(maxGap, now - last); last = now;
+          jest.advanceTimersByTime(10); await turn(); const now = Date.now(); maxGap = Math.max(maxGap, now - last); last = now;
           h.sup.oweRefused(1); // the burst: a refusal every ~10 ms, status read after each
           if (now - t0 >= 80) { // two retry intervals after the first refusal (one interval, plus a timer's lateness)
             reads++; const st = h.status().state; const markers = readdirSync(h.dir).filter((n) => /^write-pending\.r/.test(n)).length;
@@ -1292,7 +1293,7 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
         expect(reads).toBeGreaterThan(10);
         expect(bad).toEqual([]);
         expect(h.attempts.length).toBeGreaterThan(0);
-      } finally { h.done(); }
+      } finally { h.done(); jest.useRealTimers(); }
     });
 
     test('ship-r1 A: successful samples cannot postpone the clearing of a marker whose record is already durable', async () => {

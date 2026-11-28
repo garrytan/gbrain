@@ -42,8 +42,8 @@ export const RACE_SHARD_BUDGET_MS = 55 * 60_000;
 export const RACE_BASE_SHARDS = 6;
 export const RACE_MAX_SHARDS = 12;
 export const RACE_MIN_ITERATIONS = 3;
-/** The 3-iteration floor alone may spill past RACE_MAX_SHARDS into a second group that queues behind the first (stress.yml max-parallel 12). */
-export const RACE_FLOOR_MAX_SHARDS = 24;
+/** The 3-iteration floor alone may spill past RACE_MAX_SHARDS into a second and third group of 12 that queue behind the first (stress.yml max-parallel 12). */
+export const RACE_FLOOR_MAX_SHARDS = 36;
 export const EXEMPTION_LABELS = ['master-red', 'flake', 'nightly-red'];
 const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const BOT = 'github-actions[bot]';
@@ -162,8 +162,8 @@ export function raceHuntHelperImporters(root: string, since = '26 hours ago'): {
  * of 55 minutes, growing to 12 shards; past that, every file runs at least 3
  * iterations nightly and the spare capacity rotates by day so each file still
  * reaches 10 within the week. When even 3 iterations do not fit 12 shards,
- * every file runs 3 in up to 24 shards, the second 12 queued behind the
- * first. Listed files take the floor before helper importers, so a widely
+ * every file runs 3 in up to 36 shards, each further 12 queued behind the
+ * ones before. Listed files take the floor before helper importers, so a widely
  * imported helper can never push a listed arm out. Files are never dropped:
  * what does not fit is `unrun` and the job fails "race hunt over budget".
  */
@@ -411,8 +411,8 @@ export function buildReport(r: ReportInput): { summary: string; errors: string[]
     errors.push(`${missing.length} planned work item(s) left no receipt (shards: ${r.shardsResult}). Why: an unrun iteration is not a pass. Next: read the shard logs and re-run. Docs: ${docs}`);
   }
   if (plan.unrun.length) {
-    lines.push('### Race hunt over budget', '', `These files did not fit ${RACE_FLOOR_MAX_SHARDS} shards × ${RACE_SHARD_BUDGET_MS / 60_000} minutes at ${RACE_MIN_ITERATIONS} iterations and did not run:`, ...plan.unrun.map(f => `- \`${f}\``), '', `Next: speed up the slowest listed files or add a third shard group (RACE_FLOOR_MAX_SHARDS). Docs: ${docs}`, '');
-    errors.push(`race hunt over budget: ${plan.unrun.length} file(s) did not run (${plan.unrun.slice(0, 5).join(', ')}${plan.unrun.length > 5 ? ', …' : ''}). Why: files are never dropped silently. Next: speed up the slowest files or add a third shard group (RACE_FLOOR_MAX_SHARDS). Docs: ${docs}`);
+    lines.push('### Race hunt over budget', '', `These files did not fit ${RACE_FLOOR_MAX_SHARDS} shards × ${RACE_SHARD_BUDGET_MS / 60_000} minutes at ${RACE_MIN_ITERATIONS} iterations and did not run:`, ...plan.unrun.map(f => `- \`${f}\``), '', `Next: speed up the slowest listed files or add a shard group of 12 (RACE_FLOOR_MAX_SHARDS). Docs: ${docs}`, '');
+    errors.push(`race hunt over budget: ${plan.unrun.length} file(s) did not run (${plan.unrun.slice(0, 5).join(', ')}${plan.unrun.length > 5 ? ', …' : ''}). Why: files are never dropped silently. Next: speed up the slowest files or add a shard group of 12 (RACE_FLOOR_MAX_SHARDS). Docs: ${docs}`);
   }
   if (plan.notStressed.length) { lines.push('### Not stressed', ''); for (const n of plan.notStressed) lines.push(`- \`${n.file}\`: ${n.reason}`); lines.push(''); }
   const runtimeSkips = r.manifests.flatMap(m => m.files.filter(f => f.status === 'not-stressed'));

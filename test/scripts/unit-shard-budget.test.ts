@@ -6,14 +6,16 @@
  * test/scripts/ci-gates.test.ts pins the workflows' shard counts to UNIT_SHARDS.
  */
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load } from 'js-yaml';
 import {
+  MEMORY_HEAVY_UNIT_FILES,
   UNIT_JOB_TIMEOUT_MS,
   UNIT_SETUP_ALLOWANCE_MS,
   UNIT_SHARD_BUDGET_MS,
   UNIT_SHARDS,
+  UNIT_SHARDS_PER_JOB,
   unitShardPlan,
 } from '../../scripts/sharding.ts';
 
@@ -35,5 +37,18 @@ describe('unit shard budget', () => {
       .map(({ shard, ms }) => ({ shard: `${shard}/${UNIT_SHARDS}`, ms }))
       .filter(s => s.ms > UNIT_SHARD_BUDGET_MS);
     expect(over).toEqual([]);
+  }, UNIT_SHARDS * 1_000);
+
+  test('no test.yml runner holds more than its share of the memory-heavy files', () => {
+    expect(MEMORY_HEAVY_UNIT_FILES.filter(f => !existsSync(join(REPO, f)))).toEqual([]);
+    const plan = unitShardPlan(REPO);
+    const heavy = new Set(MEMORY_HEAVY_UNIT_FILES);
+    const runners = Math.ceil(UNIT_SHARDS / UNIT_SHARDS_PER_JOB);
+    const share = Math.ceil(heavy.size / runners);
+    const over = Array.from({ length: runners }, (_, r) => plan.slice(r * UNIT_SHARDS_PER_JOB, (r + 1) * UNIT_SHARDS_PER_JOB))
+      .map(shards => ({ shards: shards.map(s => s.shard).join(','), heavy: shards.flatMap(s => s.files).filter(f => heavy.has(f)) }))
+      .filter(r => r.heavy.length > share);
+    expect(over).toEqual([]);
+    expect(plan.flatMap(s => s.files).filter(f => heavy.has(f)).length).toBe(heavy.size);
   }, UNIT_SHARDS * 1_000);
 });

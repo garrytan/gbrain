@@ -74,7 +74,10 @@ receipts_init unit
 # keep-in-matrix bar.
 # export-scale.slow.test.ts (571s at its 100,001-page master scale) rides the
 # slow-entity-resolve-perf job, which sets GBRAIN_TEST_EXPORT_SCALE_PAGES per
-# event. reconcile-crash-*.slow.test.ts (244s) is not duplicated here: the
+# event. enrich-owner-contact-perf.slow.test.ts seeds 100k pages in PGLite
+# (about 2.6 GB resident) and rides the same job: inside a packed shard pair
+# it took a 16 GB runner past its memory (test (11, 12) at 46 shards).
+# reconcile-crash-*.slow.test.ts (244s) is not duplicated here: the
 # persistence-validation invariants job already runs it on PGLite for every
 # event, before and after activation.
 # evals/ is included: its *.test.ts files (eval-harness unit tests) were
@@ -89,6 +92,7 @@ ALL_FILES=$(find test evals -name '*.test.ts' \
   -not -name 'entity-card-perf.slow.test.ts' \
   -not -name 'eval-brainbench-e2e.slow.test.ts' \
   -not -name 'export-scale.slow.test.ts' \
+  -not -name 'enrich-owner-contact-perf.slow.test.ts' \
   -not -name 'reconcile-crash-*.slow.test.ts' \
   -not -path 'test/e2e/*' | sort)
 
@@ -100,7 +104,7 @@ fi
 # Delegate the LPT partition to scripts/sharding.ts. Stream the file list
 # via stdin to keep argv small (676+ files would overflow argv in some
 # shells / OSes).
-SHARD_FILES=$(printf '%s\n' "$ALL_FILES" | bun run scripts/sharding.ts "$SHARD_INDEX" "$TOTAL_SHARDS")
+SHARD_FILES=$(printf '%s\n' "$ALL_FILES" | bun run scripts/sharding.ts "$SHARD_INDEX" "$TOTAL_SHARDS" --spread-memory-heavy)
 
 if [ "$DRY_RUN_LIST" = "1" ]; then
   printf '%s' "$SHARD_FILES"
