@@ -441,6 +441,16 @@ test('derived page telemetry does not stale canonical preimages and CRLF-only di
   });
 }), 120_000);
 
+test('GST-3450: line_endings describes the canonical file, so an LF file against a CRLF database copy reports lf', async () => isolated(async engine => {
+  const f = await fixture(engine);
+  expect(readFileSync(f.file).includes(13)).toBe(false);
+  await engine.executeRaw("UPDATE pages SET compiled_truth=replace(compiled_truth, E'\\n', E'\\r\\n')||E'\\r\\nA second database line.' WHERE id=$1", [f.snapshot.page.id]);
+  await local(engine, f.registration, async () => {
+    const result = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug });
+    expect(result).toMatchObject({ status: 'needs_resolution', line_endings: 'lf', conflict_paths: ['/compiled_truth'] });
+  });
+}), 120_000);
+
 test('unadmitted private backups cannot be removed through receipt administration', async () => isolated(async engine => {
   const f = await fixture(engine);
   await local(engine, f.registration, async () => {

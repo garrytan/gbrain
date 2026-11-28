@@ -14,6 +14,7 @@ import { preparationBudgetMs } from './preparation-budget.ts';
 import { readWriteSwitchSnapshot } from './switches.ts';
 import { DATABASE_REFUSAL_HINT, DATABASE_TRIGGER_HINT, guardRefusalHint, ownerExceptionHint, unknownOriginHint } from './connector-errors.ts';
 import { readQueuedHeadBlockers } from './head-blocker.ts';
+import { ownerActivity } from './owner-activity.ts';
 import { SOURCE_CHANGED_ORIGINS } from './publication-failure.ts';
 import { abandonedClaimCutoff } from './effect-journal.ts';
 
@@ -156,7 +157,7 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
   // #6482: writer status is the probe the mode refusal names, so a malformed singleton is reported here, never refused.
   const inspected = await inspectPersistenceBrain(engine);
   const brain = inspected.row ? { enabled: inspected.row.enabled, brain_id: inspected.row.brain_id } : { enabled: false, brain_id: null, persistence_mode_problem: inspected.problem };
-  const worktrees = await engine.executeRaw(`SELECT w.id,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.topology_generation::text AS topology_generation,w.state,w.heartbeat_at,
+  const worktrees = await engine.executeRaw(`SELECT w.id,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.topology_generation::text AS topology_generation,w.state,w.heartbeat_at AS owner_stamped_at,
     COUNT(r.id) FILTER (WHERE r.state='queued')::integer AS queued,
     COUNT(r.id) FILTER (WHERE r.state='running')::integer AS running,
     COUNT(r.id) FILTER (WHERE r.state='recovering')::integer AS recovering,
@@ -166,6 +167,13 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
     (SELECT COUNT(*)::integer FROM persistence_effects e WHERE e.worktree_id=w.id AND e.recovery IS NOT NULL) AS recovering_effects
     FROM persistence_worktrees w LEFT JOIN persistence_requests r ON r.worktree_id=w.id
     GROUP BY w.id ORDER BY w.id`);
+  // GST-3519: owner_stamped_at changes only on a claim and a consumer's clean stop, so it reads as a frozen heartbeat while the owner works;
+  // owner_live and owner_last_active come from the owner's consumer heartbeats and committed receipts (null when unread or no owner).
+  const owners = await ownerActivity(engine, (worktrees as Array<{ id: string }>).map(w => w.id)).catch(() => null);
+  const worktreeRows = (worktrees as Array<{ id: string }>).map(w => {
+    const owner = owners?.get(w.id);
+    return { ...w, owner_live: owner ? owner.live : null, owner_last_active: owner?.last_active ?? null };
+  });
   const counters = await engine.executeRaw<Counter>(`SELECT key,outstanding_count::text,intent_bytes::text,lifetime_ids::text,terminal_bytes::text,recovery_bytes::text FROM persistence_counters ORDER BY key`);
   // #6278: the operation and intent kind say which budget applies and tell a sync member from a maintenance write; the owner process comes from the live claim's stamp.
   const blockers = await engine.executeRaw<{ id: string; request_id: string; worktree_id: string | null; source_id: string | null; state: WriteRequestState; created_at: Date | string; blocked_reason: string | null; error_code: string | null;
@@ -209,7 +217,7 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
     ? 'The process that answered has no resident consumer (a one-shot CLI, for example); another process may own writes. See worktrees and bindings for ownership.'
     : 'The resident consumer of the process that answered this status.' };
   return { ...brain, sampled_at: new Date().toISOString(), publication_concurrency: publicationConcurrency(engine),
-    local_process_ingress, worktrees, counters, queue, effects,
+    local_process_ingress, worktrees: worktreeRows, counters, queue, effects,
     limits: Object.fromEntries(Object.entries(limits).filter(([, value]) => Number.isFinite(value))), capacity: capacityDiagnostics(counters, limits), preparation_policy,
     recent_failures: failures.map(row => ({ ...row, next_action: recentFailureNextAction(row) })),
     backend_visibility: backends.visibility,

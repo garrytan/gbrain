@@ -113,7 +113,7 @@ describe('#6834 a managed-sync checkpoint whose source checkpoint moved', () => 
     const later = async (r: { operation: string }, c: { operation: string; kind: string | null }) => (await engine.executeRaw<{ hit: boolean }>(
       `SELECT EXISTS(SELECT 1 FROM (VALUES ($4::uuid,'example-source','__managed_sync_checkpoint__',1::bigint,'d1',$1::text,'conflict'))
           r(id,source_id,slug,sequence,digest,operation,state),
-        (VALUES ('example-source','__managed_sync_checkpoint__',2::bigint,'d2',$2::text,$3::text::jsonb,'committed')) c(source_id,slug,sequence,digest,operation,intent,state)
+        (VALUES ('example-source','__managed_sync_checkpoint__',2::bigint,'d2',$2::text,$3::text::jsonb,'committed',NULL::uuid)) c(source_id,slug,sequence,digest,operation,intent,state,worktree_id)
         WHERE ${supersessionSql('r', 'c')}) AS hit`,
       [r.operation, c.operation, c.kind ? JSON.stringify({ kind: c.kind }) : null, randomUUID()]))[0]!.hit;
     expect(await later({ operation: 'submit_job' }, { operation: 'submit_job', kind: 'managed_sync_checkpoint' })).toBe(true);

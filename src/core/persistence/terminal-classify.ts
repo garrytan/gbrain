@@ -452,8 +452,11 @@ export const UNRESOLVED_CALLER_REFUSAL_SQL = (r: string) => `((${GUARD_REFUSAL_S
  * page removal committed or pending; for a `put_page`, any later write committed or pending, or a later caller
  * `put_page` that failed (the newer content); #6834: for a refused sync checkpoint, any later committed checkpoint of the
  * source (both read by kind; a compacted row, which keeps no kind, by its operation); #6824: for a refused connector
- * write, a later committed connector retry whose recorded `retryOf` lineage reaches it (connectorRetrySql). `r` must
- * expose `id`. Literal strings only; NULL-safe for a compacted `c` (no intent).
+ * write, a later committed connector retry whose recorded `retryOf` lineage reaches it (connectorRetrySql); GST-3450: for
+ * a refused managed-sync page import or delete, a later committed write of the same page's content: a caller page write or
+ * removal, or a worktree-bound job (a sync import or delete; never a database-only one such as take extraction, a tag,
+ * link or timeline row, or a checkpoint; read by worktree so no large intent is detoasted, by kind only on the checkpoint
+ * slug; a compacted row stays unresolved). `r` must expose `id`, `c` `worktree_id`. Literal strings only; NULL-safe for a compacted `c` (no intent).
  */
 export function supersessionSql(r: string, c: string, rKind?: string): string {
   const removals = PAGE_REMOVAL_OPERATIONS.map(op => `'${op}'`).join(',');
@@ -464,8 +467,18 @@ export function supersessionSql(r: string, c: string, rKind?: string): string {
       AND COALESCE((SELECT k.intent->>'kind' FROM persistence_requests k WHERE k.id=${r}.id),'managed_sync_checkpoint')='managed_sync_checkpoint'
       AND COALESCE(${c}.intent->>'kind','managed_sync_checkpoint')='managed_sync_checkpoint')
     OR (${r}.operation='put_page' AND ${c}.state='failed' AND ${c}.operation='put_page' AND COALESCE(NOT (${c}.intent ? 'kind'), false))
+    OR (${r}.operation='submit_job' AND ${c}.state='committed'
+      AND (${c}.operation IN (${PAGE_CONTENT_WRITES}) OR (${c}.operation='submit_job' AND ${c}.worktree_id IS NOT NULL
+        AND (${r}.slug<>'__managed_sync_checkpoint__' OR ${c}.intent->>'kind' IN (${SYNC_PAGE_WRITE_KINDS}))))
+      AND ${syncPageKindOf(r, rKind)} IN (${SYNC_PAGE_WRITE_KINDS}))
     OR ${connectorRetrySql(r, c, rKind)}))`;
 }
+
+const SYNC_PAGE_WRITE_KINDS = "'managed_sync_import','managed_sync_delete'";
+/** Caller operations that publish or remove a page's content; a tag, link, timeline or take write on the slug does not. */
+const PAGE_CONTENT_WRITES = "'put_page','edit_page','append_page','delete_page','purge_page'";
+/** The failed row's own intent kind: the caller's column when it has one, else one lookup by id (after the operation test, so a put_page is never detoasted). */
+const syncPageKindOf = (r: string, rKind?: string) => rKind ?? `(SELECT k.intent->>'kind' FROM persistence_requests k WHERE k.id=${r}.id)`;
 
 /** Hops a connector retry's `retryOf` lineage is followed back; a longer chain leaves the refusal unresolved (fail closed). */
 export const CONNECTOR_RETRY_LINEAGE_MAX_DEPTH = 32;

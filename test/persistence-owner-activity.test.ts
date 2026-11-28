@@ -21,6 +21,7 @@ import { isWriteReceipt, publicWriteReceipt } from '../src/core/persistence/type
 import { acceptPendingCovers, writeErrorExitCode } from '../src/core/persistence/write-wait.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../src/core/exit-codes.ts';
 import { ownerHostStaleCheck } from '../src/commands/doctor/checks/owner-host-stale.ts';
+import { readWriterDiagnostics } from '../src/core/persistence/diagnostics.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -148,4 +149,23 @@ describe('owner activity', () => {
       expect(Date.now() - Date.parse(after.last_active!)).toBeLessThan(60_000);
     }
   }));
+});
+
+describe('GST-3519: writer status names owner liveness, not the claim stamp', () => {
+  test('a worktree stamped two days ago whose owner committed an hour ago shows both, under names that say which is which', async () => inHome(async () => {
+    for (const engine of engines) {
+      const tree = await worktree(engine, randomUUID(), 48);
+      await request(engine, tree, 'committed', 1);
+      const status = await readWriterDiagnostics(engine);
+      const row = (status.worktrees as Array<Record<string, unknown>>).find(w => String(w.id) === tree)!;
+      expect(row).not.toHaveProperty('heartbeat_at');
+      const hours = (at: unknown) => (Date.now() - new Date(at as string).getTime()) / 3_600_000;
+      expect(hours(row.owner_stamped_at)).toBeGreaterThan(47);
+      expect(hours(row.owner_last_active)).toBeLessThan(2);
+      expect(row.owner_live).toBe(false);
+      const ownerless = (await engine.executeRaw<{ id: string }>('INSERT INTO persistence_worktrees(owner_host_id) VALUES(NULL) RETURNING id::text'))[0]!.id;
+      const none = ((await readWriterDiagnostics(engine)).worktrees as Array<Record<string, unknown>>).find(w => String(w.id) === ownerless)!;
+      expect(none).toMatchObject({ owner_live: null, owner_last_active: null });
+    }
+  }), 60_000);
 });

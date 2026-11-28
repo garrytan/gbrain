@@ -141,6 +141,14 @@ function midTurnReloadNote(ctx: OperationContext): string | undefined {
  * schemas so a client that ignores `tools/list_changed` can call them by
  * name. Nothing is written; a new session starts at the registered surface.
  */
+/**
+ * GST-4055: a client that opens a new MCP session for every call and keeps the tool list it read at registration (QM
+ * does both) never sees a session widen or a later tools/list. Nothing persists a stdio widen (stdio has no client
+ * identity to bind it to), so the registration has to carry the surface.
+ */
+const STATELESS_CLIENT_NOTE = (surface: string) =>
+  `A client that opens a new session for every call, or never re-reads tools/list, gets these tools only when gbrain is registered with them: --surface ${surface} --advertise ${surface} (a narrower --advertise or mcp.advertised_surface still hides them from tools/list).`;
+
 async function widenStdioSession(ctx: OperationContext, requested: 'verbs' | 'starter' | 'full'): Promise<Record<string, unknown>> {
   const session = ctx.stdioSurface!;
   const { clampSurface, sessionWidenAllowed, surfaceWiderThan } = await import('../../mcp/surface.ts');
@@ -155,10 +163,13 @@ async function widenStdioSession(ctx: OperationContext, requested: 'verbs' | 'st
   }
   const target = clampSurface(requested);
   if (!surfaceWiderThan(target, session.surface)) {
+    const lasting = session.surface === session.registered
+      ? 'in this session and in every new one'
+      : `in this session, which was widened earlier; a new session starts at the registered surface ('${session.registered}') again`;
     return { persisted: false, scope: 'session', surface: session.surface, widened: false,
       note: target !== requested
         ? `GBRAIN_MCP_FORCE_SURFACE caps this server at '${target}', so this session stays at '${session.surface}'.`
-        : `This session already serves '${session.surface}', which includes everything in '${requested}'.` };
+        : `This session already serves '${session.surface}', which includes everything in '${requested}'. Its tools are callable by name ${lasting}, even when tools/list shows fewer (a server started with --advertise lists only part of it). ${STATELESS_CLIENT_NOTE(requested)}` };
   }
   if (ctx.dryRun) return { persisted: false, scope: 'session', dry_run: true, surface: target, previous: session.surface };
   const change = session.widen(target);
@@ -170,7 +181,7 @@ async function widenStdioSession(ctx: OperationContext, requested: 'verbs' | 'st
   return {
     persisted: false, scope: 'session', surface: target, previous: change.from,
     tools: buildToolDefs(visible, { strictParams }),
-    note: `This session now serves '${target}' (tools/list_changed was sent). ${midTurnReloadNote(ctx) ?? 'Call the new tools by name now; their schemas are above.'} A new session starts at the registered surface. ${persistent}`,
+    note: `This session now serves '${target}' (tools/list_changed was sent). ${midTurnReloadNote(ctx) ?? 'Call the new tools by name now; their schemas are above.'} A new session starts at the registered surface again. ${STATELESS_CLIENT_NOTE(requested)} ${persistent}`,
   };
 }
 
