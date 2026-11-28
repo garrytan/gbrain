@@ -22,12 +22,12 @@ cd "$WORK/shared"
 
 # $STAGING holds the pages as they stood at $STAGING.base. Copying it over a
 # page a teammate changed, added or deleted since then would silently revert
-# their commit, so list every such page and stop. Reconcile: bring those
-# commits into your sanitized checkout (gbrain git commit-push --pull; a page
-# it reports lagging is one you also edited, so merge the teammate's change
-# into your sanitized version by hand), give each listed page the full read
-# and the Phase 4 checks, re-run the SKILL.md staging block for a new $STAGING,
-# then restart Step 1 in a new $WORK.
+# their commit, so list every such page and stop. Reconcile: in your
+# sanitized checkout, commit-push the sanitized folders (gbrain git commit-push
+# -m "Sanitize" -- <folders>; on integrate_conflict the user chooses which
+# version wins), which merges the teammate's commits in; give each listed page
+# the full read and the Phase 4 checks; re-run the SKILL.md staging block for a
+# new $STAGING; then restart Step 1 in a new $WORK.
 BASE=$(cat "$STAGING.base" 2>/dev/null)
 [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null \
   || { echo "staging base ${BASE:-missing} is not a commit on the shared repo — ABORT, re-stage from a pushed checkout"; exit 1; }
@@ -52,12 +52,15 @@ unread=$(for d in people meetings daily companies projects analysis; do [ -d "$d
 [ -z "$unread" ] || { printf 'not on the export list, never read — ABORT:\n%s\n' "$unread"; exit 1; }
 SANITIZED=""
 for d in people meetings daily companies projects analysis; do [ -d "$d" ] && SANITIZED="$SANITIZED $d"; done
-OURS=$({ git -c core.quotePath=false diff --no-renames --name-only HEAD -- $SANITIZED; git -c core.quotePath=false ls-files --others --exclude-standard -- $SANITIZED; } | LC_ALL=C sort -u)
+STAGED=$(find $SANITIZED -type f | LC_ALL=C sort | while IFS= read -r f; do printf '%s\t%s\n' "$(git hash-object -- "$f")" "$f"; done | LC_ALL=C sort)
 gbrain git commit-push -m "Sanitize: strip sensitive content before history purge" -- $SANITIZED
-# A teammate push to these folders that commit-push merged in is a page nobody
-# read: stop and reconcile it as above.
-[ "$(git -c core.quotePath=false diff --no-renames --name-only "$BASE" HEAD -- $SANITIZED | LC_ALL=C sort -u)" = "$OURS" ] \
+# The pushed folders must be exactly the staged pages, byte for byte: a
+# teammate push to them that commit-push merged in is content nobody read, so
+# stop and reconcile it as above. Once they match, the sanitize commit is the
+# new base, so a restart of Step 1 only stops on pushes made after it.
+[ "$(git -c core.quotePath=false ls-tree -r HEAD -- $SANITIZED | awk -F '\t' '{ split($1, m, " "); print m[3] "\t" $2 }' | LC_ALL=C sort)" = "$STAGED" ] \
   || { echo "a teammate pushed to the sanitized folders during the sanitize push — ABORT, reconcile and re-stage"; exit 1; }
+git rev-parse HEAD > "$STAGING.base"
 
 # Pin the remote NOW: every branch and tag as it stands right after the
 # sanitize push. Step 3 pushes with a lease on each recorded sha (main's is
