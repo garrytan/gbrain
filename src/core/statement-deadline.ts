@@ -167,13 +167,12 @@ export function deadlineBoundEngine<E extends object>(engine: E): E {
       }
       // A typed read that replaced an executeRaw statement keeps that statement's bound: the engine ends it at the deadline.
       const deadlineAt = scope.deadlineAt;
-      // A decide read runs on the raw engine, and the signal discards its connection when the deadline passes with the read
-      // unanswered (as executeRaw's did). Any other typed read runs with this wrapper as `this`, so a member built on
+      // A decide read runs on the raw engine. Any other typed read runs with this wrapper as `this`, so a member built on
       // `this.executeRaw` sends its statement through the bounded executeRaw above; the raw engine's executeRaw does not
-      // read the ambient read deadline.
-      return (BOUNDED_TYPED_READS.has(key)
-        ? withReadDeadline(deadlineAt, () => Reflect.apply(fn, target, args) as Promise<unknown>, AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())))
-        : withReadDeadline(deadlineAt, () => Reflect.apply(fn, wrapper, args) as Promise<unknown>))
+      // read the ambient read deadline. Both carry the deadline's signal: a native read (preparationRead, runDeadlineRead)
+      // has its reserved connection discarded when the deadline passes with the read unanswered (as executeRaw's was).
+      const self = BOUNDED_TYPED_READS.has(key) ? target : wrapper;
+      return withReadDeadline(deadlineAt, () => Reflect.apply(fn, self, args) as Promise<unknown>, AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())))
         .catch((error: unknown) => {
           if (error instanceof ReadDeadlineError) refuse(scope);
           if (cancelled(error) && Date.now() >= deadlineAt - 100) scope.expired = true;
