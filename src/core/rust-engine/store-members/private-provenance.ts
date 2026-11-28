@@ -244,8 +244,13 @@ export function storePrivacyPolicy(
         const lineage = record.lineage === true && record.owner !== true;
         const lineageCase = form.memberCase && canonical.includes(`CASE WHEN starts_with(pp.slug, '${MEMBER_PAGE_PREFIX}') THEN`);
         const lineageFlags = lineage ? { provenanceLineage: lineageCase, callerRecord: true } : {};
-        // The owner's own lineage read (the owner record with lineage, GST-2490): the owner read rule, served as `ownerLineage`.
-        const ownerLineageFlags = record.lineage === true && record.owner === true ? { ownerRead: true, ownerLineage: true } : {};
+        // The owner's own lineage read (the owner record with lineage, GST-2490). The first form judges the provenance page by
+        // the owner read rule, served as `ownerLineage`. The second form's provenance part is the plain no-caller fragment:
+        // only its entity gate reads the owner's lineage, so it is served as `ownerRead` with `provenanceLineage` false
+        // (the provenance page judged with no identity), never `ownerLineage`.
+        const ownerLineageFlags = record.lineage === true && record.owner === true
+          ? (form.memberCase ? { ownerRead: true, ownerLineage: true } : { ownerRead: true, provenanceLineage: false })
+          : {};
         return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...reference.flags, ...lineageFlags, ...ownerLineageFlags };
       }
     }

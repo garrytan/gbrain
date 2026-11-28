@@ -14,6 +14,10 @@
  *  - Regression: on a Rust brain every remote owner read refused before any work (ownerLineageRefusal,
  *    src/mcp/engine-access-refusal.ts, engine_capability_missing "the owner lineage read"), so the owner got no fact at
  *    all. This case is red there and green once the owner lineage read goes to the Rust store as its owner read rule.
+ *    The second case: the Rust member served the owner lineage flags for the plain fact form too, so recall marked a fact
+ *    contested by a pair whose other fact sits on a page the plain form hides, and the brief's world facts included facts
+ *    from the owner's restricted page and from a page derived from it. Red there; green once only the first form carries
+ *    the owner lineage flag and the plain form keeps the owner read rule for its entity gate alone.
  *  - Why existing coverage misses it: remote-access-matrix's owner cases put every fact on one open page, so the lineage
  *    of a fact's source page (another member's origin) is never judged; facts-rest-sites' readMemberPageWithdrawal case
  *    calls the engine member, not the tools a remote owner reaches.
@@ -31,7 +35,7 @@ import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
 import { noGrantFederatedScope } from '../../src/core/source-resolver.ts';
-import { __resetPrivateVisibilityCacheForTests } from '../../src/core/search/private-visibility.ts';
+import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { addMember, bindCredential } from '../../src/core/access/members.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
 import { drainProjections } from '../../src/core/page-state/projections.ts';
@@ -43,6 +47,7 @@ const { parityTest } = parityArms(testBackends());
 const OWNER = 'owner-example';
 const BOB = 'bob-example';
 const ENTITY = 'people/subject-example';
+const DERIVED_ENTITY = 'people/derived-subject-example';
 
 /** The source pages of the facts: slug and the frontmatter lines that decide who may read each. */
 const PAGES = {
@@ -74,12 +79,12 @@ const pageText = (title: string, fm: readonly string[]) =>
 type Who = 'owner-http' | 'owner-stdio';
 const WHO: Who[] = ['owner-http', 'owner-stdio'];
 
-async function seed(engine: BrainEngine): Promise<string> {
+async function seed(engine: BrainEngine): Promise<{ token: string; ids: Record<string, number> }> {
   __resetPrivateVisibilityCacheForTests();
   for (const id of [OWNER, BOB]) await addMember(engine, id);
   for (const key of KEYS) await importFromContent(engine, PAGES[key].slug, pageText(key, PAGES[key].fm), { sourceId: 'default', noEmbed: true } as never);
   await importFromContent(engine, ENTITY, ['---', 'type: person', 'title: Subject Example', '---', '# Subject Example', '', 'A person.'].join('\n'), { sourceId: 'default', noEmbed: true } as never);
-  await engine.insertFacts(FACTS.map((f, i) => ({
+  const inserted = await engine.insertFacts(FACTS.map((f, i) => ({
     fact: factText(f.name), entity_slug: ENTITY, kind: 'fact', visibility: f.visibility, source: 'fence', row_num: i + 1,
     valid_from: new Date(Date.UTC(2026, 6, 1 + i)), source_markdown_slug: PAGES[f.page].slug,
   })) as never, { source_id: 'default' });
@@ -87,7 +92,8 @@ async function seed(engine: BrainEngine): Promise<string> {
   await bindCredential(engine, { kind: 'token', id: minted.id }, { member: OWNER });
   await setOwner(engine, OWNER);
   await drainProjections(engine);
-  return minted.token;
+  const ids = Object.fromEntries(FACTS.map((f, i) => [f.name, Number(inserted.ids[i])]));
+  return { token: minted.token, ids };
 }
 
 /** One tool call as the owner, over the caller's transport, as serve --http (an OAuth-verified token) or the stdio server does. */
@@ -141,7 +147,7 @@ describe('engine parity: the brain owner\'s remote fact reads judge each fact by
   parityTest('owner fact reads: recall, entity and get_page give the remote owner the facts of the pages it may read, never one from a page derived from another member\'s origin', {
     methods: ['listFactsByEntity', 'listFactsSince', 'insertFacts', 'getPage'],
   }, async (engine) => {
-    const token = await seed(engine);
+    const { token } = await seed(engine);
     const out: Record<string, unknown> = {};
     const reads: Array<[string, string, Record<string, unknown>]> = [
       ['recall entity', 'recall', { entity: ENTITY }],
@@ -162,6 +168,47 @@ describe('engine parity: the brain owner\'s remote fact reads judge each fact by
       mine['get_page entity'] = page.payload;
       out[who] = mine;
     }
+    await flushAccessReadLog();
+    return out;
+  });
+
+  // The two fact reads whose provenance gate is the plain, caller-independent form (privateFactFilterForCaller):
+  // contested pairs (recall's `contested` mark) and the brief's world facts. The owner's lineage read must not widen
+  // them: a fact whose source page is restricted (even to the owner) or derived from one stays out, as on PGLite. The
+  // entity gate of that form does read the owner's lineage: a fact on an entity page derived from the owner's own page
+  // stays in. Recall's own facts (the member-case form, privateProvenanceFilterUnderPolicy) keep the owner's set.
+  parityTest('owner fact reads: recall\'s contested mark and the brief\'s world facts keep the plain provenance filter for the owner lineage read', {
+    methods: ['listContestedProposalPairs', 'readBriefWorldFacts', 'insertDecideProposal', 'listFactsByEntity', 'insertFacts', 'getPage'],
+  }, async (engine) => {
+    const { token, ids } = await seed(engine);
+    // An entity page derived from the owner's own page, with one world fact from the open page.
+    await importFromContent(engine, DERIVED_ENTITY, ['---', 'type: person', 'title: Derived Subject Example', `derived_from: [${PAGES.ownerOrigin.slug}]`, '---', '# Derived Subject Example', '', 'A person.'].join('\n'), { sourceId: 'default', noEmbed: true } as never);
+    const onDerived = await engine.insertFacts([{
+      fact: factText('onDerivedEntity'), entity_slug: DERIVED_ENTITY, kind: 'fact', visibility: 'world', source: 'fence', row_num: FACTS.length + 1,
+      valid_from: new Date(Date.UTC(2026, 7, 1)), source_markdown_slug: PAGES.open.slug,
+    }] as never, { source_id: 'default' });
+    await drainProjections(engine);
+    // A pending proposal that the open fact supersedes the fact on the owner's own restricted page.
+    await engine.insertDecideProposal({
+      source_id: 'default', sweep_id: 'owner-fact-reads', pair_index: 0, new_fact_id: ids.open!, old_fact_id: ids.ownerOrigin!,
+      direction: 'new_supersedes_old', p_supersede: 0.9, threshold: 0.8, proposal_floor: 0.5, model_resolved: 'owner-fact-reads',
+    } as never);
+    const out: Record<string, unknown> = {};
+    for (const who of WHO) {
+      const recall = await call(engine, token, who, 'recall', { entity: ENTITY });
+      const text = recall.content.map(c => c.text).join('\n');
+      const body = answerJson(text) as { facts?: Array<{ fact: string; contested?: unknown }> };
+      const contested = (body.facts ?? []).filter(f => !!f.contested).map(f => FACTS.find(x => f.fact.includes(canaryOf(x.name)))?.name ?? f.fact);
+      const facts = FACTS.map(f => f.name).filter(n => text.includes(canaryOf(n)));
+      expect({ who, error: recall.isError === true, facts, contested }).toEqual({ who, error: false, facts: OWNER_FACTS, contested: [] });
+      out[`recall contested ${who}`] = contested;
+    }
+    const owner = { identity: [`member:${OWNER}`], owner: true, lineage: true, restricted: true, hidePrivate: false, applyRemoteReadPolicy: false };
+    const briefIds = [...KEYS.map(k => ids[k]!), Number(onDerived.ids[0])];
+    const nameOf = (fact: string) => [...FACTS.map(f => f.name), 'onDerivedEntity'].find(n => fact.includes(canaryOf(n))) ?? fact;
+    const brief = await withCallerAccess(owner, async () => (await engine.readBriefWorldFacts(briefIds)).map(r => nameOf(r.fact)).sort());
+    expect(brief).toEqual(['onDerivedEntity', 'open']);
+    out.brief = brief;
     await flushAccessReadLog();
     return out;
   });
