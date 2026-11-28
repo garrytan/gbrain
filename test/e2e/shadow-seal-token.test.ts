@@ -24,6 +24,7 @@ import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts'
 import { openReadSource, type ReadSource } from '../../src/shadow/read-pool.ts';
 import { installWriterHooks } from '../../src/shadow/writer-hooks.ts';
 import { confirmSeal, quietSince, sealMark } from '../../src/shadow/seal.ts';
+import * as sealModule from '../../src/shadow/seal.ts';
 import { SEED_RECORD_VERSION, writeSeedRecord, type SeedRecord } from '../../src/shadow/seed.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
@@ -146,6 +147,57 @@ d('the seal change token on Postgres', () => {
   afterAll(async () => { await template.dispose(); });
   beforeEach(async () => { ({ engine, close } = await template.clone()); await prepare(); }, 60_000);
   afterEach(teardown, 60_000);
+
+  /**
+   * Hole 1 (strict basis): the close seals only the counters read at the point the follower's state was proven from (the
+   * basis, read just before a full pass started), never a fresh reading that may already include a write the follower
+   * never saw. `readBasis` is reached through the module, so a build without it fails these tests on their assertions.
+   */
+  const readBasis = async (r: ReadSource = reads): Promise<string | null> => {
+    const fn = (sealModule as unknown as { readBasis?: (d: ReturnType<typeof deps>) => Promise<string | null> }).readBasis;
+    expect(typeof fn).toBe('function');
+    return fn!(deps(r));
+  };
+  const sealAt = (basis: string | null, r: ReadSource = reads) =>
+    (sealModule.sealMark as unknown as (d: ReturnType<typeof deps>, basis: string | null) => ReturnType<typeof sealMark>)(deps(r), basis);
+
+  test('a foreign write after the verified point, from a writer that has disconnected, is refused at close (writes_since_verified), though the database is quiet again', async () => {
+    const basis = await readBasis();
+    expect(typeof basis).toBe('string');
+    const sql = connection('psql-after-basis');
+    await sql`INSERT INTO config (key, value) VALUES ('foreign-after-basis', '1')`;
+    await finish(sql, 'psql-after-basis'); // gone, its counters flushed: nothing but the counters shows the write now
+    expect(await sealAt(basis)).toEqual({ refused: 'writes_since_verified' });
+  }, 60_000);
+
+  test('a write by this process after the verified point refuses the seal too (the cost of the strict rule)', async () => {
+    const basis = await readBasis();
+    await engine.withReservedConnection(async (conn) => {
+      await conn.executeRaw(`INSERT INTO config (key, value) VALUES ('own-after-basis', '1')`);
+      await conn.executeRaw('SELECT pg_stat_force_next_flush()'); // its counters are flushed when it goes idle
+      await conn.executeRaw('SELECT 1');
+    });
+    expect(await sealAt(basis)).toEqual({ refused: 'writes_since_verified' });
+  }, 60_000);
+
+  test('with no verified point the close does not seal (no_verified_mark)', async () => {
+    expect(await sealAt(null)).toEqual({ refused: 'no_verified_mark' });
+  }, 60_000);
+
+  test('a basis or token of the previous version is refused (mark_unreadable): it may have absorbed a foreign write', async () => {
+    const basis = await readBasis();
+    const previous = JSON.stringify({ ...(JSON.parse(basis!) as Record<string, unknown>), v: 2 });
+    expect(await sealAt(previous)).toEqual({ refused: 'mark_unreadable' });
+    expect(await quietSince(deps(), previous)).toEqual({ ok: false, reason: 'mark_unreadable' });
+    expect(await sealAt('not a mark')).toEqual({ refused: 'mark_unreadable' });
+  }, 60_000);
+
+  test('control: nothing written since the verified point seals, and the token is the basis itself', async () => {
+    const basis = await readBasis();
+    expect(typeof basis).toBe('string');
+    expect(await sealAt(basis)).toEqual({ token: basis! });
+    expect(await quietSince(deps(), basis)).toEqual({ ok: true });
+  }, 60_000);
 
   test('control: nothing changed, the seal is confirmed and no revoke follows', async () => {
     const token = await sealed();
