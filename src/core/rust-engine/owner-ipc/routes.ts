@@ -137,6 +137,9 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // served-remote-g1-search-probes (lane L3 S4, group 1): a remote search or query probes the page types of its `types` filter
   // and the target of its explain_target before it ranks, under the caller's read scope.
   'probePageTypes', 'probeTargetRows',
+  // served-remote-g1-exact-scan: a remote search_exact steps a timed-out batch one page at a time; remote-member-policy.ts wraps
+  // this member in the output-aware guard (served/remote-scan-guard.ts), so a remote caller is handed only a readable page.
+  'nextLivePageAfter',
 ];
 
 /**
