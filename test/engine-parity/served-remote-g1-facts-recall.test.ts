@@ -90,7 +90,7 @@ parityTest('a remote search matches the name heads of a saved fact by stem, so a
   // The correction shares two query words with the older fact but not the name Widget (matched by stem), so it corrects nothing.
   expect(saved).toContain('Widget revenue quarterly is 50000');
   expect(saved).not.toContain('corrected_by');
-  return { saved: saved.replace(/\s+/g, ' ') };
+  return { saved: saved.replace(/\s+/g, ' ').replace(/excerpt from fact \d+;/g, 'excerpt from fact N;') };
 });
 
 parityTest('a remote recall naming an entity checks the entity pairs of the readable pool only and shows no private fact', {
@@ -137,7 +137,7 @@ parityTest('a remote query that matches a typed claim reads the claims held on i
   const rows = JSON.parse(out.blocks.find(b => b.startsWith('[')) ?? '[]') as Array<{ slug?: string; result_type?: string; chunk_text?: string }>;
   // The member returns every typed claim held on the pages, the private one included; only a matched (readable) fact can stamp a page,
   // and the stamp is not on the remote wire, so nothing of the private claim leaves.
-  const facts = rows.filter(r => r.result_type === 'fact').map(r => (r.chunk_text ?? '').replace(/\s+/g, ' ').slice(0, 200));
+  const facts = rows.filter(r => r.result_type === 'fact').map(r => (r.chunk_text ?? '').replace(/\s+/g, ' ').replace(/excerpt from fact \d+;/g, 'excerpt from fact N;').slice(0, 200));
   expect(facts.some(f => f.includes('restated figure was 20'))).toBe(true);
   return { pages: rows.filter(r => r.slug).map(r => r.slug).sort(), facts };
 });

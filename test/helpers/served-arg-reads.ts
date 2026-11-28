@@ -105,6 +105,8 @@ export function stable(value: unknown): unknown {
   }
   // A write time (a page's updated time, a card's since) differs per arm; a seeded midnight date does not.
   if (typeof value === 'string' && /^\d{4}-\d\d-\d\dT(?!00:00:00(\.0+)?Z)[\d:.]+Z$/.test(value)) return '<time>';
+  // A fact id comes from a sequence the Postgres arm does not reset between cases, so the quoted-excerpt label is normalized.
+  if (typeof value === 'string' && /excerpt from fact \d+;/.test(value)) return value.replace(/excerpt from fact \d+;/g, 'excerpt from fact N;');
   return typeof value === 'number' && !Number.isInteger(value) ? Math.round(value * 1e4) / 1e4 : value;
 }
 
