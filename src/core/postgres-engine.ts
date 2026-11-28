@@ -1470,7 +1470,7 @@ export class PostgresEngine implements BrainEngine {
   readExactSnippetChunks(keys: readonly cliReadsOpsImpl.ExactSnippetKey[], opts: { excludePrivate: boolean }) { return cliReadsOpsImpl.readExactSnippetChunks(this.executeRaw.bind(this), keys, opts); }
   listExactRescanChunks(pageIds: readonly number[], opts: { excludePrivate: boolean }) { return cliReadsOpsImpl.listExactRescanChunks(this.executeRaw.bind(this), pageIds, opts); }
   listHeldFenceCells(keys: readonly cliReadsOpsImpl.HeldFenceCellKey[]) { return cliReadsOpsImpl.listHeldFenceCells(this.executeRaw.bind(this), keys); }
-  readFenceOverlayRows(page: { sourceId: string; slug: string }, incoming: readonly cliReadsOpsImpl.FenceOverlayIncomingRow[], opts: { hideHeld: boolean }) { return cliReadsOpsImpl.readFenceOverlayRows(this.executeRaw.bind(this), page, incoming, opts); }
+  readFenceOverlayRows(page: { sourceId: string; slug: string }, incoming: readonly cliReadsOpsImpl.FenceOverlayIncomingRow[], opts: { hideHeld: boolean }) { return this.ownRawRead(raw => cliReadsOpsImpl.readFenceOverlayRows(raw.executeRaw.bind(raw), page, incoming, opts)); } // a preparation's read: ends at its deadline (TYPED_PREPARATION_READS)
   listFenceRowTrust(keys: readonly cliReadsOpsImpl.FenceRowKey[]) { return cliReadsOpsImpl.listFenceRowTrust(this.executeRaw.bind(this), keys); }
   listExtractionPendingPages(opts: { sourceIds?: string[]; sourceId?: string; limit: number; offset: number }) { return cliReadsOpsImpl.listExtractionPendingPages(this.executeRaw.bind(this), opts); }
   listUnattributedFacts(opts: { sourceIds: string[]; worldOnly: boolean; excludePrivateProvenance: boolean; limit: number; offset: number }) { return cliReadsOpsImpl.listUnattributedFacts(this.executeRaw.bind(this), opts); }
@@ -1754,7 +1754,7 @@ export class PostgresEngine implements BrainEngine {
   listFencedFactsOfMissingPages(sourceId: string) { return factsCycleImpl.listFencedFactsOfMissingPages(this.executeRaw.bind(this), sourceId); }
   readFenceRowNumHint(sourceId: string, slug: string) { return factsCycleImpl.readFenceRowNumHint(this.executeRaw.bind(this), sourceId, slug); }
   readSourceCheckoutPath(sourceId: string) { return factsCycleImpl.readSourceCheckoutPath(this.executeRaw.bind(this), sourceId); }
-  readLiveStoredBody(sourceId: string, slug: string, lock = false) { return factsCycleImpl.readLiveStoredBody(this.executeRaw.bind(this), sourceId, slug, lock); }
+  readLiveStoredBody(sourceId: string, slug: string, lock = false) { return lock ? factsCycleImpl.readLiveStoredBody(this.executeRaw.bind(this), sourceId, slug, lock) : this.ownRawRead(raw => factsCycleImpl.readLiveStoredBody(raw.executeRaw.bind(raw), sourceId, slug, lock)); } // a locking read keeps the caller's transaction; the plain read ends at a preparation's deadline
   listPageStates(sourceId: string, slug: string) { return factsCycleImpl.listPageStates(this.executeRaw.bind(this), sourceId, slug); }
   countSegmentedVersionsOfPage(sourceId: string, slug: string) { return factsCycleImpl.countSegmentedVersionsOfPage(this.executeRaw.bind(this), sourceId, slug); }
 
@@ -6098,8 +6098,8 @@ export class PostgresEngine implements BrainEngine {
   listFactWithdrawalKeys(sourceId: string, limit: number) { return trustWithdrawalsImpl.listFactWithdrawalKeys(unscopedExecutor(this.engineSql, 'trust: the withdrawal ledger read ran through executeRaw unscoped'), sourceId, limit); }
   readFactCacheWatermark(sourceId: string) { return trustWithdrawalsImpl.readFactCacheWatermark(unscopedExecutor(this.engineSql, 'trust: the withdrawal ledger read ran through executeRaw unscoped'), sourceId); }
   readTrustGeneration() { return trustWithdrawalsImpl.readTrustGeneration(unscopedExecutor(this.engineSql, 'trust: the policy generation read ran through executeRaw unscoped')); }
-  readSourcePurgeFlags(sourceId: string) { return trustWithdrawalsImpl.readSourcePurgeFlags(unscopedExecutor(this.engineSql, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId); }
-  listPurgedTakeRows(sourceId: string, takes: readonly trustWithdrawalsImpl.TakeClaimRow[], subject: string | null) { return trustWithdrawalsImpl.listPurgedTakeRows(unscopedExecutor(this.engineSql, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId, takes, subject); }
+  readSourcePurgeFlags(sourceId: string) { return this.engineSqlRead(exec => trustWithdrawalsImpl.readSourcePurgeFlags(unscopedExecutor(exec, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId)); }
+  listPurgedTakeRows(sourceId: string, takes: readonly trustWithdrawalsImpl.TakeClaimRow[], subject: string | null) { return this.engineSqlRead(exec => trustWithdrawalsImpl.listPurgedTakeRows(unscopedExecutor(exec, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId, takes, subject)); }
   lockFactForWithdrawal(spec: trustWithdrawalsImpl.WithdrawalLockSpec) { return trustWithdrawalsImpl.lockFactForWithdrawal(this.autocommitSql, spec); }
   queueWithdrawalReview(sourceId: string, factRef: string) { return trustWithdrawalsImpl.queueWithdrawalReview(this.autocommitSql, sourceId, factRef); }
   listSegmentedPagesBySlug(sourceId: string, slugs: readonly string[]) { return trustWithdrawalsImpl.listSegmentedPagesBySlug(unscopedExecutor(this.engineSql, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId, slugs); }

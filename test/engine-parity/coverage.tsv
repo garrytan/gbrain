@@ -2049,7 +2049,7 @@ lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	9	no	yes	yes	serves
 listMarkdownPageSlugs	write_misc	yes	1	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	5	no	yes	yes	serves
-readSourceState	write_misc	yes	19	no	yes	yes	serves
+readSourceState	write_misc	yes	20	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	2	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
