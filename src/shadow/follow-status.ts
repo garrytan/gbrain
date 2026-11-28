@@ -57,6 +57,36 @@ export interface FollowerFile {
   fingerprints: { checked_rows: number; mismatches: number };
   probe: ProbeRecord;
   allocators: { verified: boolean; checked_at: string | null };
+  /**
+   * Names the unbroken run of owner sessions this file belongs to: a new one is drawn whenever an owner session cannot
+   * prove it continues the one before it (follow-child.ts). A reconcile pass left half done resumes only under the same one.
+   */
+  continuity?: string;
+  /** What a clean close left for the next owner session (follow-child.ts); trusted only while `seal.at` equals `updated_at`. */
+  seal?: FollowerSeal;
+}
+
+/**
+ * Written by an owner child when its serving process closed cleanly: every write it was handed is applied or held as an
+ * obligation below, and nothing was left unread in follower-invalidations.jsonl. The next owner session takes the
+ * obligations over instead of starting from a full one, after the checks in follow-child.ts `takeSeal` and seal.ts.
+ */
+export interface FollowerSeal {
+  version: 1;
+  /** Equal to the file's `updated_at` when written: any later write of the file by anything else breaks the seal. */
+  at: string;
+  continuity: string;
+  /** Size of follower-invalidations.jsonl at the seal: a line appended after it means a write this seal never saw. */
+  foreign_size: number;
+  /** The obligations (follow-child.ts `fullAt` and `dirty`) and the watermark at the seal. */
+  full_at: number | null;
+  dirty: Record<string, number>;
+  watermark: Watermark;
+  /** state.json `started_at` at the seal: a stop and start in between breaks it. */
+  state_started_at: string | null;
+  evidence_epoch: string | null;
+  /** The primary's clock at the seal (Postgres with writer hooks; null on PGLite): seal.ts checks for writers after it. */
+  db_at: string | null;
 }
 
 export interface PassRecord {

@@ -13,6 +13,8 @@ import type { FollowOptions } from './follow.ts';
 import { ShadowFollower } from './follower.ts';
 import { openReadSource, type ReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
+import { noteLostWrite } from './follow-child.ts';
+import { confirmSeal, sealMark, type SealDeps } from './seal.ts';
 import { createLsnWatch, makeAskHandler, type LsnWatch } from './checks.ts';
 import { epochWatch, readEpoch } from './evidence-epoch.ts';
 import { hasCapability } from '../core/engine-capabilities.ts';
@@ -74,8 +76,13 @@ export function shadowChildArgv(dir: string, gbrainArgv?: string[]): string[] {
 export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string, state: ShadowState, deps: AttachShadowDeps = {}): AttachedShadow<E> {
   const supervisor = new ShadowSupervisor({
     dir, argv: shadowChildArgv(dir, deps.gbrainArgv), onDirty: (relation) => reconciler?.markDirty(relation),
-    onAsk: (ask) => asks(ask), ...deps.supervisor,
+    onAsk: (ask) => asks(ask),
+    // Each new child is asked once whether the last session's seal holds; deferred, as start() runs inside a send.
+    onStart: () => { confirm = undefined; setImmediate(() => { if (sealDeps) confirm ??= confirmSeal(sealDeps); }); },
+    ...deps.supervisor,
   });
+  let confirm: Promise<void> | undefined; // the running child's seal confirmation (seal.ts), once asked
+  let sealDeps: SealDeps | undefined; // set once the brain is seeded and has a read source
   const samples = new SampleRegistry();
   let generation: () => number | undefined = () => undefined; // the follower's write count, set once it exists
   let watch: LsnWatch | undefined; // the primary's freshness token, set once the child's read source exists
@@ -111,10 +118,16 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   watch = createLsnWatch(askReads);
   void watch.ready(); // the first freshness token, so a sample captured a moment later has one to be held to
   const asks = makeAskHandler({ engine, reads: askReads, dir, rpc, samples, watch, get follower() { return follower; } });
+  if (reads) sealDeps = { dir, reads, postgres: primaryTakesWriterHooks(state.primary_engine), rpc };
+  const askConfirm = (): Promise<void> => (sealDeps ? (confirm ??= confirmSeal(sealDeps)) : Promise.resolve());
+  // A write the child will never hear of leaves a line for whichever process owns the store next (follow-child.ts), so no
+  // seal is trusted over it. One line a second is enough: the owner reads any line as "a write was lost".
+  let lostAt = 0;
   const follower = reads ? new ShadowFollower({
     reads, send: (line) => supervisor.send(line), rpc,
     onDirty: (relation) => reconciler?.markDirty(relation),
     onFirstBatch: () => { void reconciler?.probe().catch(() => undefined); },
+    onLost: (reason) => { const now = Date.now(); if (now - lostAt < 1_000) return; lostAt = now; try { noteLostWrite(dir, reason, now); } catch { lostAt = 0; } },
   }) : undefined;
   generation = () => follower?.published;
   const reconciler = reads ? new Reconciler({ dir, reads, rpc, follower }) : undefined;
@@ -127,16 +140,28 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   });
   engine.registerBeforeDisconnect(async () => {
     observer.stop();
+    let settled = false;
     try {
       queue.stop(); // delivers the reads still queued, so the child sees them and the counters add up
       if (supervisor.active() && supervisor.childPid !== null) queue.flushStats();
       // Let the follower finish reading what was just committed; a slow read is shed rather than waited on.
-      if (follower) await Promise.race([follower.settle(), new Promise((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
+      if (follower) settled = await Promise.race([follower.settle().then(() => true), new Promise<boolean>((resolve) => { setTimeout(() => resolve(false), 2_000).unref?.(); })]);
       await writes?.settle(2_000); // a read-back still running then is recorded as lost (`readback_abandoned`), not dropped
     } finally {
       clearInterval(usageTimer);
       flushUsage();
       reconciler?.stop();
+      follower?.close(); // from here a write is only recorded as lost
+      // Seal: tell the child its store holds every write this process committed, so the next session can carry the
+      // watermark on (follow-child.ts, seal.ts). Only when the follower finished, holds nothing, and no other writer may
+      // be writing unrecorded; the child refuses too when its own checks fail.
+      try {
+        if (settled && follower?.idle() && sealDeps && supervisor.active() && supervisor.childPid !== null) {
+          await Promise.race([askConfirm(), new Promise((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
+          const mark = await sealMark(sealDeps);
+          if (mark !== undefined && follower.idle()) supervisor.send(JSON.stringify({ t: 'seal', db_at: mark }) + '\n');
+        }
+      } catch { /* no seal: the next session starts with a full pass owed, as after a crash */ }
       await supervisor.drain(); // the CLI is about to exit and Bun drops what its pipe still holds: wait (bounded) for it to flush; stop() writes down how many samples were sent, so the child counts any it never got
       supervisor.stop();
       await reads?.close().catch(() => undefined);

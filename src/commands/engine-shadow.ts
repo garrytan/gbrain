@@ -632,8 +632,9 @@ async function reconcileCommand(
 ): Promise<number> {
   const seeded = readSeedRecord(brain.dir);
   if (seeded?.digests !== true) { err(seeded ? `engine shadow: this seed was written before follow existed, so reconcile cannot guard its rows. Reseed: ${RESEED_STEPS}.` : 'engine shadow: reconcile needs a seeded store. Run gbrain engine shadow seed first.'); return 1; }
-  const [{ Reconciler }, { ShadowSupervisor }, { shadowChildArgv }, { openReadSource }] = await Promise.all([
+  const [{ Reconciler }, { ShadowSupervisor }, { shadowChildArgv }, { openReadSource }, { sealMark }, { primaryTakesWriterHooks }] = await Promise.all([
     import('../shadow/reconcile.ts'), import('../shadow/supervisor.ts'), import('../shadow/attach.ts'), import('../shadow/read-pool.ts'),
+    import('../shadow/seal.ts'), import('../shadow/writer-hooks.ts'),
   ]);
   const primary = await (deps.openPrimary ?? openConfiguredPrimary)();
   const supervisor = new ShadowSupervisor({ dir: brain.dir, argv: shadowChildArgv(brain.dir), stillEnabled: () => true, ...deps.reconcileSupervisor });
@@ -647,6 +648,12 @@ async function reconcileCommand(
       for (const [relation, n] of Object.entries(pass.repaired_by_relation)) out(`  ${relation}: ${n}`);
     }
     if (/not_owner|store_closed|rust_store_locked/.test(pass.error ?? '')) err('engine shadow: another process holds the Rust store. Stop it (or the serving process) and run reconcile again.');
+    // A clean pass is sealed like a serving process's close (seal.ts), so the next session carries it on. This process
+    // writes nothing to the primary; the child refuses the seal if its watermark or continuity does not hold.
+    if (!pass.error && supervisor.childPid !== null) {
+      const mark = await sealMark({ dir: brain.dir, reads, postgres: primaryTakesWriterHooks(readShadowState(brain.dir)?.primary_engine) }).catch(() => undefined);
+      if (mark !== undefined && supervisor.send(JSON.stringify({ t: 'seal', db_at: mark }) + '\n')) await supervisor.drain();
+    }
     return pass.error ? 1 : 0;
   } finally {
     supervisor.stop();

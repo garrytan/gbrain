@@ -92,6 +92,12 @@ export async function listEffectiveHookedTables(engine: BrainEngine): Promise<st
   return (await engine.executeRaw<{ name: string }>(EFFECTIVE_SQL, [WRITER_HOOK_TRIGGER])).map(r => r.name);
 }
 
+/** Every brain table carries a working hook (what a full reconcile pass repairs when it is not so); seal.ts reads it. */
+export async function hooksIntact(engine: BrainEngine): Promise<boolean> {
+  const effective = new Set(await listEffectiveHookedTables(engine));
+  return (await listTables(engine)).every(t => effective.has(t));
+}
+
 export interface HookOptions {
   /** Seam for tests: called after each table is hooked (a throw simulates a killed start). */
   afterTable?: (table: string, index: number) => void | Promise<void>;
