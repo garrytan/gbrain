@@ -152,6 +152,13 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   'readAdmittedPageDateFields',
   // ... and stamps the claims its matched facts supersede by reading the typed claim facts held on its result pages.
   'listTypedClaimFactsAtPages',
+  // served-remote-g1-brief: a remote context_pack pull on a counterparty reads its entity page, its newest timeline entry or the
+  // lines its newest revision added (readBriefPageVersions answers only a page id the caller may read).
+  'readBriefEntityPages', 'readBriefEditPage', 'readBriefTimelineEntry', 'readBriefPageVersions',
+  // served-remote-g1-body: a remote get_page of a segmented page reads its body manifest (the page-id guarded members answer only a page
+  // the caller may read), and a segmented lead under a withdrawal is struck through the pure fence-line normalization.
+  'readBodyManifestRows', 'readBodyManifestMeta', 'normalizeFenceLines',
+  'readSegmentedPageHead', 'readSegmentedVersionBodyBytes', // TEMP-VERIFY-ONLY (group 3 serves them)
 ];
 
 /**
