@@ -7,7 +7,9 @@
  * 2. Fails when: the supersession probe's connector-retry branch reads every later committed submit_job's intent (one
  *    detoast per failed row and candidate) before it knows the failed row is a connector write, so each batch outruns
  *    TERMINAL_STATEMENT_MS and the read reports `unknown`.
- * 3. Postgres only: the bound is a server-side statement timeout.
+ * 3. GST-3450: every failed import has a later committed import of the page, so all 200 are superseded: none is
+ *    unresolved, and `state: 'all'` still reads them.
+ * 4. Postgres only: the bound is a server-side statement timeout.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
@@ -44,7 +46,10 @@ async function seed(state: 'failed' | 'committed', rows: number): Promise<void> 
     expect(rows.status).toBe('ok');
     const groups = await readTerminalFailures(engine, { sourceId: 'source-a', groupBy: 'category' });
     expect(groups.status).toBe('ok');
-    expect(groups.status === 'ok' && groups.groups?.reduce((sum, group) => sum + group.rows, 0)).toBe(200);
+    expect(groups.status === 'ok' && groups.groups?.reduce((sum, group) => sum + group.rows, 0)).toBe(0);
+    const all = await readTerminalFailures(engine, { sourceId: 'source-a', groupBy: 'category', state: 'all' });
+    expect(all.status).toBe('ok');
+    expect(all.status === 'ok' && all.groups?.reduce((sum, group) => sum + group.rows, 0)).toBe(200);
     expect((await readTerminalFailureSummary(engine, { sourceIds: ['source-a'] })).status).toBe('ok');
   }, 120_000);
 });
