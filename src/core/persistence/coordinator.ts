@@ -266,6 +266,17 @@ function failureState(code: string): 'conflict' | 'failed' | 'cancelled' { retur
  */
 const chargedSharedReads = new WeakSet<object>();
 /**
+ * The refusal that stops a publication body the engine runs again after an earlier run of it wrote the files (a
+ * multi-user Rust transaction that lost an optimistic conflict, optimistic-transaction.ts). The files hold the new bytes
+ * and the database holds nothing, so the run stops before it reads them; publishMutation's recovery route restores the
+ * files and requeues the request, as after a Postgres commit that failed after publication. Never terminal, never charged.
+ */
+function lostPublicationRun(row: WriteRequest): OperationError {
+  return opError('storage_error', 'The publication transaction lost to a concurrent writer after it wrote its files.',
+    `Request ${row.request_id} in source ${row.source_id} wrote its files, then its transaction lost to a concurrent writer and committed nothing. Its owner restores the files and publishes the request again; keep the same request_id.`,
+    { reason: 'database_contention', fix: requestFix(row) });
+}
+/**
  * Large-pages hardening (b)/(c): the terminal failure once a write's transient interruptions (transient-retry.ts) pass
  * persistence.max_transient_retries: `attempts` interruptions, `limit` retries. The detail keeps the shipped
  * `origin`/`sqlstate`/`attempts`/`limit` fields and adds the cause and the key the limit came from.
@@ -531,6 +542,8 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
   let recovery: RecoveryRecord | null = null;
   let published = false;
   let transactionBodyCompleted = false;
+  // The refusal a rerun of the publication body threw because an earlier run wrote the files (lostPublicationRun).
+  let lostRun: OperationError | null = null;
   let afterCommitDue: WriteRequest | null = null;
   let createdPage = false;
   const skill = prepared.target === 'skill_bundle';
@@ -639,6 +652,8 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       await hooks.boundary?.('prepared', row);
     }
     const done = await publicationTransaction(engine, async tx => {
+      // An earlier run of this body wrote the files and lost its commit; this run must not read them as a local edit.
+      if (published) throw (lostRun = lostPublicationRun(row));
       await declarePublication(tx);
       const journal = await tx.publicationJournalStore();
       const liveBinding = await guardOwnership(tx, journal, row, hostId);
@@ -770,10 +785,11 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       // record unaccounted or let a sibling publication bypass its recovery.
       // A charged interruption under the limit is retried after its backoff whatever error it surfaced as (a publication the
       // ceiling cancelled can reject with a bare AbortError); past the limit it is the terminal failure.
-      const charged = transactionBodyCompleted ? null : await chargedInterruption(engine, row, error);
-      if (!transactionBodyCompleted && transientInterruption(error)) await faultPoint('persistence:recovery_interruption_charged', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation, ...chargedInterruptionDetail(transientInterruption(error), error) });
+      const lost = lostRun !== null && error === lostRun;
+      const charged = transactionBodyCompleted || lost ? null : await chargedInterruption(engine, row, error);
+      if (!transactionBodyCompleted && !lost && transientInterruption(error)) await faultPoint('persistence:recovery_interruption_charged', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation, ...chargedInterruptionDetail(transientInterruption(error), error) });
       const terminal = charged ? charged.failure
-        : !transactionBodyCompleted && !mayReprepare(row, requestError(error)) && !transientDatabaseFailure(error) ? requestError(error) : null;
+        : !transactionBodyCompleted && !lost && !mayReprepare(row, requestError(error)) && !transientDatabaseFailure(error) ? requestError(error) : null;
       const failure = terminal ? withAttempt(terminal, published ? 'after_file_publication' : 'publication', engine) : undefined;
       try { await markRecovering(engine, row, failure ? 'publication_failed' : published ? 'commit_outcome_uncertain' : 'publication_not_started', failure); }
       catch { /* database outage: durable recovery record remains discoverable */ }

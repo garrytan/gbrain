@@ -861,6 +861,14 @@ call (`persistence::PublicationWrite`). `lockSource`, `shareWorktree` and `stagi
 nothing (one write transaction at a time, durable commit); `shareWorktreeOwner` is
 `brain.readWorktreeOwner(id)`.
 
+With multi-user mode on, the publish transaction is optimistic and the engine can run its body again after a
+`write_conflict` (`transactions.md`). A run that already wrote the files left new bytes on disk and nothing in the
+database, so publishMutation stops the next run before it reads those files (`lostPublicationRun`, `storage_error`
+reason `database_contention`). The request then takes the recovery route that a Postgres commit failure after
+publication takes: recoverPublication restores the files and requeues the request with the same request id. That
+stop is never terminal and never charged as a transient interruption. Pinned by
+`test/engine-parity/managed-publication-rerun.test.ts`.
+
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `publicationJournalRows({ kind: 'held_behind_import', sourceId, slug, sequence })` | the `deferred_import_from` of the earliest `deferred` request to the page before `sequence` whose import is the source's last commit (`''` when none), or null | compareFileTarget's held-first read |
