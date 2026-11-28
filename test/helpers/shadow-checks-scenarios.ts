@@ -1059,6 +1059,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         let clock = 0;
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) }); // the reference's one-a-minute gate opens for each
         const literal = `[${Array.from(vec(88)).join(',')}]`;
+        // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
         for (let i = 0; i < 20; i++) { // the WAL writer flushes every 200 ms: repeat so the commit is not always flushed before the reference ends
           const captured = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
           await other.transaction(async (tx) => { await tx.executeRaw(`SET LOCAL synchronous_commit = off`); await tx.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literal]); });

@@ -364,6 +364,7 @@ describe('search arms', () => {
 describe('child health', () => {
   test('panics are internal errors plus SIGABRT exits; faults are exits and failed spawns; the whole history counts', () => {
     const { dir, epoch } = epochDir();
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     for (let i = 0; i < 40; i++) fault(dir, { kind: 'mirroring_disabled', detail: 'x', epoch_id: epoch }); // pushes the first lines out of the 20-line display tail
     fault(dir, { kind: 'child_exit', detail: 'code=1 signal=none', epoch_id: epoch });
     expect(status(dir).child).toEqual({ panics: 0, faults: 1 });

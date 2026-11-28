@@ -551,6 +551,7 @@ describe('the data fence and the scratch location (lane owner ruling)', () => {
   });
 
   test('removeLinksByPagesAndSource excuses only the links it removes: a typed-NER link it keeps that changes or goes marks the sample moved', () => {
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     const kept = R({ id: '20', from_page_id: '1', to_page_id: '2', link_type: 'mentions', link_source: 'ner', link_kind: 'typed_ner', context: 'old' });
     const removed = R({ id: '21', from_page_id: '1', to_page_id: '2', link_type: 'knows', link_source: 'ner', context: 'c' });
     const args = [[{ slug: 'a/x', source_id: 'default' }], { linkSource: 'ner', keepTypedNerPairs: [{ from_slug: 'a/x', from_source_id: 'default', to_slug: 'a/y', to_source_id: 'default' }] }];
@@ -588,6 +589,7 @@ describe('the data fence and the scratch location (lane owner ruling)', () => {
     const O = R({ id: '3', source_id: 'default', slug: 'a/o', title: 'O' }); const P = R({ id: '4', source_id: 'default', slug: 'a/p', title: 'P' });
     const base = { sources: [], pages: [A, B, O, P], links: [L] };
     const after = (links: Array<Record<string, string | null>>) => ({ sources: [], pages: [A, B, O, P], links: [L, ...links] });
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     const row = (origin: string | null, id = '20') => R({ id, from_page_id: '1', to_page_id: '2', link_type: 'knows', link_source: 'markdown', origin_page_id: origin as never });
     const named = ['a/x', 'a/y', 'c', 'knows', 'markdown', 'a/o'];
     expect(movedOutsideFootprint('addLink', named, base, after([row('3')]))).toBe(false); // the origin it named
@@ -733,6 +735,7 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
     for (const q of [-1, 6, 2.5, null, '3']) { write(q); expect(readOwed(dir, 'sess-q')).toBe('unreadable'); }
   });
 
+  // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
   test('a deficit larger than 10,000 is counted whole, never cut (20,001 owed, 1 read: 20,000 counted pipe_unflushed)', async () => {
     const { dir, epoch } = await childWithOwed(20_001, ['{"t":"write","op":"putPage"}\n']);
     const t = readWriteTally(dir, epoch)!;
@@ -847,6 +850,7 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
       const dir = tmp(); writeSeedRecord(dir, SEED);
       const put = (session: string, body: Record<string, unknown>, ageMs = 0): void => { const f = receiptFile(dir, session); writeFileSync(f, JSON.stringify({ session, ...body })); if (ageMs) { const t = new Date(Date.now() - ageMs); utimesSync(f, t, t); } };
       put('dead', { sent: 7, pid: deadPid() });
+      // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
       put('recycled', { sent: 2, pid: process.ppid }, 20 * 60_000); // its pid is alive but the file is old: the pid was reused
       put('live', { sent: 50, pid: process.ppid }); // a running worker's own receipt
       put('nopid', { sent: 50 }); // cannot tell yet: fresh
@@ -1158,6 +1162,7 @@ describe('S2c: a durable per-session obligation for write samples', () => {
     owe(dir, 'sq', 25, { child_pid: deadPid(), owed_qualifying: 4 } as never);
     worker(dir, epoch, 'owner-q').recover();
     const t = readWriteTally(dir, epoch)!;
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     expect(t.uncomparable_by_reason).toMatchObject({ receipt_orphaned: 1 }); // before: 20
     expect(t.capability_missing_by_family).toMatchObject({ receipt_orphaned_nonqualifying: 19 });
     expect(existsSync(owedPath(dir, 'sq'))).toBe(false);
@@ -1740,6 +1745,7 @@ describe('S2c: every credit site settles exactly the weight it stands for', () =
     accept = 2; await wrapAgain(); // the main line and one extra are accepted, the second extra is refused
     const raw = (l: string): number => Number(/"dropped":(\d+)/.exec(l)?.[1] ?? 0);
     expect(more.map(raw)).toEqual([10_000, 10_000]); // each bounded
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     accept = 10; await wrapAgain(); // the next accepted send: the remainder (25,000 - 20,000) was kept, not cleared, by the refusal
     expect(more.map(raw)).toEqual([10_000, 10_000, 5_000]);
   });

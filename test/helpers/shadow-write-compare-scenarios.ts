@@ -1895,6 +1895,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       const t0 = Date.now();
       await wrapped.transaction(async (tx) => {
         await Promise.all([
+          // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
           tx.keywordBoundedRead(async () => { await new Promise((r) => setTimeout(r, 20)); await tx.addTag('people/alice-example', 'bounded'); return null; }),
           tx.putPage('people/cb-example', page('Callback Example')),
         ]);

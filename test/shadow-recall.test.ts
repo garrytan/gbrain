@@ -47,6 +47,7 @@ describe('scoring', () => {
   });
   test('the wrong filter, an under-filled answer and an under-filled reference', () => {
     // pregate-literal: SHADOW_ADAPTER_VERSION=12 a reference set size, not the adapter version
+    // pregate-literal: SHADOW_ADAPTER_VERSION=20 an unrelated 20 (a count, size, delay or row id), not the adapter version
     expect(scoreRecall(ref(12), rows(ids(0, 10)), rows(ids(20, 30)))).toMatchObject({ vector: 0, primary: 1 }); // all outside the reference // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
     // pregate-literal: SHADOW_ADAPTER_VERSION=12 a reference set size, not the adapter version
     expect(scoreRecall(ref(12), rows(ids(0, 10)), rows(ids(0, 4)))).toMatchObject({ vector: 0.4 }); // under-filled // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
