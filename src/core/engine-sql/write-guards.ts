@@ -10,7 +10,7 @@
  */
 import { pageSearchVectorSql } from '../fts-language.ts';
 import type { SqlExecutor } from './executor.ts';
-import { sqlFragment, trustedSql } from './fragment.ts';
+import { sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { PageKind } from '../types.ts';
 
@@ -37,13 +37,18 @@ export interface ImportedPageSeal { sourceId: string; revision: string | null; t
  * `seal.timelineText` (already sanitized). Returns the page's id, or null when the page does not exist.
  */
 export async function sealImportedPage(exec: SqlExecutor, slug: string, seal: ImportedPageSeal): Promise<{ id: number } | null> {
+  const [row] = (await exec.run<{ id: number }>(sealImportedPageStatement(slug, seal))).rows;
+  return row ? { id: Number(row.id) } : null;
+}
+
+/** The one statement `sealImportedPage` sends. The shadow write sampler reads its text to name the table it writes (src/shadow/write-capture.ts). */
+export function sealImportedPageStatement(slug: string, seal: ImportedPageSeal): SqlFragment {
   // The timeline text is bound once (v.seal_input) so the shared vector expression splices as constant text.
-  const [row] = (await exec.run<{ id: number }>(sqlFragment`UPDATE pages SET chunker_version=${seal.chunkerVersion},
+  return sqlFragment`UPDATE pages SET chunker_version=${seal.chunkerVersion},
     text_projection_revision=CASE WHEN knowledge_revision=${seal.revision}::uuid THEN knowledge_revision ELSE text_projection_revision END,
     search_vector=CASE WHEN knowledge_revision=${seal.revision}::uuid THEN ${trustedSql(pageSearchVectorSql('title', 'v.seal_input'))} ELSE search_vector END
     FROM (SELECT ${seal.timelineText}::text AS seal_input) v
-    WHERE pages.source_id=${seal.sourceId} AND pages.slug=${slug} RETURNING pages.id`)).rows;
-  return row ? { id: Number(row.id) } : null;
+    WHERE pages.source_id=${seal.sourceId} AND pages.slug=${slug} RETURNING pages.id`;
 }
 
 /** The page row columns a text projection is keyed on (page-state/projections.ts indexingContext). */

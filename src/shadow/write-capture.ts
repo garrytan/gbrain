@@ -19,6 +19,8 @@ import { COMPLETE_EFFECT_SQL, EFFECT_GUARD_BRAIN_SQL, EFFECT_GUARD_WORKTREE_SQL 
 import { EFFECT_TRANSACTION_LIMITS_SQL } from '../core/engine-sql/remote-links.ts';
 import { persistenceDeclarationStatement } from '../core/engine-sql/persistence-declaration.ts';
 import { EFFECT_CLAIM_ROW_LOCK_SQL } from '../core/engine-sql/embedding-install.ts';
+import { renderFragment } from '../core/engine-sql/fragment.ts';
+import { sealImportedPageStatement } from '../core/engine-sql/write-guards.ts';
 
 /** How long the preimage read may hold a sampled write. */
 export const PREIMAGE_TIMEOUT_MS = 2_000;
@@ -220,6 +222,16 @@ const BOOKKEEPING_MEMBERS: ReadonlySet<string> = new Set([...JOURNAL_MEMBER_STAT
  * `unmapped_write:<member>` for one of these members: the effect worker's next claim or a receipt true-up committing during a sample's read-back is not another writer.
  */
 export const bookkeepingMember = (name: string): boolean => BOOKKEEPING_MEMBERS.has(name);
+/** The statements of each typed member outside the write map whose text is known: the journal members above and the closing text seal. Only the family a sample is named under reads them. */
+const MEMBER_STATEMENTS: ReadonlyMap<string, readonly string[]> = new Map([
+  ...JOURNAL_MEMBER_STATEMENTS,
+  [SEAL_MEMBER, [renderFragment(sealImportedPageStatement('', { sourceId: '', revision: null, timelineText: '', chunkerVersion: 0 })).text]],
+]);
+/** What a sampled write sends, for naming its family (write-compare.ts `writeFamily`): a raw member's SQL text, or a typed member's known statements. */
+export function sampledStatements(name: string, args: unknown[]): readonly string[] | undefined {
+  if (memberKind(name) === 'raw') return typeof args[0] === 'string' ? [args[0]] : undefined;
+  return MEMBER_STATEMENTS.get(name);
+}
 const pageKey = (name: string, args: unknown[]): string => { const r = pageRefs(name === STAMP ? 'putPage' : name, name === STAMP ? [args[0], undefined, { sourceId: args[1] }] : args)[0]; return r ? `${r.source}\0${r.slug}` : ''; };
 
 /** The target page as the transaction commits it (beforeCommit): its revision, and its compared fields as `readBackText` writes them. */
@@ -366,7 +378,7 @@ export function createWriteSampler(o: WriteSamplerOptions, unsaid: string[] = []
         let sampled = false;
         try { sampled = o.active() && random() < rate && ctx.mayWrite(name, args); } catch { /* not sampled */ }
         if (!sampled) return run();
-        if (!PILOT_WRITES.has(name)) { send({ t: 'write', op: name, outcome: 'capability_missing', family: writeFamily(name) }); return run(); }
+        if (!PILOT_WRITES.has(name)) { send({ t: 'write', op: name, outcome: 'capability_missing', family: writeFamily(name, sampledStatements(name, args)) }); return run(); }
         const scope = ctx.inTransaction && !ctx.nested ? ctx.scope as Scope | undefined : undefined; // every pilot write of an outermost transaction is compared after its commit
         if (ctx.inTransaction && !scope) { uncomparable(name, 'in_transaction'); return run(); }
         if (scope) return inTransaction(scope, ctx.engine, name, args, run);

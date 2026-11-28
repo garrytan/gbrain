@@ -14,6 +14,7 @@ import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSy
 import { join } from 'node:path';
 import { flushDirectory, flushFile } from '../core/fs-durable.ts';
 import { readEpoch, withLock } from './evidence-epoch.ts';
+import { sqlWrites } from './sql-writes.ts';
 import { memberKind, WRITE_MAP } from './write-map.ts';
 
 export const PILOT_WRITES: ReadonlySet<string> = new Set(['putPage', 'deletePage', 'addLink', 'addLinksBatch', 'removeLink']);
@@ -112,11 +113,28 @@ export function readBackText(encoded: any): string {
   return JSON.stringify({ pages: (encoded.pages as unknown[]).map(page), links: (encoded.links as unknown[]).map(link).sort() });
 }
 
-/** The family a sampled write that the pilot does not cover is counted under (never a pilot member's own family). */
-export function writeFamily(op: string): string {
+/** The first table `statements` write, '' when they write none, or undefined when one cannot be read or writes something other than a table. */
+function firstWrittenTable(statements: readonly string[]): string | undefined {
+  for (const sql of statements) {
+    let writes; try { writes = sqlWrites(sql); } catch { return undefined; }
+    const first = writes[0];
+    if (first) return first.kind === 'relation' ? first.relation : undefined;
+  }
+  return '';
+}
+
+/**
+ * The family a sampled write that the pilot does not cover is counted under (never a pilot member's own family): the first table it writes. A mapped member's
+ * comes from the write map. A raw statement's, and a typed member's whose statements are known (`statements`: write-capture.ts `sampledStatements`), come from
+ * parsing them. A member whose statements write no row (transaction settings, row locks) is `no_row:<member>`. A page or link table is `pages:<member>` or
+ * `links:<member>`. A raw statement the parser cannot read stays `raw_sql`, and a typed member outside the map with no known statements is `unmapped:<member>`.
+ * The family only names the sample: every one of them is `capability_missing`, never compared and never counted toward the write bar.
+ */
+export function writeFamily(op: string, statements?: readonly string[]): string {
   const kind = memberKind(op);
-  if (kind === 'raw') return 'raw_sql';
-  const table = kind === 'mapped' ? WRITE_MAP[op]!.tables[0]! : 'unmapped';
+  const table = kind === 'mapped' ? WRITE_MAP[op]!.tables[0]! : statements?.length ? firstWrittenTable(statements) : undefined;
+  if (table === undefined) return kind === 'raw' ? 'raw_sql' : `unmapped:${op}`;
+  if (table === '') return kind === 'raw' ? 'raw_sql' : `no_row:${op}`;
   return table === 'pages' || table === 'links' ? `${table}:${op}` : table;
 }
 

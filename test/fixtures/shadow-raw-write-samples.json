@@ -1,0 +1,172 @@
+[
+ {
+  "caller": "src/core/persistence/effect-journal.ts:160",
+  "family": "persistence_effects",
+  "sql": "UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb, claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 RETURNING *"
+ },
+ {
+  "caller": "src/core/persistence/journal.ts:364",
+  "family": "persistence_counters",
+  "sql": "WITH reserved AS (UPDATE persistence_counters SET outstanding_count=outstanding_count+1, intent_bytes=intent_bytes+$14,lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$15 WHERE key=ANY($20::text[])) INSERT INTO persistence_requests (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug, worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version, admitter_version,admitter_host_id,client_request_id,admitter_segment_reader,state,deferred_refresh_id) VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15,$16,$17,$18,$19::uuid,$21,true,$22,$23::uuid) RETURNING *"
+ },
+ {
+  "caller": "src/core/persistence/journal.ts:868",
+  "family": "persistence_requests",
+  "sql": "UPDATE persistence_requests SET state='running', execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'), updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb WHERE id=$1::uuid AND set_config('gbrain.refresh_barrier','1',true)='1' RETURNING *,EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=persistence_requests.worktree_id AND earlier.sequence<persistence_requests.sequence AND earlier.state='queued' AND COALESCE(earlier.intent->>'kind','') LIKE 'managed_sync_%') AS passed_sync, CASE WHEN COALESCE(persistence_requests.intent->>'kind','') LIKE 'managed_sync_%' THEN (SELECT max(sequence) FROM persistence_requests)::text END AS seen_sequence"
+ },
+ {
+  "caller": "src/core/persistence/journal.ts:921",
+  "family": "persistence_requests",
+  "sql": "UPDATE persistence_requests SET claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),claim_phase=COALESCE($4::text::jsonb,claim_phase) WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING id"
+ },
+ {
+  "caller": "src/core/persistence/canonical-projections.ts:808",
+  "family": "timeline_entries",
+  "sql": "DELETE FROM timeline_entries t USING jsonb_to_recordset($2::text::jsonb) AS d(id integer,date date,source text,summary text,detail text,removed boolean) WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=d.id AND t.date=d.date AND t.source=d.source AND t.summary=d.summary AND t.detail=d.detail RETURNING t.date::text AS date, d.removed"
+ },
+ {
+  "caller": "src/core/persistence/canonical-projections.ts:608",
+  "family": "timeline_entries",
+  "sql": "INSERT INTO timeline_entries (page_id,date,source,summary,detail) SELECT $1,r.date::date,r.source,r.summary,r.detail FROM jsonb_to_recordset($2::text::jsonb) AS r(ord integer,date text,source text,summary text,detail text) ORDER BY r.ord ON CONFLICT (page_id,date,md5(summary),source) DO NOTHING"
+ },
+ {
+  "caller": "src/core/persistence/canonical-projections.ts:813",
+  "family": "timeline_entries",
+  "sql": "UPDATE timeline_entries t SET detail=r.next FROM jsonb_to_recordset($2::text::jsonb) AS r(id integer,detail text,next text) WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=r.id AND t.detail=r.detail"
+ },
+ {
+  "caller": "src/core/persistence/canonical-projections.ts:781",
+  "family": "takes",
+  "sql": "DELETE FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])"
+ },
+ {
+  "caller": "src/core/wanted-links-store.ts:91",
+  "family": "wanted_links",
+  "sql": "DELETE FROM wanted_links w WHERE w.origin_page_id = $1 AND w.producer IN (SELECT jsonb_array_elements_text(($2::jsonb)->'producers')) AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset(($2::jsonb)->'rows') AS v(producer text, ref_kind text, target_source_id text, target_ref text) WHERE v.producer = w.producer AND v.ref_kind = w.ref_kind AND v.target_source_id = w.target_source_id AND v.target_ref = w.target_ref)"
+ },
+ {
+  "caller": "src/core/wanted-links-store.ts:100",
+  "family": "wanted_links",
+  "sql": "INSERT INTO wanted_links (origin_page_id, source_id, producer, ref_kind, target_source_id, target_ref, link_type, context, checked_at) SELECT $1, $2, v.producer, v.ref_kind, v.target_source_id, v.target_ref, v.link_type, v.context, CASE WHEN v.ref_kind = 'slug' AND EXISTS (SELECT 1 FROM pages t WHERE t.source_id = v.target_source_id AND t.deleted_at IS NULL AND t.slug = v.target_ref) THEN '-infinity'::timestamptz WHEN v.ref_kind = 'name' THEN $3::timestamptz ELSE now() END FROM jsonb_to_recordset(($4::jsonb)->'rows') AS v(producer text, ref_kind text, target_source_id text, target_ref text, link_type text, context text) ON CONFLICT ON CONSTRAINT wanted_links_reference_unique DO UPDATE SET link_type = EXCLUDED.link_type, context = EXCLUDED.context, checked_at = EXCLUDED.checked_at RETURNING id"
+ },
+ {
+  "caller": "src/core/persistence/receipt-true-up.ts:51",
+  "family": "persistence_requests",
+  "sql": "WITH t AS (SELECT * FROM unnest($1::uuid[],$2::bigint[],$3::bigint[],$4::bigint[]) AS t(id,old,kept,effects)), done AS (UPDATE persistence_requests r SET terminal_reservation=t.kept FROM t WHERE r.id=t.id AND r.terminal_reservation=t.old AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state IN ('queued','running')) AND COALESCE((SELECT SUM(octet_length(data::text)+octet_length(kind)+1024) FROM persistence_effects e WHERE e.request_id=r.id),0)=t.effects RETURNING r.principal_kind,r.principal_id,t.old-t.kept AS freed), d AS (SELECT k.key,SUM(done.freed) AS freed FROM done CROSS JOIN LATERAL (VALUES ('brain'),('principal:'||done.principal_kind||':'||done.principal_id)) AS k(key) GROUP BY k.key), released AS (UPDATE persistence_counters c SET terminal_bytes=c.terminal_bytes-LEAST(d.freed,c.terminal_bytes) FROM d WHERE c.key=d.key), clamped AS (INSERT INTO config(key,value) SELECT 'persistence.true_up.clamped',k.n::text FROM (SELECT count(*) FROM d JOIN persistence_counters c ON c.key=d.key WHERE d.freed>c.terminal_bytes) AS k(n) WHERE k.n>0 ON CONFLICT (key) DO UPDATE SET value=(CASE WHEN config.value ~ '^[0-9]+$' THEN config.value::bigint ELSE 0 END+EXCLUDED.value::bigint)::text) SELECT COALESCE(SUM(freed),0)::text AS freed FROM done"
+ },
+ {
+  "caller": "src/core/persistence/consumer.ts:972",
+  "family": "persistence_requests",
+  "sql": "WITH expired AS ( SELECT r.id FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL AND r.publication_started=false AND set_config('gbrain.persistence_protocol','2',true)='2' AND (r.claim_expires_at<now() OR r.claim_phase->>'token'=r.execution_token::text AND concat_ws(':',r.claim_phase->'owner'->>'pid',r.claim_phase->'owner'->>'nonce',r.claim_phase->'owner'->>'start')=ANY($3::text[])) AND (r.worktree_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=r.worktree_id AND w.owner_host_id=$1::uuid)) ORDER BY r.sequence LIMIT 100 FOR UPDATE OF r SKIP LOCKED) UPDATE persistence_requests r SET state='queued',execution_token=NULL,claim_expires_at=NULL, preparation_attempts=r.preparation_attempts+CASE WHEN $2::boolean THEN CASE WHEN r.claim_phase->>'phase'='preparing' AND r.claim_phase->>'token'=r.execution_token::text THEN 1 ELSE 0 END ELSE 0 END FROM expired WHERE r.id=expired.id"
+ },
+ {
+  "caller": "src/core/last-retrieved.ts:224",
+  "family": "page_retrievals",
+  "sql": "INSERT INTO page_retrievals (page_id, last_retrieved_at) SELECT p.id, NOW() FROM pages p LEFT JOIN page_retrievals r ON r.page_id = p.id WHERE p.id = ANY($1::int[]) AND (r.page_id IS NULL OR r.last_retrieved_at < NOW() - INTERVAL '5 minutes') ON CONFLICT (page_id) DO UPDATE SET last_retrieved_at = EXCLUDED.last_retrieved_at WHERE page_retrievals.last_retrieved_at < NOW() - INTERVAL '5 minutes'"
+ },
+ {
+  "caller": "src/core/write-gate-store.ts:85",
+  "family": "write_gate_receipts",
+  "sql": "DELETE FROM write_gate_receipts r USING pages p WHERE r.target_table = 'pages' AND r.target_id = p.id::text AND p.source_id = $1 AND p.slug = $2 AND r.content_hash IS DISTINCT FROM $3"
+ },
+ {
+  "caller": "src/core/link-temporal-apply.ts:160",
+  "family": "link_transitions",
+  "sql": "DELETE FROM link_transitions lt USING pages f, pages t WHERE f.id = lt.from_page_id AND t.id = lt.to_page_id AND f.slug = $1 AND t.slug = $2 AND f.source_id = $3 AND t.source_id = $3 AND lt.producer = 'manual' AND ($4::text IS NULL OR lt.link_type = $4) AND (NOT $5::boolean OR lt.origin_page_id IS NULL) RETURNING lt.from_page_id, lt.to_page_id, lt.link_type"
+ },
+ {
+  "caller": "src/core/persistence/memory-proposals.ts:193",
+  "family": "memory_proposals",
+  "sql": "UPDATE memory_proposals SET state='expired', reason=$1, decided_by='gbrain:expiry', decided_at=now(), updated_at=now() WHERE state='awaiting_owner' AND expires_at<=now() RETURNING 1"
+ },
+ {
+  "caller": "src/core/persistence/memory-proposals.ts:214",
+  "family": "memory_proposals",
+  "sql": "DELETE FROM memory_proposals WHERE state<>'awaiting_owner' AND COALESCE(decided_at, updated_at) <= now() - ($1::integer * interval '1 day') RETURNING 1"
+ },
+ {
+  "caller": "src/core/notifier/store.ts:189",
+  "family": "sync_notifier_leases",
+  "sql": "INSERT INTO sync_notifier_leases (host_id, owner_id, fence, resident_kind, pid, renewed_at, expires_at) VALUES ($1, $2, 1, $3, $4, now(), now() + $5::int * interval '1 millisecond') ON CONFLICT (host_id) DO UPDATE SET owner_id = EXCLUDED.owner_id, resident_kind = EXCLUDED.resident_kind, pid = EXCLUDED.pid, fence = sync_notifier_leases.fence + CASE WHEN sync_notifier_leases.owner_id = EXCLUDED.owner_id THEN 0 ELSE 1 END, renewed_at = now(), expires_at = EXCLUDED.expires_at WHERE sync_notifier_leases.owner_id = EXCLUDED.owner_id OR sync_notifier_leases.expires_at <= now() RETURNING fence"
+ },
+ {
+  "caller": "src/core/persistence/consumer-heartbeat.ts:264",
+  "family": "persistence_consumers",
+  "sql": "WITH purged AS ( DELETE FROM persistence_consumers WHERE host_id=$1::uuid AND renewed_at < now() - ($14::integer * interval '1 millisecond') AND NOT (pid=$2::integer AND nonce=$3)) INSERT INTO persistence_consumers(host_id,pid,nonce,pid_ns,kind,mode,restart_required,root_barrier_age_ms,pool,host_json_path,persistence_home,minted_under,version,boot_id,process_start,segment_reader,capabilities) VALUES($1::uuid,$2::integer,$3,$4,$5,$6,$7::boolean,$8::integer,$9::text::jsonb,$10,$11,$12::text::jsonb,$13,$15,$16,true,ARRAY['refresh_barrier_1','refresh_barrier_import_1']::text[]) ON CONFLICT (host_id,pid,nonce) DO UPDATE SET renewed_at=now(),mode=EXCLUDED.mode,restart_required=EXCLUDED.restart_required, root_barrier_age_ms=EXCLUDED.root_barrier_age_ms,pool=EXCLUDED.pool,version=EXCLUDED.version,segment_reader=EXCLUDED.segment_reader,capabilities=EXCLUDED.capabilities"
+ },
+ {
+  "caller": "src/core/context/session-state.ts:389",
+  "family": "session_context_state",
+  "sql": "DELETE FROM session_context_state WHERE updated_at < now() - ($1 || ' days')::interval"
+ },
+ {
+  "caller": "src/core/context/session-state.ts:394",
+  "family": "session_context_state",
+  "sql": "DELETE FROM session_context_state s USING ( SELECT source_id, client_id, session_id, row_number() OVER ( PARTITION BY source_id, client_id ORDER BY updated_at DESC ) AS rn FROM session_context_state ) ranked WHERE s.source_id = ranked.source_id AND s.client_id = ranked.client_id AND s.session_id = ranked.session_id AND ranked.rn > $1"
+ },
+ {
+  "caller": "src/core/notifier/store.ts:217",
+  "family": "sync_notifier_leases",
+  "sql": "UPDATE sync_notifier_leases SET expires_at = now() WHERE host_id = $1 AND owner_id = $2"
+ },
+ {
+  "caller": "src/core/sync-anchor.ts:282",
+  "family": "sources",
+  "sql": "UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2"
+ },
+ {
+  "caller": "src/core/notifier/store.ts:277",
+  "family": "sync_notifier_sources",
+  "sql": "INSERT INTO sync_notifier_sources (source_id, source_incarnation, syncer_host_id, syncer_recorded_at, updated_at) SELECT s.id, s.incarnation::text, $2, now(), now() FROM sources s WHERE s.id = $1 ON CONFLICT (source_id) DO UPDATE SET syncer_host_id = EXCLUDED.syncer_host_id, syncer_recorded_at = now(), updated_at = now() WHERE sync_notifier_sources.syncer_host_id IS DISTINCT FROM EXCLUDED.syncer_host_id"
+ },
+ {
+  "caller": "src/core/notifier/store.ts:146",
+  "family": "sync_wanted_markers",
+  "sql": "DELETE FROM sync_wanted_markers m USING sources s WHERE m.source_id = s.id AND m.source_id = ANY($1::text[]) AND m.intent IN ('freshness','pull') AND m.wanted_head IS NOT NULL AND m.wanted_head = s.last_commit"
+ },
+ {
+  "caller": "src/core/sync-anchor.ts:309",
+  "family": "sources",
+  "sql": "UPDATE sources SET local_path = $1 WHERE id = $2"
+ },
+ {
+  "caller": "src/core/sync-anchor.ts:371",
+  "family": "sources",
+  "sql": "UPDATE sources SET chunker_version = $1 WHERE id = $2"
+ },
+ {
+  "caller": "src/core/op-checkpoint.ts:229",
+  "family": "op_checkpoints",
+  "sql": "WITH parent AS ( INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at) VALUES ($1, $2, '[]'::jsonb, now()) ON CONFLICT (op, fingerprint) DO UPDATE SET updated_at = now() ) INSERT INTO op_checkpoint_paths (op, fingerprint, path) SELECT $1, $2, unnest($3::text[]) ON CONFLICT (op, fingerprint, path) DO NOTHING"
+ },
+ {
+  "caller": "src/core/op-checkpoint.ts:275",
+  "family": "op_checkpoints",
+  "sql": "DELETE FROM op_checkpoints WHERE op = $1 AND fingerprint = $2"
+ },
+ {
+  "caller": "src/core/op-checkpoint.ts:280",
+  "family": "op_checkpoint_paths",
+  "sql": "DELETE FROM op_checkpoint_paths WHERE op = $1 AND fingerprint = $2"
+ },
+ {
+  "caller": "src/core/mentions/pass.ts:175",
+  "family": "mention_index_status",
+  "sql": "INSERT INTO mention_index_status (source_id, generation, state, pending, counted_at, last_pass_at, policy_fingerprint, error, updated_at) VALUES ($1, CASE WHEN $6::boolean THEN 1 ELSE 0 END, $2, COALESCE($3::int, 0), now(), $4::timestamptz, $7, $5, now()) ON CONFLICT (source_id) DO UPDATE SET state = EXCLUDED.state, pending = COALESCE($3::int, mention_index_status.pending), counted_at = CASE WHEN $3::int IS NULL THEN mention_index_status.counted_at ELSE now() END, last_pass_at = COALESCE($4::timestamptz, mention_index_status.last_pass_at), error = $5, generation = mention_index_status.generation + CASE WHEN $6::boolean THEN 1 ELSE 0 END, policy_fingerprint = CASE WHEN $8::boolean THEN $7 ELSE mention_index_status.policy_fingerprint END, updated_at = now()"
+ },
+ {
+  "caller": "src/core/op-checkpoint.ts:199",
+  "family": "op_checkpoints",
+  "sql": "INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at) VALUES ($1, $2, $3::text::jsonb, now()) ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys = EXCLUDED.completed_keys, updated_at = now()"
+ },
+ {
+  "caller": "src/core/mentions/pass.ts:706",
+  "family": "page_mention_state",
+  "sql": "UPDATE page_mention_state SET mention_revision = NULL, alias_revision = NULL WHERE source_id = $1"
+ },
+ {
+  "caller": "src/core/mentions/pass.ts:645",
+  "family": "page_mention_state",
+  "sql": "INSERT INTO page_mention_state (page_id, source_id, mention_revision, mention_version, mention_generation, mentions_scanned_at) SELECT id, $1, rev::uuid, $4, $5::bigint, now() FROM unnest($2::int[], $3::text[]) AS x(id, rev) ON CONFLICT (page_id) DO UPDATE SET mention_revision = EXCLUDED.mention_revision, mention_version = EXCLUDED.mention_version, mention_generation = EXCLUDED.mention_generation, mentions_scanned_at = EXCLUDED.mentions_scanned_at"
+ }
+]

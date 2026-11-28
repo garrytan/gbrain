@@ -19,8 +19,9 @@ import { existsSync } from 'node:fs';
 import { withEnv } from './helpers/with-env.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { SWAP_RECOVERY, SWAP_REFUSAL_REASONS } from '../src/core/engine-swap/refusals.ts';
-import { WRITE_COVERAGE_LIMIT, WRITE_COVERAGE_LOSS, WRITE_COVERAGE_NAMED, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
+import { WRITE_BOOKKEEPING_TABLES, WRITE_COVERAGE_LIMIT, WRITE_COVERAGE_LOSS, WRITE_COVERAGE_NAMED, WRITE_NOT_VERIFIED, WRITE_SIDE_TABLES, WRITE_TABLE_LOSS, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { PILOT_WRITES, writeFamily } from '../src/shadow/write-compare.ts';
+import { sampledStatements } from '../src/shadow/write-capture.ts';
 import { WRITE_MAP } from '../src/shadow/write-map.ts';
 
 let engine: PGLiteEngine;
@@ -204,7 +205,9 @@ describe('engine_swap_refused recovery table', () => {
 });
 
 describe('the swap report names each write type criterion 5 does not compare', () => {
-  const NAMED_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
+  const NAMED_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:sealImportedPage, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
+  const NOT_VERIFIED = 'named, not verified: each count on these lines is a sampled write that was not compared; none counts toward the comparable count or the write bar';
+  const TABLE_LOSS = 'Named loss: raw SQL statements and typed members outside the write map are counted under the first table they write, named, not verified: timeline_entries, takes and sources (their lines above); the side tables wanted_links, link_transitions, page_retrievals, mention_index_status, page_mention_state and memory_proposals; the process bookkeeping tables persistence_effects, persistence_requests, persistence_counters, persistence_consumers, op_checkpoints, op_checkpoint_paths, sync_notifier_leases, sync_notifier_sources, sync_wanted_markers, session_context_state and write_gate_receipts; and a member that only sets transaction settings or locks rows, under no_row: and its name (no_row:declarePersistence). A raw statement the parser cannot read stays raw_sql, and a typed member with no known statements is counted under unmapped: and its name.';
   const sampled = (byFamily: Record<string, unknown>) => ({
     write_comparisons: { state: 'measured', sample_rate: 1, comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: byFamily },
   }) as unknown as ShadowStatus;
@@ -212,12 +215,13 @@ describe('the swap report names each write type criterion 5 does not compare', (
     const r = await run(['--to', 'rust', '--plan', ...(json ? ['--json'] : [])], { readShadowStatus: async () => doc });
     return json ? JSON.parse(r.stdout) as { criteria: Array<Record<string, unknown>> } : r.stdout;
   };
-  const MIXED = { content_chunks: 3, tags: 1, decide_state: 2, decide_spend: 1, 'pages:updateSlug': 4, 'pages:softDeletePage': 1, raw_sql: 2, takes: 0, facts: 'x', other: 5 };
+  const MIXED = { content_chunks: 3, tags: 1, decide_state: 2, decide_spend: 1, 'pages:updateSlug': 4, 'pages:softDeletePage': 1, raw_sql: 2, takes: 0, facts: 'x', other: 5,
+    timeline_entries: 2, wanted_links: 3, page_retrievals: 1, persistence_effects: 4, 'no_row:declarePersistence': 6, 'unmapped:insertFactPurge': 1 };
   const MIXED_LINES = [
     'chunks: sampled 3 (content_chunks 3)',
     'tags: sampled 1 (tags 1)',
     'aliases: not sampled',
-    'timeline entries: not sampled',
+    'timeline entries: sampled 2 (timeline_entries 2)',
     'takes: not sampled',
     'facts: not sampled',
     'fact withdrawals: not sampled separately (counted under pages:updateSlug 4)',
@@ -225,8 +229,13 @@ describe('the swap report names each write type criterion 5 does not compare', (
     'sources: not sampled',
     'owner-only marks: not sampled',
     'decide store: sampled 3 (decide_state 2, decide_spend 1)',
-    'other write families sampled: pages:updateSlug 4, pages:softDeletePage 1, raw_sql 2, other 5',
+    'side tables: sampled 4 (wanted_links 3, page_retrievals 1)',
+    'process bookkeeping: sampled 4 (persistence_effects 4)',
+    'no row written: sampled 6 (no_row:declarePersistence 6)',
+    'other write families sampled: pages:updateSlug 4, pages:softDeletePage 1, raw_sql 2, other 5, unmapped:insertFactPurge 1',
+    NOT_VERIFIED,
     NAMED_LOSS,
+    TABLE_LOSS,
   ];
 
   test('some families sampled and some not give exactly these lines, in the JSON row and in the text report', async () => {
@@ -242,7 +251,8 @@ describe('the swap report names each write type criterion 5 does not compare', (
       'chunks: not sampled', 'tags: not sampled', 'aliases: not sampled', 'timeline entries: not sampled', 'takes: not sampled', 'facts: not sampled',
       'fact withdrawals: not sampled separately (counted under pages:updateSlug 0)',
       'open loops: not sampled', 'sources: not sampled', 'owner-only marks: not sampled', 'decide store: not sampled',
-      'other write families sampled: none', NAMED_LOSS,
+      'side tables: not sampled', 'process bookkeeping: not sampled', 'no row written: not sampled',
+      'other write families sampled: none', NOT_VERIFIED, NAMED_LOSS, TABLE_LOSS,
     ]);
   });
 
@@ -252,7 +262,7 @@ describe('the swap report names each write type criterion 5 does not compare', (
     expect(Object.keys(row).sort()).toEqual(['detail', 'gating', 'lines', 'n', 'name', 'state']);
     expect(row.state).toBe('fail');
     expect(String(row.detail).endsWith(WRITE_COVERAGE_NAMED)).toBe(true);
-    expect(String(row.detail)).toContain('sampled so far: content_chunks 3, tags 1, decide_state 2, decide_spend 1, pages:updateSlug 4, pages:softDeletePage 1, raw_sql 2, other 5');
+    expect(String(row.detail)).toContain('sampled so far: content_chunks 3, tags 1, decide_state 2, decide_spend 1, pages:updateSlug 4, pages:softDeletePage 1, raw_sql 2, other 5, timeline_entries 2, wanted_links 3, page_retrievals 1, persistence_effects 4, no_row:declarePersistence 6, unmapped:insertFactPurge 1');
     expect(String(row.detail)).not.toContain('Named loss');
     expect(doc.criteria.filter(c => c.n !== 5 && 'lines' in c)).toEqual([]);
   });
@@ -262,12 +272,45 @@ describe('the swap report names each write type criterion 5 does not compare', (
     const guide = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'engine-swap.md'), 'utf8');
     expect(guide).toContain(WRITE_COVERAGE_NAMED);
     expect(guide).toContain(NAMED_LOSS);
+    expect(WRITE_NOT_VERIFIED).toBe(NOT_VERIFIED);
+    expect(WRITE_TABLE_LOSS).toBe(TABLE_LOSS);
+    expect(guide).toContain(TABLE_LOSS);
+    expect(guide).toContain('The next line says `named, not verified`');
+  });
+
+  test('the table loss names exactly the tables the side and bookkeeping lines read, plus the named types raw writes reach', () => {
+    const named = TABLE_LOSS.match(/\b[a-z]+(?:_[a-z]+)+\b/g)!.filter(t => !['raw_sql', 'no_row'].includes(t));
+    expect(new Set(named)).toEqual(new Set(['timeline_entries', 'takes', 'sources', ...WRITE_SIDE_TABLES, ...WRITE_BOOKKEEPING_TABLES].filter(t => t.includes('_'))));
+    expect(TABLE_LOSS).toContain('timeline_entries, takes and sources');
+    expect(WRITE_SIDE_TABLES.filter(t => WRITE_BOOKKEEPING_TABLES.includes(t))).toEqual([]);
+  });
+
+  test('classifying raw_sql and unmapped samples moves no comparable count: state, the bar part of the detail and the bar are unchanged', async () => {
+    // Run A on PG17 (575 comparable, 2,559 raw and 4,263 unmapped samples): the same totals, before and after naming them.
+    const before = { raw_sql: 2559, unmapped: 4263 };
+    const named: Record<string, number> = { timeline_entries: 600, takes: 200, wanted_links: 400, sources: 6, persistence_effects: 1000, persistence_requests: 752, persistence_counters: 685,
+      page_retrievals: 60, 'no_row:declarePersistence': 1773, 'no_row:lockEffectGuard': 600, 'pages:sealImportedPage': 200, 'unmapped:insertFactPurge': 1 };
+    const after = { ...named, raw_sql: 2559 + 4263 - Object.values(named).reduce((a, b) => a + b, 0) };
+    expect(after.raw_sql).toBeGreaterThan(0);
+    const doc = (byFamily: Record<string, number>) => ({
+      write_comparisons: { state: 'measured', sample_rate: 1, comparable: 575, unexplained_difference: 0, uncomparable: 0, capability_missing: 6822, capability_missing_by_family: byFamily },
+    }) as unknown as ShadowStatus;
+    const rows = await Promise.all([before, after].map(async b => ((await plan(doc(b), true)) as { criteria: Array<Record<string, unknown>> }).criteria.find(c => c.n === 5)!));
+    for (const row of rows) {
+      expect(row.state).toBe('fail');
+      expect(String(row.detail).startsWith('575 of 1000 comparable write comparisons; ')).toBe(true);
+      // Only the not-verified line speaks of the comparable count or the bar, and it says none of these counts toward them.
+      expect((row.lines as string[]).filter(l => /comparable|write bar|toward/.test(l))).toEqual([NOT_VERIFIED]);
+    }
+    expect(rows[0]!.gating).toEqual(rows[1]!.gating);
   });
 
   test('the named loss names every page and link write that is not a pilot write, and no other', () => {
     // The set the code counts as capability_missing under pages:<op> or links:<op>: the family writeFamily gives each non-pilot WRITE_MAP member.
     const fromCode = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(op => writeFamily(op)).filter(f => /^(pages|links):/.test(f));
-    expect(fromCode.length).toBe(24);
+    // A typed member outside the map whose statements write pages is named the same way (sealImportedPage).
+    fromCode.push(writeFamily('sealImportedPage', sampledStatements('sealImportedPage', [])));
+    expect(fromCode.length).toBe(25);
     const guide = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'engine-swap.md'), 'utf8');
     // WRITE_COVERAGE_LOSS is the evaluated string, so the guide holds the same text with no source escape.
     // The guide mentions pages:updateSlug elsewhere (the fact withdrawals line), so read only its named-loss paragraph.
@@ -300,13 +343,16 @@ describe('the swap report names each write type criterion 5 does not compare', (
     const named = new Set(['content_chunks', 'tags', 'page_aliases', 'timeline_entries', 'takes', 'facts', 'open_loops', 'sources', 'owner_only_marks',
       'decide_state', 'decide_spend', 'decision_receipts', 'decide_calibrations', 'decide_proposals', 'decide_review_proposals', 'decide_review_queue', 'decide_sweep_deferred']);
     // The other line carries these, so the lines name them as sampled and no count is dropped.
-    const other = new Set(['raw_sql', 'unmapped', 'other', 'config', 'wanted_links', 'entity_identities', 'raw_data', 'files', 'page_versions', 'synthesis_evidence', 'code_edges_chunk']);
-    const stray = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(writeFamily)
-      .filter(f => !named.has(f) && !other.has(f) && !/^(pages|links):[A-Za-z]+$/.test(f));
+    // The side tables and bookkeeping lines carry these.
+    const grouped = new Set([...WRITE_SIDE_TABLES, ...WRITE_BOOKKEEPING_TABLES]);
+    const other = new Set(['raw_sql', 'unmapped', 'other', 'config', 'entity_identities', 'raw_data', 'files', 'page_versions', 'synthesis_evidence', 'code_edges_chunk']);
+    const stray = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(op => writeFamily(op))
+      .filter(f => !named.has(f) && !grouped.has(f) && !other.has(f) && !/^(pages|links):[A-Za-z]+$/.test(f));
     expect(stray).toEqual([]);
     // No named type is also on the other line, and fact withdrawals never has a family of its own.
-    expect([...other].filter(f => named.has(f))).toEqual([]);
-    expect(Object.keys(WRITE_MAP).map(writeFamily)).not.toContain('fact_withdrawals');
+    expect([...other].filter(f => named.has(f) || grouped.has(f))).toEqual([]);
+    expect([...grouped].filter(f => named.has(f))).toEqual([]);
+    expect(Object.keys(WRITE_MAP).map(op => writeFamily(op))).not.toContain('fact_withdrawals');
   });
 });
 
