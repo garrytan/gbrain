@@ -35,11 +35,16 @@
  *   exits therefore never leaves a started write running behind a new owner: `ownerGone` after the send stays final.
  * - Started writes: a write the owner started keeps running after its caller stops waiting (deadline, cancel, closed
  *   connection) and can still commit, and the owner may learn of the cancel after a read on another connection
- *   arrives. So until any started write settles, whether or not its caller still waits, the owner holds back every call to a member that would confirm it
+ *   arrives. So until a started write settles, the owner holds back every call to a member that would confirm it
  *   (confirming-reads.ts, membersWaitingFor: the members its confirming read names, or the write's own member when
- *   that read goes through it, as for executeRaw). The hold is by member, not by key, so an unrelated read of the same
- *   member waits too; other members run as before. A held call that reaches its deadline ends `owner_unavailable`,
- *   reason `earlier_call_running`, not retryable: it never ran and tells nothing about the earlier write yet.
+ *   that read goes through it, as for executeRaw), when the write was admitted before that call or its caller has
+ *   already stopped waiting (cancel, deadline, closed connection). A caller confirms a write it sent earlier, so its
+ *   read waits for that write. With two or more writers taking turns a held read would otherwise wait until all
+ *   writing stops, so a write admitted after the read no longer holds the read. The one case left open is a read on
+ *   another connection that the owner admits before the write it confirms and that runs before the owner reads that
+ *   write's cancel. The hold is by member, not by key, so an unrelated read of the same member waits too; other
+ *   members run as before. A held call that reaches its deadline ends `owner_unavailable`, reason
+ *   `earlier_call_running`, not retryable: it never ran and tells nothing about the earlier write yet.
  */
 import net, { type Server, type Socket } from 'node:net';
 import { chmodSync, lstatSync, unlinkSync } from 'node:fs';
@@ -91,6 +96,8 @@ export interface OwnerEngineServer {
 
 interface PendingCall {
   id: number;
+  /** Admission order on this owner: set when the call joins the queue, 0 for a call refused before it. */
+  seq: number;
   member: string;
   run: () => Promise<unknown>;
   controller: AbortController;
@@ -169,12 +176,15 @@ function expire(call: PendingCall, queued: boolean): void {
  * (its deadline, a cancel, a closed connection). The owner may learn of that stop late: the client gives up as soon
  * as it sends its cancel, and a read on another connection can arrive first. So a call that would read the outcome
  * of any started write waits until that write has settled, and a confirming read never answers "not there" for a
- * write that is about to commit (routes.ts, confirmingReadAdvice). Returns the earlier write's member, or undefined
- * when nothing holds `call` back.
+ * write that is about to commit (routes.ts, confirmingReadAdvice). Only a write admitted before `call`, or one whose
+ * caller already stopped waiting (`done` before `settled`), holds it: a write admitted after the read no longer holds
+ * the read, so writers that take turns cannot starve it. Returns the earlier write's member, or undefined when nothing
+ * holds `call` back.
  */
 function orphanAhead(started: ReadonlySet<PendingCall>, call: PendingCall): string | undefined {
   for (const other of started) {
-    if (other.write && !other.settled && membersWaitingFor(other.member).has(call.member)) return other.member;
+    if (!other.write || other.settled || (other.seq > call.seq && !other.done)) continue;
+    if (membersWaitingFor(other.member).has(call.member)) return other.member;
   }
   return undefined;
 }
@@ -235,6 +245,8 @@ export async function serveOwnerEngine(
   const running = new Set<Promise<unknown>>();
   // Calls whose engine work has started and not settled, so a later call can see an orphan among them.
   const started = new Set<PendingCall>();
+  // Admission counter for `seq`, so a held read waits only for writes admitted before it.
+  let admitted = 0;
 
   const releaseBytes = (call: PendingCall) => {
     if (call.released) return;
@@ -395,7 +407,7 @@ export async function serveOwnerEngine(
     if ((active >= permits || queue.length > 0) && queue.length >= maxQueued) { busy('queue_full', maxQueued); return; }
     const controller = new AbortController();
     const call: PendingCall = {
-      id, member, controller, done: false, queued: false, bytes, released: true, run: () => Promise.resolve(),
+      id, seq: 0, member, controller, done: false, queued: false, bytes, released: true, run: () => Promise.resolve(),
       write: frame.t === 'fn' || !ownerMemberOnlyReads(member), settled: false,
       reply: out => { if (calls.get(id) === call) calls.delete(id); call.done = true; send(out, member); },
     };
@@ -450,6 +462,7 @@ export async function serveOwnerEngine(
         controller.abort(timeoutReason());
       }, ms, { unref: true });
     }
+    call.seq = ++admitted;
     call.queued = true;
     call.released = false;
     inflightBytes += bytes;
