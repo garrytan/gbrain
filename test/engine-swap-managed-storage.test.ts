@@ -8,7 +8,9 @@
  * mode on a multi-user Rust store waits for the multi-user branch (slice 3). (2) Fails when, on a build that holds
  * managed_persistence back, `gbrain engine swap --to rust --plan` shows a plan, reads a readiness criterion or writes
  * anything for a brain whose `persistence_brain.enabled` is true, when the refusal loses its reason, exit code, next step
- * or guide anchor, or when a managed brain on a build that serves managed mode is refused. (3) No existing test sets
+ * or guide anchor, or when a managed brain on a build that serves managed mode is refused; and when that managed plan does
+ * not name exactly the two Rust known losses a managed brain can reach (RUST_ENGINE.md conflict rows 61a and 64, each with
+ * its raw read, in the JSON plan and as two "known loss" lines in the text plan) or an unmanaged plan carries the field. (3) No existing test sets
  * managed storage on a swap. (4) No seam: a real PGLite brain (Postgres too when DATABASE_URL is set) and the real
  * command; only the shadow status reader is injected, to prove it is never called, and the build that does not serve
  * managed mode is the real HELD_FOR_CALLERS table with the entry the lift removed put back for the test.
@@ -40,6 +42,28 @@ async function swapPlan(engine: BrainEngine, json = true, env: Record<string, st
     },
   });
   return { code, stdout, error, statusReads };
+}
+
+/** The two managed losses a Rust destination has today (RUST_ENGINE.md rows 61a and 64), each naming its raw read. */
+function expectNamedLosses(losses: unknown): void {
+  expect(Array.isArray(losses)).toBe(true);
+  const list = losses as string[];
+  expect(list).toHaveLength(2);
+  expect(list[0]).toContain('row 61a');
+  expect(list[0]).toContain('findLiveFileClaimants');
+  expect(list[0]).toContain('Owner: lane LM, due 2026-12-10');
+  expect(list[1]).toContain('row 64');
+  expect(list[1]).toContain('isMirrorOnlyPage');
+  expect(list[1]).toContain('stays claimed with no write');
+  expect(list[1]).toContain('Owner: lane LM, due 2026-12-10');
+}
+
+/** The text plan carries one "known loss" line per entry. */
+function expectKnownLossLines(stdout: string): void {
+  const lines = stdout.split('\n').filter(l => l.includes('known loss'));
+  expect(lines).toHaveLength(2);
+  expect(lines[0]).toContain('findLiveFileClaimants');
+  expect(lines[1]).toContain('isMirrorOnlyPage');
 }
 
 /** Every persistence row the swap could touch, as text, so "nothing was written" is checked, not assumed. */
@@ -106,6 +130,11 @@ describe(`engine swap refuses a managed brain only where this build's Rust canno
     expect(run.code).toBe(0);
     expect(run.statusReads).toBe(1);
     expect(JSON.parse(run.stdout).from).toBe(kind);
+    // RUST_ENGINE.md conflict rows 61a and 64: this build serves managed mode, so both raw reads are reachable and named.
+    expectNamedLosses(JSON.parse(run.stdout).managed_known_losses);
+    const text = await swapPlan(engine, false);
+    expect(text.code).toBe(0);
+    expectKnownLossLines(text.stdout);
     expect(await persistenceSnapshot(engine)).toBe(before);
   });
 
@@ -114,6 +143,8 @@ describe(`engine swap refuses a managed brain only where this build's Rust canno
     expect(run.code).toBe(0);
     expect(run.statusReads).toBe(1);
     expect(JSON.parse(run.stdout).from).toBe(kind);
+    expect('managed_known_losses' in JSON.parse(run.stdout)).toBe(false);
+    expect((await swapPlan(engine, false)).stdout).not.toContain('known loss');
   });
 });
 }

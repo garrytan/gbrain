@@ -62,6 +62,8 @@ export interface SwapPlan {
   way_back: WayBack;
   /** Report only, not bound by the plan hash: the lists whose order changes on a non-byte-order Postgres source (D25 A1). */
   collation: CollationReport;
+  /** Present only for a managed brain: what managed mode does not yet do on a Rust brain (MANAGED_RUST_LOSSES). */
+  managed_known_losses?: string[];
   plan_hash: string;
 }
 
@@ -146,10 +148,23 @@ export function rustHoldsManagedStorage(): boolean {
 /** Throws `engine_swap_refused` / `managed_storage` when the brain uses managed storage and this build's Rust engine cannot
  * hold it (rustHoldsManagedStorage). A persistence state that is missing or malformed refuses `storage_error`
  * (readManagedMode), never reads as unmanaged. */
-export async function assertNotManaged(engine: BrainEngine): Promise<void> {
+export async function assertNotManaged(engine: BrainEngine): Promise<boolean> {
   const managed = await readManagedMode(engine, { refusal: { subject: 'The engine swap plan', consequence: 'the swap refuses rather than guess whether the brain uses managed storage' } });
   if (managed && !rustHoldsManagedStorage()) throw managedStorageError();
+  return managed;
 }
+
+/**
+ * What a managed brain loses on a Rust destination today, named in the plan instead of refused. This build's Rust engine
+ * serves managed_persistence on one host (rust-engine/store-capabilities.ts HELD_FOR_CALLERS is empty), so each raw read a
+ * managed write still runs is reachable and is named here, with its RUST_ENGINE.md conflict row. An entry leaves this list
+ * in the same commit that closes its row, with its pin in test/engine-swap-managed-storage.test.ts. A managed plan carries
+ * the field; an unmanaged plan does not.
+ */
+export const MANAGED_RUST_LOSSES: readonly string[] = [
+  'Removing a page in managed mode can stop before it commits (RUST_ENGINE.md conflict row 61a): its preparation reads the other pages that claim the same file through raw SQL (persistence/file-claims.ts findLiveFileClaimants, called from persistence/page-prepare.ts), so on a Rust brain the removal refuses raw_sql and nothing changes. PGLite and Postgres commit the removal and push it, or hold it until the push works. Owner: lane LM, due 2026-12-10.',
+  'A managed write on a rooted source that no writer has claimed yet can stop after it claims the source (RUST_ENGINE.md conflict row 64): its preparation checks whether the page is a read-only mirror copy through raw SQL (persistence/mirror-read-only.ts isMirrorOnlyPage), so on a Rust brain the write refuses raw_sql, and the source stays claimed with no write. PGLite and Postgres read the page and finish or refuse the write. Owner: lane LM, due 2026-12-10.',
+];
 
 /** The plan hash binds what a run would act on, never volatile readings (time, free space). */
 function planHash(p: Omit<SwapPlan, 'plan_hash'>): string {
@@ -163,7 +178,7 @@ function planHash(p: Omit<SwapPlan, 'plan_hash'>): string {
 
 /** Builds the read-only plan. Throws `engine_swap_refused` (`managed_storage` when this build's Rust engine cannot hold a managed brain, `refresh_unsettled`) before reading any criterion. */
 export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs = {}): Promise<SwapPlan> {
-  await assertNotManaged(engine);
+  const managed = await assertNotManaged(engine);
   await assertRefreshesSettled(engine);
   const now = deps.now ?? new Date();
   const inForce = policyInForce(deps.policy ?? READINESS_POLICY, await engine.readPersistenceBrainId(), now);
@@ -187,6 +202,7 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
     blockers: await swapBlockers(engine, { remoteMcpConfigured: !!deps.remoteMcpConfigured, rustServes: deps.rustServes }),
     way_back: await wayBack(engine),
     collation: collationReport(String(engine.kind), status?.fingerprints?.probe ?? null),
+    ...(managed ? { managed_known_losses: [...MANAGED_RUST_LOSSES] } : {}),
   };
   return { ...base, plan_hash: planHash(base) };
 }

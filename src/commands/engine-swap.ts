@@ -99,6 +99,7 @@ export function renderPlanText(p: SwapPlan): string {
     ...(p.policy.brain_ref ? [`Brain reference (binds a dated override): ${p.policy.brain_ref}`] : []),
     `Capability report: Rust serves ${p.capability_report.served.length} capabilities; ${p.capability_report.lost.length ? `not served: ${p.capability_report.lost.map(l => `${l.capability} (${l.members.length} member(s))`).join(', ')}` : 'nothing this brain uses is lost'}`,
     `Expected write pause: about ${p.write_pause.seconds} s (${p.write_pause.basis})`,
+    ...(p.managed_known_losses ?? []).map(loss => `Managed mode on a Rust brain, known loss: ${loss}`),
     ...p.blockers.map(b => `Blocked: ${b.reason} (${b.detail}): ${SWAP_RECOVERY[b.reason].blocker}`),
     p.reason ? `A run would refuse with engine_swap_refused (${p.reason}): ${SWAP_RECOVERY[p.reason].blocker}` : 'READY is evidence, not permission: the swap needs its own approval.',
     `Way back: ${p.way_back.statement}`,

@@ -27,7 +27,12 @@ a store that already exists: a PGLite store with no `PG_VERSION` file is refused
 because connecting would otherwise initialize a new, empty brain. With a store in place, it opens the brain without
 migrating it and reads whether the brain uses managed storage. The Rust engine holds managed storage on one host; a
 managed brain is refused with `engine_swap_refused` (reason `managed_storage`) only when the build's Rust engine does
-not serve managed mode. Managed mode on a multi-user Rust store waits for the multi-user branch. Otherwise it reads the worktree
+not serve managed mode. Managed mode on a multi-user Rust store waits for the multi-user branch. A managed brain gets
+its plan with a `managed_known_losses` list (one "known loss" line per entry in the text plan). It names two losses
+today ([RUST_ENGINE.md](../designs/RUST_ENGINE.md) conflict rows 61a and 64): removing a page in managed mode can stop
+before it commits (a raw read in `findLiveFileClaimants`), and a managed write on a rooted source no writer has claimed
+can stop after it claims the source, which then stays claimed with no write (a raw read in `isMirrorOnlyPage`). PGLite
+and Postgres finish both writes. An unmanaged brain's plan does not carry the field. Otherwise it reads the worktree
 refresh journal and the shadow status, and lists. The shadow status is the same document `gbrain engine shadow
 status --json` prints for this brain; with no shadow for it, the verdict is `NOT READY` with reason `no_shadow`:
 
