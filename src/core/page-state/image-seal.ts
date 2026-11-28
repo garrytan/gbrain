@@ -14,6 +14,8 @@ import { jsonRowBatches } from '../batch-rows.ts';
 import { acceptedEmbeddingInputHashes } from '../embedding-input-hash.ts';
 import { embeddingInputContext, embeddingWriteTarget } from './projections.ts';
 import { AGENT_TOOL_LIMIT_MS } from '../agent-output.ts';
+import { projectionTransaction } from './projection-policy.ts';
+import { CURRENT_PROJECTION_JOB_SQL, PROJECTION_POLICY_ADMITS_SQL } from './projection-policy-sql.ts';
 
 /**
  * Measured `sealImageProjections` throughput, the basis of doctor's drain
@@ -64,7 +66,7 @@ type Candidate = { source_id: string; source_incarnation: string; slug: string; 
  * sealed page. No provider call, no file read. `notAfter` (a database
  * instant, text) leaves rows queued during the run for the next one.
  */
-export async function sealImageProjections(engine: BrainEngine, opts: { limit?: number; notAfter?: string } = {}): Promise<ImageSealResult> {
+export async function sealImageProjections(engine: BrainEngine, opts: { limit?: number; notAfter?: string; currentProjectionsOnly?: boolean } = {}): Promise<ImageSealResult> {
   const result: ImageSealResult = { sealed: 0, sealed_with_visual: 0, sealed_text_only: 0 };
   let after: [string, string] = ['00000000-0000-0000-0000-000000000000', ''];
   let budget = opts.limit ?? Infinity;
@@ -75,9 +77,10 @@ export async function sealImageProjections(engine: BrainEngine, opts: { limit?: 
     // (a fresh PGLite) a deleted_at filter here lets the planner pick pages_dedup_idx and scan the source per row.
     const params: unknown[] = [after[0], after[1], IMAGE_SEAL_GROUP];
     const notAfter = opts.notAfter === undefined ? '' : `AND j.updated_at<=$${params.push(opts.notAfter)}::text::timestamptz`;
+    const admitted = opts.currentProjectionsOnly === false ? 'TRUE' : opts.currentProjectionsOnly === true ? CURRENT_PROJECTION_JOB_SQL : PROJECTION_POLICY_ADMITS_SQL;
     const window = await engine.executeRaw<Candidate & { sealable: boolean }>(`SELECT s.id AS source_id,j.source_incarnation::text AS source_incarnation,
         j.slug,j.revision::text AS revision,p.sealable IS TRUE AS sealable
-      FROM (SELECT source_incarnation,slug,revision FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug) > ($1::uuid,$2) ${notAfter}
+      FROM (SELECT source_incarnation,slug,revision FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug) > ($1::uuid,$2) ${notAfter} AND ${admitted}
         ORDER BY j.source_incarnation,j.slug LIMIT $3) j
       LEFT JOIN LATERAL (SELECT s.id FROM sources s WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s ON true
       LEFT JOIN LATERAL (SELECT p.deleted_at IS NULL AND p.knowledge_revision=j.revision AND ${sealableImageSql('p')} AS sealable
@@ -89,16 +92,17 @@ export async function sealImageProjections(engine: BrainEngine, opts: { limit?: 
     after = [last.source_incarnation, last.slug];
     if (!group.length) continue;
     budget -= group.length;
-    const sealed = await engine.transaction(async tx => {
+    const sealed = await projectionTransaction(engine, opts.currentProjectionsOnly, async tx => {
       await tx.lockPageKeys(group.map(row => ({ sourceId: row.source_id, slug: row.slug })));
       const pages = await tx.executeRaw<{ id: number; revision: string; title: string; mode: string | null;
         corpus_generation: string | null }>(`SELECT p.id,p.knowledge_revision::text AS revision,p.title,
           p.contextual_retrieval_mode AS mode,p.corpus_generation
         FROM jsonb_to_recordset($1::text::jsonb) AS v(source_id text, slug text, revision uuid)
         JOIN sources s ON s.id=v.source_id AND NOT s.archived
+        JOIN page_projection_jobs j ON j.source_incarnation=s.incarnation AND j.slug=v.slug AND j.revision=v.revision
         CROSS JOIN LATERAL (SELECT p.id FROM pages p WHERE p.source_id=v.source_id AND p.slug=v.slug OFFSET 0) k
         JOIN pages p ON p.id=k.id
-        WHERE p.deleted_at IS NULL AND p.knowledge_revision=v.revision AND ${sealableImageSql('p')}`, [JSON.stringify(group.map(({ source_id, slug, revision }) => ({ source_id, slug, revision })))]);
+        WHERE p.deleted_at IS NULL AND p.knowledge_revision=v.revision AND ${sealableImageSql('p')} AND ${admitted}`, [JSON.stringify(group.map(({ source_id, slug, revision }) => ({ source_id, slug, revision })))]);
       if (!pages.length) return [];
       const chunks = await tx.executeRaw<{ id: number; page_id: number; chunk_text: string; chunk_source: string;
         embedding_input_hash: string | null; current: boolean }>(`SELECT id,page_id,chunk_text,chunk_source,embedding_input_hash,

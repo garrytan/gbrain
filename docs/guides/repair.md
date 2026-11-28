@@ -55,6 +55,34 @@ timeline: 12 item(s) to repair
   (and `--no-embed`). It does not repeat `--limit`; add it yourself if you
   previewed a limited batch.
 
+## Withholding historical projections
+
+An owner can set `gbrain config set embed.current_projections_only true` to
+withhold historical projection rebuilds during automatic work. The default is
+off. Jobs created by a current canonical write can still rebuild; older or
+unclassified jobs, and below-fence or unsealed pages without current-work proof,
+remain held. An ordinary edit of a held page does not itself certify its
+historical text. While held, stale embedding and its invalidation sweeps leave
+the old chunks and vectors alone. Counts, previews, and the projection
+readiness check report held work separately from actionable pending work.
+
+Preview an owner-authorized rebuild with
+`gbrain projections drain --dry-run --no-current-projections-only`, then run
+`gbrain projections drain --no-current-projections-only`. The override is
+limited to that run. It reuses vectors whose embedding inputs still match;
+changed inputs stay pending. For a source's below-fence pages, preview
+`gbrain repair safe-chunks --source <id> --no-current-projections-only` and
+apply with `--apply --no-embed`, or authorize provider work with `--apply --yes
+--max-usd <usd>` after the owner agrees. The run stops at that cap.
+
+To rebuild and embed held text in one foreground run, preview
+`gbrain embed --stale --dry-run --no-current-projections-only`, then, after the
+owner agrees, use `gbrain embed --stale --yes --max-usd <usd>
+--no-current-projections-only`. This route repairs a projection before sending
+its text; unbuildable pages stay blocked. The cap also covers probes. Background
+jobs cannot carry the override. `--current-projections-only` narrows a single
+foreground stale run even when the brain setting is off.
+
 ## Apply
 
 ```bash
@@ -67,6 +95,7 @@ gbrain repair request-indexes --apply
 gbrain repair google-file-modes --apply             # explicit-only: runs only when named
 gbrain repair --all --apply                    # every automatic kind in order
 ```
+
 
 On a large brain, apply `visibility` one previewed window at a time. The preview
 plans one class at a time in the order remote callers are exposed (world facts

@@ -108,7 +108,7 @@ describe('embed --stale past pages still waiting for a projection (#6223)', () =
     await stalePage('notes/repairable');
     await engine.executeRaw("UPDATE pages SET text_projection_revision=NULL WHERE slug='notes/repairable'");
     const result = await prepareEmbeddingProjections(engine, { repair: true, limit: 2, activeSourcesOnly: true });
-    expect(result).toEqual({ rebuilt: 1, blocked: 2 });
+    expect(result).toEqual({ rebuilt: 1, blocked: 2, held: 0 });
     expect((await listPendingProjectionPages(engine, { activeSourcesOnly: true })).map(page => [page.slug, page.page_kind]))
       .toEqual([['images/a', 'image'], ['images/b', 'image']]);
     const repaired = await engine.readPageSnapshot('notes/repairable');

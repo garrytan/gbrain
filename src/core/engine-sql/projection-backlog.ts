@@ -12,10 +12,11 @@ import { chunkGenerationFilter } from '../search/safe-chunks.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { readFilter } from './search-reads.ts';
+import { PROJECTION_POLICY_ADMITS_SQL } from '../page-state/projection-policy-sql.ts';
 
 /** `projectionBacklog`'s answer: every class of the projection queue, with the keys the wire of an older resident omits filled in. */
 export type ProjectionBacklogCounts = Required<ProjectionBacklog>;
-type ProjectionBacklogClass = 'pending' | 'failed' | 'sealable' | 'sealable_with_visual' | 'reimport' | 'ocr_required' | 'protected' | 'archived';
+type ProjectionBacklogClass = 'pending' | 'failed' | 'sealable' | 'sealable_with_visual' | 'reimport' | 'ocr_required' | 'protected' | 'archived' | 'held' | 'actionable_pending' | 'actionable_sealable';
 
 /**
  * Every class of the projection queue in one aggregate, moved from page-state/projections.ts `projectionBacklog` with its text
@@ -24,7 +25,10 @@ type ProjectionBacklogClass = 'pending' | 'failed' | 'sealable' | 'sealable_with
  */
 export async function readProjectionBacklog(raw: EngineRawRead, scope: PageReadScope = {}): Promise<ProjectionBacklogCounts> {
   const { text, params } = renderFragment(sqlFragment`SELECT COUNT(*) FILTER (WHERE k.cls='text')::int AS pending,
-      COUNT(*) FILTER (WHERE k.cls='text' AND j.reason='rebuild_failed')::int AS failed,
+      COUNT(*) FILTER (WHERE k.cls='text' AND j.reason IN ('rebuild_failed','canonical_change_rebuild_failed'))::int AS failed,
+      COUNT(*) FILTER (WHERE k.cls IN ('text','sealable') AND NOT ${trustedSql(PROJECTION_POLICY_ADMITS_SQL)})::int AS held,
+      COUNT(*) FILTER (WHERE k.cls='text' AND ${trustedSql(PROJECTION_POLICY_ADMITS_SQL)})::int AS actionable_pending,
+      COUNT(*) FILTER (WHERE k.cls='sealable' AND ${trustedSql(PROJECTION_POLICY_ADMITS_SQL)})::int AS actionable_sealable,
       COUNT(*) FILTER (WHERE k.cls='sealable')::int AS sealable,
       COUNT(*) FILTER (WHERE k.cls='sealable' AND EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND c.embedding_image IS NOT NULL
         AND ${trustedSql(chunkGenerationFilter('p', 'c'))}))::int AS sealable_with_visual,
@@ -42,5 +46,6 @@ export async function readProjectionBacklog(raw: EngineRawRead, scope: PageReadS
   const oldest = row?.oldest === null || row?.oldest === undefined ? null : Math.max(0, Math.floor(Number(row.oldest)));
   const n = (key: ProjectionBacklogClass) => Number(row?.[key] ?? 0);
   return { pending: n('pending'), failed: n('failed'), oldest_age_seconds: oldest, sealable: n('sealable'), sealable_with_visual: n('sealable_with_visual'),
-    reimport: n('reimport'), ocr_required: n('ocr_required'), protected: n('protected'), archived: n('archived'), as_of: String(row?.as_of ?? '') };
+    reimport: n('reimport'), ocr_required: n('ocr_required'), protected: n('protected'), archived: n('archived'), held: n('held'),
+    actionable_pending: n('actionable_pending'), actionable_sealable: n('actionable_sealable'), as_of: String(row?.as_of ?? '') };
 }

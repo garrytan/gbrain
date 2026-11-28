@@ -7,21 +7,21 @@ test('projection fixture count models its sealed snapshots', async () => {
   const engine = mockEmbedProjectionEngine();
   const snapshot = await engine.readPageSnapshot('synthetic-fixture');
   expect(snapshot?.page.text_projection_revision).toBe(snapshot?.page.knowledge_revision);
-  expect(await prepareEmbeddingProjections(engine)).toEqual({ rebuilt: 0, blocked: 0 });
+  expect(await prepareEmbeddingProjections(engine)).toEqual({ rebuilt: 0, blocked: 0, held: 0 });
 });
 
 test.each([undefined, null, NaN, -1, 'unknown'])('projection readiness rejects an unknown or invalid count: %s', async n => {
-  const engine = { executeRaw: async (sql: string) => sql.startsWith('SELECT count(') ? [{ n }] : [] } as unknown as BrainEngine;
+  const engine = { getConfig: async () => null, executeRaw: async (sql: string) => sql.startsWith('SELECT count(') ? [{ n }] : [] } as unknown as BrainEngine;
   await expect(prepareEmbeddingProjections(engine)).rejects.toThrow('Cannot determine pending embedding projections');
 });
 
 test('projection readiness rejects missing count rows', async () => {
-  const engine = { executeRaw: async () => [] } as unknown as BrainEngine;
+  const engine = { getConfig: async () => null, executeRaw: async () => [] } as unknown as BrainEngine;
   await expect(prepareEmbeddingProjections(engine)).rejects.toThrow('Cannot determine pending embedding projections');
 });
 
 test('projection readiness propagates count failures', async () => {
-  const engine = { executeRaw: async (sql: string) => {
+  const engine = { getConfig: async () => null, executeRaw: async (sql: string) => {
     if (sql.startsWith('SELECT count(')) throw new Error('synthetic count failure');
     return [];
   } } as unknown as BrainEngine;
@@ -41,7 +41,7 @@ test('projection recovery stops after a batch makes no progress', async () => {
       return [];
     },
   });
-  expect(await prepareEmbeddingProjections(engine, { repair: true })).toEqual({ rebuilt: 0, blocked: 1 });
+  expect(await prepareEmbeddingProjections(engine, { repair: true })).toEqual({ rebuilt: 0, blocked: 1, held: 0 });
   expect(batches).toBe(1);
 });
 
@@ -61,6 +61,6 @@ test('projection recovery advances past full unavailable batches and terminates'
       return [];
     },
   });
-  expect(await prepareEmbeddingProjections(engine, { repair: true, limit: 2 })).toEqual({ rebuilt: 0, blocked: 5 });
+  expect(await prepareEmbeddingProjections(engine, { repair: true, limit: 2 })).toEqual({ rebuilt: 0, blocked: 5, held: 0 });
   expect(cursors).toEqual([0, 2, 4]);
 });

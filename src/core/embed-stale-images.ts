@@ -36,10 +36,14 @@ import { serr } from './console-prefix.ts';
 import { gitChildEnv } from './git-env.ts';
 import { isMultimodalEnabled } from './sync.ts';
 import { embedCostStopVerdict, noteEmbedCostStop, type EmbedCostCap, type EmbedCostStopFields } from './embed-cost-cap.ts';
+import { resolveCurrentProjectionsOnly } from './search/safe-chunks.ts';
+import { HISTORICAL_PROJECTION_HELD_SQL } from './page-state/projection-policy-sql.ts';
+import { pageProjectionHeld } from './page-state/projection-policy.ts';
 
 export interface StaleImageSweepResult extends EmbedCostStopFields {
   candidates: number;
   rebuilt: number;
+  held?: number;
   /** Candidates the importer left unchanged (complete by its own check, or refused for another reason). */
   skipped: number;
   /**
@@ -77,10 +81,12 @@ export async function embedStaleImages(
   opts: { sourceId?: string; dryRun: boolean; costCap?: EmbedCostCap | null },
 ): Promise<StaleImageSweepResult> {
   const ocrWanted = process.env.GBRAIN_EMBEDDING_IMAGE_OCR === 'true';
+  const currentOnly = await resolveCurrentProjectionsOnly(engine);
   const params: unknown[] = [ocrWanted];
   if (opts.sourceId) params.push(opts.sourceId);
   // #6803: an unsealed image is a candidate only in the reimport class; a sealed one keeps its two incompleteness arms.
-  const scope = `FROM pages p JOIN sources s ON s.id = p.source_id CROSS JOIN LATERAL (SELECT ${projectionClassSql('p', 's')} AS cls) k
+  const scope = `FROM pages p JOIN sources s ON s.id = p.source_id LEFT JOIN page_projection_jobs j ON j.source_incarnation=s.incarnation AND j.slug=p.slug
+      CROSS JOIN LATERAL (SELECT ${projectionClassSql('p', 's')} AS cls) k
       WHERE p.page_kind = 'image' AND p.deleted_at IS NULL${opts.sourceId ? ' AND p.source_id = $2' : ''}`;
   const unsealed = 'p.text_projection_revision IS DISTINCT FROM p.knowledge_revision';
   const incompleteSealed = `(NOT (${safeChunksFilter('p')})
@@ -89,6 +95,7 @@ export async function embedStaleImages(
   const rows = await engine.executeRaw<{ slug: string; source_id: string; source_path: string | null; local_path: string | null }>(
     `SELECT p.slug, p.source_id, p.source_path, s.local_path ${scope}
         AND CASE WHEN ${unsealed} THEN k.cls = 'reimport' ELSE ${incompleteSealed} END
+        ${currentOnly ? `AND NOT ${HISTORICAL_PROJECTION_HELD_SQL}` : ''}
       ORDER BY p.id`, params);
   const [counts] = await engine.executeRaw<Record<'reimport' | 'incomplete_sealed' | 'ocr_required' | 'sealable' | 'protected' | 'archived', number>>(
     `SELECT COUNT(*) FILTER (WHERE ${unsealed} AND k.cls = 'reimport')::int AS reimport,
@@ -100,6 +107,11 @@ export async function embedStaleImages(
   const result: StaleImageSweepResult = { candidates: rows.length, rebuilt: 0, skipped: 0, missingFile: 0, missingSourcePath: rows.filter(row => row.source_path === null).length,
     failures: 0, failure_samples: [], missing_samples: [], reimport: Number(counts?.reimport ?? 0), incomplete_sealed: Number(counts?.incomplete_sealed ?? 0),
     ocr_required: Number(counts?.ocr_required ?? 0), sealable: Number(counts?.sealable ?? 0), protected: Number(counts?.protected ?? 0), archived: Number(counts?.archived ?? 0) };
+  if (currentOnly) {
+    const [held] = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n ${scope}
+      AND CASE WHEN ${unsealed} THEN k.cls='reimport' ELSE ${incompleteSealed} END AND ${HISTORICAL_PROJECTION_HELD_SQL}`, params);
+    result.held = Number(held?.n ?? 0);
+  }
   const fail = (row: { source_id: string; slug: string }, error: string) => {
     result.failures++;
     if (result.failure_samples.length < SAMPLE_CAP) result.failure_samples.push(`${row.source_id}:${row.slug}: ${error}`);
@@ -114,6 +126,7 @@ export async function embedStaleImages(
   for (const row of rows) {
     // Fix wave 13 P1.18: the approved cap stops the sweep before the next image; a refused image is not a failure.
     if (cap?.hit()) break;
+    if (await pageProjectionHeld(engine, { sourceId: row.source_id, slug: row.slug })) continue;
     const root = row.local_path ?? (row.source_id === 'default' ? repoPath : null);
     // An image slug is the lower-cased repo-relative path, so it names the file when the importer never recorded source_path.
     const located = root ? locateSourceFile(root, [row.source_path, row.slug], gitRoots, listings) : null;
@@ -181,6 +194,7 @@ export async function runStaleImageSweepFirst(engine: BrainEngine, opts: { sourc
 export function foldImageSweep<T extends { failures: number; failure_samples: string[]; images?: StaleImageSweepResult }>(result: T, sweep: StaleImageSweepResult | null): T {
   if (!sweep) return result;
   result.images = sweep;
+  if (sweep.held) serr(`[embed] images: ${sweep.held} historical image projection(s) held by embed.current_projections_only.`);
   if (sweep.missingFile > 0) serr(`[embed] images: ${sweep.missingFile} image page(s) have no source file in the checkout and were not rebuilt (first: ${sweep.missing_samples[0]}); delete those pages or restore the files.`);
   if (sweep.failures > 0) {
     result.failures += sweep.failures;
@@ -207,6 +221,7 @@ export async function runEmbedStaleImagesCli(engine: BrainEngine, args: string[]
       : `${result.rebuilt} rebuilt, ${result.skipped} unchanged, ${result.ocr_required} need OCR, ${result.missingFile} missing source file, ${result.failures} failed`}`);
     console.log(`[embed] images: ${result.ocr_required} ${dryRun ? 'would be refused until OCR is enabled' : 'refused for lack of a successful fresh OCR pass'} (ocr_required; GBRAIN_EMBEDDING_IMAGE_OCR=true), `
       + `${result.sealable} sealable (not candidates: gbrain projections drain seals them keyless), ${result.protected} protected and ${result.archived} archived (not candidates, by design)`);
+    if (result.held) console.log(`[embed] images: ${result.held} historical projection(s) held by embed.current_projections_only.`);
   }
   if (result.missing_samples.length) serr(`[embed] first missing image file: ${result.missing_samples[0]}`);
   if (result.failures > 0) serr(`[embed] first image failure: ${result.failure_samples[0]}`);

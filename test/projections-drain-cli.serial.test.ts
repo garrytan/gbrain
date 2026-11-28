@@ -16,6 +16,7 @@ import { runCli } from './helpers/cli-spawn.ts';
 const root = mkdtempSync(join(tmpdir(), 'gbrain-projections-cli-'));
 const healthyHome = join(root, 'healthy');
 const failingHome = join(root, 'failing');
+const heldHome = join(root, 'held');
 const mountedHome = join(root, 'mounted');
 
 function writeConfig(home: string, config: Record<string, unknown>) {
@@ -43,6 +44,13 @@ async function seedBrain(home: string, broken: boolean) {
 beforeAll(async () => {
   await seedBrain(healthyHome, false);
   await seedBrain(failingHome, true);
+  await seedBrain(heldHome, false);
+  const heldEngine = new PGLiteEngine();
+  await heldEngine.connect({ engine: 'pglite', database_path: join(heldHome, '.gbrain', 'brain.pglite') });
+  try {
+    await heldEngine.executeRaw("UPDATE page_projection_jobs SET reason='protocol_activation'");
+    await heldEngine.setConfig('embed.current_projections_only', 'true');
+  } finally { await heldEngine.disconnect(); }
   writeConfig(mountedHome, { engine: 'postgres', database_url: 'postgresql://example@127.0.0.1:1/unreachable' });
   writeFileSync(join(mountedHome, '.gbrain', 'mounts.json'), JSON.stringify({ version: 1, mounts: [
     { id: 'team-a', path: join(mountedHome, 'team-a'), engine: 'pglite', database_path: join(mountedHome, 'team-a.pglite'), enabled: true },
@@ -64,6 +72,19 @@ describe('gbrain projections drain', () => {
     expect(JSON.parse(limit.stdout)).toMatchObject({ error: 'invalid_params', suggestion: expect.stringContaining('gbrain projections drain --limit 1000') });
   }, 120_000);
 
+  test('preview and owner override operate on held jobs through the CLI', async () => {
+    const preview = await runCli(['projections', 'drain', '--dry-run', '--json'], { home: heldHome });
+    expect(preview.exitCode).toBe(0);
+    const held = JSON.parse(preview.stdout);
+    expect(held).toMatchObject({ pending: 2, held: 2, current_projections_only: true, rows: [] });
+    const authorized = await runCli(['projections', 'drain', '--dry-run', '--no-current-projections-only', '--json'], { home: heldHome });
+    expect(authorized.exitCode).toBe(0);
+    expect(JSON.parse(authorized.stdout)).toMatchObject({ held: 2, current_projections_only: false, rows: expect.arrayContaining([expect.objectContaining({ slug: 'notes/a' })]) });
+    const result = await runCli(['projections', 'drain', '--no-current-projections-only', '--json'], { home: heldHome });
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ rebuilt: 2, held: 0, current_projections_only: false });
+  }, 120_000);
+
   test('exit 0 drains the backlog and says it is empty', async () => {
     const human = await runCli(['projections', 'drain'], { home: healthyHome });
     expect(human.exitCode).toBe(0);
@@ -73,7 +94,7 @@ describe('gbrain projections drain', () => {
     // #6803: the JSON now also carries limited, the image seal counts and every class left.
     expect(JSON.parse(again.stdout)).toEqual({ rebuilt: 0, superseded: 0, failed: [], remaining: 0, limited: false, sealed: 0, sealed_with_visual: 0,
       sealed_text_only: 0, statistics_refreshed: false, remaining_by_class: { pending: 0, failed: 0, oldest_age_seconds: null, sealable: 0,
-        sealable_with_visual: 0, reimport: 0, ocr_required: 0, protected: 0, archived: 0, as_of: expect.any(String) } });
+        sealable_with_visual: 0, reimport: 0, ocr_required: 0, protected: 0, archived: 0, held: 0, actionable_pending: 0, actionable_sealable: 0, as_of: expect.any(String) } });
   }, 120_000);
 
   test('exit 1 reports each failed page with its source, slug, reason and next action', async () => {

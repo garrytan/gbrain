@@ -884,11 +884,14 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
       slugs?: string[]; noLlm?: boolean; maxLlmUsd?: number; deadline?: number; stop?: AbortSignal; recordDatabaseStops?: boolean;
       prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string; provenance?: string; cursor?: string; progress?: ProgressReporter;
       keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
-      cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger; readers?: ReadersRequest; openFacts?: OpenFactsRequest } = {}): Promise<RepairResult> {
+      cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger; readers?: ReadersRequest; openFacts?: OpenFactsRequest; currentProjectionsOnly?: boolean; embeddingCapUsd?: number; embeddingConsent?: boolean } = {}): Promise<RepairResult> {
       const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0], writeWaitMs } as OperationContext;
       const spec = repairSpec(kind, opts.registry);
       return runRepair(ctx, spec.handler, scope, { apply: opts.apply, limit: run.limit, embeddingModel, sourceFlag: run.sourceFlag, spec,
-        embed: !opts.noEmbed && embeddingModel !== undefined, applyArgs: [...(opts.noEmbed && spec.embeds === 'inline' ? ['--no-embed'] : []),
+        embed: !opts.noEmbed && embeddingModel !== undefined, currentProjectionsOnly: run.currentProjectionsOnly, applyArgs: [
+          ...(opts.noEmbed && spec.embeds === 'inline' ? ['--no-embed'] : []),
+          ...(run.currentProjectionsOnly === false ? ['--no-current-projections-only', ...(!opts.noEmbed
+            ? run.embeddingConsent && run.embeddingCapUsd !== undefined ? ['--yes', '--max-usd', String(run.embeddingCapUsd)] : ['--no-embed'] : [])] : []),
           ...(run.olderThan ? ['--older-than', run.olderThan] : []), ...(run.includeFailures ? ['--include-failures'] : []), ...(run.force ? ['--force'] : []),
           ...(run.afterPage !== undefined ? ['--after', String(run.afterPage)] : []), ...(run.generations ? generationsSelectionArgv(run.generations) : []), ...(run.day ? ['--day', run.day] : []), ...(run.rules?.length ? ['--rules', run.rules.join(',')] : []),
           ...(kind === 'agent-session-facts' ? agentSessionFlagArgs(run).map(arg => shellQuote(arg)) : []),

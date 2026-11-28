@@ -7,6 +7,12 @@ import { credentialSafeProjection } from './credential-projection.ts';
 import { isEmbedSkipped } from './embed-skip.ts';
 import { isQuarantined } from './quarantine.ts';
 
+export interface PreparedCodeChunks {
+  chunks: ChunkInput[];
+  edges: ExtractedEdge[];
+  content: string;
+}
+
 export async function prepareCodeChunks(page: { compiled_truth: string; frontmatter?: Record<string, unknown> | null }, path: string) {
   const content = credentialSafeProjection(sanitizeRemoteBody(page.compiled_truth));
   const prepared = isEmbedSkipped(page.frontmatter) || isQuarantined(page.frontmatter)
@@ -22,7 +28,7 @@ export async function prepareCodeChunks(page: { compiled_truth: string; frontmat
 }
 
 export async function installCodeChunkEdges(engine: BrainEngine, slug: string, sourceId: string,
-  prepared: Awaited<ReturnType<typeof prepareCodeChunks>>): Promise<void> {
+  prepared: PreparedCodeChunks): Promise<void> {
   const stored = await engine.getChunks(slug, { sourceId, includeUnsealed: true });
   if (!stored.length) return;
   const ids = stored.map(c => c.id);

@@ -6,7 +6,7 @@ import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
 import { CHUNKER_VERSION } from '../chunkers/code.ts';
 import { prepareMarkdownChunks } from '../markdown-chunks.ts';
 import { loadFenceChunkOverlay, type FenceChunkOverlay } from '../eligibility/fence-overlay.ts';
-import { prepareCodeChunks, installCodeChunkEdges } from '../code-chunks.ts';
+import { prepareCodeChunks, installCodeChunkEdges, type PreparedCodeChunks } from '../code-chunks.ts';
 import { resolveMaxChunkTokens } from '../embedding-input-limit.ts';
 import { assertPageRevision, PageProjectionConflictError, PageRevisionConflictError, type PageSnapshot, type ProjectionConflictField } from './types.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -33,6 +33,9 @@ import { ACTIVATION_SERVED_REVISION } from '../search/safe-chunks.ts';
 export { sealPageTextProjection } from './text-seal.ts';
 import { sealPageTextProjection } from './text-seal.ts';
 import { DEFERRED_CHUNK_CLAIM, DEFERRED_CHUNK_REPLACEMENT, projectionJobProbes } from '../engine-sql/projection-rebuild.ts';
+import { HistoricalProjectionHeldError, pageProjectionHeld, projectionTransaction } from './projection-policy.ts';
+import { CURRENT_PROJECTION_JOB_SQL, PROJECTION_POLICY_ADMITS_SQL } from './projection-policy-sql.ts';
+import { resolveCurrentProjectionsOnly } from '../search/safe-chunks.ts';
 
 /**
  * A coordinated import's one closing page write: the chunker version its apply
@@ -250,6 +253,7 @@ export async function continueDeferredProjectionStep(engine: BrainEngine, source
     const head = await tx.readProjectionHead(sourceId, slug);
     if (!head || head.sealed) return ['skipped'];
     if (await tx.isDeferredReplacementHeld(sourceId, slug, head.revision, claim)) return ['held'];
+    if (await pageProjectionHeld(tx, { sourceId, slug })) return ['held'];
     const carried = state.plan?.current.revision === head.revision && state.plan.pageId === Number(head.id)
       && state.plan.fingerprint === await chunkRowsFingerprint(tx, Number(head.id)) ? state.plan : null;
     const base = carried ?? await planDeferredReplacement(tx, sourceId, slug);
@@ -289,11 +293,11 @@ export async function continueDeferredProjection(engine: BrainEngine, sourceId: 
 }
 
 /** No provider work under the guard. Delayed derived results lose to newer content. */
-export async function installPageProjection(engine: BrainEngine, prepared: ProjectionSnapshot, chunks: ChunkInput[], opts: { seal?: boolean; signature?: string; preserveEmbeddings?: boolean; code?: Awaited<ReturnType<typeof prepareCodeChunks>> } = {}): Promise<void> {
+export async function installPageProjection(engine: BrainEngine, prepared: ProjectionSnapshot, chunks: ChunkInput[], opts: { seal?: boolean; signature?: string; preserveEmbeddings?: boolean; code?: PreparedCodeChunks; currentProjectionsOnly?: boolean } = {}): Promise<void> {
   const { snapshot } = prepared;
   const sourceId = snapshot.page.source_id;
   const slug = snapshot.page.slug;
-  await engine.transaction(async tx => {
+  await projectionTransaction(engine, opts.currentProjectionsOnly, async tx => {
     await tx.lockPageKeys([{ sourceId, slug }]);
     const current = await tx.readPageSnapshot(slug, { sourceId });
     assertPageRevision(current, { expectedRevision: snapshot.revision });
@@ -302,6 +306,7 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
     if (current!.sourceIncarnation !== snapshot.sourceIncarnation || current!.page.id !== snapshot.page.id) {
       throw new PageRevisionConflictError(snapshot.revision, current!.revision);
     }
+    if (opts.seal && await pageProjectionHeld(tx, { sourceId, slug }, opts.currentProjectionsOnly)) throw new HistoricalProjectionHeldError(sourceId, slug);
     const stored = await tx.getChunks(slug, { sourceId, includeUnsealed: true });
     const context = await indexingContext(tx, current!, prepared.maxChunkTokensOverride);
     // getChunks omits vector payloads but includes identity, text/source, metadata
@@ -372,6 +377,7 @@ export async function installPageEmbeddings(engine: BrainEngine, prepared: Proje
       || current.page.text_projection_revision !== current.revision || isSegmentedPage(current.page)) return refused;
     const source = await tx.readSourceRow(sourceId);
     if (!source || source.archived) return refused;
+    if (await pageProjectionHeld(tx, { sourceId, slug })) return refused;
     const context = await indexingContext(tx, current, prepared.maxChunkTokensOverride);
     if (context.key !== prepared.indexingContext) return refused;
     const stored = await tx.getChunks(slug, { sourceId, includeUnsealed: true });
@@ -444,13 +450,14 @@ export async function projectionBelowSafeFence(engine: Pick<BrainEngine, 'getPag
  * the page is gone or already sealed at the fence; a concurrent change
  * surfaces as PageRevisionConflictError.
  */
-export async function resealSafeChunks(engine: BrainEngine, slug: string, sourceId: string): Promise<{ pendingChunks: number; pendingChars: number } | null> {
+export async function resealSafeChunks(engine: BrainEngine, slug: string, sourceId: string, opts: { currentProjectionsOnly?: boolean } = {}): Promise<{ pendingChunks: number; pendingChars: number } | null> {
   const prepared = await readProjectionSnapshot(engine, slug, sourceId, { allowUnsealed: true, requireLiveSource: true });
   if (!prepared || prepared.snapshot.page.deleted_at || !['markdown', 'code'].includes(prepared.pageKind)) return null;
   if (!await projectionBelowSafeFence(engine, prepared.snapshot.page.id)
     && prepared.snapshot.page.text_projection_revision === prepared.snapshot.revision) return null;
+  if (await pageProjectionHeld(engine, { sourceId, slug }, opts.currentProjectionsOnly)) return null;
   const projection = await preparePageProjection(prepared);
-  await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code });
+  await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code, ...opts });
   const pending = await engine.countPendingTextChunks(prepared.snapshot.page.id, prepared.embeddingColumn);
   return { pendingChunks: pending.chunks, pendingChars: pending.chars };
 }
@@ -532,8 +539,9 @@ export const SEGMENTED_PROJECTION_LEASE_SECONDS = 60;
  * over `page_projection_jobs j`, shared by the consumer's idle probe and the
  * resident's selector.
  */
-export const SEGMENTED_PROJECTION_CLAIMED_SQL = `(split_part(j.reason,':',1)='${SEGMENTED_PROJECTION_CLAIM}' AND j.updated_at>=now()-interval '${SEGMENTED_PROJECTION_LEASE_SECONDS} seconds')`;
-export const PROJECTION_RETRY_READY_SQL = "(j.reason IS DISTINCT FROM 'rebuild_failed' OR j.updated_at<now()-interval '30 seconds')"
+export const SEGMENTED_PROJECTION_CLAIMED_SQL = `(split_part(j.reason,':',1) IN ('${SEGMENTED_PROJECTION_CLAIM}','historical_segmented_projecting') AND j.updated_at>=now()-interval '${SEGMENTED_PROJECTION_LEASE_SECONDS} seconds')`;
+export const PROJECTION_RETRY_READY_SQL = "(j.reason NOT IN ('rebuild_failed','canonical_change_rebuild_failed') OR j.updated_at<now()-interval '30 seconds')"
+  + ` AND ${PROJECTION_POLICY_ADMITS_SQL}`
   + ` AND NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}`
   // #7172: a chunk replacement a continuation holds renews its claim each step (continueDeferredProjectionStep), under the same lease.
   + ` AND NOT (split_part(j.reason,':',1)='${DEFERRED_CHUNK_CLAIM}' AND j.updated_at>=now()-interval '${SEGMENTED_PROJECTION_LEASE_SECONDS} seconds')`;
@@ -555,6 +563,8 @@ export interface ProjectionRebuildOptions {
   retryCooldown?: boolean;
   /** Only rows whose queue reason is one of these. */
   reasons?: readonly string[];
+  /** Explicit false authorizes this run to rebuild historical projections. */
+  currentProjectionsOnly?: boolean;
   /** Only these pages of one source. */
   pages?: { sourceId: string; slugs: readonly string[] };
   /** Receives each failed page; without it a generic stderr line is printed. */
@@ -609,7 +619,7 @@ type WindowKey = { source_incarnation: string; slug: string };
 async function selectWindowJobs(engine: BrainEngine, cursor: ProjectionScanCursor, retryCooldown: boolean):
   Promise<{ jobs: Array<QueuedJob & { ord: number }>; window: WindowKey[]; highWater: string | null }> {
   const params: unknown[] = [];
-  const ctes = residentWindowCtes(cursor, params, retryCooldown ? PROJECTION_RETRY_READY_SQL : 'TRUE');
+  const ctes = residentWindowCtes(cursor, params, retryCooldown ? PROJECTION_RETRY_READY_SQL : PROJECTION_POLICY_ADMITS_SQL);
   const rows = await engine.executeRaw<WindowKey & { lane: string | null; ord: number; revision: string; high_water: string | null }>(`WITH ${ctes}
     SELECT r.lane,r.ord,r.source_incarnation::text AS source_incarnation,r.slug,r.revision::text AS revision,h.at AS high_water
     FROM high_water h LEFT JOIN (SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM recent
@@ -662,15 +672,23 @@ export interface ProjectionBacklog {
   archived?: number;
   /** Database time of the count. */
   as_of?: string;
+  /** Historical text or sealable image jobs withheld by the configured policy. */
+  held?: number;
+  /** Jobs admitted by the configured policy, excluding historical holds. */
+  actionable_pending?: number;
+  actionable_sealable?: number;
 }
 
 /** Every class of the queue in one aggregate; `scope` narrows to the pages a caller may read. */
 export async function projectionBacklog(engine: Pick<BrainEngine, 'executeRaw'>, scope: PageReadScope = {}): Promise<Required<ProjectionBacklog>> {
   const params: unknown[] = [];
   const read = pageReadFilter('p', scope, params);
-  const [row] = await engine.executeRaw<Record<'pending' | 'failed' | 'sealable' | 'sealable_with_visual' | 'reimport' | 'ocr_required' | 'protected' | 'archived', number>
+  const [row] = await engine.executeRaw<Record<'pending' | 'failed' | 'sealable' | 'sealable_with_visual' | 'reimport' | 'ocr_required' | 'protected' | 'archived' | 'held' | 'actionable_pending' | 'actionable_sealable', number>
     & { oldest: number | null; as_of: string }>(`SELECT COUNT(*) FILTER (WHERE k.cls='text')::int AS pending,
-      COUNT(*) FILTER (WHERE k.cls='text' AND j.reason='rebuild_failed')::int AS failed,
+      COUNT(*) FILTER (WHERE k.cls='text' AND j.reason IN ('rebuild_failed','canonical_change_rebuild_failed'))::int AS failed,
+      COUNT(*) FILTER (WHERE k.cls IN ('text','sealable') AND NOT ${PROJECTION_POLICY_ADMITS_SQL})::int AS held,
+      COUNT(*) FILTER (WHERE k.cls='text' AND ${PROJECTION_POLICY_ADMITS_SQL})::int AS actionable_pending,
+      COUNT(*) FILTER (WHERE k.cls='sealable' AND ${PROJECTION_POLICY_ADMITS_SQL})::int AS actionable_sealable,
       COUNT(*) FILTER (WHERE k.cls='sealable')::int AS sealable,
       COUNT(*) FILTER (WHERE k.cls='sealable' AND EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND c.embedding_image IS NOT NULL
         AND ${chunkGenerationFilter('p', 'c')}))::int AS sealable_with_visual,
@@ -685,9 +703,15 @@ export async function projectionBacklog(engine: Pick<BrainEngine, 'executeRaw'>,
     CROSS JOIN LATERAL (SELECT ${projectionClassSql('p', 's')} AS cls) k
     WHERE ${read}`, params);
   const oldest = row?.oldest === null || row?.oldest === undefined ? null : Math.max(0, Math.floor(Number(row.oldest)));
-  const n = (key: 'pending' | 'failed' | 'sealable' | 'sealable_with_visual' | 'reimport' | 'ocr_required' | 'protected' | 'archived') => Number(row?.[key] ?? 0);
+  const n = (key: 'pending' | 'failed' | 'sealable' | 'sealable_with_visual' | 'reimport' | 'ocr_required' | 'protected' | 'archived' | 'held' | 'actionable_pending' | 'actionable_sealable') => Number(row?.[key] ?? 0);
   return { pending: n('pending'), failed: n('failed'), oldest_age_seconds: oldest, sealable: n('sealable'), sealable_with_visual: n('sealable_with_visual'),
-    reimport: n('reimport'), ocr_required: n('ocr_required'), protected: n('protected'), archived: n('archived'), as_of: String(row?.as_of ?? '') };
+    reimport: n('reimport'), ocr_required: n('ocr_required'), protected: n('protected'), archived: n('archived'), held: n('held'),
+    actionable_pending: n('actionable_pending'), actionable_sealable: n('actionable_sealable'), as_of: String(row?.as_of ?? '') };
+}
+
+export interface ProjectionDrainPreview extends Required<ProjectionBacklog> {
+  current_projections_only: boolean;
+  rows: Array<{ source_id: string; slug: string; page_kind: string; reason: string; updated_at: string }>;
 }
 
 /**
@@ -698,15 +722,16 @@ export async function projectionBacklog(engine: Pick<BrainEngine, 'executeRaw'>,
  * queue reason, so a row that last failed (`rebuild_failed`) is named before
  * anything is rebuilt.
  */
-export async function previewProjectionDrain(engine: Pick<BrainEngine, 'executeRaw'>, limit = 50):
-  Promise<Required<ProjectionBacklog> & { rows: Array<{ source_id: string; slug: string; page_kind: string; reason: string; updated_at: string }> }> {
+export async function previewProjectionDrain(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, limit = 50, opts: { currentProjectionsOnly?: boolean } = {}): Promise<ProjectionDrainPreview> {
+  const currentProjectionsOnly = await resolveCurrentProjectionsOnly(engine, opts.currentProjectionsOnly);
   const backlog = await projectionBacklog(engine);
   const rows = await engine.executeRaw<{ source_id: string; slug: string; page_kind: string; reason: string; updated_at: string }>(`SELECT s.id AS source_id,j.slug,p.page_kind,j.reason,j.updated_at::text AS updated_at
     FROM page_projection_jobs j ${projectionJobProbes({ media: true })}
+    ${currentProjectionsOnly ? `WHERE ${CURRENT_PROJECTION_JOB_SQL}` : ''}
     ORDER BY CASE WHEN p.page_kind NOT IN ('markdown','code') THEN 1
       WHEN EXISTS (SELECT 1 FROM pages q WHERE q.source_id=s.id AND q.slug=j.slug AND q.text_projection_revision='${ACTIVATION_SERVED_REVISION}'::uuid) THEN 2
       ELSE 0 END,j.updated_at,j.source_incarnation,j.slug LIMIT $1`, [Math.max(1, limit)]);
-  return { ...backlog, rows };
+  return { ...backlog, current_projections_only: currentProjectionsOnly, rows };
 }
 
 /**
@@ -728,6 +753,8 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   const startedAt = now();
   const params: unknown[] = [Math.max(1, Math.min(limit, 100))];
   const filters: string[] = [];
+  if (opts.currentProjectionsOnly === true) filters.push(CURRENT_PROJECTION_JOB_SQL);
+  else if (opts.currentProjectionsOnly !== false) filters.push(PROJECTION_POLICY_ADMITS_SQL);
   if (opts.retryCooldown) filters.push(PROJECTION_RETRY_READY_SQL);
   if (opts.notAfter !== undefined) { params.push(opts.notAfter); filters.push(`j.updated_at<=$${params.length}::text::timestamptz`); }
   if (opts.reasons) { params.push(opts.reasons); filters.push(`j.reason=ANY($${params.length}::text[])`); }
@@ -766,8 +793,9 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
     try {
       const prepared = await engine.transaction(async tx => {
         await tx.lockPageKeys([{ sourceId: job.source_id, slug: job.slug }]);
-        const pending = await tx.executeRaw<{ reason: string }>(`SELECT reason FROM page_projection_jobs
-          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, observed);
+        const pending = await tx.executeRaw<{ reason: string }>(`SELECT reason FROM page_projection_jobs j
+          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid
+            ${opts.currentProjectionsOnly === false ? '' : `AND ${opts.currentProjectionsOnly === true ? CURRENT_PROJECTION_JOB_SQL : PROJECTION_POLICY_ADMITS_SQL}`}`, observed);
         if (!pending.length) return null;
         if (pending[0]!.reason === DEFERRED_CHUNK_REPLACEMENT || pending[0]!.reason.split(':')[0] === DEFERRED_CHUNK_CLAIM) return 'deferred';
         const read = await readGuardedProjectionSnapshot(tx, job.slug, job.source_id, { allowUnsealed: true });
@@ -803,7 +831,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
         return true;
       }
       if (prepared === 'segmented') {
-        const built = await buildSegmentedProjection(engine, { sourceId: job.source_id, slug: job.slug });
+        const built = await buildSegmentedProjection(engine, { sourceId: job.source_id, slug: job.slug }, { currentProjectionsOnly: opts.currentProjectionsOnly });
         await engine.executeRaw(built.sealed
           ? 'DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid'
           : `UPDATE page_projection_jobs j SET updated_at=now() WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid
@@ -813,9 +841,10 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
         return true;
       }
       const projection = await preparePageProjection(prepared);
-      await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code });
+      await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code, currentProjectionsOnly: opts.currentProjectionsOnly });
       rebuilt++;
     } catch (error) {
+      if (error instanceof HistoricalProjectionHeldError) { superseded++; return true; }
       if (active > 1 && isRetryableConnError(error)) {
         active--;
         lost++;
@@ -824,7 +853,8 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
         return false;
       }
       if (!(error instanceof PageRevisionConflictError)) {
-        await engine.executeRaw(`UPDATE page_projection_jobs j SET reason='rebuild_failed',updated_at=now()
+        await engine.executeRaw(`UPDATE page_projection_jobs j SET reason=CASE WHEN COALESCE((SELECT value='true' FROM config WHERE key='embed.current_projections_only'),false) AND ${CURRENT_PROJECTION_JOB_SQL}
+            THEN 'canonical_change_rebuild_failed' ELSE 'rebuild_failed' END,updated_at=now()
           WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid AND NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}`, observed);
         if (opts.onFailure) opts.onFailure({ source_id: job.source_id, slug: job.slug, reason: (error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 300) });
         else process.stderr.write('[gbrain] Projection rebuild failed; work remains queued. Inspect projection readiness and the recorded source path.\n');
@@ -859,7 +889,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   await noteProjectionRebuilds(engine, rebuilt, async () => selected ? selected.jobs.length <= rebuilt
     : !(await engine.executeRaw(`SELECT 1 FROM page_projection_jobs j
       ${projectionJobProbes({ media: opts.media })}
-      WHERE j.reason<>'rebuild_failed' LIMIT 1`)).length);
+      WHERE j.reason NOT IN ('rebuild_failed','canonical_change_rebuild_failed') AND ${PROJECTION_POLICY_ADMITS_SQL} LIMIT 1`)).length);
   const last = jobs[attempted - 1];
   if (opts.walk && !selected && last?.updated_at !== undefined) {
     opts.walk.after = { updated_at: last.updated_at, source_incarnation: last.source_incarnation, slug: last.slug };
@@ -882,6 +912,8 @@ export interface ProjectionDrainResult {
   failed: ProjectionRebuildFailure[];
   /** Markdown/code rows still queued (`pending`). */
   remaining: number;
+  held?: number;
+  current_projections_only?: boolean;
   /** The run stopped at its `limit` while rows it could take remain. */
   limited: boolean;
   /** #6803, media drains only: `sealable` images sealed. */
@@ -903,7 +935,8 @@ export interface ProjectionDrainResult {
  * notes beside 93K queued images rebuilt at 14 pages/s instead of 150.
  */
 export async function drainProjections(engine: BrainEngine, opts: { limit?: number; progress?: ProgressReporter; reasons?: readonly string[]; media?: boolean;
-  concurrency?: number; onNarrow?: (concurrency: number, error: unknown) => void } = {}): Promise<ProjectionDrainResult> {
+  concurrency?: number; onNarrow?: (concurrency: number, error: unknown) => void; currentProjectionsOnly?: boolean } = {}): Promise<ProjectionDrainResult> {
+  const currentProjectionsOnly = await resolveCurrentProjectionsOnly(engine, opts.currentProjectionsOnly);
   const [{ runStart }] = await engine.executeRaw<{ runStart: string }>('SELECT now()::text AS "runStart"');
   // PGLite's clock can be coarse: wait until it passes the run start, so a page
   // that fails in this run is stamped after it and is not tried again.
@@ -911,7 +944,15 @@ export async function drainProjections(engine: BrainEngine, opts: { limit?: numb
     await new Promise(resolve => setTimeout(resolve, 1));
   }
   const before = await projectionBacklog(engine);
-  const total = before.pending + (opts.media ? before.sealable : 0);
+  let total = before.pending + (opts.media ? before.sealable : 0);
+  if (currentProjectionsOnly && before.held) {
+    const [row] = await engine.executeRaw<{ count: number }>(`SELECT COUNT(*)::int AS count
+      FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation
+      JOIN pages p ON p.source_id=s.id AND p.slug=j.slug AND p.deleted_at IS NULL
+      CROSS JOIN LATERAL (SELECT ${projectionClassSql('p', 's')} AS cls) k
+      WHERE k.cls IN (${opts.media ? "'text','sealable'" : "'text'"}) AND NOT ${CURRENT_PROJECTION_JOB_SQL}`);
+    total -= Number(row?.count ?? 0);
+  }
   opts.progress?.start('projections.drain', opts.limit === undefined ? total : Math.min(total, opts.limit));
   const refreshes = projectionStatisticsRefreshes(engine);
   if (before.pending > 0) await refreshProjectionStatistics(engine, total);
@@ -932,7 +973,7 @@ export async function drainProjections(engine: BrainEngine, opts: { limit?: numb
       let healed = 0;
       let failedNow = 0;
       const batch = await rebuildPendingPageProjections(engine, Math.min(DRAIN_BATCH, (opts.limit ?? Infinity) - tried),
-        { notAfter: runStart, reasons: opts.reasons, media: opts.media, walk, served, concurrency, onNarrow, onHeal: () => { healed++; },
+        { notAfter: runStart, reasons: opts.reasons, media: opts.media, walk, served, concurrency, onNarrow, currentProjectionsOnly: opts.currentProjectionsOnly, onHeal: () => { healed++; },
           onFailure: failure => { failed.push(failure); if (!failure.reason.startsWith('revision_conflict:')) failedNow++; } });
       rebuilt += batch.rebuilt;
       superseded += batch.superseded;
@@ -951,7 +992,7 @@ export async function drainProjections(engine: BrainEngine, opts: { limit?: numb
     const listed: string[] = [];
     while (opts.limit === undefined || tried < opts.limit) {
       const batch = await rebuildPendingSegmentedProjections(engine, Math.min(DRAIN_BATCH, (opts.limit ?? Infinity) - tried),
-        { notAfter: runStart, reasons: opts.reasons, retryCooldown: false, exclude: listed, onFailure: failure => { failed.push(failure); } });
+        { notAfter: runStart, reasons: opts.reasons, retryCooldown: false, exclude: listed, currentProjectionsOnly: opts.currentProjectionsOnly, onFailure: failure => { failed.push(failure); } });
       projectionDrainWork.batches++;
       projectionDrainWork.segmented_pages += batch.listed.length;
       if (!batch.listed.length) break;
@@ -965,11 +1006,11 @@ export async function drainProjections(engine: BrainEngine, opts: { limit?: numb
     await rebuildInline('waiting');
     if (opts.media && (opts.limit === undefined || tried < opts.limit)) {
       const { sealImageProjections } = await import('./image-seal.ts');
-      seal = await sealImageProjections(engine, { limit: opts.limit === undefined ? undefined : opts.limit - tried, notAfter: runStart });
+      seal = await sealImageProjections(engine, { limit: opts.limit === undefined ? undefined : opts.limit - tried, notAfter: runStart, currentProjectionsOnly: opts.currentProjectionsOnly });
       tried += seal.sealed;
       opts.progress?.tick(seal.sealed, `${seal.sealed} images sealed`);
       await noteProjectionRebuilds(engine, seal.sealed, async () => !(await engine.executeRaw(`SELECT 1 FROM page_projection_jobs j ${probes}
-        WHERE j.reason<>'rebuild_failed' LIMIT 1`)).length);
+        WHERE j.reason NOT IN ('rebuild_failed','canonical_change_rebuild_failed') AND ${opts.currentProjectionsOnly === false ? 'TRUE' : PROJECTION_POLICY_ADMITS_SQL} LIMIT 1`)).length);
     }
     await rebuildInline('answering');
   } finally {
@@ -977,9 +1018,10 @@ export async function drainProjections(engine: BrainEngine, opts: { limit?: numb
   }
   const after = await projectionBacklog(engine);
   const more = opts.limit !== undefined && tried >= opts.limit
-    && (await engine.executeRaw(`SELECT 1 FROM page_projection_jobs j ${probes}
-      UNION ALL SELECT 1 FROM page_projection_jobs j ${SEGMENTED_JOB_PROBES} LIMIT 1`)).length > 0;
-  const result: ProjectionDrainResult = { rebuilt, superseded, failed, remaining: after.pending, limited: more };
+    && (await engine.executeRaw(`SELECT 1 FROM page_projection_jobs j ${probes} WHERE ${opts.currentProjectionsOnly === false ? 'TRUE' : PROJECTION_POLICY_ADMITS_SQL}
+      UNION ALL SELECT 1 FROM page_projection_jobs j ${SEGMENTED_JOB_PROBES} WHERE ${opts.currentProjectionsOnly === false ? 'TRUE' : PROJECTION_POLICY_ADMITS_SQL} LIMIT 1`)).length > 0;
+  const result: ProjectionDrainResult = { rebuilt, superseded, failed, remaining: after.pending, limited: more,
+    ...(currentProjectionsOnly || opts.currentProjectionsOnly === false ? { held: after.held, current_projections_only: currentProjectionsOnly } : {}) };
   return opts.media ? { ...result, ...seal, statistics_refreshed: projectionStatisticsRefreshes(engine) > refreshes, remaining_by_class: after } : result;
 }
 

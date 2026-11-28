@@ -30,7 +30,7 @@ const OPEN_FACTS_SETTING = 'gbrain.write_open_facts';
  * aborted transaction cannot accept statements; its rollback clears SET LOCAL
  * automatically. A success restores the enclosing values.
  */
-async function withTransactionSettings<T>(engine: SettingsEngine, names: readonly string[],
+export async function withTransactionSettings<T>(engine: SettingsEngine, names: readonly string[],
   next: (previous: string[]) => string[], fn: () => Promise<T>): Promise<T> {
   const previous = (await engine.readTransactionSettings(names)).map(value => value ?? '');
   await applySettings(engine, names, next(previous));

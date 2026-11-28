@@ -1667,7 +1667,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    * grandfathered). Provider-migration paths set this so pre-stamp pages
    * aren't silently left in the old embedding space.
    */
-  countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number>;
+  countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; currentProjectionsOnly?: boolean }): Promise<number>;
   /**
    * Sum of LENGTH(chunk_text) over stale chunks — the character-count
    * backlog the embed phase / embed-backfill will process. Sibling of
@@ -1684,7 +1684,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    * `includeNullSignature` lifts the grandfather clause (#3391) — see
    * countStaleChunks.
    */
-  sumStaleChunkChars(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number>;
+  sumStaleChunkChars(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; currentProjectionsOnly?: boolean }): Promise<number>;
   /**
    * Stamp `pages.embedding_signature = signature` for one page. Called after
    * a page's chunks are (re)embedded so a later model swap can detect it as
@@ -1707,7 +1707,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    * index. `gbrain migrate embeddings` and `embed --stale
    * --include-null-signature` set this.
    */
-  invalidateStaleSignatureEmbeddings(opts: { signature: string; sourceId?: string; includeNullSignature?: boolean }): Promise<number>;
+  invalidateStaleSignatureEmbeddings(opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; currentProjectionsOnly?: boolean }): Promise<number>;
   /**
    * #4246: NULL out the embeddings (embedding + embedded_at +
    * embedded_text_hash) of every chunk whose stored `embedded_text_hash` no
@@ -1719,7 +1719,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    * batches in id order, one transaction each, no saved cursor (the embed
    * paths run content-drift-sweep.ts). Returns the chunk count invalidated.
    */
-  invalidateContentDriftEmbeddings(opts?: { sourceId?: string }): Promise<number>;
+  invalidateContentDriftEmbeddings(opts?: { sourceId?: string; currentProjectionsOnly?: boolean }): Promise<number>;
   /**
    * Return every chunk whose registry-ACTIVE embedding column IS NULL (S2),
    * with the metadata needed for embedBatch + upsertChunks. Vector columns
@@ -1740,7 +1740,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
     batchSize?: number;
     afterPageId?: number;
     afterChunkIndex?: number;
-    sourceId?: string;
+    sourceId?: string; currentProjectionsOnly?: boolean;
     // v0.41.18.0 (A13, codex #9): pagination order. Default 'page_id'
     // (legacy stable cursor). 'updated_desc' joins pages and orders by
     // p.updated_at DESC NULLS LAST, p.id, cc.chunk_index — backed by

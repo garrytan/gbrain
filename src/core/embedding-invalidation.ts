@@ -32,7 +32,7 @@ import {
   quoteIdentifier,
 } from './search/embedding-column.ts';
 import { pageBudgetLimitedFilter } from './page-size-policy.ts';
-import { chunkGenerationFilter } from './search/safe-chunks.ts';
+import { chunkGenerationFilter, embeddingProjectionFilter } from './search/safe-chunks.ts';
 
 export function splitEmbeddingSignature(signature: string): { model: string; dims: number | null } {
   const separator = signature.lastIndexOf(':');
@@ -175,7 +175,7 @@ export async function clearFalseStampedSignatures(
  */
 export async function countRestampOnlyChunks(
   engine: Pick<BrainEngine, 'executeRaw'>,
-  opts: { signature: string; sourceId?: string; includeNullSignature?: boolean },
+  opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; currentProjectionsOnly?: boolean },
 ): Promise<number> {
   return (await measureRestampOnlyChunks(engine, opts)).chunks;
 }
@@ -183,7 +183,7 @@ export async function countRestampOnlyChunks(
 /** countRestampOnlyChunks plus their text size, so a paid estimate can leave them out. */
 export async function measureRestampOnlyChunks(
   engine: Pick<BrainEngine, 'executeRaw'>,
-  opts: { signature: string; sourceId?: string; includeNullSignature?: boolean },
+  opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; currentProjectionsOnly?: boolean },
 ): Promise<{ chunks: number; chars: number }> {
   const colId = quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name);
   const { model, dims } = splitEmbeddingSignature(opts.signature);
@@ -196,6 +196,7 @@ export async function measureRestampOnlyChunks(
       WHERE p.deleted_at IS NULL AND ${sigClause}
         AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
         AND NOT ${pageBudgetLimitedFilter('p')}
+        AND ${embeddingProjectionFilter('p', opts.currentProjectionsOnly)}
         AND ($4::text IS NULL OR p.source_id = $4)
         AND ${currentSpaceChunkPredicate(colId, 2, 3)}`,
     [opts.signature, model, dims, opts.sourceId ?? null],
@@ -217,7 +218,7 @@ export const SIGNATURE_INVALIDATION_PAGE_BATCH = 1000;
  */
 export async function invalidateStaleSignatureEmbeddingsGuarded(
   engine: BrainEngine,
-  opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; pageBatch?: number },
+  opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; pageBatch?: number; currentProjectionsOnly?: boolean },
 ): Promise<number> {
   const pageBatch = Math.trunc(opts.pageBatch ?? SIGNATURE_INVALIDATION_PAGE_BATCH);
   if (!Number.isFinite(pageBatch) || pageBatch < 1) throw new Error(`invalid signature invalidation page batch: ${opts.pageBatch}`);
@@ -254,6 +255,7 @@ export async function invalidateStaleSignatureEmbeddingsGuarded(
           AND NOT ${pageBudgetLimitedFilter('p')}
             AND p.deleted_at IS NULL
             AND p.text_projection_revision = p.knowledge_revision
+            AND ${embeddingProjectionFilter('p', opts.currentProjectionsOnly)}
             AND ${sigClause}${srcClause}
           RETURNING cc.page_id`,
         params,
@@ -264,6 +266,7 @@ export async function invalidateStaleSignatureEmbeddingsGuarded(
             AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)
             AND p.deleted_at IS NULL
             AND p.text_projection_revision = p.knowledge_revision
+            AND ${embeddingProjectionFilter('p', opts.currentProjectionsOnly)}
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
           AND NOT ${pageBudgetLimitedFilter('p')}
             AND EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
@@ -289,7 +292,7 @@ export async function invalidateStaleSignatureEmbeddingsGuarded(
  */
 export async function hasSignatureDrift(
   engine: Pick<BrainEngine, 'executeRaw'>,
-  opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; nullSignatureOnly?: boolean },
+  opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; nullSignatureOnly?: boolean; currentProjectionsOnly?: boolean },
 ): Promise<boolean> {
   const colId = await activeColId(engine);
   const sigClause = opts.nullSignatureOnly ? 'p.embedding_signature IS NULL'
@@ -300,6 +303,7 @@ export async function hasSignatureDrift(
        SELECT 1 FROM pages p
         WHERE ${sigClause}
           AND p.deleted_at IS NULL
+          AND ${embeddingProjectionFilter('p', opts.currentProjectionsOnly)}
           AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
           AND NOT ${pageBudgetLimitedFilter('p')}
           AND ($1::text IS NULL OR p.source_id = $1)

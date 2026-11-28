@@ -2239,12 +2239,12 @@ export class PGLiteEngine implements BrainEngine {
     return quoteIdentifier(col.name);
   }
 
-  async countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number> {
+  async countStaleChunks(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; currentProjectionsOnly?: boolean }): Promise<number> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
     return chunksImpl.countStaleChunks(scopedRead(this.engineSql), column, opts);
   }
 
-  async sumStaleChunkChars(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number> {
+  async sumStaleChunkChars(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; currentProjectionsOnly?: boolean }): Promise<number> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name;
     return chunksImpl.sumStaleChunkChars(unscopedExecutor(this.engineSql, 'chunks: unscoped on master (EO4 inventory)'), column, opts);
   }
@@ -2253,12 +2253,12 @@ export class PGLiteEngine implements BrainEngine {
     return chunksImpl.setPageEmbeddingSignature(this.engineSql, slug, opts);
   }
 
-  async invalidateStaleSignatureEmbeddings(opts: { signature: string; sourceId?: string; includeNullSignature?: boolean }): Promise<number> {
+  async invalidateStaleSignatureEmbeddings(opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; currentProjectionsOnly?: boolean }): Promise<number> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this)).name;
     return chunksImpl.invalidateStaleSignatureEmbeddings(fn => this.transaction(fn), column, opts);
   }
 
-  async invalidateContentDriftEmbeddings(opts?: { sourceId?: string }): Promise<number> {
+  async invalidateContentDriftEmbeddings(opts?: { sourceId?: string; currentProjectionsOnly?: boolean }): Promise<number> {
     const column = (await resolveActiveEmbeddingColumnFromEngine(this)).name;
     return chunksImpl.invalidateContentDriftEmbeddings(fn => this.transaction(fn), column, opts);
   }
@@ -2267,7 +2267,7 @@ export class PGLiteEngine implements BrainEngine {
     batchSize?: number;
     afterPageId?: number;
     afterChunkIndex?: number;
-    sourceId?: string;
+    sourceId?: string; currentProjectionsOnly?: boolean;
     orderBy?: 'page_id' | 'updated_desc';
     afterUpdatedAt?: string | null;
   }): Promise<StaleChunkRow[]> {

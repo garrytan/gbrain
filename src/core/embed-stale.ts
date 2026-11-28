@@ -38,7 +38,7 @@ import { AbortError } from './abort-check.ts';
 import { contentDriftSweepLine, runContentDriftSweep, type ContentDriftSweepStatus } from './content-drift-sweep.ts';
 import { meterPageBatch, spendGrant } from './page-embedding-budget.ts';
 import { acquirePageEmbeddingLease, stillPendingChunks } from './page-embedding-lease.ts';
-import { chunkGenerationFilter, chunkVisibleFilter, currentTextProjectionFilter } from './search/safe-chunks.ts';
+import { chunkGenerationFilter, chunkVisibleFilter, currentTextProjectionFilter, embeddingProjectionFilter, resolveCurrentProjectionsOnly } from './search/safe-chunks.ts';
 import { embedSegmentedPage, embedSegmentedRows, readSegmentedEmbedPage, type SegmentedEmbedOpts } from './page-body/segmented-embedding.ts';
 
 /**
@@ -90,6 +90,7 @@ export interface EmbedStaleOpts {
   signal?: AbortSignal;
   deadline?: number;
   assertOwned?: (tx?: BrainEngine) => Promise<void>;
+  currentProjectionsOnly?: boolean;
   /**
    * Fired once per batch with the cursor after that batch finishes. Caller
    * uses this for crash-resumable progress (Minion `job.updateProgress`).
@@ -126,6 +127,7 @@ export interface EmbedStaleOpts {
 
 export interface EmbedStaleResult {
   blocked?: number;
+  held?: { pages: number; chunks: number };
   remaining?: number;
   failures?: number;
   complete?: boolean;
@@ -298,11 +300,13 @@ export async function embedStalePages(
     signal?: AbortSignal;
     embedFn?: (texts: string[], o: { abortSignal?: AbortSignal }) => Promise<Float32Array[]>;
     embeddingSignature?: string;
+    currentProjectionsOnly?: boolean;
   } = {},
 ): Promise<{ embedded: number; pagesProcessed: number; aborted: boolean }> {
   const embedFn = opts.embedFn ?? (async (texts: string[], fnOpts: { abortSignal?: AbortSignal }) =>
     embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }));
   const result = { embedded: 0, pagesProcessed: 0, aborted: false };
+  const currentOnly = await resolveCurrentProjectionsOnly(engine, opts.currentProjectionsOnly);
   // #9715: a brain with embedding off (either plane) sends no page text, whichever phase or repair asked.
   if (await embeddingSendBlocked(engine)) return result;
   // S2: stale = NULL in the registry-ACTIVE column (the one upsertChunks
@@ -319,6 +323,10 @@ export async function embedStalePages(
       return result;
     }
     try {
+      if (currentOnly) {
+        const [eligible] = await engine.executeRaw<{ ok: boolean }>(`SELECT ${embeddingProjectionFilter('p', true)} AS ok FROM pages p WHERE p.source_id=$1 AND p.slug=$2`, [sourceId, slug]);
+        if (eligible?.ok !== true) continue;
+      }
       const segmented = await readSegmentedEmbedPage(engine, { sourceId, slug });
       if (segmented) {
         const page = await embedSegmentedPage(engine, segmented, { embedFn, signal: opts.signal, signature: opts.embeddingSignature });
@@ -393,6 +401,8 @@ export async function embedStaleForSource(
   sourceId: string,
   opts: EmbedStaleOpts = {},
 ): Promise<EmbedStaleResult> {
+  const currentOnly = await resolveCurrentProjectionsOnly(engine, opts.currentProjectionsOnly);
+  const policy = { currentProjectionsOnly: opts.currentProjectionsOnly === false ? true : opts.currentProjectionsOnly };
   const batchSize = opts.batchSize ?? 2000;
   const concurrency = opts.concurrency ?? resolveStaleEmbedConcurrency(engine);
   const signal = opts.signal;
@@ -422,8 +432,8 @@ export async function embedStaleForSource(
   if (stopped()) return { ...result, aborted: true };
   const archivedWork = await countArchivedEmbeddingWork(engine, { sourceId, signature });
   if (archivedWork) return { ...result, blocked: archivedWork, failures: archivedWork, complete: false, done: true,
-    remaining: await engine.countStaleChunks({ sourceId, ...(signature && { signature }) }) };
-  const readinessOptions = { sourceId, existingChunksOnly: true, activeSourcesOnly: true, stale: { signature }, signal,
+    remaining: await engine.countStaleChunks({ sourceId, ...policy, ...(signature && { signature }) }) };
+  const readinessOptions = { sourceId, currentProjectionsOnly: opts.currentProjectionsOnly, existingChunksOnly: true, activeSourcesOnly: true, stale: { signature }, signal,
     deadline: opts.deadline, assertOwned: opts.assertOwned };
   let readiness = await prepareEmbeddingProjections(engine, readinessOptions);
   if (stopped()) return { ...result, aborted: true };
@@ -435,7 +445,7 @@ export async function embedStaleForSource(
     await opts.assertOwned?.();
     if (!probeOk) {
       return { ...result, blocked: readiness.blocked, complete: false, done: true,
-        remaining: await engine.countStaleChunks({ sourceId }), invalidationSkipped: 'embedder_probe_failed' };
+        remaining: await engine.countStaleChunks({ sourceId, ...policy }), invalidationSkipped: 'embedder_probe_failed' };
     }
     readiness = await prepareEmbeddingProjections(engine, { ...readinessOptions, repair: true });
     if (stopped()) return { ...result, aborted: true };
@@ -444,6 +454,11 @@ export async function embedStaleForSource(
   // source; the drain skips their unsealed snapshots and the result stays
   // incomplete with them counted in `blocked`.
   const projectionBlocked = readiness.blocked;
+  if (currentOnly) {
+    const total = await engine.countStaleChunks({ sourceId, signature, currentProjectionsOnly: false });
+    const eligible = await engine.countStaleChunks({ sourceId, signature, currentProjectionsOnly: true });
+    result.held = { pages: readiness.held, chunks: Math.max(0, total - eligible) };
+  }
   const stamp = await resolveProvenanceStamp(engine, signature); // column resolved once per drain, not per page
   if (stopped()) return { ...result, aborted: true };
   await opts.assertOwned?.();
@@ -460,7 +475,7 @@ export async function embedStaleForSource(
   if (signature) {
     try {
       // One page-first EXISTS: no chunk count before the probe, so a large drifted corpus cannot time the pre-check out (#7117 follow-up).
-      if (await hasSignatureDrift(engine, { signature, sourceId })) {
+      if (await hasSignatureDrift(engine, { signature, sourceId, ...policy })) {
         await opts.assertOwned?.();
         if (stopped()) return { ...result, aborted: true };
         const probeOk = await probeEmbedder(embedFn, signature, signal);
@@ -472,11 +487,11 @@ export async function embedStaleForSource(
           result.invalidated += opts.assertOwned ? await engine.transaction(async tx => {
             await opts.assertOwned!(tx);
             if (stopped()) throw new AbortError();
-            const invalidated = await invalidateStaleSignatureEmbeddingsGuarded(tx, { signature, sourceId });
+            const invalidated = await invalidateStaleSignatureEmbeddingsGuarded(tx, { signature, sourceId, ...policy });
             await opts.assertOwned!(tx);
             if (stopped()) throw new AbortError();
             return invalidated;
-          }) : await invalidateStaleSignatureEmbeddingsGuarded(engine, { signature, sourceId });
+          }) : await invalidateStaleSignatureEmbeddingsGuarded(engine, { signature, sourceId, ...policy });
         } else {
           result.invalidationSkipped = 'embedder_probe_failed';
           process.stderr.write(
@@ -503,7 +518,7 @@ export async function embedStaleForSource(
   // the NULL-only loop still runs; a lost lease propagates.
   if (stopped()) return { ...result, aborted: true };
   const sweep = await runContentDriftSweep(engine, {
-    sourceId, signal, deadline: opts.deadline, stopped,
+    sourceId, ...policy, signal, deadline: opts.deadline, stopped,
     assertOwned: opts.assertOwned,
   });
   result.contentDrift = sweep;
@@ -523,13 +538,14 @@ export async function embedStaleForSource(
         afterPageId,
         afterChunkIndex,
         sourceId,
+        ...policy,
       }),
     );
     if (batch.length === 0) {
       const blocked = await countArchivedEmbeddingWork(engine, { sourceId, signature });
       if (blocked) { result.blocked = blocked; result.failures = (result.failures ?? 0) + blocked; }
       if (projectionBlocked) result.blocked = (result.blocked ?? 0) + projectionBlocked;
-      const remaining = await engine.countStaleChunks({ sourceId, ...(signature && { signature }) });
+      const remaining = await engine.countStaleChunks({ sourceId, ...policy, ...(signature && { signature }) });
       if (remaining || result.chunksProcessed || result.blocked) {
         result.remaining = remaining;
         result.complete = remaining === 0 && !result.blocked;
@@ -565,6 +581,10 @@ export async function embedStaleForSource(
       const slug = stale[0].slug;
       try {
         await opts.assertOwned?.();
+        if (currentOnly) {
+          const [eligible] = await engine.executeRaw<{ ok: boolean }>(`SELECT ${embeddingProjectionFilter('p', true)} AS ok FROM pages p WHERE p.id=$1`, [stale[0]!.page_id]);
+          if (eligible?.ok !== true) return;
+        }
         if (stopped() || await embedSegmentedStaleRows(engine, stale, result, { embedFn, signal, signature, stamp, pacer, assertOwned: opts.assertOwned, stopped })) return;
         await using lease = await acquirePageEmbeddingLease(engine, stale[0].page_id, { signal, deadline: opts.deadline });
         if (lease.busy) return;

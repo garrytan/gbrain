@@ -1,9 +1,12 @@
 import type { BrainEngine } from './engine.ts';
-import { readProjectionSnapshot, queuePageProjection, preparePageProjection, installPageProjection } from './page-state/projections.ts';
+import { readProjectionSnapshot, queuePageProjection, preparePageProjection, installPageProjection, projectionBelowSafeFence } from './page-state/projections.ts';
 import { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } from './search/embedding-column.ts';
 import { QUARANTINE_FILTER_FRAGMENT } from './quarantine.ts';
 import { isMultimodalEnabled } from './sync.ts';
 import { buildSegmentedProjection } from './page-body/projection.ts';
+import { resolveCurrentProjectionsOnly, SAFE_FENCE_CHUNKER_VERSION } from './search/safe-chunks.ts';
+import { HISTORICAL_PROJECTION_HELD_SQL } from './page-state/projection-policy-sql.ts';
+import { pageProjectionHeld } from './page-state/projection-policy.ts';
 
 /** A segmented page with a body: its projection (`buildSegmentedProjection`) owes chunk rows even when it has none yet. */
 const SEGMENTED_BODY = `(p.body_storage = 'segmented' AND p.body_bytes > 0)`;
@@ -26,7 +29,7 @@ export async function countArchivedEmbeddingWork(engine: BrainEngine, opts: { so
   return row.n;
 }
 
-type ProjectionScope = { sourceId?: string; existingChunksOnly?: boolean; activeSourcesOnly?: boolean; stale?: { signature?: string; includeNullSignature?: boolean } };
+type ProjectionScope = { sourceId?: string; existingChunksOnly?: boolean; activeSourcesOnly?: boolean; currentProjectionsOnly?: boolean; stale?: { signature?: string; includeNullSignature?: boolean } };
 
 /** The pages still waiting for a text projection under `opts`, as one WHERE clause over `pages p JOIN sources s`. */
 async function pendingProjectionWhere(engine: BrainEngine, opts: ProjectionScope): Promise<{ where: string; params: unknown[] }> {
@@ -41,7 +44,7 @@ async function pendingProjectionWhere(engine: BrainEngine, opts: ProjectionScope
   }
   const where = `p.deleted_at IS NULL
     AND NOT (COALESCE(p.frontmatter,'{}'::jsonb) ? 'embed_skip')
-    AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision
+    AND (p.text_projection_revision IS DISTINCT FROM p.knowledge_revision${opts.currentProjectionsOnly === false ? ` OR p.chunker_version < ${SAFE_FENCE_CHUNKER_VERSION}` : ''})
     AND ($1::text IS NULL OR p.source_id=$1)
     ${opts.activeSourcesOnly ? 'AND NOT s.archived' : ''}
     AND (NOT $2::boolean OR ${SEGMENTED_BODY} OR EXISTS(SELECT 1 FROM content_chunks c WHERE c.page_id=p.id)) ${eligible}`;
@@ -80,17 +83,21 @@ export async function reportBlockedProjections(engine: BrainEngine, opts: Projec
   return new Set(pages.map(page => `${page.source_id}::${page.slug}`));
 }
 
-export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { sourceId?: string; limit?: number; repair?: boolean; existingChunksOnly?: boolean; activeSourcesOnly?: boolean; stale?: { signature?: string; includeNullSignature?: boolean }; signal?: AbortSignal; deadline?: number; assertOwned?: (tx?: BrainEngine) => Promise<void> } = {}) {
+export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { sourceId?: string; limit?: number; repair?: boolean; existingChunksOnly?: boolean; activeSourcesOnly?: boolean; currentProjectionsOnly?: boolean; stale?: { signature?: string; includeNullSignature?: boolean }; signal?: AbortSignal; deadline?: number; assertOwned?: (tx?: BrainEngine) => Promise<void> } = {}) {
   const limit = Math.max(1, Math.min(opts.limit ?? 100, 100));
   const { where, params } = await pendingProjectionWhere(engine, opts);
+  const currentOnly = await resolveCurrentProjectionsOnly(engine, opts.currentProjectionsOnly);
+  const joins = 'JOIN sources s ON s.id=p.source_id LEFT JOIN page_projection_jobs j ON j.source_incarnation=s.incarnation AND j.slug=p.slug';
   const countBlocked = async () => {
     const [remaining] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages p
-      JOIN sources s ON s.id=p.source_id WHERE ${where}`, params);
+      ${joins} WHERE ${where} ${currentOnly ? `AND NOT ${HISTORICAL_PROJECTION_HELD_SQL}` : ''}`, params);
     if (!Number.isSafeInteger(remaining?.n) || remaining.n < 0) throw new Error('Cannot determine pending embedding projections.');
     return remaining.n;
   };
   let rebuilt = 0;
   let blocked = await countBlocked();
+  const [heldRow] = currentOnly ? await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages p ${joins} WHERE ${where} AND ${HISTORICAL_PROJECTION_HELD_SQL}`, params) : [];
+  const held = Number(heldRow?.n ?? 0);
   // #6223: a keyset cursor visits each candidate once, so a catch-up run
   // cannot retry the same batch forever. #6803: it walks only the kinds a
   // rebuild can build; image pages stay counted as blocked (their seal is the
@@ -98,7 +105,7 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
   let afterPageId = 0;
   while (opts.repair && blocked > 0 && !opts.signal?.aborted && Date.now() < (opts.deadline ?? Infinity)) {
     const rows = await engine.executeRaw<{ id: number; slug: string; source_id: string }>(`SELECT p.slug,p.source_id,p.id FROM pages p
-      JOIN sources s ON s.id=p.source_id WHERE ${where} AND NOT s.archived AND p.id>$${params.length + 1}
+      ${joins} WHERE ${where} AND NOT s.archived ${currentOnly ? `AND NOT ${HISTORICAL_PROJECTION_HELD_SQL}` : ''} AND p.id>$${params.length + 1}
         AND (p.page_kind IN ('markdown','code') OR p.body_storage='segmented')
       ORDER BY p.id LIMIT $${params.length + 2}`, [...params, afterPageId, limit]);
     if (!rows.length) break;
@@ -107,15 +114,17 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
       if (opts.signal?.aborted || Date.now() >= (opts.deadline ?? Infinity)) break;
       await opts.assertOwned?.();
       try {
-        if (await readProjectionSnapshot(engine, row.slug, row.source_id)) continue;
+        const existing = await readProjectionSnapshot(engine, row.slug, row.source_id);
+        if (existing && !await projectionBelowSafeFence(engine, existing.snapshot.page.id)) continue;
         const [segmented] = await engine.executeRaw(`SELECT 1 FROM pages WHERE id=$1 AND body_storage='segmented'`, [row.id]);
         if (segmented) {
-          if ((await buildSegmentedProjection(engine, { sourceId: row.source_id, slug: row.slug })).sealed) rebuilt++;
+          if ((await buildSegmentedProjection(engine, { sourceId: row.source_id, slug: row.slug }, { currentProjectionsOnly: opts.currentProjectionsOnly })).sealed) rebuilt++;
           continue;
         }
         const queued = await engine.transaction(async tx => {
           await opts.assertOwned?.(tx);
           await tx.lockPageKeys([{ sourceId: row.source_id, slug: row.slug }]);
+          if (await pageProjectionHeld(tx, { sourceId: row.source_id, slug: row.slug }, opts.currentProjectionsOnly)) return false;
           if (!await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, requireLiveSource: true })) return false;
           opts.signal?.throwIfAborted();
           await queuePageProjection(tx, row.source_id, row.slug, 'embedding_recovery');
@@ -131,7 +140,7 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
           await opts.assertOwned?.(tx);
           opts.signal?.throwIfAborted();
           if (Date.now() >= (opts.deadline ?? Infinity)) throw new Error('Projection recovery deadline exceeded.');
-          await installPageProjection(tx, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code });
+          await installPageProjection(tx, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code, currentProjectionsOnly: opts.currentProjectionsOnly });
           await opts.assertOwned?.(tx);
           opts.signal?.throwIfAborted();
           if (Date.now() >= (opts.deadline ?? Infinity)) throw new Error('Projection recovery deadline exceeded.');
@@ -146,5 +155,5 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
     blocked = await countBlocked();
     if (rows.length < limit) break;
   }
-  return { rebuilt, blocked };
+  return { rebuilt, blocked, held };
 }

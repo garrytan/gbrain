@@ -180,7 +180,7 @@ for (const kind of testBackends()) {
 
       test('embed --stale projection recovery rebuilds it', async () => {
         const readiness = await prepareEmbeddingProjections(engine, { existingChunksOnly: true, activeSourcesOnly: true, stale: {}, repair: true });
-        expect(readiness).toEqual({ rebuilt: 1, blocked: 0 });
+        expect(readiness).toEqual({ rebuilt: 1, blocked: 0, held: 0 });
         await expectSealedWithChunks();
       }, 120_000);
 

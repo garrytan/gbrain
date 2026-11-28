@@ -1,5 +1,6 @@
 import { requireMaintainerPoliciesSql } from '../derived-state-maintainers.ts';
 import { ACTIVATION_SERVED_REVISION, protectedTextFilter, SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
+import { currentProjectionReasonSql, PROJECTION_OVERRIDE_SETTING } from './projection-policy-sql.ts';
 
 /**
  * The page search-vector trigger fires on the columns its function reads:
@@ -15,7 +16,7 @@ export const PAGE_SEARCH_VECTOR_TRIGGER_SQL = `DO $trg$ BEGIN
 const dropsJobs = requireMaintainerPoliciesSql('page_projection_jobs', ['SELECT', 'DELETE'], '        ');
 /** Queues a page's text rebuild by source incarnation; under RLS the writer needs sources and the queue (#7637). */
 export const PAGE_PROJECTION_QUEUE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
-    DECLARE incarnation UUID;
+    DECLARE incarnation UUID; prior_reason TEXT; old_reason TEXT; held BOOLEAN := false; current_only BOOLEAN := false;
     BEGIN
       ${requireMaintainerPoliciesSql('sources', ['SELECT'], '      ')}
       IF TG_OP='DELETE' THEN
@@ -24,19 +25,50 @@ export const PAGE_PROJECTION_QUEUE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gb
           WHERE s.id=OLD.source_id AND j.source_incarnation=s.incarnation AND j.slug=OLD.slug;
         RETURN NULL;
       END IF;
+      IF to_regclass('public.config') IS NOT NULL THEN
+        SELECT COALESCE((SELECT value='true' FROM config WHERE key='embed.current_projections_only'),false)
+          AND COALESCE(current_setting('${PROJECTION_OVERRIDE_SETTING}',true),'')<>'false' INTO current_only;
+      END IF;
+      IF TG_OP='UPDATE' AND current_only THEN
+        ${requireMaintainerPoliciesSql('page_projection_jobs', ['SELECT'], '        ')}
+        SELECT j.reason INTO old_reason FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation
+          WHERE s.id=OLD.source_id AND j.slug=OLD.slug;
+        IF old_reason IS NULL AND (COALESCE((to_jsonb(OLD)->>'chunker_version')::int,0)<${SAFE_FENCE_CHUNKER_VERSION}
+          OR OLD.text_projection_revision IS DISTINCT FROM OLD.knowledge_revision) THEN
+          old_reason := 'legacy_projection';
+        END IF;
+      END IF;
       IF TG_OP='UPDATE' AND (OLD.source_id,OLD.slug) IS DISTINCT FROM (NEW.source_id,NEW.slug) THEN
         ${dropsJobs}
         DELETE FROM page_projection_jobs j USING sources s
           WHERE s.id=OLD.source_id AND j.source_incarnation=s.incarnation AND j.slug=OLD.slug;
       END IF;
       SELECT s.incarnation INTO incarnation FROM sources s WHERE s.id=NEW.source_id;
-      IF NEW.deleted_at IS NOT NULL OR NEW.text_projection_revision=NEW.knowledge_revision THEN
+      IF current_only THEN
+        ${requireMaintainerPoliciesSql('page_projection_jobs', ['SELECT'], '        ')}
+        SELECT j.reason INTO prior_reason FROM page_projection_jobs j WHERE j.source_incarnation=incarnation AND j.slug=NEW.slug;
+        prior_reason := COALESCE(prior_reason,old_reason);
+        held := prior_reason IS NOT NULL AND NOT ${currentProjectionReasonSql('prior_reason')};
+      END IF;
+      IF NEW.deleted_at IS NOT NULL THEN
         ${dropsJobs}
         DELETE FROM page_projection_jobs j WHERE j.source_incarnation=incarnation AND j.slug=NEW.slug;
+      ELSIF NEW.text_projection_revision=NEW.knowledge_revision THEN
+        IF held THEN
+          IF TG_OP='INSERT' OR OLD.text_projection_revision IS DISTINCT FROM OLD.knowledge_revision
+            OR OLD.knowledge_revision IS DISTINCT FROM NEW.knowledge_revision
+            OR (COALESCE((to_jsonb(OLD)->>'chunker_version')::int,0)<${SAFE_FENCE_CHUNKER_VERSION}
+              AND COALESCE((to_jsonb(NEW)->>'chunker_version')::int,0)>=${SAFE_FENCE_CHUNKER_VERSION}) THEN
+            RAISE EXCEPTION 'historical_projection_held: historical text requires an authorized rebuild' USING ERRCODE='55000';
+          END IF;
+        ELSE
+          ${dropsJobs}
+          DELETE FROM page_projection_jobs j WHERE j.source_incarnation=incarnation AND j.slug=NEW.slug;
+        END IF;
       ELSIF TG_OP='INSERT' OR NEW.knowledge_revision IS DISTINCT FROM OLD.knowledge_revision THEN
         ${requireMaintainerPoliciesSql('page_projection_jobs', ['SELECT', 'INSERT', 'UPDATE'], '        ')}
         INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
-          VALUES (incarnation,NEW.slug,NEW.knowledge_revision,'canonical_change')
+          VALUES (incarnation,NEW.slug,NEW.knowledge_revision,CASE WHEN held THEN prior_reason ELSE 'canonical_change' END)
           ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now();
       END IF;
       RETURN NULL;
