@@ -171,10 +171,14 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
           let refused: string | null = !settled ? 'follower_not_settled' : !follower.idle() ? 'follower_not_idle' : !lost.flush() ? LOST_WRITE_UNRECORDED : null;
           let token: string | null = null;
           if (!refused) {
-            const confirmed = await Promise.race([askConfirm(), new Promise<void>((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
+            const pending = Symbol('pending');
+            const confirmed = await Promise.race([askConfirm(), new Promise<typeof pending>((resolve) => { setTimeout(() => resolve(pending), 2_000).unref?.(); })]);
             const mark = await (deps.sealChecks?.mark ?? sealMark)(sealDeps);
-            // A confirmation left in doubt, or a revoke of it not yet acknowledged, is never sealed over.
-            if (confirmed?.doubt) refused = confirmed.doubt;
+            // A confirmation left in doubt, or a revoke of it not yet acknowledged, is never sealed over. Nor is one still
+            // running: its second read (seal.ts) is what catches another writer that began after its first, and a mark
+            // taken now would include that write, so the next session's check would match it.
+            if (confirmed === pending) refused = 'seal_confirm_pending';
+            else if (confirmed?.doubt) refused = confirmed.doubt;
             else if (revoking) refused = revoking;
             else if ('refused' in mark) refused = mark.refused;
             else if (!follower.idle()) refused = 'follower_not_idle';
