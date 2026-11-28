@@ -159,6 +159,9 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // the caller may read), and a segmented lead under a withdrawal is struck through the pure fence-line normalization.
   'readBodyManifestRows', 'readBodyManifestMeta', 'normalizeFenceLines',
   'readSegmentedPageHead', 'readSegmentedVersionBodyBytes', // TEMP-VERIFY-ONLY (group 3 serves them)
+  // served-remote-g1-belief-links: a remote delta with beliefs pages the ledger's history (the remote filter runs in readBeliefHistoryPage,
+  // after the raw rows return), keeps a link only when its page lifetimes are visible, and places the window in the coverage events.
+  'readBeliefHistoryRows', 'listVisibleBeliefLifetimes', 'readBeliefCoverageEvents',
 ];
 
 /**
