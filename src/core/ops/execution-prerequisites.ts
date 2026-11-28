@@ -12,7 +12,7 @@
 /** trust/confirm.ts MEMORY_CONFIRM_SCOPE; a literal keeps this table a leaf of the schema-migration import closure (v202 imports grants/legacy-token.ts). */
 const MEMORY_CONFIRM_SCOPE = 'memory_confirm';
 
-export type ExecutionPrerequisiteKind = 'owner_granted_scope' | 'explicit_operation_approval';
+export type ExecutionPrerequisiteKind = 'owner_granted_scope' | 'explicit_operation_approval' | 'attested_actor';
 
 export interface ExecutionPrerequisite {
   kind: ExecutionPrerequisiteKind;
@@ -28,6 +28,8 @@ const MEMBERSHIP_APPROVAL: ExecutionPrerequisite = {
 };
 
 export const EXECUTION_PREREQUISITES: Readonly<Record<string, ExecutionPrerequisite>> = {
+  memory_write: { kind: 'attested_actor', fix: 'The credential must already have the right to attest a person for memory_write.' },
+  memory_propose: { kind: 'attested_actor', fix: 'The credential must already have the right to attest a person for memory_propose.' },
   confirm_memory: {
     kind: 'owner_granted_scope', scope: MEMORY_CONFIRM_SCOPE,
     fix: `Snapshot admission does not grant trust promotion: confirming memory needs the ${MEMORY_CONFIRM_SCOPE} scope, which only the brain owner grants from the local CLI.`,

@@ -58,6 +58,8 @@ function delegationRepair(auth: AuthInfo, reasons: readonly string[]) {
 
 /** One grant as the diagnosis sees it: the verifier's principal plus the stored axes that decide which operations it can call. */
 export interface GrantGapInput {
+  /** Operations for which the credential may attest a person. */
+  attestedOperations?: readonly string[];
   scopes: readonly string[];
   /** null = no operation snapshot. */
   allowedOperations: readonly string[] | null;
@@ -104,8 +106,10 @@ export async function grantOperationGaps(input: GrantGapInput): Promise<GrantGap
   ]);
   const fence = { boundSlugPrefixes: input.boundSlugPrefixes, fenceProjectionDegraded: input.fenceProjectionDegraded, grantProjectionDegraded: input.grantProjectionDegraded };
   const named = new Set(input.allowedOperations ?? []);
-  const eligible = operations.filter(op => !op.localOnly && !input.disabled.has(op.name) && (!addedOnlyByName(op.name) || named.has(op.name))
+  const withinScope = operations.filter(op => !op.localOnly && !input.disabled.has(op.name) && (!addedOnlyByName(op.name) || named.has(op.name))
     && operationScopesAllowed([...input.scopes], op) && opAllowedForBoundClient(fence, op));
+  const lacksActor = (name: string) => EXECUTION_PREREQUISITES[name]?.kind === 'attested_actor' && !input.attestedOperations?.includes(name);
+  const eligible = withinScope.filter(op => !lacksActor(op.name));
   const outside = (surface: GrantSurface | null): string[] => {
     if (!surface || surface === 'full') return [];
     const listed = new Set(filterOpsForSurface(eligible, surface).map(op => op.name));
@@ -117,7 +121,9 @@ export async function grantOperationGaps(input: GrantGapInput): Promise<GrantGap
   const pinExcluded = outside(input.clientSurface);
   const serverExcluded = outside(input.serverSurface);
   const blocked = new Set([...snapshotExcluded, ...approvalExcluded, ...pinExcluded, ...serverExcluded]);
-  const prerequisites: GrantPrerequisite[] = [];
+  const prerequisites: GrantPrerequisite[] = withinScope.filter(op => lacksActor(op.name)).map(op => ({
+    operation: op.name, prerequisite: 'attested_actor', fix: EXECUTION_PREREQUISITES[op.name]!.fix,
+  }));
   for (const op of eligible) {
     const need = EXECUTION_PREREQUISITES[op.name];
     if (!need) continue;
@@ -318,7 +324,7 @@ export async function resolveGrantDiagnosis(auth: AuthInfo, engine: BrainEngine,
     : opts.surfaceCeiling ?? (effective && surfaceWiderThan(clientSurface, effective) ? effective : null);
   const allowedOperations = Array.isArray(auth.allowedOperations) ? auth.allowedOperations : null;
   const gaps = await grantOperationGaps({
-    scopes: auth.scopes, allowedOperations, boundSlugPrefixes: auth.boundSlugPrefixes,
+    scopes: auth.scopes, allowedOperations, attestedOperations: auth.attest?.ops, boundSlugPrefixes: auth.boundSlugPrefixes,
     fenceProjectionDegraded: auth.fenceProjectionDegraded, grantProjectionDegraded: auth.grantProjectionDegraded,
     clientSurface, serverSurface, disabled: opts.disabled ?? await disabledOpsForPublishGates(engine, config),
   });

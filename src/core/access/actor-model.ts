@@ -68,6 +68,12 @@ export function attestRightFrom(row: Record<string, unknown> | undefined, grant:
   return { system, ops: ops.filter(op => SCOPE_ATTEST_OPS.has(op)), sources, ...readField };
 }
 
+/** The maximum attest right a stored OAuth client could exercise with client credentials. */
+export function clientAttestRightFrom(row: Record<string, unknown> | undefined): AttestRight | null {
+  const cc = Array.isArray(row?.grant_types) && row.grant_types.includes('client_credentials') && row.confidential === true;
+  return attestRightFrom(row, cc ? 'client_credentials' : null, row?.member_id);
+}
+
 /** The verify join plus the live attest right, for AuthInfo (a verifier spreads the result). */
 export function withAttestRight<T extends { member: unknown }>(binding: T, row: Record<string, unknown>, grant: unknown): T & { attest: AttestRight | null } {
   return { ...binding, attest: attestRightFrom(row, grant, binding.member) };
