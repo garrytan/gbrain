@@ -1014,6 +1014,11 @@ jobs:
       - run: bash scripts/run-with-receipt.sh slow entity-card-perf -- bun test test/entity-card-perf.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/perf-b
         env:
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+      # Owner-contact enrich order at 100k pages: about 2.6 GB resident, too much
+      # to pack beside two unit shards on one runner (scripts/test-shard.sh).
+      - run: bash scripts/run-with-receipt.sh slow enrich-owner-contact-perf -- bun test test/enrich-owner-contact-perf.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/perf-d
+        env:
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
       # Export at scale: pull requests prove bounded keyset enumeration, sidecars
       # and fence normalization on 10,001 pages (~30s); pushes, schedules and
       # manual runs keep the 100,001-page scale (~4-10 minutes, one core).

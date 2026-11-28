@@ -1178,6 +1178,7 @@ jobs:
       - run: bun test test/entity-resolve-perf.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-b
       - run: bun test test/entity-card-perf.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-c
       - run: bun test test/eval-brainbench-e2e.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-d
+      - run: bun test test/enrich-owner-contact-perf.slow.test.ts --timeout=300000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-g
       # Coverage only: the 100,001-page scale and the PGLite crash gate run in
       # test.yml and persistence-validation.yml on every push.
       - run: bun test test/export-scale.slow.test.ts --timeout=900000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/slow-e
