@@ -617,6 +617,17 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
       }
       if (c.revision !== revision) {
         const position = Math.min(c.offset, doc.total);
+        // #8572: a cursor still identifies this page and view after an edit.
+        // In a multi-selector read it keeps precedence: restarting at the
+        // caller's fallback lines/bytes loses the continuation position.
+        // A cursor alone retains its explicit revision_changed refusal.
+        if (req.fallbacks?.length) {
+          cursorMax = c.max_bytes;
+          note(sel);
+          const selector = out.window_selector as { note: string };
+          selector.note = `The page changed since this cursor was issued; resumed at byte ${position} of the current revision. ${selector.note}`;
+          return doc.bytes(position, Math.min(c.max_bytes, maxBytes));
+        }
         return fallBack(opError('revision_changed', `Page ${page.slug} changed since this cursor was issued (revision ${c.revision}, now ${revision}).`,
           `Continue from the same byte offset at the current revision (bytes: { offset: ${position}, length: ${c.max_bytes} }), or start over from the outline.`,
           { legacy_error: 'invalid_params', detail: JSON.stringify({ revision, cursor_revision: c.revision, offset: position }),
@@ -642,7 +653,8 @@ export async function readPartialBody(ctx: OperationContext, input: PartialReadI
   };
   const cap = await resultByteCap({ remote: ctx.remote, transport: ctx.transport, engine: ctx.engine, config: ctx.config });
   const startCursor = sel?.kind === 'cursor' ? decodeCursor(sel.raw) : null;
-  const cursorReads = startCursor !== null && startCursor.page_id === page.id && startCursor.view === req.view && startCursor.revision === revision;
+  const cursorReads = startCursor !== null && startCursor.page_id === page.id && startCursor.view === req.view
+    && (startCursor.revision === revision || !!req.fallbacks?.length);
   let maxBytes = await windowBudget(ctx, req.maxBytes ?? (cursorReads ? startCursor.max_bytes : undefined), DEFAULT_WINDOW_BYTES);
   for (let attempt = 0; ; attempt++) {
     const win = await select(maxBytes);

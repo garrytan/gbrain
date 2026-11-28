@@ -83,6 +83,18 @@ describe('local gbrain get', () => {
       expect(String(err.mock.calls[0]?.[0])).toContain('partial page: bytes');
     } finally { err.mockRestore(); }
   });
+
+  test('a selector beside include_content prints the safety note on stderr, never in the window', async () => {
+    const r = await get(localCtx(), { slug: 'logs/big-example', include_content: true, lines: { from: 10, count: 2 } });
+    const err = spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      expect(formatGetPage(r)).toBe(r.window.text);
+      const stderr = err.mock.calls.map(call => String(call[0])).join('');
+      expect(stderr).toContain(r.window_selector.note);
+      expect(stderr).toContain("This window is not the page's content");
+      expect(stderr).toContain('edit_page');
+    } finally { err.mockRestore(); }
+  });
 });
 
 describe('put_page after a windowed read', () => {

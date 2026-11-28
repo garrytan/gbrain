@@ -180,8 +180,8 @@ describe('several window selectors (GBRA-280)', () => {
     expect(b.window_selector.note).toStartWith("the cursor pages view 'read', so this is the lines window.");
     await put('logs/sel-other', conversation(6001));
     const c = await get(ctx(), { slug: 'logs/sel-other', cursor: readCursor, bytes: { offset: 0, length: 2000 }, max_bytes: 30_000 });
-    expect([c.window.byte_start, c.window_selector.applied, c.window_selector.ignored]).toEqual([0, 'bytes', ['cursor']]);
-    expect(c.window_selector.note).toStartWith('the page changed since the cursor was issued, so this is the bytes window.');
+    expect([c.window.byte_start, c.window_selector.applied, c.window_selector.ignored]).toEqual([decodeCursor(readCursor)!.offset, 'cursor', ['bytes']]);
+    expect(c.window_selector.note).toContain('current revision');
     await expectCode(get(ctx(), { slug: 'logs/sel-other', cursor: readCursor }), 'revision_changed');
   });
 

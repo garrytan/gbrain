@@ -46,11 +46,12 @@ type GetPageResult = Record<string, any>;
 function partialNote(r: GetPageResult): string {
   const size = r.size ?? {};
   const total = typeof size.total_bytes === 'number' ? `${size.total_bytes} bytes` : 'unknown size';
+  const selector = typeof r.window_selector?.note === 'string' ? ` ${r.window_selector.note}` : '';
   if (r.window && typeof r.window.byte_start === 'number') {
     const next = r.next_cursor ? ` Read on: gbrain get ${r.slug} --cursor ${r.next_cursor}` : '';
-    return `[gbrain] partial page: bytes ${r.window.byte_start}-${r.window.byte_end} of ${total} (lines ${r.window.line_start}-${r.window.line_end}).${next}`;
+    return `[gbrain] partial page: bytes ${r.window.byte_start}-${r.window.byte_end} of ${total} (lines ${r.window.line_start}-${r.window.line_end}).${next}${selector}`;
   }
-  return `[gbrain] partial page (${r.body}, ${total}): no page body was printed. Whole page: gbrain get ${r.slug} --body full`;
+  return `[gbrain] partial page (${r.body}, ${total}): no page body was printed. Whole page: gbrain get ${r.slug} --body full${selector}`;
 }
 
 function renderOutline(r: GetPageResult): string {
