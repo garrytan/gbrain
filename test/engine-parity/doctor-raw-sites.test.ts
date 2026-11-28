@@ -1,15 +1,14 @@
 /**
- * BrainEngine parity: the doctor check that still reads through `executeRaw` (the timeline dedup index shape in
- * src/core/timeline-dedup-repair.ts), and the multi_source_drift, schema_pack_source_drift and three calibration rows
- * (src/commands/doctor/checks/calibration.ts), which every arm answers.
+ * BrainEngine parity: the doctor rows that read through `executeRaw` before: the timeline dedup index shape
+ * (src/core/timeline-dedup-repair.ts), which Rust skips by name, and the multi_source_drift, schema_pack_source_drift and
+ * three calibration rows (src/commands/doctor/checks/calibration.ts), which every arm answers.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the focused doctor report run_doctor returns (doctorReportRemote, brain-wide, as an unscoped caller gets it)
- *    completes on every arm and has a row for each check
- *    these files feed. On PGLite and Postgres each row is a real answer. On the Rust arm each row says it could not
- *    check (a `Could not check ...` row, or a `Not verified` row), never ok or a zero count, because the Rust engine
- *    refuses `executeRaw` and the check catches that refusal. The idx_timeline_dedup shape is a named permanent loss: it
- *    is a Postgres index, and the Rust store keeps no SQL index.
+ *    completes on every arm and has a row for each check these files feed. On PGLite and Postgres timeline_dedup_index
+ *    reads the index shape. The idx_timeline_dedup shape is a named permanent loss: it is a Postgres index, and the
+ *    Rust store keeps no SQL index, so on the Rust arm the row is a skip that names the reason (`store_keyed_timeline`)
+ *    with no raw read. Before, the Rust row was "Could not check idx_timeline_dedup shape", a warn with no reason.
  *  - Contract: contextual_retrieval_coverage, abandoned_threads and grade_confidence_drift give the same status and
  *    message on every arm: their counts are typed members, and before they were the Rust arm said "Could not check".
  *  - Regression: lane L3 found that run_doctor on a Rust brain catches raw-SQL refusals in these four files, and no
@@ -20,10 +19,10 @@
  *  - Seam: none. A page is seeded with putPage and a second source with a local directory (createSource) holding that
  *    page's file and an uningested one, so the drift walk reaches its existence probe on every arm and finds one misroute. The report is called directly: run_doctor over MCP binds the caller
  *    to one source, and the drift check needs a second one to run at all.
- *  - On the Rust arm the caught refusals are pinned by calling file in test/rust-stop-pins/lane-2b-doctor-raw.tsv. Each
- *    pin goes when its file stops calling executeRaw on a Rust brain. Any source with a local path and no successful
- *    sync (one is enough) also reaches the raw read of src/core/sync-attempt.ts: sync_freshness then says "last attempt
- *    unreadable" on Rust. That is pinned there too, and the sync-attempt case below reproduces it with one source.
+ *  - Any source with a local path and no successful sync (one is enough) reaches the raw read of
+ *    src/core/sync-attempt.ts: sync_freshness then says "last attempt unreadable" on Rust. On the Rust arm that caught
+ *    refusal is pinned in test/rust-stop-pins/lane-2b-doctor-raw.tsv until it reads through a typed member, and the
+ *    sync-attempt case below reproduces it with one source.
  *
  * The adopted skill-pack read (src/core/shared-skills/adopted-packs.ts) is served on every arm by
  * listAdoptedSkillPackSourceIds. Before it was, a Rust brain with any source that has a local path got the note
@@ -46,17 +45,12 @@ import { checkTimelineDedupIndex, repairTimelineDedupIndex } from '../../src/cor
 
 const { parityTest } = parityArms(testBackends());
 
-/** The rows the raw-SQL doctor files feed, with the file each row reads through. */
-const RAW_ROWS: Record<string, string> = {
-  timeline_dedup_index: 'src/core/timeline-dedup-repair.ts',
-};
 /** The calibration rows, which typed members serve (countContextualCoverage, countAbandonedTakes, countAppliedTakeGrades). */
 const CALIBRATION_ROWS = ['contextual_retrieval_coverage', 'abandoned_threads', 'grade_confidence_drift'] as const;
-const NOT_CHECKED = /^(Could not check |Not verified: )/;
 
 type Check = { name?: unknown; status?: unknown; message?: unknown };
 
-parityTest('the doctor report answers each raw-SQL check on SQL engines and says it could not check it on Rust', {
+parityTest('the doctor report answers the former raw-SQL checks on every arm and skips the timeline index check on Rust by name', {
   methods: ['putPage', 'addTakesBatch'], timeout: 240_000,
 }, async (engine: BrainEngine, backend) => {
   const page = await engine.putPage('notes/doctor-raw', { type: 'note' as never, title: 'Doctor raw', compiled_truth: 'A note.', timeline: '', frontmatter: {} });
@@ -76,14 +70,13 @@ parityTest('the doctor report answers each raw-SQL check on SQL engines and says
     rmSync(dir, { recursive: true, force: true });
   }
   const checks: Check[] = report.checks;
-  const rows = Object.keys(RAW_ROWS).map((name) => {
-    const row = checks.find((c) => c.name === name);
-    return { name, status: row?.status, message: typeof row?.message === 'string' ? row.message : '' };
-  });
-  expect(rows.filter((r) => r.status === undefined).map((r) => r.name)).toEqual([]);
-  // The swap-critical half: on Rust no row may pass as healthy, and on the SQL engines no row may be a non-answer.
-  const notChecked = rows.filter((r) => r.status === 'warn' && NOT_CHECKED.test(r.message)).map((r) => r.name);
-  expect({ backend, notChecked }).toEqual({ backend, notChecked: backend === 'rust' ? Object.keys(RAW_ROWS) : [] });
+  // idx_timeline_dedup is a named permanent loss: the SQL engines read its shape, and Rust skips the check by name with
+  // no raw read (before, the Rust row was "Could not check idx_timeline_dedup shape", a warn that gave no reason).
+  const timeline = checks.find((c) => c.name === 'timeline_dedup_index') as Check & { details?: unknown } | undefined;
+  const timelineRow = { status: timeline?.status, message: timeline?.message, details: timeline?.details };
+  expect(timelineRow).toEqual(backend === 'rust'
+    ? { status: 'ok', message: 'Skipped: not applicable on this engine; the Rust store dedupes timeline entries by a store key, so there is no idx_timeline_dedup to check.', details: { outcome: 'skipped', reason: 'store_keyed_timeline' } }
+    : { status: 'ok', message: 'idx_timeline_dedup has the md5-keyed 4-column shape', details: undefined });
   // The drift roster and existence probe are typed members (readDoctorSources 'drift_roster', probeSlugSources): every
   // arm walks the second source and finds the one page that sits at default but not at its intended source.
   const drift = checks.find((c) => c.name === 'multi_source_drift') as Check & { details?: { code?: unknown } } | undefined;
@@ -107,7 +100,7 @@ parityTest('the doctor report answers each raw-SQL check on SQL engines and says
     abandoned_threads: { status: 'ok', message: '1 high-conviction take(s) older than 12 months and never revisited — see `gbrain calibration` for details' },
     grade_confidence_drift: { status: 'ok', message: 'Only 0 auto-applied verdicts — need 30+ for drift detection' },
   });
-  return { rows: rows.map((r) => r.name), drift: driftRow, packDrift: packDriftRow, calibration };
+  return { timeline: timelineRow.status, drift: driftRow, packDrift: packDriftRow, calibration };
 });
 
 parityTest('the timeline dedup index check reads the shape of a Postgres index', {

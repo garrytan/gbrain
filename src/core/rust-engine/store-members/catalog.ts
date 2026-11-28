@@ -60,6 +60,7 @@ export type CatalogSkipReason =
   | 'no_server_settings'
   | 'no_relation_sizes'
   | 'store_keyed_pages'
+  | 'store_keyed_timeline'
   | 'utf8_store'
   | 'capability_not_reported';
 
@@ -72,6 +73,7 @@ const SKIP_TEXT: Readonly<Record<CatalogSkipReason, string>> = {
   no_server_settings: 'the Rust store has no Postgres server settings',
   no_relation_sizes: 'the Rust store reports no table sizes, so the size is not measured',
   store_keyed_pages: 'the Rust store keys every page by source and slug itself, so there is no upsert index to check',
+  store_keyed_timeline: 'the Rust store dedupes timeline entries by a store key, so there is no idx_timeline_dedup to check',
   utf8_store: 'the Rust store keeps all text as UTF-8 and has no server encoding',
   capability_not_reported: 'the engine does not report the capability this check needs',
 };

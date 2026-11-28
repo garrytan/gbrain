@@ -19,6 +19,7 @@ import { pendingFreshInstallCheck } from './checks/pending-fresh-install.ts';
 import { compareVersions } from '../migrations/index.ts';
 import { resolveHoursEnv } from '../../core/env-number.ts';
 import { schemaVersionHealth } from '../../core/schema-version-health.ts';
+import { answersFromCatalog, catalogSkipCheck } from '../../core/rust-engine/store-members/catalog.ts';
 import { checkProjectionReadiness } from './checks/projection-readiness.ts';
 import { remoteUnlinkedFactsCheck } from './checks/unlinked-facts.ts';
 import { checkChatFallbackChain } from './checks/chat-fallback.ts';
@@ -164,7 +165,9 @@ export async function doctorReportRemote(
   // (v102) can be recorded-as-applied without its DDL running, leaving the
   // 3-column index in place — every timeline write then fails the 4-column
   // ON CONFLICT. The version counter can't see this, so check the index SHAPE.
-  try {
+  // Rust keeps no SQL index (a named permanent loss, RUST_ENGINE.md#named-permanent-losses): skip with the reason.
+  if (answersFromCatalog(engine)) checks.push(catalogSkipCheck('timeline_dedup_index', 'store_keyed_timeline'));
+  else try {
     const { checkTimelineDedupIndex } = await import('../../core/timeline-dedup-repair.ts');
     const idx = await checkTimelineDedupIndex(engine);
     if (!idx.tablePresent || !idx.needsRepair) {
