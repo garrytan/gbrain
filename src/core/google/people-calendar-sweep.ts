@@ -198,7 +198,7 @@ async function applyContact(deps: GoogleSyncDeps, c: ContactData,
       contactsDir,
     ),
     write: async (relPath, markdown) => {
-      const landed = await importRendered(deps, relPath, markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
+      const landed = await storedSlug(deps, await importRendered(deps, relPath, markdown, sweep.activePack, sweep.summary, sweep.countedSlugs));
       if (landed !== null) sweep.touched.add(landed);
       return landed;
     },
@@ -209,6 +209,16 @@ async function applyContact(deps: GoogleSyncDeps, c: ContactData,
     skippedHandAuthored: (relPath) => deps.log(`[google] skipping hand-authored ${relPath}`),
     applied: () => deps.tick(`contact ${c.resourceName}`),
   });
+}
+
+/**
+ * The slug an import landed, or null. On a managed brain an accepted write can still be pending when the sweep moves
+ * on and be refused at publication (a purge tombstone the session's screen missed), so the stored page is read back,
+ * which waits for this run's own outstanding write, before anything is retired in its favour.
+ */
+async function storedSlug(deps: GoogleSyncDeps, slug: string | null): Promise<string | null> {
+  if (slug === null || !deps.managed) return slug;
+  return await deps.managed.page(slug) ? slug : null;
 }
 
 /**
@@ -465,7 +475,7 @@ async function applyEvent(deps: GoogleSyncDeps, ev: CalendarEventData, range: Ca
   if (change.kind === 'remove') await deletePageByRelPath(deps, change.relPath, ctx.summary);
   if (change.kind !== 'write' || !page) return;
   const landed = await importRendered(deps, page.relPath, page.markdown, ctx.activePack, ctx.summary, ctx.countedSlugs);
-  if (change.retireAfter && landed !== null && landed !== slugifyPath(change.retireAfter)) {
+  if (change.retireAfter && landed !== null && landed !== slugifyPath(change.retireAfter) && await storedSlug(deps, landed) !== null) {
     await deletePageByRelPath(deps, change.retireAfter, ctx.summary);
   }
   deps.tick(`event ${ev.id}`);

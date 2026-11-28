@@ -29,6 +29,8 @@ import { parseAppleContactsSourceConfig } from '../src/core/apple-contacts/sourc
 import { listEntityIdentities } from '../src/core/entity-identity.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { ManagedConnectorSync } from '../src/core/persistence/connector-sync.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { slugifyPath } from '../src/core/sync.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { ContactsStub, STUB_TOKEN, type StubContact } from './helpers/apple-contacts-stub.ts';
@@ -282,5 +284,47 @@ describe('apple contacts on a managed brain: a rename into purged content keeps 
         expect(await linked(moved!)).toBe('apple-contacts');
       }
     } finally { stub.stop(); }
+  }), 180_000);
+});
+
+describe('google contacts on a managed brain: a replacement still pending when the sweep moves on is not taken as landed', () => {
+  const fixture = createConnectorFixture();
+  beforeAll(fixture.setup, 120_000);
+  afterAll(fixture.teardown);
+
+  test('a pending rename the pages guard refuses at publication keeps the old page', async () => withEnv(fixture.env, async () => {
+    for (const engine of fixture.engines) {
+      const f = await fixture.source(engine, CONTACTS);
+      const cfg = parseGoogleSourceConfig(CONTACTS, f.dir);
+      let name = 'Alice Example';
+      const fetch = withGoogleAccount(async (url: string) => {
+        const u = new URL(url);
+        if (u.pathname.endsWith('/people/me/connections')) return json({ connections: [contact('c1', name)], nextSyncToken: 'token-1' });
+        if (u.pathname.endsWith('/contactGroups')) return json({ contactGroups: [] });
+        throw new Error(`Unexpected Google fixture route: ${url}`);
+      }, ACCOUNT);
+      const run = async () => {
+        await runGoogleSync(engine, f.id, cfg, options, fetch).catch(() => {});
+        await settleConnectorWrites(engine, f.id).catch(() => {});
+        await disposePersistenceConsumer(engine);
+      };
+      await run();
+      await purge(engine, f.id, 'people/alice-example');
+      await settleConnectorWrites(engine, f.id).catch(() => {});
+      await disposePersistenceConsumer(engine);
+      name = 'Bob Example';
+      await run();
+      expect(await live(engine, f.id)).toEqual(['people/bob-example']);
+
+      // The session's purge screen misses the render, so the write is admitted, outlives the item's wait and is refused
+      // by the pages guard only at publication.
+      name = 'Alice Example';
+      const screen = spyOn(ManagedConnectorSync.prototype as unknown as { carriesPurgedPage: () => Promise<boolean> }, 'carriesPurgedPage').mockResolvedValue(false);
+      const quiet = spyOn(process.stderr, 'write').mockImplementation(() => true);
+      let stalled = false;
+      installFaultHook(async (point) => { if (point === 'consumer:preparing' && !stalled) { stalled = true; await new Promise(r => setTimeout(r, 6_500)); } });
+      try { await run(); } finally { installFaultHook(undefined); quiet.mockRestore(); screen.mockRestore(); }
+      expect(await live(engine, f.id)).toEqual(['people/bob-example']);
+    }
   }), 180_000);
 });
