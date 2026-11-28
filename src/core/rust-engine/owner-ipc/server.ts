@@ -64,7 +64,7 @@ import { ownerHelloCapabilities, ownerRemoteRefusal } from './remote-check.ts';
 import { heldRowHook } from './held-row.ts';
 import { membersWaitingFor } from './confirming-reads.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
-import { servedSession, type ServedHooks, type ServedServerOptions, type ServedServerSide, type ServedSession, type ServedCall } from '../served/session.ts';
+import { endServedReplicaWaits, servedSession, type ServedHooks, type ServedServerOptions, type ServedServerSide, type ServedSession, type ServedCall } from '../served/session.ts';
 import { encodeLengthFrame } from '../served/framing.ts';
 import { IMPORT_CLIENT_FILE } from '../served/client-files.ts';
 import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, SERVED_STORE_KEYS } from '../served/store-returning.ts';
@@ -750,6 +750,8 @@ export async function serveOwnerEngine(
     close: () => (closed ??= (async () => {
       closing = true;
       sealed = handOff !== null;
+      // Answers waiting for a replica's ack end `replication_timeout` while their sockets are still open.
+      if (opts.served && endServedReplicaWaits(opts.served)) await new Promise<void>(resolve => setImmediate(resolve));
       await closeOwnerServer({ server, lanes, running, handOff, leaveQueue, live: () => [...sockets, ...refused], farewell: handOff ? () => sayBye(v2Sockets) : null });
     })()),
   };

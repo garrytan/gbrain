@@ -161,8 +161,8 @@ commit time. Its cursor is its own log's `newest`, written in the same redb tran
 | Call | What it does |
 |---|---|
 | `Follower::open(dir)` | Opens or creates the follower in `dir`; an empty one accepts only a snapshot. A brain without a log is refused. |
-| `apply_page(&LogPage)` / `apply_raw(lineage, &[(position, record bytes)])` | Applies the records after the cursor in one redb transaction: data ops, the records, the log meta, the sequence (pinned to the primary's) and `M\0ctime`. Records at or before the cursor are skipped, so applying twice is a no-op. A gap, a cursor the log no longer reaches, or another history refuses `snapshot_required` and changes nothing. |
-| `install_snapshot(dir, manifest)` | Validates and copies a snapshot (`Store::snapshot_to`) from one held read state, in one redb transaction that replaces every key. Refused, changing nothing: no log, another brain, a manifest mismatch, an inconsistent log, or a snapshot behind the follower on the same history. On another history it may move the follower back. |
+| `apply_page(&LogPage)` / `apply_raw(lineage, &[(position, record bytes)])` | Applies the records after the cursor in one redb transaction: data ops, the records, the log meta, the sequence (pinned to the primary's) and `M\0ctime`. Records at or before the cursor are skipped, so applying twice is a no-op. A gap, a cursor the log no longer reaches, or another history refuses `snapshot_required` and changes nothing; holding records past another timeline's fork refuses `diverged_tail` (below). |
+| `install_snapshot(dir, manifest)` | Validates and copies a snapshot (`Store::snapshot_to`) from one held read state, in one redb transaction that replaces every key. Refused, changing nothing: no log, another brain, a manifest mismatch, an inconsistent log, or a snapshot behind the follower on the same history. On another history it may move the follower back, but only over an exported diverged tail (below). |
 | `cursor()`, `lineage()`, `sequence()`, `last_commit_time()`, `records()` | What the follower holds. |
 | `promote(options)` / `promote_with(options, env, settings, stopped)` | Fenced (below), then starts a new timeline at the cursor and opens the brain as a logged multi-user `Store` on `env`. The new timeline's first commit, `(cursor.sequence + 1, 0)`, is its promotion note (`M promotion/<timeline>`: who promoted, from where, on what basis); its commit clock starts above max(`M\0ctime`, the newest record's time). A refusal changes nothing; an error after the new timeline is written is `promotion_partial` (open the brain with `Store::open_dir`, then `serve_as_primary`). |
 
@@ -217,6 +217,71 @@ reaches a promotion (guarded by `tests/takeover.rs`). Not covered: clock skew la
 primaries after a wrong attestation during a network cut, or after two followers both promote, which is phase M4
 (work item 9e3753d4).
 
+## Replica acks
+
+With multi-user mode on, a primary can wait for a follower before it answers a write (`replica.rs`, the TypeScript
+gate `served/replica-gate.ts`). The guarantee holds only for the follower the primary waited for: an answered write
+is in the records of every attached replica that acked it, so an attested promotion of that replica keeps it. Writes
+made in-process on the server (not through a served connection) never wait. A brain with no attached replica answers
+as before, with no store call.
+
+| Call | What it does |
+|---|---|
+| `Store::attach_replica(id)` | Records `M replica/<id>` (`{ id, generation, attached_at_us }`) in a logged commit. Idempotent; a re-attach after a detach takes the detach's generation + 1. An id is 1-128 of letters, digits, `.`, `_`, `:`, `-`. |
+| `Store::report_replica_ack(id, generation, cursor, lineage)` | Raises the replica's acked cursor in memory, never back. Refused `invalid_state`, changing nothing: an id not attached, another generation, a cursor past the log's newest, or a lineage the log does not continue. |
+| `Store::replica_cover(position)` | `{ required, covered, acked_through }`: required while any replica is attached; covered when one acked at or past `position`. |
+| `Store::wait_replicated(position)` | Waits (bounded) until covered; ends `replication_timeout` on its deadline, a full budget, or a detach. Not on napi: the served gate waits in TypeScript and holds no pool worker. |
+| `Store::detach_replica(id, reason)` | Deletes `M replica/<id>` and writes `M replica-detach/<id>` in one logged commit; false, committing nothing, for an id not attached. Ends every wait at once. |
+
+A follower names its replica id in `repl_follow` (`followPrimary({ replica })`). The primary attaches it and counts
+only acks that can be true: a records ack that is `ok`, answers the frame sent and ends at its last record; a snapshot
+ack at the snapshot's commit sequence (the manifest `generation`); and, on reconnect, the follower's cursor with a
+lineage the store accepts. Each counted ack is told back as `repl_mark { acked }`, which the follower keeps durably in
+`REPLICA-MARK` (`Follower::note_primary_acked`); a promotion records it as `acked_seen` in its note. A promotion
+detaches every replica the brain had attached, reason `promoted <timeline>`, in the note's commit. Acks are in memory:
+a restarted primary waits again until the follower reports.
+
+| Setting | Default | Range |
+|---|---|---|
+| `GBRAIN_RUST_REPLICA_ACK_TIMEOUT_MS` | 10 000 | 1 to 600 000 |
+| `GBRAIN_RUST_REPLICA_ACK_MAX_WAITERS` | 1 024 | 1 to 65 536 |
+
+The store reads both at open, only with the commit log on; any other value refuses the open `invalid_argument`. The
+TypeScript engine sends its own process's values (`OpenOptions::replica_ack_env`); a name it does not send is read
+from the store process's environment.
+
+A served write that does not see its ack in time ends `replication_timeout` (reason `outcome_unknown`): the commit is
+durable on the primary, and only the replica's copy is unknown. Do not send a new write: resend the same request id,
+which answers once the ack arrives, or the timeout again. With `max_waiters` answers already waiting, a new write is
+refused `replication_busy` before it runs (nothing written; retry). Reads never wait. The `replica/` and
+`replica-detach/` keys are read only by name (`replica.rs`); no list, dump, export or parity path scans the meta
+family, so no output shows them. Snapshots and the log carry them as brain data. Switched off, the store writes none.
+
+Detach runbook (a replica that is gone, so writes stop timing out): on any machine with an owner server token, call
+`followPrimary(...).detach(reason)` on the replica's own link, or `detachReplicaAt({ url, token, ca, replica, reason })`
+from `served/follower-serve.ts` (one connection, `repl_detach`, answered `repl_detached { detached }`). There is no CLI
+yet. `detached: false` means the id was not attached. Waiting answers end `replication_timeout` with `end=detached`;
+later writes do not wait. To follow again, start the follower with the same `replica` id.
+
+## Diverged tail recovery
+
+A follower (or a stopped old primary) can hold records past the point where a promoted timeline forked: commits the
+new primary never had. `apply_*` and `install_snapshot` refuse such a follower `diverged_tail`, changing nothing,
+until the tail is exported (`diverged_tail.rs`); the refusal names the fork, the cursor, both lineages and whether the
+log still holds the whole tail.
+
+| Call | What it does |
+|---|---|
+| `Follower::export_diverged_tail(dir, theirs_lineage)` | Writes a new directory (mode 0700, files 0600): a complete image of the follower's records (`records.redb`, `FORMAT`, `SNAPSHOT.json`), so a value whose record retention trimmed is kept; `tail.jsonl`, the raw records after the fork; and `MANIFEST.json` (the sha256 of each file), written last. Refused `export_no_space` when the free space is under image + tail + 16 MiB. Any failure removes what it wrote and permits nothing. Refuses an existing directory, one inside the follower, and a symlinked parent. |
+| `Follower::allow_install_over(dir)` | Checks the export against the follower (brain, cursor, lineage, fork, every tail record) and permits one snapshot install over exactly that tail. The permit is in memory; after a restart, call it again with the same directory. |
+
+Runbook: stop following; export with the new primary's lineage (`Follower#exportDivergedTail(dir, lineage)`, the
+lineage of any `repl_records` from it, or of `Brain#readCommitLogRaw` on the new primary); check `MANIFEST.json`
+exists; start following again with `followPrimary({ divergedTailExport: dir })`, which calls `allowInstallOver(dir)`
+and installs the snapshot the primary sends; verify the follower's cursor. With `divergedTailExport` set and no export
+there yet, `followPrimary` exports on the first `diverged_tail` from a records frame by itself. The export takes disk
+the size of the brain. Merging the exported commits back is a manual step.
+
 ## Tests
 
 `tests/commit_log.rs` (both store modes): a follower that reads only the log matches the leader after every commit
@@ -236,3 +301,8 @@ no-product-path guards. `src/primary/tests.rs` (unit tests on seams): upkeep tha
 serve whose upkeep failed leaves the store refusing writes, and a commit judged before the lease was taken conflicts.
 `tests/follower.rs`: a crash at every I/O call of a promotion's durable step, where a
 promotion on disk that returned an error names it `promotion_partial`.
+`tests/replica_ack.rs`: acked writes survive an attested promotion, a stopped follower and a detach end waits, acks
+that cannot be true are refused, a restarted primary waits again, the budget, switch-off, a promotion during a wait,
+the durable mark, and promotion notes with and without `acked_seen`. `tests/follower.rs` also covers the diverged
+tail: refusals, an export kept byte for byte, a trimmed value kept by the image, unsafe destinations, and every
+simulated stop of the export (process stops at each step, not fsync-failure injection) and a tampered file.

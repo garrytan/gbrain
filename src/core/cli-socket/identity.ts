@@ -50,6 +50,9 @@ export const READ_BEHAVIOR_ENV: readonly string[] = [
   // In multi-user mode, the deadline of an explicit transaction with none of its own: past it the call ends `timeout`
   // instead of answering, so a serve and a CLI with different values answer the same call differently.
   'GBRAIN_RUST_TXN_DEADLINE_MS',
+  // With a replica attached, how long a write's answer waits for its ack and how many may wait: past either the call
+  // ends `replication_timeout` or `replication_busy` instead of answering.
+  'GBRAIN_RUST_REPLICA_ACK_TIMEOUT_MS', 'GBRAIN_RUST_REPLICA_ACK_MAX_WAITERS',
 ];
 /** Provider credentials: only whether each is set enters the identity. Every other provider variable (endpoints, deployments, versions, org/project/group ids) enters with its value. */
 const SECRET_PROVIDER_ENV = /(_API_KEY|_TOKEN|_SECRET)$/;

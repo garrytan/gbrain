@@ -4,7 +4,15 @@
  * `follower`, which a session offers only when asked by an owner server token; every other hello and every existing
  * v2/v3 frame is unchanged.
  *
- * Start, follower -> primary: { t: 'repl_follow', id, cursor: { sequence, index } | null } (follower-serve.ts).
+ * Start, follower -> primary: { t: 'repl_follow', id, cursor: { sequence, index } | null, replica?, lineage? }
+ * (follower-serve.ts). `replica` (an id) makes the follower a registered replica the primary's writes wait for (multi-user
+ * Rust; rust/docs/store/commit-log.md, "Replica acks"); `lineage` lets its cursor count as an ack on (re)connect.
+ *
+ * Replica acks, only on a connection whose repl_follow carried `replica` (an older follower never sees them):
+ *   primary -> follower  { t: 'repl_mark', acked: { sequence, index } }   what the primary counts as this replica's ack
+ *   follower -> primary  { t: 'repl_detach', replica, reason }            stop waiting for `replica` (any owner-token
+ *                                                                         connection that asked for `follower`)
+ *   primary -> follower  { t: 'repl_detached', replica, detached }        whether a detach was committed
  *
  * Records, primary -> follower (the three arguments of `Follower::apply_raw`):
  *   { t: 'repl_records', id, seq, brain_id, lineage: [{ id, from: { sequence, index } }],
@@ -36,7 +44,13 @@ import { opError } from '../../ops/contract.ts';
 
 /** The capability under which a session offers these frames (follower-serve.ts): only to an owner server token. */
 export const FOLLOWER_CAP = 'follower';
-export const REPL_FRAME_TYPES = ['repl_follow', 'repl_records', 'repl_ack', 'repl_snap_begin', 'repl_snap_chunk', 'repl_snap_window', 'repl_snap_end'] as const;
+export const REPL_FRAME_TYPES = [
+  'repl_follow', 'repl_records', 'repl_ack', 'repl_snap_begin', 'repl_snap_chunk', 'repl_snap_window', 'repl_snap_end',
+] as const;
+/** Replica-ack frames on the same follower connection: sent only to or by a follower that names a `replica`. */
+export const REPLICA_FRAME_TYPES = ['repl_mark', 'repl_detach', 'repl_detached'] as const;
+/** A replica id: what `Store::attach_replica` keys on (letters, digits, `.`, `_`, `:`, `-`; at most 128 bytes). */
+export const REPLICA_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 /** The files of a store snapshot directory, in the order they cross (format.rs RECORDS_FILE, FORMAT, snapshot.rs MANIFEST_FILE). */
 export const SNAPSHOT_FILES = ['records.redb', 'FORMAT', 'SNAPSHOT.json'] as const;
 export const SNAPSHOT_MANIFEST_VERSION = 1;
@@ -123,6 +137,46 @@ export function decodeReplRecords(header: Record<string, unknown>, tail: Buffer 
 
 export function encodeReplAck(input: { id: number; seq: number } & ({ ok: true; applied?: number; skipped?: number; cursor: CommitPositionWire } | { ok: false; error: unknown })): Record<string, unknown> {
   return { t: 'repl_ack', ...input };
+}
+
+// ---- replica acks ----
+
+export function encodeReplFollow(input: { id: number; cursor: CommitPositionWire | null; replica?: string; lineage?: TimelineWire[] }): Record<string, unknown> {
+  return {
+    t: 'repl_follow', id: input.id, cursor: input.cursor ? { sequence: input.cursor.sequence, index: input.cursor.index } : null,
+    ...(input.replica !== undefined ? { replica: input.replica } : {}),
+    ...(input.lineage !== undefined ? { lineage: input.lineage.map(t => ({ id: t.id, from: { sequence: t.from.sequence, index: t.from.index } })) } : {}),
+  };
+}
+
+/** `repl_follow`, or a refusal. A frame without `replica` / `lineage` (an older follower) decodes with them absent. */
+export function decodeReplFollow(header: Record<string, unknown>): { cursor: CommitPositionWire | null; replica?: string; lineage?: TimelineWire[] } {
+  if (header.t !== 'repl_follow') return bad('type');
+  const cursor = header.cursor === null || header.cursor === undefined ? null : position(header.cursor, 'cursor');
+  if (header.replica !== undefined && (typeof header.replica !== 'string' || !REPLICA_ID.test(header.replica))) return bad('replica');
+  const lineage = header.lineage === undefined || header.lineage === null ? undefined : lineageOf(header.lineage);
+  return { cursor, ...(header.replica !== undefined ? { replica: header.replica as string } : {}), ...(lineage ? { lineage } : {}) };
+}
+
+export function encodeReplMark(acked: CommitPositionWire): Record<string, unknown> {
+  return { t: 'repl_mark', acked: { sequence: acked.sequence, index: acked.index } };
+}
+
+export function decodeReplMark(header: Record<string, unknown>): CommitPositionWire {
+  if (header.t !== 'repl_mark') return bad('type');
+  return position(header.acked, 'acked');
+}
+
+export function encodeReplDetach(replica: string, reason: string): Record<string, unknown> {
+  return { t: 'repl_detach', replica, reason };
+}
+
+/** `repl_detach`, or a refusal: a replica id and a reason of at most 512 characters. */
+export function decodeReplDetach(header: Record<string, unknown>): { replica: string; reason: string } {
+  if (header.t !== 'repl_detach') return bad('type');
+  if (typeof header.replica !== 'string' || !REPLICA_ID.test(header.replica)) return bad('replica');
+  if (typeof header.reason !== 'string' || header.reason === '' || header.reason.length > 512) return bad('reason');
+  return { replica: header.replica, reason: header.reason };
 }
 
 // ---- snapshot ----

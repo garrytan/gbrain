@@ -8,7 +8,7 @@ import { embeddedSchemaEmbedding } from '../embedded-engine.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from '../ai/defaults.ts';
 import { WRITE_GATE_DETECTOR_VERSION } from '../write-gate-schema.ts';
 import { mapStoreError } from './store-errors.ts';
-import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './multiuser-switch.ts';
+import { rustMultiuserFromEnv, rustMultiuserSetting, rustMultiuserSubSwitch } from './multiuser-switch.ts';
 
 /** Worker threads the store's pool runs its calls on. One write runs at a time; reads overlap. */
 const STORE_POOL_THREADS = 4;
@@ -308,10 +308,16 @@ export async function openRustStore(
     // reads it only when the switch itself is on or a sub-switch is set.
     const commitLogOn = rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', MODE_MAY_BE_ON);
     const writeOriginOn = rustMultiuserSubSwitch('GBRAIN_RUST_WRITE_ORIGIN', MODE_MAY_BE_ON);
+    const replicaAckTimeout = rustMultiuserSetting('GBRAIN_RUST_REPLICA_ACK_TIMEOUT_MS', MODE_MAY_BE_ON);
+    const replicaAckMaxWaiters = rustMultiuserSetting('GBRAIN_RUST_REPLICA_ACK_MAX_WAITERS', MODE_MAY_BE_ON);
     const writes = (hostId: string | undefined) => ({
       ...(commitLogOn ? { commitLog: true } : {}),
       ...(writeOriginOn ? { writeOrigin: true } : {}),
       ...((commitLogOn || writeOriginOn) && hostId ? { hostId } : {}),
+      // Replica-ack settings (rust/docs/store/commit-log.md, "Replica acks"), as this process's environment holds them;
+      // the store checks them, and only with the commit log on.
+      ...(commitLogOn && replicaAckTimeout !== undefined ? { replicaAckTimeoutMs: replicaAckTimeout } : {}),
+      ...(commitLogOn && replicaAckMaxWaiters !== undefined ? { replicaAckMaxWaiters } : {}),
     });
     const base = {
       schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', chunkStrategy: SEED_CHUNK_STRATEGY,

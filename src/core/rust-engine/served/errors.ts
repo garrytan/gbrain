@@ -70,6 +70,44 @@ export function servedGone(member: string, sent: boolean): OperationError {
       why: 'This process reaches its brain through a brain server. A call in flight when the connection ended may have run there.' });
 }
 
+/** Why a write's replica confirmation never came (served/replica-gate.ts). */
+export type ReplicationEnd = 'timeout' | 'detached' | 'budget' | 'closed' | 'no_position' | 'cover_failed';
+
+const REPLICATION_END_TEXT: Record<ReplicationEnd, (ms: number) => string> = {
+  timeout: ms => `within ${ms} ms`,
+  detached: () => 'before the replica was detached',
+  closed: () => 'before the brain server closed',
+  budget: () => 'because too many answers already waited for it',
+  no_position: () => 'because the server could not read the commit position of the write',
+  cover_failed: () => 'because the server could not read the replica state',
+};
+
+function positionText(p: { sequence: number; index: number } | null): string {
+  return p ? `cp1:${p.sequence}.${p.index}` : 'unknown';
+}
+
+/**
+ * A write committed on the primary, and the attached replica did not confirm it in time (`replication_timeout`,
+ * reason `outcome_unknown`). The commit is durable on the primary; a same-id resend reads its stored outcome.
+ */
+export function servedReplicationTimeout(member: string, req: string, position: { sequence: number; index: number } | null,
+  timeoutMs: number, ackedThrough: { sequence: number; index: number } | null, end: ReplicationEnd = 'timeout'): OperationError {
+  return opError('replication_timeout',
+    `The primary committed request ${req} at ${positionText(position)}, but replica confirmation did not arrive ${REPLICATION_END_TEXT[end](timeoutMs)}. Do not submit a new write.`,
+    'Resend the same request id to check its stored outcome; if the replica stays unavailable, the brain-host operator runs the detach step in rust/docs/store/commit-log.md, Replica acks.',
+    { reason: 'outcome_unknown', retryable: false,
+      detail: `member=${member} via=served req=${req} position=${positionText(position)} acked_through=${positionText(ackedThrough)} durable=primary rerun=false end=${end}`,
+      why: 'A brain with an attached replica answers a write only after the replica holds it, so a promoted replica never loses an answered write. Without that confirmation the write is on the primary only.' });
+}
+
+/** Too many answers already wait for replica confirmation, so this write did not run (`replication_busy`). */
+export function servedReplicationBusy(member: string, req: string, maxWaiters: number): OperationError {
+  return opError('replication_busy',
+    `${maxWaiters} answers already wait for replica confirmation, so the brain server did not run request ${req} (${member}); nothing was written.`,
+    'Retry the same request id after a short wait; if it keeps failing, the brain-host operator checks that the replica is following (rust/docs/store/commit-log.md, Replica acks).',
+    { retryable: true, detail: `member=${member} via=served req=${req} max_waiters=${maxWaiters} ran=false written=nothing` });
+}
+
 /** A retried request whose outcome the server no longer has; it was not run again. */
 export function servedOutcomeUnknown(member: string, req: string): OperationError {
   return opError('owner_unavailable',

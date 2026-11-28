@@ -219,6 +219,10 @@ pub struct OpenOptions {
     /// multi-user mode (`multiuser` or its config row, I-0.v2); off, or with the mode off, the store writes, reads
     /// and returns exactly what it did before they existed.
     pub multiuser_writes: MultiUserWrites,
+    /// The replica-ack settings' texts by environment name (`replica::TIMEOUT_ENV`, `replica::MAX_WAITERS_ENV`),
+    /// from a caller that reads its own environment (the napi binding sends the TypeScript process's values). A
+    /// name not listed is read from this process's environment. Read only with the commit log on.
+    pub replica_ack_env: Vec<(String, String)>,
 }
 
 /// The commit log and write origin sub-switches of multi-user mode (`GBRAIN_RUST_COMMIT_LOG=1`,
@@ -255,6 +259,7 @@ impl Default for OpenOptions {
             write_gate_detector_version: None,
             multiuser: false,
             multiuser_writes: MultiUserWrites::default(),
+            replica_ack_env: Vec::new(),
         }
     }
 }
@@ -589,7 +594,14 @@ impl Store {
         };
         // Replica ack settings: read only with the log on, so a bad value never refuses an open with the switch off.
         let replica_settings = if multiuser.commit_log && !read_only {
-            replica::ReplicaAckSettings::from_env()?
+            replica::ReplicaAckSettings::from_lookup(|name| {
+                options
+                    .replica_ack_env
+                    .iter()
+                    .find(|(key, _)| key == name)
+                    .map(|(_, text)| text.clone())
+                    .or_else(|| std::env::var(name).ok())
+            })?
         } else {
             replica::ReplicaAckSettings::default()
         };

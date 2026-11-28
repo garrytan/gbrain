@@ -427,6 +427,41 @@ fn with_multi_user_mode_off_replica_acks_do_nothing() {
     assert!(seen > 0);
 }
 
+/// The settings come from the caller's texts when it sends them (the napi binding sends the TypeScript process's
+/// environment), checked as the environment would be; with the commit log off a bad text never refuses the open.
+#[test]
+fn the_ack_settings_come_from_the_open_options() {
+    use gbrain_store::replica::{MAX_WAITERS_ENV, TIMEOUT_ENV};
+    let dir = TempDir::new("ra-settings");
+    let with = |env: &[(&str, &str)], options: OpenOptions| OpenOptions {
+        replica_ack_env: env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        ..options
+    };
+    let store = Store::open_dir(
+        &dir.path().join("a"),
+        with(&[(TIMEOUT_ENV, "1500"), (MAX_WAITERS_ENV, " 7 ")], mu(true)),
+    )
+    .unwrap();
+    assert_eq!(store.replica_ack_settings(), settings(1_500, 7));
+    drop(store);
+    for bad in ["0", "600001", "soon", ""] {
+        let error = Store::open_dir(&dir.path().join("b"), with(&[(TIMEOUT_ENV, bad)], mu(true)))
+            .err()
+            .unwrap();
+        assert_eq!(error.code, INVALID_ARGUMENT, "{bad:?}");
+    }
+    let error = Store::open_dir(&dir.path().join("b"), with(&[(MAX_WAITERS_ENV, "65537")], mu(true)))
+        .err()
+        .unwrap();
+    assert_eq!(error.code, INVALID_ARGUMENT);
+    let off = Store::open_dir(
+        &dir.path().join("c"),
+        with(&[(TIMEOUT_ENV, "soon")], OpenOptions::default()),
+    )
+    .unwrap();
+    assert_eq!(off.replica_ack_settings(), ReplicaAckSettings::default());
+}
+
 /// C1 (Ember's add): a write that waits while its replica promotes ends `replication_timeout`, never success; it
 /// stays durable on the old primary, and the old primary's diverged-tail export keeps it.
 #[test]

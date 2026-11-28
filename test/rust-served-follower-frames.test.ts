@@ -21,7 +21,8 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  FOLLOWER_CAP, REPL_FRAME_TYPES, SNAPSHOT_FILES, decodeReplRecords, decodeSnapshotBegin, decodeSnapshotChunk,
+  FOLLOWER_CAP, REPL_FRAME_TYPES, REPLICA_FRAME_TYPES, SNAPSHOT_FILES, decodeReplDetach, decodeReplFollow, decodeReplMark,
+  decodeReplRecords, decodeSnapshotBegin, decodeSnapshotChunk, encodeReplDetach, encodeReplFollow, encodeReplMark,
   encodeReplRecords, encodeSnapshotBegin, encodeSnapshotChunk, encodeSnapshotEnd, encodeSnapshotWindow,
   SnapshotReceiver, type SnapshotManifestWire,
 } from '../src/core/rust-engine/served/follower-frames.ts';
@@ -203,5 +204,41 @@ describe('off is identical', () => {
     expect([...SERVED_SERVER_CAPS]).toEqual(['request_ids', 'positions', 'whole_ops', 'binary_tail', 'remote_check', 'callbacks', 'txn']);
     expect((SERVED_SERVER_CAPS as readonly string[]).includes(FOLLOWER_CAP)).toBe(false);
     expect([...REPL_FRAME_TYPES]).toEqual(['repl_follow', 'repl_records', 'repl_ack', 'repl_snap_begin', 'repl_snap_chunk', 'repl_snap_window', 'repl_snap_end']);
+  });
+});
+
+describe('replica-ack frames', () => {
+  const lineage = [{ id: '0193f6a0-0000-7000-8000-000000000001', from: { sequence: 3, index: 2 } }];
+  const refused = (fn: () => unknown) => { try { fn(); return null; } catch (e) { return { code: (e as { code?: string }).code, reason: (e as { reason?: string }).reason }; } };
+
+  test('repl_follow carries a replica id and the lineage of its cursor, and an older follower decodes with neither', async () => {
+    const full = await overWire(encodeReplFollow({ id: 1, cursor: { sequence: 2 ** 53 - 1, index: 0xffff_ffff }, replica: 'replica-b.1', lineage }), null);
+    expect(decodeReplFollow(full.header)).toEqual({ cursor: { sequence: 2 ** 53 - 1, index: 0xffff_ffff }, replica: 'replica-b.1', lineage });
+    // The frame a follower from before replica acks sends: same decode, no replica (so nothing waits for it).
+    expect(decodeReplFollow({ t: 'repl_follow', id: 1, cursor: { sequence: 4, index: 0 } })).toEqual({ cursor: { sequence: 4, index: 0 } });
+    expect(decodeReplFollow({ t: 'repl_follow', id: 1, cursor: null })).toEqual({ cursor: null });
+    expect(encodeReplFollow({ id: 1, cursor: null })).toEqual({ t: 'repl_follow', id: 1, cursor: null });
+  });
+
+  test('a replica id or a detach reason of the wrong shape is refused frame_malformed', () => {
+    for (const replica of ['', 'a/b', 'x'.repeat(129), 7, 'sp ace']) {
+      expect(refused(() => decodeReplFollow({ t: 'repl_follow', id: 1, cursor: null, replica }))).toEqual({ code: 'owner_ipc_protocol', reason: 'frame_malformed' });
+      expect(refused(() => decodeReplDetach({ t: 'repl_detach', replica, reason: 'r' }))).toEqual({ code: 'owner_ipc_protocol', reason: 'frame_malformed' });
+    }
+    for (const reason of ['', 'x'.repeat(513), null]) {
+      expect(refused(() => decodeReplDetach({ t: 'repl_detach', replica: 'r1', reason }))).toEqual({ code: 'owner_ipc_protocol', reason: 'frame_malformed' });
+    }
+    expect(refused(() => decodeReplFollow({ t: 'repl_follow', id: 1, cursor: { sequence: -1, index: 0 } }))).not.toBeNull();
+    expect(refused(() => decodeReplMark({ t: 'repl_mark', acked: { sequence: 1, index: 2 ** 32 } }))).not.toBeNull();
+  });
+
+  test('repl_mark and repl_detach round-trip through the length framing', async () => {
+    expect(decodeReplMark((await overWire(encodeReplMark({ sequence: 9, index: 1 }), null)).header)).toEqual({ sequence: 9, index: 1 });
+    expect(decodeReplDetach((await overWire(encodeReplDetach('r1', 'host lost'), null)).header)).toEqual({ replica: 'r1', reason: 'host lost' });
+  });
+
+  test('the replica frames are their own list, apart from the follower frames', () => {
+    expect([...REPLICA_FRAME_TYPES]).toEqual(['repl_mark', 'repl_detach', 'repl_detached']);
+    expect(REPLICA_FRAME_TYPES.some(t => (REPL_FRAME_TYPES as readonly string[]).includes(t))).toBe(false);
   });
 });

@@ -106,6 +106,26 @@ fn lineage_out(lineage: &[Timeline]) -> Result<Value, TaskError> {
     Ok(Value::Array(items?))
 }
 
+/// The helpers above with store errors, for `replica_acks.rs`.
+fn to_store(e: TaskError) -> gbrain_store::StoreError {
+    gbrain_store::StoreError::new(e.code, e.message)
+}
+
+pub(super) fn position_in_store(
+    v: &Value,
+    what: &str,
+) -> Result<CommitPosition, gbrain_store::StoreError> {
+    position_of_value(v, what).map_err(to_store)
+}
+
+pub(super) fn position_out_store(p: CommitPosition) -> Result<Value, gbrain_store::StoreError> {
+    position_out(p).map_err(to_store)
+}
+
+pub(super) fn lineage_in_store(v: &Value) -> Result<Vec<Timeline>, gbrain_store::StoreError> {
+    lineage_in(v).map_err(to_store)
+}
+
 /// One record `applyRaw` takes: its position and the bytes the primary stores.
 #[napi(object)]
 pub struct RawRecordInput {
@@ -173,6 +193,17 @@ impl Follower {
             })?;
             work(&follower)
         })
+    }
+
+    /// `run` for work that returns store errors (`replica_acks.rs`).
+    pub(super) fn run_store<'env>(
+        &self,
+        env: &'env Env,
+        work: impl FnOnce(&StoreFollower) -> Result<Value, gbrain_store::StoreError>
+        + Send
+        + 'static,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |f| work(f).map_err(task_error))
     }
 
     /// `open(dir)`: opens (or creates) the follower in `dir`; resolves `{ cursor }`.

@@ -37,6 +37,8 @@ interface OpenTxn {
   engine: BrainEngine;
   /** Ends a transaction the client opened: commit (resolve) or roll back (reject). Absent for a borrowed handle. */
   end?: { commit(): void; rollback(error: unknown): void; settled: Promise<unknown>; timer: ReturnType<typeof setTimeout> };
+  /** A read-write transaction the client opened at the top level: its commit waits for the replica (replica-gate.ts). */
+  gated?: boolean;
 }
 
 export interface SessionCallsContext {
@@ -49,6 +51,11 @@ export interface SessionCallsContext {
   replyDirect(id: number, member: string, error: unknown): void;
   /** The connection's credential refusal, or null while it still works (session.ts). */
   staleCredential(): Error | null;
+  /**
+   * Replica acks: null once a commit at `position` may be answered as a success, else the `replication_timeout` error
+   * (session.ts, replica-gate.ts).
+   */
+  afterCommit?(position: { sequence: number; index: number } | null): Promise<Error | null>;
 }
 
 export function sessionCalls(ctx: SessionCallsContext) {
@@ -195,7 +202,7 @@ export function sessionCalls(ctx: SessionCallsContext) {
         if (ctx.closed()) throw servedTransactionDeadline(0);
         const timer = setTimeout(() => rollback(servedTransactionDeadline(maxMs)), maxMs);
         timer.unref?.();
-        txns.set(ref, { engine: tx, end: { commit, rollback, settled: ended, timer } });
+        txns.set(ref, { engine: tx, end: { commit, rollback, settled: ended, timer }, gated: parentRef === undefined && frame.read_only !== true });
         answered = true;
         writeFrame({ t: 'result', id, ok: true, value: ref });
         try { await ended; } finally { clearTimeout(timer); txns.delete(ref); }
@@ -218,14 +225,26 @@ export function sessionCalls(ctx: SessionCallsContext) {
     }
     if (op === 'commit') open.end.commit(); else open.end.rollback(Object.assign(new Error('rolled back by the client'), { rolledBackByClient: true }));
     void settled.then(
-      // A commit answers the position its transaction committed at (the client's handle reports it after the end).
-      async () => writeFrame({ t: 'result', id, ok: true, value: op === 'commit' ? encodeValue(await committedPosition(open.engine)) : null }),
+      // A commit answers the position its transaction committed at (the client's handle reports it after the end). A
+      // top-level read-write commit is answered as a success only once an attached replica holds it.
+      async () => {
+        if (op !== 'commit') { writeFrame({ t: 'result', id, ok: true, value: null }); return; }
+        const position = await committedPosition(open.engine);
+        const refused = open.gated && ctx.afterCommit ? await ctx.afterCommit(positionWire(position)) : null;
+        writeFrame(refused ? { t: 'result', id, ok: false, error: encodeErr(refused) } : { t: 'result', id, ok: true, value: encodeValue(position) });
+      },
       (error: unknown) => writeFrame(op === 'rollback' && (error as { rolledBackByClient?: boolean })?.rolledBackByClient
         ? { t: 'result', id, ok: true, value: null }
         : { t: 'result', id, ok: false, error: encodeErr(error) }),
     );
   };
   const txnSettled = new Map<string, Promise<unknown>>();
+
+  const positionWire = (v: unknown): { sequence: number; index: number } | null => {
+    const p = v as { sequence?: unknown; index?: unknown } | null;
+    const sequence = Number(p?.sequence), index = Number(p?.index);
+    return p && Number.isSafeInteger(sequence) && Number.isSafeInteger(index) ? { sequence, index } : null;
+  };
 
   /** The position a committed transaction's engine reports (`lastCommitPosition`), or null (no commit log, or none). */
   const committedPosition = async (engine: unknown): Promise<unknown> => {

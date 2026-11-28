@@ -15,7 +15,7 @@
  * opens the follower: its owner opens it with `Follower.open`, which checks the format on a recovered copy.
  */
 import { createHash } from 'node:crypto';
-import { mkdtempSync, openSync, readSync, closeSync, fstatSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, openSync, readSync, closeSync, existsSync, fstatSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { encodeError } from '../owner-ipc/codec.ts';
 import {
@@ -32,7 +32,12 @@ export interface FollowerNapi {
   applyRaw(brainId: string, lineage: TimelineWire[], records: Array<{ sequence: number; index: number; bytes: Buffer }>):
     Promise<{ applied: number; skipped: number; cursor: CommitPositionWire }>;
   installSnapshot(dir: string, manifest: SnapshotManifestWire | null): Promise<CommitPositionWire>;
+  /** Diverged tail recovery (rust/docs/store/commit-log.md); absent on builds before replica acks. */
+  exportDivergedTail?(dir: string, lineage: TimelineWire[]): Promise<unknown>;
+  allowInstallOver?(dir: string): Promise<unknown>;
 }
+
+const codeOf = (error: unknown) => (error as { code?: unknown } | null)?.code;
 
 interface RawLogPage {
   brainId?: string; brain_id?: string; lineage: TimelineWire[]; newest: CommitPositionWire | null;
@@ -113,7 +118,14 @@ export async function primarySnapshotFrames(store: RustStore, opts: { id: number
 export class FollowerApplier {
   private transfer: { id: number; xfer: string; receiver: SnapshotReceiver; dir: string } | null = null;
 
-  constructor(private readonly follower: FollowerNapi, private readonly opts: { brainId: string; stagingDir: string; maxBytes: number }) {}
+  // The primary's lineage from its newest records frame: what a diverged tail is exported against.
+  private theirs: TimelineWire[] | null = null;
+
+  constructor(private readonly follower: FollowerNapi, private readonly opts: {
+    brainId: string; stagingDir: string; maxBytes: number;
+    /** followPrimary's `divergedTailExport`: absent, a diverged tail stays refused. */
+    divergedTailExport?: string;
+  }) {}
 
   async onFrame(header: Record<string, unknown>, tail: Buffer | null): Promise<Frame[]> {
     const id = typeof header.id === 'number' ? header.id : 0;
@@ -138,7 +150,14 @@ export class FollowerApplier {
         const t = this.transferFor(header);
         try {
           const { dir, manifest } = t.receiver.end(header);
-          const cursor = await this.follower.installSnapshot(dir, manifest);
+          let cursor: CommitPositionWire;
+          try { cursor = await this.follower.installSnapshot(dir, manifest); }
+          catch (error) {
+            // The permit for an install over the exported tail lives in memory: after a restart it is granted again
+            // from the export directory. Only once; without a complete export the refusal stands.
+            if (codeOf(error) !== 'diverged_tail' || !(await this.exportTail())) throw error;
+            cursor = await this.follower.installSnapshot(dir, manifest);
+          }
           return [{ header: encodeReplAck({ id: t.id, seq: 0, ok: true, cursor }), tail: null }];
         } finally { this.dropTransfer(); }
       });
@@ -152,12 +171,35 @@ export class FollowerApplier {
     const seq = typeof header.seq === 'number' ? header.seq : 0;
     try {
       const decoded = decodeReplRecords(header, tail);
-      const out = await this.follower.applyRaw(decoded.brainId, decoded.lineage,
-        decoded.records.map(r => ({ sequence: r.position.sequence, index: r.position.index, bytes: r.bytes })));
+      this.theirs = decoded.lineage;
+      let out: Awaited<ReturnType<FollowerNapi['applyRaw']>>;
+      try {
+        out = await this.follower.applyRaw(decoded.brainId, decoded.lineage,
+          decoded.records.map(r => ({ sequence: r.position.sequence, index: r.position.index, bytes: r.bytes })));
+      } catch (error) {
+        // Exported and permitted here, the refusal still goes back: the primary answers it with a snapshot.
+        if (codeOf(error) === 'diverged_tail') await this.exportTail();
+        throw error;
+      }
       return { header: encodeReplAck({ id: decoded.id, seq: decoded.seq, ok: true, applied: out.applied, skipped: out.skipped, cursor: out.cursor }), tail: null };
     } catch (error) {
       return { header: encodeReplAck({ id, seq, ok: false, error: encodeError(error) }), tail: null };
     }
+  }
+
+  /**
+   * With `divergedTailExport`: writes the tail there when no export exists yet (and the primary's lineage is known),
+   * then permits one install over it. True when the permit was granted; a failure is the store's refusal.
+   */
+  private async exportTail(): Promise<boolean> {
+    const dir = this.opts.divergedTailExport;
+    if (dir === undefined || !this.follower.allowInstallOver) return false;
+    if (!existsSync(dir)) {
+      if (!this.theirs || !this.follower.exportDivergedTail) return false;
+      await this.follower.exportDivergedTail(dir, this.theirs);
+    }
+    await this.follower.allowInstallOver(dir);
+    return true;
   }
 
   /** Runs one snapshot step; a refusal ends the transfer and answers `repl_ack` with the error unchanged. */

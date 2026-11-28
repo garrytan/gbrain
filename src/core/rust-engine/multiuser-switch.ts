@@ -39,3 +39,11 @@ export function rustMultiuserConfigOn(value: string | null | undefined): boolean
 export function rustMultiuserSubSwitch(name: string, store: { readonly multiuser: boolean }, env: Env = processEnv()): boolean {
   return store.multiuser === true && env[name] === '1';
 }
+
+/**
+ * A lane setting's text (`GBRAIN_RUST_REPLICA_ACK_TIMEOUT_MS`, ...), read only while the brain runs in multi-user mode,
+ * else undefined. The text goes to the store unchanged; the store checks it.
+ */
+export function rustMultiuserSetting(name: string, store: { readonly multiuser: boolean }, env: Env = processEnv()): string | undefined {
+  return store.multiuser === true ? env[name] : undefined;
+}

@@ -394,7 +394,9 @@ cap list. The follower (`followPrimary`) sends `repl_follow { id, cursor }` with
 loop reads the log after the cursor, sends `repl_records` and waits for each `repl_ack`. When the cursor is null (an
 empty follower), the log cannot continue the cursor, or the follower answers `snapshot_required`, it streams a snapshot with at most 64 MiB of chunk bytes past
 the follower's last `repl_snap_window`. A refusal it cannot get past ends the connection with `refused`. After a drop
-the follower reconnects and sends its cursor again, so nothing is applied twice.
+the follower reconnects and sends its cursor again, so nothing is applied twice. Replica acks (`repl_follow` with
+`replica`/`lineage`, `repl_mark`, `repl_detach`/`repl_detached`, sent only with a follower that names a `replica`) and
+diverged-tail recovery: rust/docs/store/commit-log.md, "Replica acks" and "Diverged tail recovery".
 
 Positions are JSON integers: a sequence must be a safe integer (below 2^53), an index at most `u32::MAX` (the
 `end_of` position included). A refusal is `owner_ipc_protocol` reason `frame_malformed`; nothing of the frame is
@@ -415,6 +417,9 @@ included), and nothing more until the hello is answered; at most 32 connections 
 | `owner_unavailable` | `server_unreachable`, `tls_untrusted` | the client could not reach or trust the server | check `rust_server.url` and `ca_file`; no token was sent |
 | `owner_unavailable` | `outcome_unknown` | a retried write the server has no record of | run the confirming read the error names |
 | `timeout` | `position_not_reached`, `callback_timeout`, `transaction_deadline` | a bounded wait passed | retry once within a new deadline |
+| `replication_timeout` | `outcome_unknown` | a write committed on the primary; its replica's ack did not arrive | resend the same request id; never a new write |
+| `replication_busy` | | the replica wait budget is full; nothing ran | retry |
+| `diverged_tail` | `export_no_space` | a follower holds records past another timeline's fork | export the tail, then install |
 | `idempotency_conflict` | | a `req` reused with other arguments | send a new request id |
 | `engine_capability_missing` | `served` | an operation that names a server path | run it on the server host |
 

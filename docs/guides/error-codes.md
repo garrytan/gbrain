@@ -1941,6 +1941,18 @@ More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/gu
 |---|---|---|---|---|---|---|
 | Commit or stash canonical skill edits before optimization. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### diverged_tail
+
+<a id="diverged_tail"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Rust follower holds commits the new primary does not have, so it refused to install the primary's snapshot over them and changed nothing. | Installing over those commits would lose them. The follower first writes a complete export of its image and the diverged records (with a MANIFEST.json of digests); only then does it allow the install. export_no_space: the disk lacks room for that export, so nothing was written. | On the follower host, export the diverged tail and allow the install (rust/docs/store/commit-log.md, Diverged tail recovery), then follow again. | host_admin | `repeat the read that failed` | 1 | no |
+
+Reasons: `export_no_space`.
+
+More: [rust/docs/store/commit-log.md#diverged-tail-recovery](../../rust/docs/store/commit-log.md#diverged-tail-recovery)
+
 ### doctor_alert_act
 
 <a id="doctor_alert_act"></a>
@@ -5664,6 +5676,28 @@ More: [docs/guides/troubleshooting.md#repair-preview-timeout](../../docs/guides/
 | gbrain repair visibility --propose was pointed at a directory inside a git work tree for its slugs files, so nothing was written. | The slugs files list page slugs and who would read them; a file inside a checkout can be committed and pushed. | Pass --out <dir> outside any git checkout, or leave --out off to use the gbrain config directory (with GBRAIN_HOME outside any checkout). | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#propose-readers](../../docs/guides/repair.md#propose-readers)
+
+### replication_busy
+
+<a id="replication_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Too many answers already wait for replica confirmation on a served Rust primary, so the write did not run and nothing was written. | Each write waiting for its replica holds an answer slot; the bound (GBRAIN_RUST_REPLICA_ACK_MAX_WAITERS) keeps a stopped replica from holding unbounded memory. The refusal comes before the write runs. | Retry the same request id after a short wait; if it keeps failing, check that the replica is following. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [rust/docs/store/commit-log.md#replica-acks](../../rust/docs/store/commit-log.md#replica-acks)
+
+### replication_timeout
+
+<a id="replication_timeout"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write committed on a served Rust primary, and the attached replica did not confirm it in time, so it was not answered as a success. | With multi-user mode on and a replica attached, a write is answered only after the replica holds it, so a promoted replica never loses an answered write. The commit is durable on the primary; a stopped replica, a detach, a server shutdown or a full wait budget each end the wait this way, never as a success. | Do not submit a new write. Resend the same request id to read its stored outcome; if the replica stays unavailable, the brain-host operator detaches it (rust/docs/store/commit-log.md, Replica acks). | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `outcome_unknown`.
+
+More: [rust/docs/store/commit-log.md#replica-acks](../../rust/docs/store/commit-log.md#replica-acks)
 
 ### request_already_submitted
 

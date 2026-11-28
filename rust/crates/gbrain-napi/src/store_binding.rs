@@ -95,6 +95,10 @@ pub struct BrainOpenOptions {
     pub write_origin: Option<bool>,
     /// This machine's host id (`host.json`), the write origin's `host_id`.
     pub host_id: Option<String>,
+    /// `GBRAIN_RUST_REPLICA_ACK_TIMEOUT_MS` and `GBRAIN_RUST_REPLICA_ACK_MAX_WAITERS` as the caller's environment holds
+    /// them (the store validates them, and reads them only with the commit log on).
+    pub replica_ack_timeout_ms: Option<String>,
+    pub replica_ack_max_waiters: Option<String>,
 }
 
 #[napi]
@@ -277,6 +281,14 @@ impl Brain {
                     host_id: options.host_id,
                     log_retention_bytes: None,
                 };
+                for (name, text) in [
+                    (gbrain_store::replica::TIMEOUT_ENV, options.replica_ack_timeout_ms),
+                    (gbrain_store::replica::MAX_WAITERS_ENV, options.replica_ack_max_waiters),
+                ] {
+                    if let Some(text) = text {
+                        opts.replica_ack_env.push((name.into(), text));
+                    }
+                }
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.

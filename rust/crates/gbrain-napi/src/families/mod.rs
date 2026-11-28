@@ -48,6 +48,7 @@ mod fact_relink_writes;
 mod facts_holding_purges;
 mod field_usage;
 mod follower;
+mod replica_acks;
 mod generations;
 mod graph;
 mod import_members;
