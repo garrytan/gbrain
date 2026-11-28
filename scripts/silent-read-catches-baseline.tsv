@@ -1540,7 +1540,6 @@ src/core/storage/s3.ts#S3Storage.uploadFile	promise_catch_empty	1
 src/core/sweep.ts#bankSegmentLinks	catch_empty	2
 src/core/sweep.ts#corpusHasPendingFiles	promise_catch_empty	1
 src/core/sync-applicability.ts#syncContentDirectory	catch_empty	1
-src/core/sync-attempt.ts#lastSyncJob	capability_refusal_swallowed	1
 src/core/sync-cost-gate.ts#estimateDeltaTokens	catch_empty	1
 src/core/sync-cost-gate.ts#estimateLanguageTokens	catch_empty	2
 src/core/sync-cost-gate.ts#estimateSourceTreeTokens	catch_empty	2

@@ -11,7 +11,7 @@ use crate::env::{iso, parse_iso};
 use crate::keys;
 use crate::kv::scan_prefix;
 use crate::stats::IngestRecord;
-use crate::timeline_queries::timestamptz_text;
+use crate::timeline_queries::{jsonb_field_text, timestamptz_text};
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
@@ -160,6 +160,69 @@ fn source_of(row: &JobRecord, field: &str) -> String {
         .get(field)
         .and_then(jsonb_field_text)
         .unwrap_or_else(|| "default".into())
+}
+
+/// `result ->> field` of a job (NULL when the result is missing or not an object).
+fn result_text(row: &JobRecord, field: &str) -> Option<String> {
+    row.result.as_ref()?.get(field).and_then(jsonb_field_text)
+}
+
+/// `COALESCE((result->>field)::numeric, 0)`; text that is not a number is the cast's error.
+fn result_numeric(row: &JobRecord, field: &str) -> Result<f64> {
+    let Some(text) = result_text(row, field) else {
+        return Ok(0.0);
+    };
+    let t = text.trim();
+    let lower = t.to_ascii_lowercase();
+    let n = match lower.trim_start_matches(['+', '-']) {
+        "nan" | "inf" | "infinity" => t.parse::<f64>().ok(),
+        _ if t
+            .bytes()
+            .all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'+' | b'-' | b'e' | b'E')) =>
+        {
+            t.parse::<f64>().ok()
+        }
+        _ => None,
+    };
+    n.ok_or_else(|| {
+        StoreError::invalid(format!("invalid input syntax for type numeric: \"{text}\""))
+    })
+}
+
+/// The `LIMITED` filter of `LAST_SYNC_JOB_SQL`: a completed run the usage limit stopped part-way, not for pending writes.
+fn sync_limited(row: &JobRecord) -> bool {
+    row.status == "completed"
+        && result_text(row, "status").as_deref() == Some("partial")
+        && result_text(row, "stopped_on").as_deref() == Some("usage_limit")
+        && !matches!(
+            result_text(row, "reason").as_deref(),
+            Some("writer_pending" | "timeout")
+        )
+}
+
+/// The `LANDED` filter: added + modified + deleted > 0 (a numeric NaN sorts above every number).
+fn sync_landed(row: &JobRecord) -> Result<bool> {
+    let sum = result_numeric(row, "added")?
+        + result_numeric(row, "modified")?
+        + result_numeric(row, "deleted")?;
+    Ok(sum.is_nan() || sum > 0.0)
+}
+
+/// The `SUBSTANTIVE` filter: not queued, not running under a live lock, not skipped, not a run stopped on pending writes.
+fn sync_substantive(row: &JobRecord, now: i64) -> bool {
+    let waiting = matches!(
+        row.status.as_str(),
+        "waiting" | "delayed" | "waiting-children" | "paused"
+    );
+    let live = row.status == "active" && row.lock_until.is_some_and(|l| l > now);
+    let skipped = row.status == "completed"
+        && (result_text(row, "skipped").as_deref() == Some("true")
+            || (result_text(row, "stopped_on").as_deref() == Some("usage_limit")
+                && matches!(
+                    result_text(row, "reason").as_deref(),
+                    Some("writer_pending" | "timeout")
+                )));
+    !(waiting || live || skipped)
 }
 
 impl Store {
@@ -609,6 +672,90 @@ impl Store {
             .collect();
         rows.sort_by_key(|r| r.id);
         Ok(rows.iter().map(facts_absorb_json).collect())
+    }
+    /// `readLastSyncJob`: the newest `sync` job of a source (by `created_at`, then id) and, when
+    /// `fresh_since` is given, when its usage-limited run that landed pages started to count.
+    pub fn read_last_sync_job(
+        &self,
+        source_id: &str,
+        fresh_since: Option<&str>,
+    ) -> Result<Option<Value>> {
+        let since = match fresh_since {
+            Some(text) => Some(parse_iso(text).ok_or_else(|| {
+                StoreError::invalid(format!(
+                    "readLastSyncJob: freshSince is not an ISO timestamp: {text}"
+                ))
+            })?),
+            None => None,
+        };
+        let read = self.read()?;
+        let local_path = crate::sources::read_source(&*read, source_id)?.and_then(|s| s.local_path);
+        let now = self.env.now_micros();
+        let jobs: Vec<JobRecord> = all_rows(&*read)?
+            .into_iter()
+            .filter(|r| {
+                if r.name != "sync" {
+                    return false;
+                }
+                let field = |k: &str| r.data.get(k).and_then(jsonb_field_text);
+                match field("sourceId").or_else(|| field("source_id")) {
+                    Some(id) => id == source_id,
+                    None => match field("repoPath") {
+                        None => source_id == "default",
+                        Some(repo) => local_path.as_deref() == Some(repo.as_str()),
+                    },
+                }
+            })
+            .collect();
+        let at = |r: &JobRecord| r.finished_at.or(r.started_at).unwrap_or(r.created_at);
+        let Some(last) = jobs.iter().max_by_key(|r| (r.created_at, r.id)) else {
+            return Ok(None);
+        };
+        let mut usage_limited_since = None;
+        if let Some(since) = since {
+            let (mut landed_created, mut landed_at, mut broken_created) =
+                (None::<i64>, None::<i64>, None::<i64>);
+            for r in jobs.iter().filter(|r| at(r) >= since) {
+                let limited = sync_limited(r);
+                if limited && sync_landed(r)? {
+                    landed_created = landed_created.max(Some(r.created_at));
+                    landed_at = landed_at.max(Some(at(r)));
+                }
+                if !limited && sync_substantive(r, now) {
+                    broken_created = broken_created.max(Some(r.created_at));
+                }
+            }
+            let landed_later = match (broken_created, landed_created) {
+                (None, _) => true,
+                (Some(b), Some(l)) => b < l,
+                (Some(_), None) => false,
+            };
+            if landed_later {
+                usage_limited_since = landed_at;
+            }
+        }
+        let live = if last.status != "active" {
+            Some(false)
+        } else {
+            last.lock_until.map(|l| l > now)
+        };
+        let partial_causes = last
+            .result
+            .as_ref()
+            .and_then(|r| r.get("partial_causes"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        Ok(Some(json!({
+            "job_id": last.id,
+            "status": last.status,
+            "result_status": result_text(last, "status"),
+            "failed_files": result_text(last, "failedFiles"),
+            "partial_causes": partial_causes,
+            "live": live,
+            "started_at": last.started_at.map(iso),
+            "at": iso(at(last)),
+            "usage_limited_since": usage_limited_since.map(iso),
+        })))
     }
 }
 

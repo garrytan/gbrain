@@ -7,7 +7,7 @@
  */
 import type {
   DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob,
-  LegacyJobAuthorityRead, QueuedSpendRows,
+  LastSyncJobRow, LegacyJobAuthorityRead, QueuedSpendRows,
 } from '../../engine-sql/jobs-checks.ts';
 import { withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -54,3 +54,9 @@ export const listFactsAbsorbJobsByKeyPrefix: StoreMember<[spec: { prefix: string
 
 export const listDeadFactsAbsorbJobsByKeys: StoreMember<[keys: readonly string[]], FactsAbsorbJobRow[]> = async (brain, keys) =>
   factsAbsorbRows(await call('listDeadFactsAbsorbJobsByKeys', () => brain.listDeadFactsAbsorbJobsByKeys(keys)));
+
+/** The store returns the three times as ISO text; PGLite returns `Date`s. */
+export const readLastSyncJob: StoreMember<[sourceId: string, freshSince: string | null], LastSyncJobRow | null> = async (brain, sourceId, freshSince) => {
+  const row: LastSyncJobRow | null = await call('readLastSyncJob', () => brain.readLastSyncJob(sourceId, freshSince));
+  return row ? withDates(row, ['started_at', 'at', 'usage_limited_since'] as const) : null;
+};

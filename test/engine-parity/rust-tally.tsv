@@ -91,7 +91,7 @@ test/engine-parity/doctor-fence-census.test.ts	5	0
 test/engine-parity/doctor-join-checks.test.ts	4	0
 test/engine-parity/doctor-pages.test.ts	17	0
 test/engine-parity/doctor-persistence.test.ts	6	0
-test/engine-parity/doctor-raw-sites.test.ts	2	2
+test/engine-parity/doctor-raw-sites.test.ts	3	1
 test/engine-parity/doctor-reads.test.ts	5	0
 test/engine-parity/doctor-search.test.ts	10	0
 test/engine-parity/doctor-sources.test.ts	2	0
@@ -200,7 +200,7 @@ test/engine-parity/import-folder-stamp.test.ts	5	0
 test/engine-parity/import-members.test.ts	10	0
 test/engine-parity/import-path.test.ts	8	0
 test/engine-parity/import-writes.test.ts	11	0
-test/engine-parity/jobs-checks.test.ts	10	0
+test/engine-parity/jobs-checks.test.ts	11	0
 test/engine-parity/jobs-health.test.ts	11	0
 test/engine-parity/jobs-insight.test.ts	2	0
 test/engine-parity/jobs-queue.test.ts	41	0

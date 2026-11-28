@@ -383,3 +383,84 @@ fn build_skew_lines_follow_the_window_and_the_scan_limit() {
         rows.len()
     );
 }
+
+/// A sync job of `source_id`, claimed and completed with `result`.
+fn sync_done(b: &Brain, source_id: &str, result: Value) -> i64 {
+    let id = add(b, "sync", json!({ "data": { "sourceId": source_id } }));
+    let token = format!("t:{id}");
+    b.claim_next_job(&claim_spec(&token, "default", &["sync"], json!({})))
+        .unwrap()
+        .expect("the job is claimed");
+    b.complete_job(id, &token, Some(&result)).unwrap().unwrap();
+    id
+}
+
+#[test]
+fn the_last_sync_job_follows_the_lock_clock_the_window_and_the_numeric_cast() {
+    let b = brain("checks-last-sync");
+    let limited = |extra: Value| {
+        let mut r = json!({ "status": "partial", "stopped_on": "usage_limit" });
+        for (k, v) in extra.as_object().unwrap() {
+            r[k] = v.clone();
+        }
+        r
+    };
+    // A landed limited run, then a run that is still live: the live one is neither, so the limited run counts.
+    let landed = sync_done(&b, "src-a", limited(json!({ "added": "NaN" })));
+    b.clock.advance(HOUR);
+    let live = add(&b, "sync", json!({ "data": { "sourceId": "src-a" } }));
+    b.claim_next_job(&claim_spec("live", "default", &["sync"], json!({})))
+        .unwrap()
+        .expect("the job is claimed");
+    let read = b
+        .read_last_sync_job("src-a", Some("2000-01-01T00:00:00.000Z"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(read["job_id"].as_i64().unwrap(), live);
+    assert_eq!(read["live"], json!(true));
+    assert_eq!(
+        read["usage_limited_since"],
+        json!("2027-01-15T08:00:00.000000Z"),
+        "a numeric NaN is more than zero"
+    );
+    assert!(landed < live);
+    // Past its 30 s lock the active job is no longer live and ended the other way: the limited run stops counting.
+    b.clock.advance(60_000_000);
+    let read = b
+        .read_last_sync_job("src-a", Some("2000-01-01T00:00:00.000Z"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (read["live"].clone(), read["usage_limited_since"].clone()),
+        (json!(false), Value::Null)
+    );
+    // A window that starts after the landed run but before the expired one: nothing landed in it.
+    let read = b
+        .read_last_sync_job("src-a", Some("2027-01-15T08:30:00.000Z"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(read["usage_limited_since"], Value::Null);
+
+    // A limited run whose counts are not numbers is the cast's error, but only when the run is limited.
+    sync_done(&b, "src-b", json!({ "status": "ok", "added": "many" }));
+    assert!(
+        b.read_last_sync_job("src-b", Some("2000-01-01T00:00:00.000Z"))
+            .unwrap()
+            .is_some()
+    );
+    sync_done(&b, "src-b", limited(json!({ "added": "many" })));
+    let err = b
+        .read_last_sync_job("src-b", Some("2000-01-01T00:00:00.000Z"))
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+    assert!(
+        b.read_last_sync_job("src-b", None).unwrap().is_some(),
+        "no window, no cast"
+    );
+
+    let err = b
+        .read_last_sync_job("src-a", Some("yesterday"))
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+    assert!(b.read_last_sync_job("nobody", None).unwrap().is_none());
+}

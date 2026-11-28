@@ -102,6 +102,7 @@ export const JOBS_MEMBERS = {
   readQueuedPageChars: 'minion_queue',
   readSourceJobCounts: 'minion_queue',
   readEmbedBackfillBySource: 'minion_queue',
+  readLastSyncJob: 'minion_queue',
   // Group C: the queue reads of the doctor checks and the dream breaker.
   listStalledEmbedBackfillSources: 'minion_queue',
   readGlobalMaintenanceDeaths: 'minion_queue',

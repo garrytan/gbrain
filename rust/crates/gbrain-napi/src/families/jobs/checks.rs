@@ -47,6 +47,19 @@ impl Brain {
         })
     }
 
+    /// `readLastSyncJob(sourceId, freshSince)`: the newest sync job of a source, or null.
+    #[napi]
+    pub fn read_last_sync_job<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        fresh_since: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_last_sync_job(&source_id, fresh_since.as_deref())
+        })
+    }
+
     /// `listFactsAbsorbJobsStillDead({ hours, limit })`: `{ total, jobs }`.
     #[napi]
     pub fn list_facts_absorb_jobs_still_dead<'env>(

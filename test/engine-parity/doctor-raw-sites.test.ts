@@ -19,10 +19,10 @@
  *  - Seam: none. A page is seeded with putPage and a second source with a local directory (createSource) holding that
  *    page's file and an uningested one, so the drift walk reaches its existence probe on every arm and finds one misroute. The report is called directly: run_doctor over MCP binds the caller
  *    to one source, and the drift check needs a second one to run at all.
- *  - Any source with a local path and no successful sync (one is enough) reaches the raw read of
- *    src/core/sync-attempt.ts: sync_freshness then says "last attempt unreadable" on Rust. On the Rust arm that caught
- *    refusal is pinned in test/rust-stop-pins/lane-2b-doctor-raw.tsv until it reads through a typed member, and the
- *    sync-attempt case below reproduces it with one source.
+ *  - Any source with a local path and no successful sync (one is enough) reads its last sync job
+ *    (src/core/sync-attempt.ts, through the typed member readLastSyncJob). Before that member, the read was raw SQL,
+ *    which a Rust brain refuses, and sync_freshness said "last attempt unreadable" on Rust instead of "no attempt
+ *    recorded". The sync-attempt case below failed that way on Rust at ff81b4e7c7.
  *
  * The adopted skill-pack read (src/core/shared-skills/adopted-packs.ts) is served on every arm by
  * listAdoptedSkillPackSourceIds. Before it was, a Rust brain with any source that has a local path got the note
@@ -178,12 +178,8 @@ parityTest('a read-only adopted skill pack is exempt from sync freshness on ever
   }
 });
 
-/** The named Rust stop of the sync-attempt case; the case's error carries it. */
-const SYNC_ATTEMPT_PIN = 'lane 2b (doctor-raw, due 2026-12-09): src/core/sync-attempt.ts:72 reads the last sync job with executeRaw, which a Rust brain refuses, so readLastSyncAttempt answers "unreadable" instead of "no attempt recorded"; remove this rustStop and the sync-attempt.ts row of test/rust-stop-pins/lane-2b-doctor-raw.tsv when the read is a typed member with Rust parity (RUST_ENGINE.md ledger row 65)';
-
 parityTest('one source with a local path and no successful sync: sync_freshness reads its last attempt', {
-  methods: ['readDoctorSources'], timeout: 240_000,
-  rustStop: { code: 'last_attempt_unreadable', pin: SYNC_ATTEMPT_PIN },
+  methods: ['readDoctorSources', 'readLastSyncJob'], timeout: 240_000,
 }, async (engine: BrainEngine, backend) => {
   const dir = mkdtempSync(join(tmpdir(), 'doctor-raw-never-'));
   try {
@@ -191,9 +187,6 @@ parityTest('one source with a local path and no successful sync: sync_freshness 
     const check = await checkSyncFreshness(engine);
     const entries = ((check.details as { no_successful_sync?: Array<Record<string, unknown>> } | undefined)?.no_successful_sync ?? []);
     const message = String(check.message);
-    if (backend === 'rust' && /last attempt unreadable/.test(message)) {
-      throw Object.assign(new Error(`${SYNC_ATTEMPT_PIN}. sync_freshness said: ${message.slice(0, 400)}`), { code: 'last_attempt_unreadable' });
-    }
     const result = { status: check.status, codes: entries.map((e) => e.code), reasons: entries.map((e) => e.reason), unreadable: /unreadable/.test(message),
       noAttempt: /no attempt recorded/.test(message) };
     expect(result).toEqual({ status: 'fail', codes: ['sync_no_successful_sync'], reasons: expect.any(Array), unreadable: false, noAttempt: true });

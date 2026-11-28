@@ -80,7 +80,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listAccessTokenRows', 'lockOauthClientName', 'readAccessMemberLink', 'insertAccessMemberLink', 'deleteAccessMemberLink',
   'listAccessMemberLinks', 'readCredentialMemberId', 'listCredentialMemberBindings', 'pingStore', 'readJobDataByIdempotencyKey', 'coalesceOnIdempotencyKey', 'listBudgetOwners', 'readLinkedMember',
   // doctor job checks
-  'listStalledEmbedBackfillSources', 'readGlobalMaintenanceDeaths', 'readLastFailedGlobalMaintenanceJob', 'listFactsAbsorbJobsStillDead', 'readLegacyJobAuthority',
+  'listStalledEmbedBackfillSources', 'readLastSyncJob', 'readGlobalMaintenanceDeaths', 'readLastFailedGlobalMaintenanceJob', 'listFactsAbsorbJobsStillDead', 'readLegacyJobAuthority',
   'readQueuedSpendRows', 'listBuildSkewStacktraceLines', 'countDeadDreamSubmissionRows', 'listFactsAbsorbJobsByKeyPrefix', 'listDeadFactsAbsorbJobsByKeys',
   // group D (jobs insight)
   'readJobInsight',

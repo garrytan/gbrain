@@ -22,6 +22,7 @@ engines return for that field.
 | `countDeadDreamSubmissionRows(spec)` | dead dream submissions per base key through the synthesize, patterns and per-transcript branches, with the persisted resets and the window applied |
 | `listFactsAbsorbJobsByKeyPrefix({ prefix, keys })` | `facts-absorb` jobs whose key is `LIKE prefix || '%'` and that are dead, or whose key is in `keys`; by id |
 | `listDeadFactsAbsorbJobsByKeys(keys)` | dead `facts-absorb` jobs whose key is in `keys`; by id |
+| `readLastSyncJob(sourceId, freshSince)` | the newest `sync` job of a source (by `created_at`, then id), or null: its status, `result.status`, `result.failedFiles`, `result.partial_causes`, whether its lock is live, its start, its last time, and, when `freshSince` is given, the last time of the newest usage-limited run since then that landed pages, unless a later run ended another way |
 
 Differences from PGLite:
 
@@ -53,6 +54,19 @@ Differences from PGLite:
 - Not moved: `src/core/minions/idempotency-coalesce.ts` (it runs inside a transaction), the contained-failure
   and reset writes in `dream-breaker.ts`, `embed-backfill-stalled.ts` reading `page_projection_jobs`, and the
   `ingest_log` reads in `knowledge-health.ts`. They stay on `executeRaw`.
+- `readLastSyncJob` (doctor `sync_freshness`, `src/core/sync-attempt.ts`) matches a job to its source by
+  `data.sourceId`, else `data.source_id`; a job with neither belongs to the source whose `local_path` equals
+  its `data.repoPath`, or to `default` when it has no `repoPath` (a missing source or a NULL `local_path`
+  matches nothing). Its last time is `COALESCE(finished_at, started_at, created_at)`. `live` is false for a
+  job that is not active, null for an active job with no lock time, and otherwise whether the lock is after
+  the store clock (read once). The usage-limited chain reads only jobs whose last time is at or after
+  `freshSince`: a limited run is a completed `partial` run the usage limit stopped for a reason other than
+  `writer_pending` or `timeout`; it landed when `added + modified + deleted` (each `::numeric`, a missing one
+  0) is more than 0, and a numeric `NaN` is more than every number, as in PostgreSQL. A run ended another way
+  when it is not limited, not queued, not live, not skipped and not stopped on pending writes. A count that is
+  not a number is the cast's error (`INVALID_ARGUMENT`); the store evaluates it only for a limited run inside
+  the window, where PostgreSQL may also evaluate it for other rows. `freshSince` must be `Date#toISOString`
+  text on the Rust engine.
 
 Accepted gaps (documented, not fixed in this family):
 

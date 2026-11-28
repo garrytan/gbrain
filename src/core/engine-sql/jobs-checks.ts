@@ -263,3 +263,59 @@ export async function listDeadFactsAbsorbJobsByKeys(tx: Raw, keys: readonly stri
       ORDER BY id`, [keys]);
   return rows.map(factsAbsorbRow);
 }
+
+const SUBSTANTIVE = `NOT COALESCE(status IN ('waiting', 'delayed', 'waiting-children', 'paused') OR (status = 'active' AND lock_until > now())
+  OR (status = 'completed' AND (result->>'skipped' = 'true' OR (result->>'stopped_on' = 'usage_limit' AND result->>'reason' IN ('writer_pending', 'timeout')))), false)`;
+const LIMITED = `COALESCE(status = 'completed' AND result->>'status' = 'partial' AND result->>'stopped_on' = 'usage_limit'
+  AND COALESCE(result->>'reason', '') NOT IN ('writer_pending', 'timeout'), false)`;
+const LANDED = `COALESCE((result->>'added')::numeric, 0) + COALESCE((result->>'modified')::numeric, 0) + COALESCE((result->>'deleted')::numeric, 0) > 0`;
+
+/**
+ * GST-3452: the newest sync job of a source, plus, when `$2` (the fail age's start) is given, the newest limited run since then
+ * that landed pages and the newest run since then that ended any other way. Queued, running (live job lock) and skipped jobs,
+ * and limited runs whose writes were still pending, are neither; an active job whose lock expired ended the other way.
+ */
+const LAST_SYNC_JOB_SQL = `WITH jobs AS (SELECT id, status, result, created_at, started_at, lock_until, COALESCE(finished_at, started_at, created_at) AS at
+    FROM minion_jobs WHERE name='sync'
+      AND (COALESCE(data->>'sourceId', data->>'source_id')=$1 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL
+        AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1))))),
+  chain AS (SELECT max(created_at) FILTER (WHERE ${LIMITED} AND ${LANDED}) AS landed_created, max(at) FILTER (WHERE ${LIMITED} AND ${LANDED}) AS landed_at,
+      max(created_at) FILTER (WHERE ${SUBSTANTIVE} AND NOT (${LIMITED})) AS broken_created
+    FROM jobs WHERE $2::timestamptz IS NOT NULL AND at >= $2::timestamptz)
+SELECT j.id AS job_id, j.status, j.result->>'status' AS result_status, j.result->>'failedFiles' AS failed_files, j.result->'partial_causes' AS partial_causes,
+    (j.status='active' AND j.lock_until > now()) AS live, j.started_at, j.at,
+    CASE WHEN c.broken_created IS NULL OR c.broken_created < c.landed_created THEN c.landed_at END AS usage_limited_since
+  FROM (SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT 1) j CROSS JOIN chain c`;
+
+/**
+ * The newest `sync` job of a source (by `created_at`, then id) for doctor `sync_freshness` (`src/core/sync-attempt.ts`),
+ * or null when the source has none. A job names its source by `data.sourceId` (or `data.source_id`); one that names
+ * none belongs to the source whose `local_path` is its `data.repoPath`, or to `default` when it has no `repoPath`.
+ * `live` is null for an active job with no lock time. `usage_limited_since` is read only when `freshSince` (an ISO
+ * timestamp, the fail age's start) is given.
+ */
+export interface LastSyncJobRow {
+  job_id: number;
+  status: string;
+  result_status: string | null;
+  failed_files: string | null;
+  partial_causes: unknown;
+  live: boolean | null;
+  started_at: Date | null;
+  at: Date | null;
+  usage_limited_since: Date | null;
+}
+
+const timeOrNull = (v: Date | string | null | undefined): Date | null => (v == null ? null : v instanceof Date ? v : new Date(v));
+
+export async function readLastSyncJob(tx: Raw, sourceId: string, freshSince: string | null): Promise<LastSyncJobRow | null> {
+  const [row] = await tx.executeRaw<{ job_id: number | string; status: string; result_status: string | null; failed_files: string | null;
+    partial_causes: unknown; live: boolean | null; started_at: Date | string | null; at: Date | string | null; usage_limited_since: Date | string | null }>(
+    LAST_SYNC_JOB_SQL, [sourceId, freshSince]);
+  if (!row) return null;
+  return {
+    job_id: Number(row.job_id), status: row.status, result_status: row.result_status, failed_files: row.failed_files,
+    partial_causes: row.partial_causes ?? null, live: row.live ?? null, started_at: timeOrNull(row.started_at), at: timeOrNull(row.at),
+    usage_limited_since: timeOrNull(row.usage_limited_since),
+  };
+}

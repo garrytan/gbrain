@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2527/2559
+# covered: 2528/2560
 # lifecycle: 21/22
 # pages: 141/142
 # search: 8/8
@@ -40,7 +40,7 @@
 # entity_reads: 34/35
 # cycle_locks: 10/10
 # minion_jobs: 10/10
-# minion_queue: 139/142
+# minion_queue: 140/143
 # minion_status: 14/14
 # minion_subagent: 17/17
 # cli_reads_export: 15/15
@@ -1244,15 +1244,15 @@ takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 renewPageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 releasePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	139	no	yes	yes	serves
-getJob	minion_jobs	yes	48	no	yes	yes	serves
+admitJob	minion_jobs	yes	140	no	yes	yes	serves
+getJob	minion_jobs	yes	49	no	yes	yes	serves
 readJobDataByIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 coalesceOnIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	98	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	99	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
-completeJob	minion_jobs	yes	56	no	yes	yes	serves
-failJob	minion_jobs	yes	43	no	yes	yes	serves
+completeJob	minion_jobs	yes	57	no	yes	yes	serves
+failJob	minion_jobs	yes	44	no	yes	yes	serves
 reclaimStalledJobs	minion_jobs	yes	2	no	yes	yes	serves
 readActiveAccessTokenGrant	minion_queue	yes	3	no	yes	yes	serves
 accessTokenLive	minion_queue	yes	2	no	yes	yes	serves
@@ -1363,6 +1363,7 @@ listStuckActiveJobsByName	minion_queue	yes	1	no	yes	yes	serves
 listStalledEmbedBackfillSources	minion_queue	yes	1	no	yes	yes	serves
 readGlobalMaintenanceDeaths	minion_queue	yes	1	no	yes	yes	serves
 readLastFailedGlobalMaintenanceJob	minion_queue	yes	1	no	yes	yes	serves
+readLastSyncJob	minion_queue	yes	2	no	yes	yes	serves
 listFactsAbsorbJobsStillDead	minion_queue	yes	1	no	yes	yes	serves
 readLegacyJobAuthority	minion_queue	yes	1	no	yes	yes	serves
 readQueuedSpendRows	minion_queue	yes	1	no	yes	yes	serves

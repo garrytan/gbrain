@@ -191,6 +191,18 @@ Once it can, one named loss stays: a remote read by the brain owner on a Rust br
 remote callers, and the local CLI, read what they read on the old engine. The swap plan lists it under "Named loss for
 remote callers".
 
+<a id="doctor-after-swap"></a>
+### Doctor after a swap
+
+The doctor report (`run_doctor`, and the brain-wide report behind it) gives the same rows on a swapped brain as on the
+old engine for `sync_freshness`, `multi_source_drift`, `schema_pack_source_drift`, `contextual_retrieval_coverage`,
+`abandoned_threads` and `grade_confidence_drift`: each reads through a store member, not raw SQL. One named loss stays:
+`timeline_dedup_index` is a skip that names its reason ("the Rust store dedupes timeline entries by a store key, so
+there is no idx_timeline_dedup to check"), because the Rust store keeps no SQL index. Other doctor rows that still read
+raw SQL are open gaps of the Rust engine, listed with their owners in `docs/designs/RUST_ENGINE.md`.
+
+**Say to your agent:** *"Run doctor on my brain and tell me which rows the Rust engine skips."*
+
 <a id="policy"></a>
 ## The readiness policy
 

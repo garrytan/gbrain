@@ -1321,6 +1321,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readSourceJobCounts': OOS.minionJobs,
   'readEmbedBackfillBySource': OOS.minionJobs,
   'listStalledEmbedBackfillSources': OOS.minionJobs,
+  'readLastSyncJob': OOS.minionJobs,
   'readGlobalMaintenanceDeaths': OOS.minionJobs,
   'readLastFailedGlobalMaintenanceJob': OOS.minionJobs,
   'listFactsAbsorbJobsStillDead': OOS.minionJobs,

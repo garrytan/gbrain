@@ -36,29 +36,6 @@ export interface SyncAttempt {
   usage_limited_since?: string;
 }
 
-const SUBSTANTIVE = `NOT COALESCE(status IN ('waiting', 'delayed', 'waiting-children', 'paused') OR (status = 'active' AND lock_until > now())
-  OR (status = 'completed' AND (result->>'skipped' = 'true' OR (result->>'stopped_on' = 'usage_limit' AND result->>'reason' IN ('writer_pending', 'timeout')))), false)`;
-const LIMITED = `COALESCE(status = 'completed' AND result->>'status' = 'partial' AND result->>'stopped_on' = 'usage_limit'
-  AND COALESCE(result->>'reason', '') NOT IN ('writer_pending', 'timeout'), false)`;
-const LANDED = `COALESCE((result->>'added')::numeric, 0) + COALESCE((result->>'modified')::numeric, 0) + COALESCE((result->>'deleted')::numeric, 0) > 0`;
-
-/**
- * GST-3452: the newest sync job of a source, plus, when `$2` (the fail age's start) is given, the newest limited run since then
- * that landed pages and the newest run since then that ended any other way. Queued, running (live job lock) and skipped jobs,
- * and limited runs whose writes were still pending, are neither; an active job whose lock expired ended the other way.
- */
-const JOB_SQL = `WITH jobs AS (SELECT id, status, result, created_at, started_at, lock_until, COALESCE(finished_at, started_at, created_at) AS at
-    FROM minion_jobs WHERE name='sync'
-      AND (COALESCE(data->>'sourceId', data->>'source_id')=$1 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL
-        AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1))))),
-  chain AS (SELECT max(created_at) FILTER (WHERE ${LIMITED} AND ${LANDED}) AS landed_created, max(at) FILTER (WHERE ${LIMITED} AND ${LANDED}) AS landed_at,
-      max(created_at) FILTER (WHERE ${SUBSTANTIVE} AND NOT (${LIMITED})) AS broken_created
-    FROM jobs WHERE $2::timestamptz IS NOT NULL AND at >= $2::timestamptz)
-SELECT j.id AS job_id, j.status, j.result->>'status' AS result_status, j.result->>'failedFiles' AS failed_files, j.result->'partial_causes' AS partial_causes,
-    (j.status='active' AND j.lock_until > now()) AS live, j.started_at, j.at,
-    CASE WHEN c.broken_created IS NULL OR c.broken_created < c.landed_created THEN c.landed_at END AS usage_limited_since
-  FROM (SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT 1) j CROSS JOIN chain c`;
-
 const iso = (value: unknown): string | null => {
   if (value === null || value === undefined) return null;
   const date = value instanceof Date ? value : new Date(String(value));
@@ -66,16 +43,14 @@ const iso = (value: unknown): string | null => {
 };
 
 async function lastSyncJob(engine: BrainEngine, sourceId: string, freshSince: string | null): Promise<Omit<SyncAttempt, 'managed_next'> | null> {
-  let rows: Array<{ job_id: number | string | null; status: string | null; result_status: string | null; failed_files: string | null; live: boolean | null;
-    partial_causes: unknown; started_at: unknown; at: unknown; usage_limited_since: unknown }>;
+  let row: Awaited<ReturnType<BrainEngine['readLastSyncJob']>>;
   try {
-    rows = await engine.executeRaw(JOB_SQL, [sourceId, freshSince]);
+    row = await engine.readLastSyncJob(sourceId, freshSince);
   } catch (error) {
     if (isMissingSchemaObject(error, 'table', 'minion_jobs')) return null;
     throw error;
   }
-  const row = rows?.[0];
-  if (!row || row.job_id === null || row.job_id === undefined || typeof row.status !== 'string') return null;
+  if (!row) return null;
   const queued = ['waiting', 'delayed', 'active', 'waiting-children', 'paused'].includes(row.status) && !(row.status === 'active' && row.live !== true);
   const failed = Number(row.failed_files ?? 0);
   const since = iso(row.usage_limited_since);

@@ -5766,6 +5766,7 @@ export class PostgresEngine implements BrainEngine {
 
   // Group C: the queue reads the doctor checks and the dream breaker make (engine-sql/jobs-checks.ts).
   async listStalledEmbedBackfillSources() { return jobsChecks.listStalledEmbedBackfillSources(this); }
+  async readLastSyncJob(sourceId: string, freshSince: string | null) { return jobsChecks.readLastSyncJob(this, sourceId, freshSince); }
   async readGlobalMaintenanceDeaths(spec: { deaths: number }) { return jobsChecks.readGlobalMaintenanceDeaths(this, spec); }
   async readLastFailedGlobalMaintenanceJob(since: string | null) { return jobsChecks.readLastFailedGlobalMaintenanceJob(this, since); }
   async listFactsAbsorbJobsStillDead(spec: { hours: number; limit: number }) { return jobsChecks.listFactsAbsorbJobsStillDead(this, spec); }

@@ -2,7 +2,7 @@
  * BrainEngine parity: the queue reads the doctor checks and the dream breaker make (engine-sql/jobs-checks.ts): stalled
  * embed-backfill sources, how the brain-wide maintenance job and its dream children died, the last failed maintenance
  * job, facts-absorb jobs still dead, the legacy job authority population, the queued spend census, build-skew
- * stacktrace lines, the dead dream submission count, and the dead facts-absorb retry reads.
+ * stacktrace lines, the dead dream submission count, the dead facts-absorb retry reads, and the last sync job of a source.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each read returns the same rows on every engine arm (PGLite always; Postgres with DATABASE_URL; the
@@ -13,7 +13,8 @@
  *    a still-dead facts-absorb job (same slug and source, a larger id, completed), the claim gate's population, the
  *    spend basis of a queued row (a recorded kind, a legacy prefix of the right name, or unrecorded) and its byte order,
  *    the build-skew LIKE prefix (`_` is a wildcard, as in the original doctor read), the breaker's three counting branches with their resets and window, or the retry's
- *    key prefix and key set. Each of these decides what an operator is told or whether a paid job loop is stopped.
+ *    key prefix and key set, or the last sync job's source match (id, source_id key, repo path, default) and its
+ *    usage-limited chain (a landed limited run counts until a later run ends any other way). Each of these decides what an operator is told or whether a paid job loop is stopped.
  *  - Why existing coverage misses it: test/doctor*.test.ts and test/dream-breaker*.test.ts run these checks on PGLite
  *    only, and a Rust engine has no raw SQL, so nothing compared the engines on one scenario.
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18). Row states come from the queue's own writes
@@ -29,7 +30,10 @@ import { APPLICATION_AUTHORITY, coalesceDecision, parseSubmissionAuthority, type
 import { LEGACY_SPEND_KEY_PREFIXES } from '../../src/core/minions/spend-authorization.ts';
 import { FENCE_REPAIR_ENABLED_KEY, FENCE_REPAIR_LLM_KEY } from '../../src/core/fence-repair/config.ts';
 import { LAST_GLOBAL_MAINTENANCE_KEY, readFenceAutoRepair } from '../../src/core/fence-repair/hold-fix.ts';
-import { parityArms } from './harness.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -417,6 +421,86 @@ describe('jobs checks parity', () => {
         resetUnparsedKeyPresent: await (async () => { try { await count({ 'dream:synth-v2:abc': 'garbage' }); return 'ok'; } catch { return 'threw'; } })(),
         noWindow: view(await count({}, 0)),
       };
+    });
+
+  parityTest('readLastSyncJob reads the newest sync job of a source by its id, its source_id key or its repo path, and when its usage-limited run started to count',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'getJob', 'readLastSyncJob'] }, async (engine, backend) => {
+      const dir = mkdtempSync(join(tmpdir(), 'jobs-checks-sync-'));
+      try {
+        await createSource(engine, backend, 'src-r', {}, dir);
+        const token = 'sync-run';
+        const run = async (data: Record<string, unknown>, how: 'completed' | 'failed', result?: Record<string, unknown>) => {
+          const id = await active(engine, 'sync', token, { data });
+          if (how === 'completed') await engine.completeJob(id, token, result);
+          else await engine.failJob(id, token, 'sync failed on purpose', 'failed');
+          return id;
+        };
+        const limited = (extra: Record<string, unknown>) => ({ status: 'partial', stopped_on: 'usage_limit', ...extra });
+        // src-a: a limited run that landed pages, then a skipped run and a run stopped on pending writes (neither counts).
+        const first = await run({ sourceId: 'src-a' }, 'completed', limited({ added: 2 }));
+        await run({ sourceId: 'src-a' }, 'completed', { skipped: true });
+        await run({ sourceId: 'src-a' }, 'completed', limited({ reason: 'writer_pending', added: 5, failedFiles: 3, partial_causes: ['usage limit', 7, 'writer'] }));
+        // src-b (by the source_id key): a limited run that landed pages (a numeric string), then a failure.
+        await run({ source_id: 'src-b' }, 'completed', limited({ modified: '4' }));
+        await run({ source_id: 'src-b' }, 'failed');
+        // src-c: a failure, then a limited run that landed, then a limited run that landed nothing.
+        await run({ sourceId: 'src-c' }, 'failed');
+        await run({ sourceId: 'src-c' }, 'completed', limited({ deleted: 1, reason: 'other' }));
+        await run({ sourceId: 'src-c' }, 'completed', limited({ added: 0 }));
+        // By repo path: the source's local path, a path no source has, and (no path, no id) the default source.
+        await run({ repoPath: dir }, 'completed', { status: 'ok' });
+        await run({ repoPath: '/no/such/repo' }, 'completed', { status: 'ok' });
+        await run({}, 'failed');
+        await run({ sourceId: null }, 'completed', { status: 'ok' });
+        // Another job name never counts.
+        await ended(engine, 'sync-other', 'failed', { extra: { data: { sourceId: 'src-e' } } });
+        await Bun.sleep(3);
+        await active(engine, 'sync', 'live-run', { data: { sourceId: 'src-l' } });
+        await Bun.sleep(3);
+        await add(engine, 'sync', { data: { sourceId: 'src-q' } });
+
+        const atOf = new Map<string, number[]>();
+        for (const id of made.get(engine) ?? []) {
+          const job = await engine.getJob(id);
+          const at = iso(job?.finished_at ?? job?.started_at ?? job?.created_at);
+          if (at) atOf.set(at, [...(atOf.get(at) ?? []), id - first]);
+        }
+        const nameAt = (v: unknown) => (v == null ? null : atOf.get(iso(v)!) ?? [`unknown ${iso(v)}`]);
+        const view = async (row: Awaited<ReturnType<BrainEngine['readLastSyncJob']>>) => {
+          if (!row) return row;
+          const own = await engine.getJob(row.job_id);
+          return {
+            ...row, job_id: row.job_id - first, at: nameAt(row.at), usage_limited_since: nameAt(row.usage_limited_since),
+            started_at: row.started_at === null ? null : iso(row.started_at) === iso(own?.started_at) ? 'own start' : iso(row.started_at),
+            dates: [row.started_at, row.at, row.usage_limited_since].map(v => (v === null ? null : v instanceof Date)),
+          };
+        };
+        const out: Record<string, unknown> = {};
+        for (const source of ['src-a', 'src-b', 'src-c', 'src-r', 'default', 'src-l', 'src-q', 'src-e', 'ghost']) {
+          for (const [label, since] of [['no window', null], ['since 2000', PAST], ['since 2099', FAR]] as const) {
+            out[`${source} ${label}`] = await view(await engine.readLastSyncJob(source, since));
+          }
+        }
+        const pick = (key: string) => {
+          const row = out[key] as Record<string, unknown> | null;
+          return row && { job: row.job_id, status: row.status, result_status: row.result_status, failed_files: row.failed_files, live: row.live, since: row.usage_limited_since };
+        };
+        // What sync_freshness is told, on every arm (the harness compares the rest with PGLite).
+        expect(pick('src-a since 2000')).toEqual({ job: 2, status: 'completed', result_status: 'partial', failed_files: '3', live: false, since: [0] });
+        expect((out['src-a no window'] as { partial_causes: unknown }).partial_causes).toEqual(['usage limit', 7, 'writer']);
+        expect(pick('src-a no window')?.since).toBeNull();
+        expect(pick('src-a since 2099')?.since).toBeNull();
+        expect(pick('src-b since 2000')).toEqual({ job: 4, status: 'failed', result_status: null, failed_files: null, live: false, since: null });
+        expect(pick('src-c since 2000')?.since).toEqual([6]);
+        expect(pick('src-r no window')?.job).toBe(8);
+        expect(pick('default no window')?.job).toBe(11);
+        expect(pick('src-l no window')).toMatchObject({ job: 13, status: 'active', live: true });
+        expect(pick('src-q no window')).toMatchObject({ job: 14, status: 'waiting', live: false });
+        expect([out['src-e no window'], out['ghost since 2000']]).toEqual([null, null]);
+        return out;
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     });
 
   parityTest('listFactsAbsorbJobsByKeyPrefix and listDeadFactsAbsorbJobsByKeys read the dead-write retry jobs by key prefix and key set, by id',

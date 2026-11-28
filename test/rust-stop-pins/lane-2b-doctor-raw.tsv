@@ -1,3 +1,0 @@
-# Raw-SQL reads the doctor report catches on the Rust arm (lane 2b, doctor-raw). Columns (tab separated): parity file, case name, member that refused, owner, due date (YYYY-MM-DD, UTC), what Rust declines.
-# Each row goes when its file stops calling executeRaw on a Rust brain: a typed member with Rust parity.
-test/engine-parity/doctor-raw-sites.test.ts	the doctor report answers the former raw-SQL checks on every arm and skips the timeline index check on Rust by name	executeRaw@src/core/sync-attempt.ts	lane 2b (main trunk)	2026-12-09	the last sync job read is raw SQL; sync_freshness says the last attempt is unreadable until it reads through a typed member

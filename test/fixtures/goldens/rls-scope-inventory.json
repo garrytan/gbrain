@@ -11312,6 +11312,7 @@
         "readLastContradictionsPromptVersion": "none",
         "readLastFailedGlobalMaintenanceJob": "none",
         "readLastFinishedJobAt": "none",
+        "readLastSyncJob": "none",
         "readLastUndoneHandoverId": "none",
         "readLatestBeliefCoverage": "none",
         "readLatestCatalogProvenanceAudit": "none",
