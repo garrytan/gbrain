@@ -8,9 +8,10 @@
  * Protects:
  * - a typed read stalled on a connection that never answers ends when the clock's signal aborts, with the signal's
  *   reason (as master's raw path), and its reserved connection is discarded, not released;
- * - a group's shared source read (`preparationReads`) goes out once for every member and takes no member's
- *   deadline or signal, so one member's abort never rejects a sibling's read.
- * Fails when the typed path drops the clock's signal, or `getSource` bypasses the group memo.
+ * - a group's shared source read and shared skill-pack reads (`preparationReads`) go out once for every member and
+ *   take no member's deadline or signal, so one member's abort never rejects a sibling's read.
+ * Fails when the typed path drops the clock's signal, or `getSource` or a skill-pack read bypasses the group memo or
+ * carries a member's deadline.
  * No database: the engine runs on the recording fake.
  */
 import { expect, test } from 'bun:test';
@@ -64,4 +65,25 @@ test('a group\'s shared source read goes out once for every member, without a me
   // Another source is its own read.
   await Promise.all([shared.getSource('other'), gate.promise]);
   expect(seen).toHaveLength(2);
+});
+
+test('a group\'s shared skill-pack reads go out once for every member, without a member\'s deadline or signal', async () => {
+  const seen: Array<{ read: string; deadline: number | undefined; signal: AbortSignal | undefined }> = [];
+  const gate = Promise.withResolvers<void>();
+  const roots = [{ source_id: 'default', source_incarnation: 'i', source_root: '/brain', worktree_root: null, relative_path: null }];
+  const engine = { kind: 'postgres', executeRaw: async () => [],
+    sharedSkillPackTablePresent: () => { seen.push({ read: 'present', deadline: readDeadline(), signal: readDeadlineSignal() }); return gate.promise.then(() => true); },
+    listSharedSkillPackRoots: (hostId: string) => { seen.push({ read: `roots:${hostId}`, deadline: readDeadline(), signal: readDeadlineSignal() }); return gate.promise.then(() => roots); },
+  } as unknown as BrainEngine;
+  const shared = preparationReads(engine);
+  const a = new AbortController();
+  const memberA = boundedReads(shared, startClaimPhase(Date.now(), a.signal, 10_000));
+  const memberB = boundedReads(shared, startClaimPhase(Date.now(), new AbortController().signal, 10_000));
+  const reads = [memberA.sharedSkillPackTablePresent(), memberA.listSharedSkillPackRoots('host-1'),
+    memberB.sharedSkillPackTablePresent(), memberB.listSharedSkillPackRoots('host-1')];
+  expect(seen).toEqual([{ read: 'present', deadline: undefined, signal: undefined }, { read: 'roots:host-1', deadline: undefined, signal: undefined }]);
+  a.abort({ code: 'preparation_deadline' });
+  gate.resolve();
+  expect(await reads[2]).toBe(true);
+  expect(await reads[3]).toEqual(roots);
 });

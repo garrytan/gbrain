@@ -231,9 +231,10 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
     if (key === 'getAllConfig') return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
     // The source row (contextual retrieval policy) is one read per source for the group, taking no member's deadline or signal.
     if (key === 'getSource') return (sourceId: string) => once(`source:${sourceId}`, () => withoutReadDeadline(() => target.getSource(sourceId)));
-    // The shared skill packs (knowledge-guard.ts, engine-sql/write-misc.ts), once for the group, as their two statements were.
-    if (key === 'sharedSkillPackTablePresent') return () => once(key, () => target.sharedSkillPackTablePresent());
-    if (key === 'listSharedSkillPackRoots') return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSharedSkillPackRoots(hostId));
+    // The shared skill packs (knowledge-guard.ts, engine-sql/write-misc.ts), once for the group, as their two statements were,
+    // taking no member's deadline or signal (a member that times out never fails a sibling's read).
+    if (key === 'sharedSkillPackTablePresent') return () => once(key, () => withoutReadDeadline(() => target.sharedSkillPackTablePresent()));
+    if (key === 'listSharedSkillPackRoots') return (hostId: string) => once(JSON.stringify([key, hostId]), () => withoutReadDeadline(() => target.listSharedSkillPackRoots(hostId)));
     if (imports && key === 'readPageSnapshot') return (slug: string, opts?: Parameters<BrainEngine['readPageSnapshot']>[1]) =>
       imports.snapshot(slug, opts) ?? target.readPageSnapshot(slug, opts);
     if (imports && key === 'findDuplicatePage') return (sourceId: string, opts: Parameters<NonNullable<BrainEngine['findDuplicatePage']>>[1]) => imports.findDuplicate(sourceId, opts);
