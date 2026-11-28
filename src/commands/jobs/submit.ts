@@ -108,7 +108,7 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
         command: 'jobs submit', argv, preview_argv: [...argv, '--dry-run'], args,
         scope: { all: data.all === true, ...(typeof data.sourceId === 'string' ? { sourceId: data.sourceId } : {}), unestimated: Array.isArray(data.slugs) },
       });
-      if (auth) spendAuthorization = jobSpendAuthorization(auth, { command: `jobs submit ${name}`, of: 1, argv });
+      if (auth?.cap_source === 'user' && Number.isFinite(auth.cap_usd)) spendAuthorization = jobSpendAuthorization(auth, { command: `jobs submit ${name}`, of: 1, argv });
     } catch (e) {
       if (!isConsentRefusal(e)) throw e;
       setCliExitVerdict(printConsentRefusal(e, { json: hasFlag(args, '--json') }));

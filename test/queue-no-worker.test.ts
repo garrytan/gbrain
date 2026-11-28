@@ -138,6 +138,23 @@ describe('CLI jobs submit on PGLite', () => {
       resetGateway();
     }
   }));
+
+  test('an embedding job approved with --yes and no cap stays uncapped', () => inHome(async () => {
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    const err = spyOn(process.stderr, 'write').mockImplementation(() => true);
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'sk-fake' } });
+    try {
+      await runJobsSubmit({ args: ['submit', 'embed', '--params', '{"sourceId":"default"}', '--queue-only', '--yes'], engine, queue: new MinionQueue(engine) } as never);
+      const rows = await engine.executeRaw<{ spend_authorization: unknown }>(
+        `SELECT spend_authorization FROM minion_jobs WHERE name = 'embed' ORDER BY id DESC LIMIT 1`);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].spend_authorization).toBeNull();
+    } finally {
+      log.mockRestore();
+      err.mockRestore();
+      resetGateway();
+    }
+  }));
 });
 
 describe('jobs work on PGLite', () => {

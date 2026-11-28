@@ -83,7 +83,7 @@ worker enforces it:
 |---|---|---|---|
 | `book-mirror` | one `subagent` per chapter | `authorized`, one group | the approved total, shared by the chapters |
 | `enrich --background` (Postgres) | one `enrich` per source | `authorized`, one group | the approved total, shared by the sources |
-| `jobs submit enrich\|subagent\|embed\|embed-backfill\|embed-catch-up` | one | `authorized` | the approved cap (an embedding backfill also keeps its own `embed.backfill_max_usd` cap; the lower one stops it) |
+| `jobs submit enrich\|subagent\|embed\|embed-backfill\|embed-catch-up` | one | `authorized` | the approved cap (embedding jobs record it only when you set the cap yourself, and stop at the first refusal; a backfill also keeps its own `embed.backfill_max_usd` cap, and the lower one stops it) |
 | jobs of those commands queued before submit-time authorization | as above | `legacy_default`, one group per job | `enrich`: the job's `--max-usd`, else $5; `subagent`: $5 |
 | everything else (`agent run`, MCP `submit_agent`/`submit_job`, `doctor --remediate`, autopilot and dream phases, `skillopt`, `import`, `reindex`, `sync`, automatically queued embedding backfills) | various | none (`unrecorded`) | the producer's own budget: client daily budget, cycle budget, embedding caps, write-path embedding as configured, `--max-usd` for remediation |
 
