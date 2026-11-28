@@ -20,6 +20,7 @@ import type { MinionJobContext } from '../src/core/minions/types.ts';
 import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { makeSyncHandler } from '../src/core/minions/handlers/sync.ts';
+import { planJobDrain } from '../src/core/minions/handlers/sync-job-drain.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -102,6 +103,20 @@ test('drain:false keeps the single pass: the same slow write returns writer_pend
     } finally { await hold.release(); await disposePersistenceConsumer(engine); }
   }
 }), 240_000);
+
+test('disabling the drain still passes a known queue deadline with cleanup reserve', async () => {
+  const now = 1_000_000;
+  for (const engine of engines) {
+    const explicit = await planJobDrain(engine, job(0, { drain: false }, now + 600_000), now);
+    expect(explicit.opts).toEqual({ deadlineAtMs: now + 540_000 });
+    expect((await planJobDrain(engine, job(0, { drain: false }, null), now)).opts).toEqual({});
+    await engine.setConfig('sync.job_drain', 'false');
+    try {
+      const configured = await planJobDrain(engine, job(0, {}, now + 40_000), now);
+      expect(configured.opts).toEqual({ deadlineAtMs: now + 30_000 });
+    } finally { await engine.unsetConfig('sync.job_drain'); }
+  }
+});
 
 test('a deadline stop with progress queues one continuation on a worker-backed brain; no progress, or PGLite, queues none', async () => withEnv({ GBRAIN_HOME: home }, async () => {
   const { settleJobDrain, planJobDrain } = await import('../src/core/minions/handlers/sync-job-drain.ts');

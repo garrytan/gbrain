@@ -127,19 +127,147 @@ test('GitHub partial detail and pagination do not advance freshness or delete su
     const cfg = parseGitHubSourceConfig(githubConfig, f.dir);
     expect((await runGitHubSync(engine, f.id, cfg, options, githubFetch({ failDetail: true }))).status).toBe('partial');
     expect((await engine.getPage('gh/acme-example/app/1', { sourceId: f.id }))?.frontmatter.detail_fetched).toBe(false);
-    // Fix wave 4: the partial run publishes the item's failure count, never a cursor.
-    expect(await sourceCursor(engine, f.id)).toEqual([[{ state: { last_sweep_at: null, repos: [] } }]]);
+    // The partial run publishes the item's failure count, but not freshness.
+    expect(await sourceCursor(engine, f.id)).toEqual([[{ state: expect.objectContaining({ last_sweep_at: null, repos: [] }) }]]);
     expect((await engine.executeRaw<{ last_sync_at: unknown }>('SELECT last_sync_at FROM sources WHERE id=$1', [f.id]))[0].last_sync_at).toBeNull();
     await disposePersistenceConsumer(engine);
     expect((await runGitHubSync(engine, f.id, cfg, options, githubFetch())).status).not.toBe('partial');
-    const checkpoint = await sourceCheckpoint(engine, f.id);
+    const before = (await sourceCursor(engine, f.id))[0][0].state;
+    const [freshness] = await engine.executeRaw<{ last_sync_at: unknown }>('SELECT last_sync_at FROM sources WHERE id=$1', [f.id]);
     expect((await runGitHubSync(engine, f.id, cfg, { ...options, full: true }, githubFetch({ failSecondPage: true }))).status).toBe('partial');
-    expect(await sourceCheckpoint(engine, f.id)).toEqual(checkpoint);
+    expect((await sourceCursor(engine, f.id))[0][0].state).toMatchObject({ last_sweep_at: before?.last_sweep_at, repos: before?.repos });
+    expect((await engine.executeRaw<{ last_sync_at: unknown }>('SELECT last_sync_at FROM sources WHERE id=$1', [f.id]))[0].last_sync_at).toEqual(freshness.last_sync_at);
     expect(await engine.getPage('gh/acme-example/app/1', { sourceId: f.id })).not.toBeNull();
     expect((await runGitHubSync(engine, f.id, cfg, { ...options, githubItem: { repo: 'acme-example/app', number: 1, kind: 'issue', deleted: true } }, githubFetch())).deleted).toBe(1);
     expect(await engine.getPage('gh/acme-example/app/1', { sourceId: f.id })).toBeNull();
   }
 }), 120_000);
+
+test('managed GitHub deadline interruption banks fresh items without advancing freshness and resumes after restart', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await source(engine, githubConfig);
+    const cfg = parseGitHubSourceConfig(githubConfig, f.dir);
+    const issues = Array.from({ length: 5 }, (_, index) => ({
+      ...issueFixture,
+      number: index + 1,
+      title: `Synthetic issue ${index + 1}`,
+      body: `Synthetic body for issue ${index + 1}.`,
+      updated_at: `2026-01-0${index + 2}T00:00:00Z`,
+      html_url: `https://github.com/acme-example/app/issues/${index + 1}`,
+    }));
+    let listed = [issues[0]];
+    let interrupt = false;
+    let deadlineFired = false;
+    const calls: string[] = [];
+    const fetcher = async (url: string, init: RequestInit) => {
+      const u = new URL(url);
+      const path = u.pathname;
+      calls.push(url);
+      if (path.endsWith('/issues')) {
+        const since = u.searchParams.get('since');
+        return json(listed.filter(issue => !since || issue.updated_at > since));
+      }
+      const item = path.match(/^\/repos\/acme-example\/app\/issues\/(\d+)(\/comments)?$/);
+      if (item) {
+        const number = Number(item[1]);
+        if (interrupt && number === 4 && !item[2]) {
+          const signal = init.signal;
+          if (!signal) throw new Error('The managed deadline signal was not armed');
+          const { promise, reject } = Promise.withResolvers<Response>();
+          const abort = () => { deadlineFired = true; reject(signal.reason); };
+          if (signal.aborted) abort();
+          else signal.addEventListener('abort', abort, { once: true });
+          return promise;
+        }
+        if (!issues[number - 1]) throw new Error(`Unexpected issue ${number}`);
+        return json(item[2] ? [] : issues[number - 1]);
+      }
+      if (path.endsWith('/pulls')) return json([]);
+      if (path === '/repos/acme-example/app') return json({ full_name: 'acme-example/app', private: true, default_branch: 'main' });
+      throw new Error(`Unexpected external fixture route: ${path}`);
+    };
+
+    // Webhook refreshes seed pages without advancing the sweep cursor past issue 1.
+    expect((await runGitHubSync(engine, f.id, cfg, options, fetcher)).status).not.toBe('partial');
+    for (const number of [2, 3, 4, 5]) {
+      const targeted = { repo: 'acme-example/app', number, kind: 'issue' as const };
+      expect((await runGitHubSync(engine, f.id, cfg, { ...options, githubItem: targeted }, fetcher)).status).not.toBe('partial');
+    }
+    const cursorBefore = (await sourceCursor(engine, f.id))[0][0].state;
+    expect(cursorBefore?.last_sweep_at).toBe(issues[0].updated_at);
+    expect(cursorBefore?.repos).toEqual(['acme-example/app']);
+    const [freshnessBefore] = await engine.executeRaw<{ last_sync_at: unknown }>('SELECT last_sync_at FROM sources WHERE id=$1', [f.id]);
+    expect(freshnessBefore.last_sync_at).not.toBeNull();
+    const checkpointBefore = await sourceCheckpoint(engine, f.id);
+    // Issues 2 and 3 are fresh; 4 and 5 need detail but no list-page writes.
+    issues[3] = { ...issues[3], updated_at: '2026-01-07T00:00:00Z' };
+    issues[4] = { ...issues[4], updated_at: '2026-01-08T00:00:00Z' };
+
+    listed = issues.slice(1);
+    calls.length = 0;
+    interrupt = true;
+    const reads: string[] = [];
+    const readSnapshot = engine.readPageSnapshot;
+    const trackReads: BrainEngine['readPageSnapshot'] = async function (this: BrainEngine, slug, opts) {
+      if (opts?.sourceId === f.id) reads.push(slug);
+      return readSnapshot.call(this, slug, opts);
+    };
+    engine.readPageSnapshot = trackReads;
+    // Let the real deadline abort an in-flight detail request, not the writer's timers.
+    const interrupted = await (async () => {
+      try {
+        return await runGitHubSync(engine, f.id, cfg, { ...options, deadlineAtMs: Date.now() + 3_000 }, fetcher);
+      } finally {
+        engine.readPageSnapshot = readSnapshot;
+        interrupt = false;
+      }
+    })();
+    expect(deadlineFired).toBe(true);
+    expect(interrupted).toMatchObject({ status: 'partial', reason: 'timeout' });
+    const interruptedPaths = calls.map(url => new URL(url).pathname);
+    expect(interruptedPaths).toContain('/repos/acme-example/app/issues/4');
+    expect(interruptedPaths).not.toContain('/repos/acme-example/app/issues/5');
+    for (const number of [2, 3]) {
+      expect(reads).toContain(`gh/acme-example/app/${number}`);
+      expect(interruptedPaths).not.toContain(`/repos/acme-example/app/issues/${number}`);
+      expect(interruptedPaths).not.toContain(`/repos/acme-example/app/issues/${number}/comments`);
+    }
+    expect((await sourceCursor(engine, f.id))[0][0].state).toMatchObject({
+      last_sweep_at: cursorBefore?.last_sweep_at, repos: cursorBefore?.repos,
+    });
+    expect((await engine.executeRaw<{ last_sync_at: unknown }>('SELECT last_sync_at FROM sources WHERE id=$1', [f.id]))[0].last_sync_at).toEqual(freshnessBefore.last_sync_at);
+    const banked = await sourceCheckpoint(engine, f.id);
+    expect(banked).toHaveLength(1);
+    expect(banked).not.toEqual(checkpointBefore);
+    await disposePersistenceConsumer(engine);
+    expect(await sourceCheckpoint(engine, f.id)).toEqual(banked);
+
+    // Reopen the connector session and observe actual page reads as well as provider fetches.
+    calls.length = 0;
+    reads.length = 0;
+    engine.readPageSnapshot = trackReads;
+    const resumed = await (async () => {
+      try { return await runGitHubSync(engine, f.id, cfg, options, fetcher); }
+      finally { engine.readPageSnapshot = readSnapshot; }
+    })();
+    expect(resumed.status).not.toBe('partial');
+    const resumedPaths = calls.map(url => new URL(url).pathname);
+    for (const number of [2, 3]) {
+      expect(reads).not.toContain(`gh/acme-example/app/${number}`);
+      expect(resumedPaths).not.toContain(`/repos/acme-example/app/issues/${number}`);
+      expect(resumedPaths).not.toContain(`/repos/acme-example/app/issues/${number}/comments`);
+    }
+    for (const number of [4, 5]) {
+      expect(resumedPaths).toContain(`/repos/acme-example/app/issues/${number}`);
+      expect((await engine.getPage(`gh/acme-example/app/${number}`, { sourceId: f.id }))?.compiled_truth).toContain(`Synthetic body for issue ${number}.`);
+    }
+    expect(calls.some(url => {
+      const u = new URL(url);
+      return u.pathname.endsWith('/issues') && u.searchParams.get('since') === issues[0].updated_at;
+    })).toBe(true);
+    expect((await sourceCursor(engine, f.id))[0][0].state?.last_sweep_at).toBe(issues[4].updated_at);
+  }
+}), 180_000);
 
 test('remote, narrowed, and mismatched connector authority is refused before external requests', async () => withEnv(env, async () => {
   for (const engine of engines) {

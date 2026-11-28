@@ -10,6 +10,11 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## Unreleased
+
+### Fixed
+- GitHub connector sweeps bank checked item versions before a job deadline and resume unfinished work without marking the source fresh or skipping failed items. Open pull requests continue to refresh their checks; a source with a large backlog can finish over several bounded jobs. Nothing to do on upgrade.
+
 ## [0.60.782.0] - 2026-11-28
 
 **Shadow mode now sees and follows writes made through the database handle inside a transaction, and keeps a transaction's calls in order beside a nested transaction that is still running.**

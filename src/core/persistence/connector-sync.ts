@@ -275,11 +275,9 @@ function connectorBindingRoot(engine: object, sourceId: string, source: Connecto
 }
 
 /**
- * Fix wave 4: a page intent binds to the connector cursor, not to its item
- * holds or the checkpoint generation. A holds-only publication (the abort
- * path, a partial run) therefore neither invalidates accepted page writes nor
- * changes their request identity, so an ordinary rerun still replays the same
- * receipt. Checkpoint intents keep the full checkpoint.
+ * A page intent binds to the source cursor, not its holds or the GitHub
+ * sweep's unfinished-work ledger. An intermediate checkpoint therefore does
+ * not change a page retry's identity or invalidate an accepted write.
  */
 /** #9681: the cursor a checkpoint receipt writes; a replayed save keeps the entry (and run stamp) its first admission stored. */
 function savedCursor(row: WriteRequest, next: unknown[]): unknown[] {
@@ -290,7 +288,7 @@ function cursorOnly(checkpoint: unknown): unknown[] {
   return (Array.isArray(checkpoint) ? checkpoint : []).map(entry => {
     const state = (entry as { state?: unknown } | null)?.state ?? null;
     if (!state || typeof state !== 'object') return { state };
-    const { item_holds: _holds, ...cursor } = state as Record<string, unknown>;
+    const { item_holds: _holds, sweep_progress: _progress, ...cursor } = state as Record<string, unknown>;
     return { state: cursor };
   });
 }
@@ -506,6 +504,8 @@ export class ManagedConnectorSync {
   get failedWriteCount(): number { return this.failedPending.length; }
   /** #9968: the caller's deadline stopped this sweep; the run ended partial with its state recorded. */
   stoppedAtDeadline = false;
+  /** An intermediate connector checkpoint is durable, but does not finish its full sweep. */
+  incompleteSweep = false;
   /** #9968: the caller's deadline (epoch ms); waiting on a retained publication never runs past it. */
   deadlineAtMs: number | undefined;
   readonly counts: Omit<ConnectorRunCounts, 'finished_at' | 'pending' | 'stopped_on_wait_budget'> & { created: number; updated: number; deleted: number; purged_skipped: number } = {
@@ -962,7 +962,7 @@ export class ManagedConnectorSync {
     const now = new Date().toISOString();
     const outstanding = [...this.pendingRows.values()].map(pending => pending.entry);
     const complete = this.lastSaveCommitted && !outstanding.length && !this.failedPending.length && !this.pendingCheckpoint && !this.stopped
-      && !this.stoppedAtDeadline;
+      && !this.stoppedAtDeadline && !this.incompleteSweep;
     // Only a complete --full sweep (which also reconciles deletions) proves that a failed item it never reached
     // was deleted upstream. Delta and targeted runs keep every unreached carried entry for its automatic retry.
     const unreached = this.unreachedCarried();

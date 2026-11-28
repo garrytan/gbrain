@@ -118,6 +118,12 @@ interface GitHubState {
   repos: string[];
   /** Fix wave 4: connector item holds (src/core/connectors/item-holds.ts). */
   item_holds?: unknown;
+  /** Work already checked in an unfinished sweep; this never advances freshness. */
+  sweep_progress?: {
+    full: boolean;
+    since: string | null;
+    items: Record<string, { version: string; detail: boolean }>;
+  };
 }
 
 function readState(dir: string): GitHubState {
@@ -132,6 +138,7 @@ function readState(dir: string): GitHubState {
         ? parsed.repos.filter((r): r is string => typeof r === 'string').map((r) => r.toLowerCase())
         : [],
       ...(parsed.item_holds ? { item_holds: parsed.item_holds } : {}),
+      ...(parsed.sweep_progress ? { sweep_progress: parsed.sweep_progress } : {}),
     };
   } catch {
     return { last_sweep_at: null, repos: [] };
@@ -1163,6 +1170,9 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
       // from the stored repo still matches (GitHub repo names are
       // case-insensitive; the managed dir layout is lowercase).
       const item = { ...opts.githubItem, repo: opts.githubItem.repo.toLowerCase() };
+      // A webhook can change or delete a page while a sweep is suspended.
+      // Recheck that sweep rather than skip an item whose bytes changed.
+      delete state.sweep_progress;
       if (!repos.includes(item.repo)) {
         return syncResult({ ...summary, status: 'up_to_date' }, opts);
       }
@@ -1173,10 +1183,14 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
         stopItemHb();
       }
       if (managed) await managed.saveState(state);
-      else await touchSourceRow(deps, new Date().toISOString());
+      else { writeState(cfg.dir, state); await touchSourceRow(deps, new Date().toISOString()); }
       return syncResult(summary, opts);
     }
+    if (managed) managed.incompleteSweep = true;
 
+    // A multi-job sweep may see writes between listings. Its watermark must
+    // not pass any item changed after this invocation began.
+    const sweepStartedAt = new Date().toISOString();
     const since = opts.full ? undefined : state.last_sweep_at ?? undefined;
     const keepPaths = new Set<string>();
     const succeededRepos = new Set<string>();
@@ -1189,19 +1203,72 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
     // permanently failing item no longer pins the watermark; held items stay
     // visible (sources status, doctor, sync summary) until retried.
     const holds = await ConnectorHoldSession.open(engine, sourceId, managed, { last_sweep_at: null, repos: [] }, state.item_holds, { full: opts.full });
+    // Keep the old freshness cursor until every repo succeeds, but bank work
+    // inside that window. A changed item is checked again, and a list-only
+    // item still needs its detail pass. Open PRs refresh again next sweep.
+    const saved = state.sweep_progress;
+    const hasSaved = !!saved && saved.since === state.last_sweep_at
+      && !!saved.items && typeof saved.items === 'object' && !Array.isArray(saved.items);
+    // A later ordinary sync may finish an interrupted full sweep. In that
+    // case retain only list-only checkpoints; completed full entries are
+    // screened again so open PR checks are refreshed.
+    const resumes = hasSaved && (saved!.full === (opts.full === true) || saved!.full && !opts.full);
+    const items = resumes ? { ...saved!.items } : {} as Record<string, { version: string; detail: boolean }>;
+    if (resumes && saved!.full && !opts.full) {
+      for (const [key, entry] of Object.entries(items)) if (!entry.detail) delete items[key];
+    }
+    const sweep = {
+      full: opts.full === true,
+      since: state.last_sweep_at,
+      items,
+    };
+    let unbanked = 0;
+    let hasCheckpoint = resumes;
+    let stopped = false;
+    let stoppedOnDeadline = false;
+    // The job drain's deadline already leaves time before the queue timeout.
+    // Stop a little earlier still so this connector can publish its checkpoint.
+    const stopAt = opts.deadlineAtMs === undefined ? undefined
+      : opts.deadlineAtMs - Math.min(5_000, Math.max(0, opts.deadlineAtMs - Date.now()) / 4);
+    const shouldStop = () => {
+      if (opts.signal?.aborted) return stopped = true;
+      if (stopAt !== undefined && Date.now() >= stopAt) return stopped = stoppedOnDeadline = true;
+      return false;
+    };
+    const version = (item: { kind: string; state: string; updated_at: string }) => `${item.kind}:${item.state}:${item.updated_at}`;
+    const rememberItem = (key: string, item: { kind: string; state: string; updated_at: string }, detail: boolean) => {
+      // An unknown version is not safe to skip on a later listing.
+      if (!item.updated_at) return false;
+      sweep.items[key] = { version: version(item), detail };
+      return ++unbanked >= 100;
+    };
+    const bank = async () => {
+      if (!unbanked) return;
+      // Intermediate saves carry the initial holds, not tentative failures:
+      // the run's outage breaker and hold counts settle together at the end.
+      const checkpoint = { ...state, item_holds: holds.holds.initial(), sweep_progress: sweep };
+      if (managed) await managed.saveState(checkpoint);
+      else writeState(cfg.dir, checkpoint);
+      unbanked = 0;
+      hasCheckpoint = true;
+    };
+    const failedRepos = new Set<string>();
     const itemFailed = async (repo: string, item: { number: number; kind: 'issue' | 'pr'; updated_at: string; list?: { title?: string } }, err: unknown, what = '') => {
       const key = `${repo}#${item.number}`;
+      // An older successful checkpoint must never hide this later failure.
+      delete sweep.items[key];
       const blocking = !holds.isHeld(key);
       await holds.fail(key, err, { version: item.updated_at || null, ref: item.kind, slug: slugifyPath(`gh/${repo}/${item.number}`),
         meta: { title: item.list?.title ?? null, upstream_at: item.updated_at || null } });
       deps.client.log?.(`[github] item ${repo}#${item.number}${what} failed: ${err instanceof Error ? err.message : String(err)}`);
       summary.failedFiles++;
       if (blocking) summary.status = 'partial';
+      if (blocking) failedRepos.add(repo);
       progress.tick(1, `${repo}#${item.number} failed`);
     };
 
     for (const repo of repos) {
-      if (opts.signal?.aborted) break;
+      if (shouldStop()) { summary.status = 'partial'; break; }
       try {
         const repoSince = opts.full || !previousRepos.has(repo) ? undefined : since;
         const stopListHb = startHeartbeat(progress, `listing ${repo}`);
@@ -1223,17 +1290,34 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
           ...issues.map((i) => ({ repo, number: i.number, kind: 'issue' as const, state: i.state, updated_at: i.updated_at, list: i as RawIssueListItem })),
           ...prs.map((p) => ({ repo, number: p.number, kind: 'pr' as const, state: p.state, updated_at: p.updated_at, list: p as RawPullListItem })),
         ];
-        // Item count known: restart the phase with this repo's total. Every
-        // item ticks exactly once (fresh skip, pass-1 failure, or pass 2).
-        progress.start('sync.github_materialize', items.length);
+        // Reconsiderations can fall outside the since-filtered listing.
+        const listed = new Set(items.map((i) => i.number));
+        const unlistedFailures = Object.values(holds.holds.initial().items)
+          .filter(record => record.state === 'failing').map(record => record.key);
+        const unlisted = [...holds.dueHeldKeys(), ...unlistedFailures].filter(key =>
+          key.startsWith(`${repo}#`) && !listed.has(Number(key.slice(repo.length + 1))));
+        // Each listed or explicitly retried item ticks exactly once.
+        progress.start('sync.github_materialize', items.length + unlisted.length);
         const pendingDetail: typeof items = [];
         for (const item of items) {
           const filePath = itemPagePath(cfg.dir, repo, item.number);
           keepPaths.add(relative(cfg.dir, filePath).replace(/\\/g, '/'));
           summary.itemsSeen++;
-          if (opts.signal?.aborted) { summary.status = 'partial'; continue; }
-          if (!holds.shouldAttempt(`${repo}#${item.number}`, item.updated_at)) {
+          if (shouldStop()) { summary.status = 'partial'; break; }
+          const key = `${repo}#${item.number}`;
+          if (!holds.shouldAttempt(key, item.updated_at)) {
             progress.tick(1, `${repo}#${item.number} held`);
+            continue;
+          }
+          const prior = sweep.items[key];
+          if (prior?.version === version(item) && !holds.holds.record(key)
+            && (prior.detail || !opts.full && !(item.kind === 'pr' && item.state === 'open'))) {
+            if (prior.detail) pendingDetail.push(item);
+            else {
+              if (item.updated_at > maxUpdatedAt) maxUpdatedAt = item.updated_at;
+              holds.succeed(key);
+              progress.tick(1, `${key} banked`);
+            }
             continue;
           }
           // Open PRs are never fresh: their check state can change without
@@ -1246,16 +1330,18 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
           try {
             stored = await storedPage(deps, filePath, item.updated_at);
           } catch (err) {
+            if (opts.signal?.aborted) { stopped = true; summary.status = 'partial'; break; }
             await itemFailed(repo, item, err, ' stored page read');
             continue;
           }
           const { fresh, hasDetail } = stored;
-          if (!opts.full && !isOpenPr && fresh && hasDetail) {
+          if (!opts.full && !isOpenPr && fresh && hasDetail && !holds.holds.record(key)) {
             // Cursor accounting: a fresh skip is a success too. Without this,
             // a repo whose newest item is always fresh stays re-listed on
             // every sweep (the since filter never passes it).
             if (item.updated_at > maxUpdatedAt) maxUpdatedAt = item.updated_at;
             holds.succeed(`${repo}#${item.number}`);
+            if (rememberItem(key, item, false)) await bank();
             progress.tick(1, `${repo}#${item.number} fresh`);
             continue;
           }
@@ -1275,18 +1361,22 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
                 }
               }
             } catch (err) {
+              if (opts.signal?.aborted) { stopped = true; summary.status = 'partial'; break; }
               await itemFailed(repo, item, err, ' list render');
               continue;
             }
           }
+          // Remove the old success before accepting a detail refresh. If the
+          // refresh fails or the run is cut short, this version remains due.
+          delete sweep.items[key];
+          if (rememberItem(key, item, true)) await bank();
           pendingDetail.push(item);
         }
-        // Held items the listing no longer returns are re-attempted when
-        // retry-held asked for them or a transient reconsideration is due.
-        const listed = new Set(items.map((i) => i.number));
-        for (const key of holds.dueHeldKeys()) {
+        // Retry unlisted failures too: a failed full refresh may predate the
+        // delta cursor, even when its stored page still appears fresh.
+        for (const key of stopped ? [] : unlisted) {
           const number = Number(key.slice(repo.length + 1));
-          if (!key.startsWith(`${repo}#`) || listed.has(number) || !holds.shouldAttempt(key)) continue;
+          if (!holds.shouldAttempt(key)) continue;
           keepPaths.add(relative(cfg.dir, itemPagePath(cfg.dir, repo, number)).replace(/\\/g, '/'));
           pendingDetail.push({ repo, number, kind: holds.holds.record(key)?.ref === 'pr' ? 'pr' : 'issue', state: 'open', updated_at: '', list: {} as RawIssueListItem });
         }
@@ -1297,7 +1387,7 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
         const stopDetailHb = startHeartbeat(progress, `fetching item detail for ${repo}`);
         try {
           for (const item of pendingDetail) {
-            if (opts.signal?.aborted) {
+            if (shouldStop()) {
               summary.status = 'partial';
               break;
             }
@@ -1315,10 +1405,13 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
                 }
               }
             } catch (err) {
+              if (opts.signal?.aborted) { stopped = true; summary.status = 'partial'; break; }
+              delete sweep.items[`${repo}#${item.number}`];
               await itemFailed(repo, item, err);
               continue;
             }
             holds.succeed(`${repo}#${item.number}`);
+            if (rememberItem(`${repo}#${item.number}`, item, false)) await bank();
             progress.tick(1, `${repo}#${item.number}`);
             // Cursor advances only for items that fully succeeded.
             if (item.updated_at > maxUpdatedAt) maxUpdatedAt = item.updated_at;
@@ -1329,7 +1422,7 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
         // Repo card, refreshed once per repo.
         const cardPath = repoCardPath(cfg.dir, repo);
         keepPaths.add(relative(cfg.dir, cardPath).replace(/\\/g, '/'));
-        if (!opts.signal?.aborted && (opts.full || !(await storedPage(deps, cardPath, '')).exists)) {
+        if (!shouldStop() && (opts.full || !(await storedPage(deps, cardPath, '')).exists)) {
           try {
             const meta = await client.fetchJSON<RawRepo>(`/repos/${repo}`, { signal: opts.signal });
             repoMeta.set(repo, meta);
@@ -1339,13 +1432,15 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
               if (imported.created) summary.added++; else summary.modified++;
             }
           } catch (error) {
-            if (managed) { rethrowConnectorWriteError(error); summary.failedFiles++; summary.status = 'partial'; }
+            if (opts.signal?.aborted) { stopped = true; summary.status = 'partial'; }
+            else if (managed) { rethrowConnectorWriteError(error); summary.failedFiles++; summary.status = 'partial'; failedRepos.add(repo); }
           }
         } else {
           keepPaths.add(relative(cfg.dir, cardPath).replace(/\\/g, '/'));
         }
-        if (!opts.signal?.aborted) succeededRepos.add(`gh/${repo}`);
+        if (!stopped && !failedRepos.has(repo)) succeededRepos.add(`gh/${repo}`);
       } catch (err) {
+        if (opts.signal?.aborted) { stopped = true; summary.status = 'partial'; break; }
         if (managed) rethrowConnectorWriteError(err);
         deps.client.log?.(`[github] repo ${repo} failed: ${err instanceof Error ? err.message : String(err)}`);
         summary.failedFiles++;
@@ -1361,15 +1456,9 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
       await deleteStalePages(deps, keepPaths, summary, succeededRepos);
     }
 
-    // Size-gated extract + embed, mirroring performSyncInner's gates.
-    await runExtractAndEmbed(deps, summary, activePack);
-
-    // Cursor discipline: the sweep cursor only advances on a fully successful
-    // run. On a partial run (item or repo failures) or an aborted signal we
-    // keep the previous cursor so the next sweep re-enumerates from the old
-    // point; fresh pages are still skipped by content hash, so the only real
-    // cost is the retry of whatever failed.
-    if (opts.signal?.aborted) summary.status = 'partial';
+    // Partial sweeps keep the old freshness cursor. Their separately banked
+    // item versions let the next run resume without re-reading fresh pages.
+    if (stopped || opts.signal?.aborted) summary.status = 'partial';
     // A repo enters state.repos only once a sweep fully succeeded for it (or
     // it was already listed): state-listing an unswept repo would skip its
     // history bootstrap on the next run (previousRepos gates the since filter).
@@ -1377,19 +1466,38 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
     // Throws connector_holds_exhausted before any save, so the cursor stays.
     state.item_holds = holds.finish();
     if (summary.status === 'synced') {
-      state.last_sweep_at = maxUpdatedAt || (managed ? null : new Date().toISOString());
-      if (managed) await managed.saveState(state, true, state.last_sweep_at ?? undefined);
+      delete state.sweep_progress;
+      state.last_sweep_at = maxUpdatedAt
+        ? (maxUpdatedAt < sweepStartedAt ? maxUpdatedAt : sweepStartedAt)
+        : (managed ? null : new Date().toISOString());
+      if (managed) {
+        await managed.saveState(state, true, state.last_sweep_at ?? undefined);
+        managed.incompleteSweep = false;
+      }
       else { writeState(cfg.dir, state); await touchSourceRow(deps, state.last_sweep_at!); }
     } else if (managed) {
-      // A partial run leaves the cursor at its last committed position and publishes only changed holds.
-      if (!opts.signal?.aborted) await managed.publishHolds({ last_sweep_at: null, repos: [] }, state.item_holds);
+      // A connector deadline aborts its fetch signal but leaves the lease
+      // alive for settlement. Caller cancellation and lease loss do not.
+      const deadlineAbort = opts.signal?.aborted && opts.deadlineAtMs !== undefined
+        && (opts.signal.reason as { name?: string } | undefined)?.name === 'TimeoutError';
+      if (!opts.signal?.aborted || deadlineAbort) {
+        if (stopped || hasCheckpoint) {
+          state.sweep_progress = sweep;
+          await managed.saveState(state);
+        } else {
+          await managed.publishHolds({ last_sweep_at: null, repos: [] }, state.item_holds);
+        }
+      }
     } else {
-      // #5740 (#5741): a partial sweep persists its state but never stamps last_sync_at.
+      if (stopped || hasCheckpoint) state.sweep_progress = sweep;
       writeState(cfg.dir, state);
     }
+    // Publish resumable work before the best-effort post-processing tail.
+    if (!opts.signal?.aborted) await runExtractAndEmbed(deps, summary, activePack);
     await holds.complete();
 
-    return { ...syncResult(summary, opts), ...connectorHoldsResult(sourceId, holds.summary()) };
+    return { ...syncResult(summary, opts), ...(stoppedOnDeadline && !summary.failedFiles ? { reason: 'timeout' as const } : {}),
+      ...connectorHoldsResult(sourceId, holds.summary()) };
   } finally {
     progress.finish();
   }

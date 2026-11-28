@@ -7,14 +7,15 @@
 import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/google-source.ts';
-import { parseGitHubSourceConfig, runGitHubSync } from '../src/core/github-source.ts';
-import { readAllSourceHolds } from '../src/core/connectors/item-holds-store.ts';
+import { parseGitHubSourceConfig, runGitHubSync, type GitHubSourceConfig } from '../src/core/github-source.ts';
+import { readAllSourceHolds, readConnectorCursorState } from '../src/core/connectors/item-holds-store.ts';
 import { retryHeld } from '../src/commands/sources-retry-held.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { readManagedConnectorState } from '../src/core/persistence/connector-state.ts';
-import { createConnectorFixture, options, sourceCheckpoint, sourceCursor, withGoogleAccount } from './helpers/connector-fixture.ts';
+import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
+import { createConnectorFixture, json, options, sourceCheckpoint, sourceCursor, withGoogleAccount } from './helpers/connector-fixture.ts';
 import { HOLD_CAP } from '../src/core/connectors/item-holds.ts';
-import { addThread, fakeGitHub, fakeGmail, githubHoldsFetch, gmailFetch } from './helpers/connector-holds-fixture.ts';
+import { addThread, fakeGitHub, fakeGmail, githubHoldsFetch, gmailFetch, type FakeGitHub } from './helpers/connector-holds-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -69,6 +70,44 @@ async function githubSource(engine: BrainEngine, managed: boolean) {
 
 async function sourceHolds(engine: BrainEngine, id: string) {
   return (await readAllSourceHolds(engine, { sourceIds: [id] }))[0]?.held ?? [];
+}
+
+async function githubState(engine: BrainEngine, id: string) {
+  const [row] = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; config: Record<string, unknown> }>(
+    'SELECT id,incarnation::text,local_path,config FROM sources WHERE id=$1', [id]);
+  return readConnectorCursorState(engine, row);
+}
+
+async function githubLastSync(engine: BrainEngine, id: string) {
+  const [row] = await engine.executeRaw<{ last_sync_at: string | null }>('SELECT last_sync_at FROM sources WHERE id=$1', [id]);
+  return row.last_sync_at;
+}
+
+/** Expire the sweep's deadline immediately after the selected detail response, without a sleep or a racing timer. */
+async function githubDeadlineSlice(
+  engine: BrainEngine,
+  f: { id: string; cfg: GitHubSourceConfig },
+  fx: FakeGitHub,
+  afterDetail: number,
+  extra: Record<string, unknown> = {},
+) {
+  const realNow = Date.now.bind(Date);
+  const deadlineAtMs = realNow() + 600_000;
+  let expired = false;
+  // Leave the connector's publication reserve available after it notices the deadline.
+  const clock = spyOn(Date, 'now').mockImplementation(() => expired ? deadlineAtMs - 4_999 : realNow());
+  const fetchImpl = githubHoldsFetch(fx);
+  try {
+    const result = await runGitHubSync(engine, f.id, f.cfg, { ...options, ...extra, deadlineAtMs }, async url => {
+      const response = await fetchImpl(url);
+      if (new URL(url).pathname === `/repos/${fx.repo}/issues/${afterDetail}`) expired = true;
+      return response;
+    });
+    expect(expired).toBe(true);
+    return result;
+  } finally {
+    clock.mockRestore();
+  }
 }
 
 test('sources status reports an unreadable hold state for that source only', async () => withEnv(env, async () => {
@@ -131,6 +170,246 @@ test('#5740: a GitHub item failing 3 runs is held, the watermark advances past i
     } finally { errors.mockRestore(); }
   }
 }), 180_000);
+
+test('a deadline slice retries failed detail and reprocesses a completed item changed between slices', async () => withEnv(env, async () => {
+  const key = 'acme-example/app#2';
+  for (const engine of engines) for (const managed of [false, true]) {
+    const f = await githubSource(engine, managed);
+    const fx = fakeGitHub();
+    fx.issues = [1, 4, 2, 3].map(n => ({ number: n, title: `Synthetic issue ${n}`, body: `Body ${n}`, updated_at: issueAt(n) }));
+    fx.failDetail.set(2, 422);
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const stopped = await githubDeadlineSlice(engine, f, fx, 2);
+      await disposePersistenceConsumer(engine);
+      expect(stopped.status).toBe('partial');
+      expect(stopped.failedFiles).toBe(1);
+      expect(fx.detailFetches).toEqual([1, 4, 2]);
+      expect(await githubLastSync(engine, f.id)).toBeNull();
+      const state = await githubState(engine, f.id);
+      expect(state).toMatchObject({ last_sweep_at: null, item_holds: { items: {
+        [key]: { state: 'failing', attempts: 1, code: 'http_4xx', upstream_version: issueAt(2) },
+      } } });
+      expect(state?.item_holds).toEqual({ version: 1, items: { [key]: expect.any(Object) } });
+      expect((await engine.getPage('gh/acme-example/app/1', { sourceId: f.id }))?.frontmatter.detail_fetched).toBe(true);
+      expect((await engine.getPage('gh/acme-example/app/2', { sourceId: f.id }))?.frontmatter.detail_fetched).toBe(false);
+
+      // Item 1 changed, item 4 stayed complete, item 2 recovers, and item 3 was never detail-fetched.
+      fx.issues[0] = { ...fx.issues[0], body: 'Updated between deadline slices', updated_at: issueAt(5) };
+      fx.failDetail.delete(2);
+      fx.detailFetches.length = 0;
+      const resumed = await runGitHubSync(engine, f.id, f.cfg, options, githubHoldsFetch(fx));
+      await disposePersistenceConsumer(engine);
+      expect(resumed.status).not.toBe('partial');
+      expect(fx.detailFetches).toEqual([1, 2, 3]);
+      expect(await sourceHolds(engine, f.id)).toEqual([]);
+      const resumedState = await githubState(engine, f.id);
+      expect(resumedState?.item_holds).toEqual({ version: 1, items: {} });
+      expect(resumedState?.last_sweep_at).toBe(issueAt(5));
+      expect(await githubLastSync(engine, f.id)).not.toBeNull();
+      const [page] = await engine.executeRaw<{ compiled_truth: string }>(
+        "SELECT compiled_truth FROM pages WHERE source_id=$1 AND slug='gh/acme-example/app/1'", [f.id]);
+      expect(page.compiled_truth).toContain('Updated between deadline slices');
+      expect((await engine.getPage('gh/acme-example/app/2', { sourceId: f.id }))?.frontmatter.detail_fetched).toBe(true);
+    } finally {
+      errors.mockRestore();
+      await disposePersistenceConsumer(engine);
+    }
+  }
+}), 240_000);
+
+test('an interrupted full GitHub sweep drains over deadline-bounded delta slices without restarting pass one', async () => withEnv(env, async () => {
+  const count = 101;
+  for (const engine of engines) {
+    const f = await githubSource(engine, false);
+    await engine.setConfig('sync.write_through', 'false');
+    _resetWriteThroughCacheForTest();
+    const fx = fakeGitHub();
+    fx.issues = Array.from({ length: count }, (_, i) => ({
+      number: i + 1, title: `Synthetic issue ${i + 1}`, body: `Body ${i + 1}`, updated_at: issueAt(1),
+    }));
+    const baseFetch = githubHoldsFetch(fx);
+    try {
+      // A page read in pass one consumes budget; a checkpointed item does not.
+      // Budget 20 such reads or 25 detail requests per delta slice. Re-reading
+      // the 100 list-only pages each time would exhaust every slice before pass two.
+      const slice = async (full: boolean) => {
+        const realNow = Date.now.bind(Date);
+        const deadlineAtMs = realNow() + 600_000;
+        let expired = false;
+        let inDetails = false;
+        let listReads = 0;
+        let details = 0;
+        const clock = spyOn(Date, 'now').mockImplementation(() => expired ? deadlineAtMs - 4_999 : realNow());
+        const getPage = engine.getPage;
+        const pageRead = spyOn(engine, 'getPage').mockImplementation(async function (this: BrainEngine, slug, pageOptions) {
+          const page = await getPage.call(this, slug, pageOptions);
+          if (!full && !inDetails && slug.startsWith('gh/acme-example/app/')) {
+            if (++listReads >= 20) expired = true;
+          }
+          return page;
+        });
+        const fetcher = async (url: string) => {
+          const path = new URL(url).pathname;
+          if (/^\/repos\/acme-example\/app\/issues\/\d+$/.test(path)) {
+            inDetails = true;
+            if (++details >= (full ? 1 : 25)) expired = true;
+          }
+          const comment = /^\/repos\/acme-example\/app\/issues\/(\d+)\/comments$/.exec(path);
+          if (comment) return json([{ user: { login: 'example-user' }, body: `Synthetic detail comment ${comment[1]}`, created_at: issueAt(1) }]);
+          return baseFetch(url);
+        };
+        try {
+          const result = await runGitHubSync(engine, f.id, f.cfg, { ...options, ...(full ? { full: true } : {}), deadlineAtMs }, fetcher);
+          return { result, details, listReads };
+        } finally {
+          pageRead.mockRestore();
+          clock.mockRestore();
+        }
+      };
+
+      for (let n = 0; n < 6; n++) {
+        const { result, details, listReads } = await slice(n === 0);
+        if (n < 5) {
+          expect(result.status).toBe('partial');
+          expect(await githubLastSync(engine, f.id)).toBeNull();
+          expect((await githubState(engine, f.id))?.last_sweep_at).toBeNull();
+        } else {
+          expect(result.status).not.toBe('partial');
+        }
+        expect(details).toBe(n === 0 ? 1 : n === 5 ? 0 : 25);
+        expect(listReads).toBeLessThan(20);
+      }
+
+      expect(fx.detailFetches).toEqual(Array.from({ length: count }, (_, i) => i + 1));
+      expect((await githubState(engine, f.id))?.last_sweep_at).toBe(issueAt(1));
+      expect(await githubLastSync(engine, f.id)).not.toBeNull();
+      expect(await sourceHolds(engine, f.id)).toEqual([]);
+      const pages = await engine.executeRaw<{ slug: string; compiled_truth: string }>(
+        "SELECT slug,compiled_truth FROM pages WHERE source_id=$1 AND slug LIKE 'gh/acme-example/app/%' AND slug <> 'gh/acme-example/app/index'", [f.id]);
+      expect(pages).toHaveLength(count);
+      const bySlug = new Map(pages.map(page => [page.slug, page.compiled_truth]));
+      for (let n = 1; n <= count; n++) {
+        expect(bySlug.get(`gh/acme-example/app/${n}`)).toContain(`Synthetic detail comment ${n}`);
+      }
+    } finally {
+      await engine.unsetConfig('sync.write_through');
+      _resetWriteThroughCacheForTest();
+      await disposePersistenceConsumer(engine);
+    }
+  }
+}), 240_000);
+
+test('a fresh pre-existing GitHub page does not hide a recovered failure on the next deadline-slice resume', async () => withEnv(env, async () => {
+  const key = 'acme-example/app#3';
+  for (const engine of engines) for (const managed of [false, true]) {
+    const f = await githubSource(engine, managed);
+    const fx = fakeGitHub();
+    fx.issues = [1, 2, 3].map(n => ({ number: n, title: `Synthetic issue ${n}`, body: `Body ${n}`, updated_at: issueAt(n) }));
+    const run = () => runGitHubSync(engine, f.id, f.cfg, options, githubHoldsFetch(fx));
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect((await run()).status).not.toBe('partial');
+      await disposePersistenceConsumer(engine);
+      const baselineSync = await githubLastSync(engine, f.id);
+      expect(baselineSync).not.toBeNull();
+
+      fx.failDetail.set(3, 422);
+      const stopped = await githubDeadlineSlice(engine, f, fx, 3, { full: true });
+      await disposePersistenceConsumer(engine);
+      expect(stopped.status).toBe('partial');
+      expect(stopped.failedFiles).toBe(1);
+      expect(await githubLastSync(engine, f.id)).toEqual(baselineSync);
+      expect(await githubState(engine, f.id)).toMatchObject({ last_sweep_at: issueAt(3), item_holds: { items: {
+        [key]: { state: 'failing', attempts: 1, upstream_version: issueAt(3) },
+      } } });
+      expect((await engine.getPage('gh/acme-example/app/3', { sourceId: f.id }))?.frontmatter.detail_fetched).toBe(true);
+
+      fx.failDetail.delete(3);
+      fx.detailFetches.length = 0;
+      expect((await run()).status).not.toBe('partial');
+      await disposePersistenceConsumer(engine);
+      expect(fx.detailFetches).toEqual([3]);
+      expect((await githubState(engine, f.id))?.item_holds).toEqual({ version: 1, items: {} });
+      expect(await sourceHolds(engine, f.id)).toEqual([]);
+    } finally {
+      errors.mockRestore();
+      await disposePersistenceConsumer(engine);
+    }
+  }
+}), 240_000);
+
+test('#5740: deadline-interrupted failures of a fresh GitHub page keep counting, hold, and retry after the watermark passes', async () => withEnv(env, async () => {
+  const key = 'acme-example/app#2';
+  for (const engine of engines) for (const managed of [false, true]) {
+    const f = await githubSource(engine, managed);
+    const fx = fakeGitHub();
+    // Issue 2 is at the baseline watermark and already has a complete, fresh page.
+    fx.issues = [1, 2, 3].map(n => ({ number: n, title: `Synthetic issue ${n}`, body: `Body ${n}`, updated_at: issueAt(n === 2 ? 3 : n === 3 ? 2 : 1) }));
+    const run = () => runGitHubSync(engine, f.id, f.cfg, options, githubHoldsFetch(fx));
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect((await run()).status).not.toBe('partial');
+      await disposePersistenceConsumer(engine);
+      const baselineSync = await githubLastSync(engine, f.id);
+      expect(baselineSync).not.toBeNull();
+      expect((await githubState(engine, f.id))?.last_sweep_at).toBe(issueAt(3));
+
+      fx.failDetail.set(2, 422);
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        fx.detailFetches.length = 0;
+        // A full refresh first discovers the failure; ordinary resumed sweeps must not
+        // mistake its previously complete page for a successful retry.
+        const stopped = await githubDeadlineSlice(engine, f, fx, 2, attempt === 1 ? { full: true } : {});
+        await disposePersistenceConsumer(engine);
+        expect(stopped.status).toBe('partial');
+        expect(stopped.failedFiles).toBe(1);
+        expect(fx.detailFetches).toEqual(attempt === 1 ? [1, 2] : [2]);
+        expect(await githubLastSync(engine, f.id)).toEqual(baselineSync);
+        expect(await githubState(engine, f.id)).toMatchObject({
+          last_sweep_at: issueAt(3),
+          item_holds: { items: { [key]: { state: attempt < 3 ? 'failing' : 'held', attempts: attempt,
+            code: 'http_4xx', upstream_version: issueAt(3) } } },
+        });
+      }
+      expect(await sourceHolds(engine, f.id)).toEqual([expect.objectContaining({ key, state: 'held', attempts: 3, class: 'content' })]);
+
+      // A held item no longer blocks later work or the watermark, but stays visible.
+      fx.issues[2] = { ...fx.issues[2], body: 'A newer synthetic change', updated_at: issueAt(4) };
+      fx.detailFetches.length = 0;
+      const pastHold = await run();
+      await disposePersistenceConsumer(engine);
+      expect(pastHold.status).not.toBe('partial');
+      expect(fx.detailFetches).toEqual([3]);
+      expect((await githubState(engine, f.id))?.last_sweep_at).toBe(issueAt(4));
+      expect(await sourceHolds(engine, f.id)).toEqual([expect.objectContaining({ key, attempts: 3 })]);
+
+      // A failed explicit retry is consumed once and the item remains held.
+      expect((await retryHeld(engine, f.id)).scheduled).toBe(1);
+      fx.detailFetches.length = 0;
+      expect((await run()).status).not.toBe('partial');
+      await disposePersistenceConsumer(engine);
+      expect(fx.detailFetches).toEqual([2]);
+      expect(await sourceHolds(engine, f.id)).toEqual([expect.objectContaining({ key, state: 'held', attempts: 4 })]);
+      fx.detailFetches.length = 0;
+      expect((await run()).status).not.toBe('partial');
+      await disposePersistenceConsumer(engine);
+      expect(fx.detailFetches).not.toContain(2);
+
+      fx.failDetail.delete(2);
+      expect((await retryHeld(engine, f.id)).items).toEqual([expect.objectContaining({ key, action: 'retry_scheduled' })]);
+      fx.detailFetches.length = 0;
+      expect((await run()).status).not.toBe('partial');
+      await disposePersistenceConsumer(engine);
+      expect(fx.detailFetches).toEqual([2]);
+      expect(await sourceHolds(engine, f.id)).toEqual([]);
+      expect((await githubState(engine, f.id))?.last_sweep_at).toBe(issueAt(4));
+    } finally {
+      errors.mockRestore();
+      await disposePersistenceConsumer(engine);
+    }
+  }
+}), 240_000);
 
 async function waiting(engine: BrainEngine, sourceId: string, remote = false) {
   const { handleToolCall } = await import('../src/mcp/server.ts');

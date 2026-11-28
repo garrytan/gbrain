@@ -33,12 +33,15 @@ export interface JobDrainPlan {
   trusted: boolean;
 }
 
-/** The drain options for this job, or none when draining is off (`drain: false` from a trusted submitter, or `sync.job_drain=false`). */
+/** The drain options for this job; a known job deadline still bounds connector work when draining is off. */
 export async function planJobDrain(engine: BrainEngine, job: MinionJobContext, now = Date.now()): Promise<JobDrainPlan> {
   const trusted = !job.submission_authority || job.submission_authority.kind === 'application';
   const params = trusted ? job.data : {};
   const configured = await engine.getConfig('sync.job_drain').catch(() => null);
-  if (params.drain === false || configured === 'false') return { opts: {}, row: null, trusted };
+  if (params.drain === false || configured === 'false') {
+    const deadline = job.deadlineAtMs;
+    return { opts: deadline == null ? {} : { deadlineAtMs: deadline - Math.min(JOB_DRAIN_RESERVE_MS, Math.max(0, deadline - now) / 4) }, row: null, trusted };
+  }
   const { WALL_CLOCK_THRESHOLD_MS_SQL } = await import('../handler-timeouts.ts');
   const [row] = await engine.executeRaw<JobRow>(
     `SELECT (EXTRACT(EPOCH FROM started_at) * 1000)::float8 AS started_ms, (${WALL_CLOCK_THRESHOLD_MS_SQL})::float8 AS wall_ms,

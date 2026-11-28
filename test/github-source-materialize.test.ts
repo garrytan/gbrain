@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,6 +8,7 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { runGitHubSync, type GitHubSourceConfig } from '../src/core/github-source.ts';
 import { PAGE_MAX_BYTES } from '../src/core/page-size-policy.ts';
+import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 
 let engine: PGLiteEngine;
 
@@ -301,6 +302,117 @@ describe('github-source materialize', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test('an aborted sweep resumes without re-reading already checked fresh items', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-resume-'));
+    const fx = makeFixture();
+    // Closed PRs are fresh and need no detail-fetch delay in this probe.
+    fx.items.get(2)!.state = 'closed';
+    const fetchImpl = buildFetch(fx);
+    let restorePageRead = () => {};
+    try {
+      await insertSource(engine, dir);
+      await engine.setConfig('sync.write_through', 'false');
+      _resetWriteThroughCacheForTest();
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true, noExtract: true, noEmbed: true }, fetchImpl);
+        // Simulate an interrupted backlog whose pages landed but cursor did not.
+        writeFileSync(join(dir, '.github-source.json'), JSON.stringify({ last_sweep_at: null, repos: [REPO] }));
+        const controller = new AbortController();
+        const getPage = engine.getPage.bind(engine);
+        const pageRead = spyOn(engine, 'getPage').mockImplementation(async (slug, options) => {
+          const page = await getPage(slug, options);
+          if (slug === `gh/${REPO}/1`) controller.abort();
+          return page;
+        });
+        restorePageRead = () => { pageRead.mockRestore(); };
+        const stopped = await runGitHubSync(engine, 'ghsrc', makeCfg(dir),
+          { sourceId: 'ghsrc', noExtract: true, noEmbed: true, signal: controller.signal }, fetchImpl);
+        expect(stopped.status).toBe('partial');
+        const partialState = JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8'));
+        expect(partialState.last_sweep_at).toBeNull();
+
+        pageRead.mockClear();
+        const resumed = await runGitHubSync(engine, 'ghsrc', makeCfg(dir),
+          { sourceId: 'ghsrc', noExtract: true, noEmbed: true }, fetchImpl);
+        expect(resumed.status).not.toBe('partial');
+        expect(pageRead.mock.calls.filter(([slug]) => slug === `gh/${REPO}/1`)).toHaveLength(0);
+        const finalState = JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8'));
+        expect(finalState.last_sweep_at).toBe('2026-08-02T00:00:00Z');
+        expect(finalState.sweep_progress).toBeUndefined();
+      });
+    } finally {
+      restorePageRead();
+      await engine.unsetConfig('sync.write_through');
+      _resetWriteThroughCacheForTest();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a webhook invalidates an unfinished sweep before a later full reconcile', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-webhook-resume-'));
+    const fx = makeFixture();
+    fx.items.get(2)!.state = 'closed';
+    const fetchImpl = buildFetch(fx);
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true, noExtract: true, noEmbed: true }, fetchImpl);
+        writeFileSync(join(dir, '.github-source.json'), JSON.stringify({
+          last_sweep_at: null, repos: [REPO],
+          sweep_progress: { full: false, since: null, items: { [`${REPO}#1`]: { version: `issue:open:${fx.items.get(1)!.updated_at}`, detail: false } } },
+        }));
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir),
+          { sourceId: 'ghsrc', noExtract: true, noEmbed: true, githubItem: { repo: REPO, number: 1, kind: 'issue', deleted: true } }, fetchImpl);
+        expect(await engine.getPage('gh/acme/app/1', { sourceId: 'ghsrc' })).toBeNull();
+        expect(JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf8')).sweep_progress).toBeUndefined();
+        await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', noExtract: true, noEmbed: true }, fetchImpl);
+        expect(await engine.getPage('gh/acme/app/1', { sourceId: 'ghsrc' })).not.toBeNull();
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('a write missed by a completed repo while another repo is listed remains in the next delta', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ghsrc-sweep-race-'));
+    const fx = makeFixture();
+    fx.items.delete(2);
+    fx.items.delete(3);
+    const fetchFirst = buildFetch(fx);
+    const oldUpdatedAt = new Date(Date.now() - 60_000).toISOString();
+    fx.items.get(1)!.updated_at = oldUpdatedAt;
+    let changed = false;
+    const fetchImpl = async (url: string, init: RequestInit): Promise<Response> => {
+      const path = new URL(url).pathname;
+      if (path === '/repos/acme/other/issues') {
+        if (!changed) {
+          changed = true;
+          // Item 1 was already listed; item 4 lifts the other repo's maximum.
+          fx.items.get(1)!.updated_at = new Date(Date.now() + 60_000).toISOString();
+          fx.items.get(1)!.body = 'Changed after its repo listing';
+        }
+        return new Response(JSON.stringify([{ number: 4, title: 'Later item', state: 'open',
+          updated_at: new Date(Date.now() + 120_000).toISOString() }]));
+      }
+      if (path === '/repos/acme/other/pulls' || path === '/repos/acme/other/issues/4/comments') return new Response('[]');
+      if (path === '/repos/acme/other/issues/4') return new Response(JSON.stringify({ number: 4, title: 'Later item', state: 'open',
+        body: '', created_at: oldUpdatedAt, updated_at: new Date(Date.now() + 120_000).toISOString(),
+        closed_at: null, labels: [], assignees: [], milestone: null, html_url: '', user: null }));
+      if (path === '/repos/acme/other') return new Response(JSON.stringify({ full_name: 'acme/other', private: false, default_branch: 'main' }));
+      return fetchFirst(url, init);
+    };
+    try {
+      await insertSource(engine, dir);
+      await withEnv({ GH_TOKEN: 'test-token' }, async () => {
+        const cfg = { ...makeCfg(dir), repos: [REPO, 'acme/other'] };
+        expect((await runGitHubSync(engine, 'ghsrc', cfg, { sourceId: 'ghsrc', noExtract: true, noEmbed: true }, fetchImpl)).status).not.toBe('partial');
+        const cursor = JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8')).last_sweep_at as string;
+        expect(cursor < fx.items.get(1)!.updated_at).toBe(true);
+        expect(readFileSync(join(dir, 'gh', REPO, '1.md'), 'utf8')).not.toContain('Changed after its repo listing');
+        await runGitHubSync(engine, 'ghsrc', cfg, { sourceId: 'ghsrc', noExtract: true, noEmbed: true }, fetchImpl);
+        expect(readFileSync(join(dir, 'gh', REPO, '1.md'), 'utf8')).toContain('Changed after its repo listing');
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   test('webhook item refresh updates exactly one item', async () => {
