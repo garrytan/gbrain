@@ -30,7 +30,11 @@
  *    the purge's own publication claim stamp (consumer.ts holdClaimForPublication, renewWriteClaim on the request row),
  *    which an effect claim read and lost, so the effect claim's retry holds that row's queue when the purge reads it
  *    (occ_kv.rs row-lock queueing). There the case asserts at least the expected runs, and that every line names one
- *    request and one target, which is what lets the restore replay them once.
+ *    request and one target, which is what lets the restore replay them once. The count is capped too: the case counts
+ *    the callback runs that read the purged body (`countPurgeRuns`; the served client runs the callback too, so it counts
+ *    there as well). The lines are at least the runs whose callback returned (each wrote its line), at most the runs
+ *    that read the body (a run a read conflict stops before the append writes none), and the runs stay within the
+ *    engine's retry limit: one run plus OPTIMISTIC_TRANSACTION_RETRIES, or SERVED_TRANSACTION_RETRIES when served.
  */
 import { afterEach, describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -44,6 +48,8 @@ import { purgeMirrorPath, readPurgeMirror, replayPurgesInRestore, type PurgeMirr
 import { enableBeliefCoverage, parityArms, type ParityBackend } from './harness.ts';
 import { rustMuArmRequested, rustServedRequested } from './rust-arm.ts';
 import { forceRerunOnHit, type ForcedRerun } from './force-rerun.ts';
+import { OPTIMISTIC_TRANSACTION_RETRIES } from '../../src/core/rust-engine/optimistic-transaction.ts';
+import { SERVED_TRANSACTION_RETRIES } from '../../src/core/rust-engine/served/engine.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
@@ -77,6 +83,41 @@ function assertArm(engine: BrainEngine, backend: ParityBackend, rerun: ForcedRer
 const contended = (engine: BrainEngine, backend: ParityBackend) =>
   backend === 'rust' && (rustServedRequested() || (engine as { multiuser?: boolean }).multiuser === true);
 
+/**
+ * Counts the runs of the engine's transaction callbacks that read the purged page's body (`readPurgePageBody`), and how
+ * many of those returned. Installed over force-rerun's wrapper, so the forced run counts as one that returned.
+ */
+function countPurgeRuns(engine: BrainEngine) {
+  const runs = { read: 0, returned: 0 };
+  const own = Object.getOwnPropertyDescriptor(engine, 'transaction');
+  // The method itself, as force-rerun.ts reads it: a read through the harness's recording proxy would wrap it twice.
+  let holder: object | null = engine, found: PropertyDescriptor | undefined;
+  while (holder && !(found = Object.getOwnPropertyDescriptor(holder, 'transaction'))) holder = Object.getPrototypeOf(holder);
+  const original = found!.value as (...args: unknown[]) => Promise<unknown>;
+  const watch = (tx: BrainEngine, run: { read: boolean }): BrainEngine => new Proxy(tx, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function') return value;
+      if (prop === 'readPurgePageBody') return (...args: unknown[]) => {
+        if (!run.read) { run.read = true; runs.read++; }
+        return value.apply(target, args);
+      };
+      if (prop === 'transaction') return (fn: (inner: BrainEngine) => Promise<unknown>, ...rest: unknown[]) => value.call(target, (inner: BrainEngine) => fn(watch(inner, run)), ...rest);
+      return value.bind(target);
+    },
+  });
+  const transaction = function (this: unknown, fn: (tx: BrainEngine) => Promise<unknown>, ...rest: unknown[]) {
+    return original.call(this, async (tx: BrainEngine) => {
+      const run = { read: false };
+      const value = await fn(watch(tx, run));
+      if (run.read) runs.returned++;
+      return value;
+    }, ...rest);
+  };
+  Object.defineProperty(engine, 'transaction', { value: transaction, configurable: true, writable: true });
+  return { runs, restore() { if (own) Object.defineProperty(engine, 'transaction', own); else delete (engine as { transaction?: unknown }).transaction; } };
+}
+
 const inHome = async <T>(fn: () => Promise<T>): Promise<T> => {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-page-purge-rerun-'));
   try { return await withEnv({ GBRAIN_HOME: home }, fn); } finally { rmSync(home, { recursive: true, force: true }); }
@@ -88,14 +129,15 @@ async function purgePage(engine: BrainEngine, slug: string, force: boolean) {
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: SRC });
   const requestId = randomUUID();
   const rerun = force && !rustServedRequested() ? forceRerunOnHit(engine, { members: ['readPurgePageBody'], limit: 1 }) : null;
+  const counted = countPurgeRuns(engine);
   let outcome: Record<string, unknown>;
   try {
     outcome = await operationsByName.delete_page.handler(localCtx(engine), { slug, purge: true, request_id: requestId, expected_revision: snapshot?.revision }) as Record<string, unknown>;
-  } finally { rerun?.restore(); }
+  } finally { counted.restore(); rerun?.restore(); }
   const lines = readPurgeMirror(purgeMirrorPath()) ?? [];
   const intents = lines.filter((l): l is PurgeMirrorIntent => l.kind === 'intent' && l.request_id === requestId);
   const committed = new Set(lines.filter(l => l.kind === 'committed').map(l => l.request));
-  return { outcome, rerun, lines, intents, committed };
+  return { outcome, rerun, runs: counted.runs, lines, intents, committed };
 }
 
 /** The fields of an intent line that name what it purges: everything but the time. */
@@ -111,7 +153,7 @@ describe('engine parity: a page purge whose transaction runs again', () => {
   }, async (engine, backend) => inHome(async () => {
     opened.push(engine);
     await enableBeliefCoverage(engine, backend, SRC);
-    const { outcome, rerun, intents, committed } = await purgePage(engine, 'notes/doomed', true);
+    const { outcome, rerun, runs, intents, committed } = await purgePage(engine, 'notes/doomed', true);
     assertArm(engine, backend, rerun);
     const result = {
       status: outcome.status,
@@ -130,8 +172,16 @@ describe('engine parity: a page purge whose transaction runs again', () => {
     };
     // The forced run, plus any run real contention adds where the owner's background writers share the brain.
     const minLines = rustServedRequested() ? 1 : 2;
-    if (contended(engine, backend)) expect(result.intent_lines).toBeGreaterThanOrEqual(minLines);
-    else expect(result.intent_lines).toBe(minLines);
+    if (contended(engine, backend)) {
+      expect(result.intent_lines).toBeGreaterThanOrEqual(minLines);
+      // Each run that returned wrote its line; no run that did not read the purged body wrote one; the engine stops at its retry limit.
+      expect(result.intent_lines).toBeGreaterThanOrEqual(runs.returned);
+      expect(result.intent_lines).toBeLessThanOrEqual(runs.read);
+      expect(runs.read).toBeLessThanOrEqual(1 + (rustServedRequested() ? SERVED_TRANSACTION_RETRIES : OPTIMISTIC_TRANSACTION_RETRIES));
+    } else {
+      expect(result.intent_lines).toBe(minLines);
+      expect(runs).toEqual({ read: minLines, returned: minLines });
+    }
     expect({ ...result, intent_lines: null }).toEqual({ status: 'purged', page: 'gone', tombstoned: true, forced: rustServedRequested() ? null : 1,
       intent_lines: null, requests: 1, request_committed: true, differing: [], targets: 1,
       carries: { facts: true, lifetimes: true, content_hashes: true } });
