@@ -20,6 +20,7 @@ import { servedCallbackTimeout, servedProtocol, servedTransactionConflict, serve
 import { restoreTail } from './framing.ts';
 import type { ServedCall, ServedServerOptions, ServedServerSide } from './session.ts';
 import { STORE_RETURNING_MEMBERS as STORE_MEMBERS_RETURNING, servedBrainMethod } from './store-returning.ts';
+import { remoteMemberPolicy } from './remote-member-policy.ts';
 
 /** True for a transaction-bound engine handle (or any BrainEngine-shaped object) the server holds. */
 function isEngineHandle(value: object): value is BrainEngine {
@@ -146,7 +147,9 @@ export function sessionCalls(ctx: SessionCallsContext) {
         const name = member.slice(dot + 1);
         method = Object.hasOwn(self as object, name) ? (self as Record<string, unknown>)[name] : undefined;
       } else if (Object.hasOwn(OWNER_IPC_ROUTES, member) && (OWNER_IPC_ROUTES as Record<string, string>)[member] === 'forward') {
-        method = (open.engine as unknown as Record<string, unknown>)[member];
+        // The same per-member policy as an ordinary call frame (served/remote-member-policy.ts), on the transaction handle.
+        const raw = (open.engine as unknown as Record<string, unknown>)[member];
+        method = typeof raw === 'function' ? remoteMemberPolicy(open.engine, member, raw as (...a: unknown[]) => Promise<unknown>) : raw;
       } else throw ownerIpcRefusal(member, 'it is not sent across the owner socket');
     } catch (error) { replyDirect(id, member, error); return; }
     if (typeof method !== 'function') { replyDirect(id, member, ownerIpcRefusal(member, 'it is not a member of the transaction handle')); return; }

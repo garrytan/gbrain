@@ -327,7 +327,7 @@ How one crosses:
 **The one side write.** `OWNER_IPC_REMOTE_SIDE_WRITES` (owner-ipc/routes.ts) holds exactly `bumpPageRetrievals`, the usage
 stamp a remote read (`get_page`, `query`, `search`) makes in process too. It feeds ranking and sampling, so a forged stamp
 could move what other callers see: the server resolves each id to its page and stamps only when the caller may read every
-one (served/remote-side-writes.ts); one id outside the caller's read scope refuses the whole call and stamps nothing. The
+one (served/remote-member-policy.ts); one id outside the caller's read scope refuses the whole call and stamps nothing. The
 stamp stays best-effort: a failed stamp never fails the read. `test/rust-owner-ipc-remote.test.ts` pins the list to that one
 member; any addition waits for a ruling.
 

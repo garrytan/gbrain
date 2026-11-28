@@ -1,6 +1,10 @@
 /**
- * The one engine member a remote caller may write through over the served wire (owner-ipc/routes.ts
- * OWNER_IPC_REMOTE_SIDE_WRITES, ruled 2026-11-26): `bumpPageRetrievals`, the usage stamp a remote read makes in process too.
+ * The brain server's per-member policy for a remote caller's engine member call over the served wire. It runs on both
+ * call paths: an ordinary call frame (owner-ipc/server.ts) and a call inside a transaction the caller holds
+ * (served/session-calls.ts), against the engine or the transaction handle the call runs on, so no path skips it.
+ *
+ * The side write a remote caller may make (owner-ipc/routes.ts OWNER_IPC_REMOTE_SIDE_WRITES, ruled 2026-11-26):
+ * `bumpPageRetrievals`, the usage stamp a remote read makes in process too.
  *
  * The stamp feeds ranking and sampling (search stale-bias, brainstorm sampling, volunteered context), so a forged stamp
  * could move what other callers see. The brain server therefore stamps only page ids the caller may read: it resolves each
@@ -15,8 +19,8 @@ import type { BrainEngine } from '../../engine.ts';
 
 type Member = (...args: unknown[]) => Promise<unknown>;
 
-/** The owner's call target for `member`: the scope check first for a remote caller's usage stamp, else the member itself. */
-export function remoteSideWrite(engine: object, member: string, method: Member): Member {
+/** The owner's call target for `member` on `engine` (the engine or a transaction handle): the remote caller's check first, else the member itself. */
+export function remoteMemberPolicy(engine: object, member: string, method: Member): Member {
   const plain: Member = (...args) => method.apply(engine, args);
   if (member !== 'bumpPageRetrievals') return plain;
   return async (...args) => {
