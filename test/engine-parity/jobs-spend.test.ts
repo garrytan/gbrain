@@ -132,8 +132,10 @@ describe('engine parity: spend reservations and lease pressure', () => {
       await settled(bare, 7, { client_id: null, budget_key: 'group-1' });
       await settled(other, 99);
       await pending(other);
+      // A fenced caller is the OAuth client that owns the rows by their `__owner_client_id` stamp (these rows record no principal).
+      const asOwner = (client: string | null) => client === null ? null : { principal: { kind: 'oauth_client', id: client }, clientId: client, actor: ['', '', '', ''] as const };
       const view = async (jobIds: number[], owner: string | null) =>
-        (await engine.readJobSpendTree({ jobIds, owner })).map(r => ({ ...r, root: r.root - base }));
+        (await engine.readJobSpendTree({ jobIds, owner: asOwner(owner) })).map(r => ({ ...r, root: r.root - base }));
       const all = [root, a1, b1, a2, b2, bare, other];
       return {
         unfenced: await view(all, null),

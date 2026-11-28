@@ -14,13 +14,13 @@ export function wholeItemsWithin(head: string, items: string[], sep: string, max
 
 export const SAVED_FACTS_NOTICE_MAX_CHARS = 1_500;
 
-export type SavedFactNotice = { fact: string; entity_slug: string | null; valid_from: string; source: string; linked_from?: string; corrected_by?: number; quoted?: string; room_access?: { readable: unknown; reason?: string } };
+export type SavedFactNotice = { fact: string; entity_slug: string | null; valid_from: string | null; source: string; linked_from?: string; corrected_by?: number; quoted?: string; room_access?: { readable: unknown; reason?: string } };
 
 /** The saved facts (remember) a search or query matched, as the block MCP and the CLI print after the rows; null when there are none. */
 export function savedFactsNoticeBlock(savedFacts: SavedFactNotice[] | undefined): string | null {
   if (!savedFacts?.length) return null;
   const { text, more } = wholeItemsWithin('Saved facts (remember): about the entity this query names (newest first), then facts those point to, then matches for its words; recall returns more:\n',
-    savedFacts.map(f => `- ${f.fact}${f.quoted ? '\n' : ''} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}${f.linked_from ? `; named in a saved fact about ${f.linked_from}` : ''}${f.corrected_by ? '; corrected by a newer saved fact above' : ''}${f.room_access ? `; room: ${f.room_access.readable === true ? 'readable' : f.room_access.readable === false ? `not readable (${f.room_access.reason})` : `unknown (${f.room_access.reason})`}` : ''}]`),
+    savedFacts.map(f => `- ${f.fact}${f.quoted ? '\n' : ''} [entity: ${f.entity_slug ?? 'none'}; ${f.valid_from == null ? 'date unknown' : `saved ${String(f.valid_from).slice(0, 10)}`}; provenance: ${f.source}${f.linked_from ? `; named in a saved fact about ${f.linked_from}` : ''}${f.corrected_by ? '; corrected by a newer saved fact above' : ''}${f.room_access ? `; room: ${f.room_access.readable === true ? 'readable' : f.room_access.readable === false ? `not readable (${f.room_access.reason})` : `unknown (${f.room_access.reason})`}` : ''}]`),
     '\n', SAVED_FACTS_NOTICE_MAX_CHARS);
   return more ? `${text}\n(+${more} more; recall returns them)` : text;
 }

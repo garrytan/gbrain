@@ -341,7 +341,7 @@ function freezeRow(row: ConversationFactRow, entryVisibility: 'private' | 'world
   return {
     ...(row.visibility === 'private' && entryVisibility === 'world' && !OUTCOME_SOURCES.has(row.source) ? { visibility: 'private' as const } : {}),
     fact: row.fact, kind: row.kind ?? 'fact', entity_slug: row.entity_slug ?? null, context: row.context ?? null,
-    valid_from: (row.valid_from ?? new Date()).toISOString(), valid_until: row.valid_until ? row.valid_until.toISOString() : null,
+    valid_from: row.valid_from ? row.valid_from.toISOString() : null, valid_until: row.valid_until ? row.valid_until.toISOString() : null,
     source: row.source, source_session: row.source_session ?? null, confidence: row.confidence ?? 1.0,
     notability: row.notability ?? 'medium', embedding: row.embedding ? Array.from(row.embedding) : null,
     embedding_model: row.embedding ? row.embedding_model ?? null : null,
@@ -414,7 +414,7 @@ function entryProblem(entry: ConversationPageEntry): string | null {
   for (const fact of entry.rows) {
     if (typeof fact.fact !== 'string' || !fact.fact.trim() || typeof fact.source !== 'string' || !fact.source.startsWith(CONVERSATION_FACTS_SOURCE_PREFIX)
       || !ALL_FACT_KINDS.includes((fact.kind ?? 'fact') as never) || (fact.source_session != null && !String(fact.source_session).startsWith(CONVERSATION_FACTS_SOURCE_PREFIX))
-      || Number.isNaN(Date.parse(fact.valid_from)) || (fact.valid_until != null && Number.isNaN(Date.parse(fact.valid_until)))) {
+      || (fact.valid_from != null && Number.isNaN(Date.parse(fact.valid_from))) || (fact.valid_until != null && Number.isNaN(Date.parse(fact.valid_until)))) {
       return 'a row falls outside the conversation extractor\'s provenance or fact kinds';
     }
     if (OUTCOME_SOURCES.has(fact.source) && fact.source_session !== `${fact.source}:${entry.slug}:${entry.version_token}`) return 'it carries an outcome for another page version';
@@ -507,8 +507,9 @@ export async function publishConversationFacts(tx: BrainEngine, sourceId: string
   let duplicates = 0;
   for (const entry of retire || opts.scope === 'window' || segments ? kept : kept.filter(({ row }) => OUTCOME_SOURCES.has(row.source))) {
     const { row } = entry;
-    const prior = row.dimension && row.value && row.entity_slug && row.valid_from != null
-      ? await tx.readConversationSlotValueHash(sourceId, row.entity_slug, row.dimension, row.valid_from) : null;
+    // #10288: a row with no event date is as of its save time, so the slot read is as of now.
+    const prior = row.dimension && row.value && row.entity_slug
+      ? await tx.readConversationSlotValueHash(sourceId, row.entity_slug, row.dimension, row.valid_from ?? new Date()) : null;
     if (OUTCOME_SOURCES.has(row.source) || (prior && prior.value_hash !== valueHash(row.value!)) || !await findCaptureDuplicate(scope, { fact: row.fact, entitySlug: row.entity_slug ?? null,
       visibility: row.visibility ?? 'private', attributedTo: row.attributed_to ?? null })) published.push(entry);
     else duplicates++;
@@ -525,6 +526,10 @@ export async function publishConversationFacts(tx: BrainEngine, sourceId: string
     return { deleted: retiredWindows + outcomes.length, ...await insertConversationFacts(tx, sourceId, slug, published.map(({ row }) => row)) };
   });
   const stored = published.filter((_, i) => !purged.has(i));
+  // #10443: a claim this run narrows to private (stored, or skipped as a duplicate) narrows the page's expired copies of
+  // it too, matched by claim fingerprint, so history never shows it wider.
+  const narrowed = kept.flatMap(({ row }) => row.visibility === 'private' && !OUTCOME_SOURCES.has(row.source) ? [row.fact] : []);
+  if (narrowed.length) await tx.narrowConversationExpiredCopies(sourceId, slug, narrowed);
   if (segments) await stampSourceWindows(tx, ids, stored.map(({ index }) => segments.windows[index] ?? null));
   for (const [i, id] of ids.entries()) {
     await recordTaintEdges(tx, { table: 'facts', id, sourceId }, derivation.inputs);
@@ -596,16 +601,7 @@ async function insertableSlots(tx: BrainEngine, sourceId: string, slug: string, 
 
 
 /**
- * Clears a page's prior extractor batch before a replacement, keeping the
- * history other records depend on: a row an open loop (`open_loops.fact_id`,
- * no FK) or another fact's `superseded_by` references is expired, never
- * deleted, and rows `gbrain repair conversation-labels` retired stay expired.
- * A row `gbrain facts relink --conversation` linked is expired too, so the
- * replacement inherits its entity (conversation-relink-carry.ts); the previous
- * clear's expired relinked rows go first. Every other extractor row of the
- * page is deleted. Returns the rows removed from the active batch.
- */
-/** The page's conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
+/** The page's active conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
 export async function countConversationFacts(db: BrainEngine, sourceId: string, slug: string): Promise<number> {
   return db.countPageConversationFacts(sourceId, slug);
 }
@@ -621,6 +617,11 @@ export async function countConversationFactsOutside(db: BrainEngine, sourceId: s
 }
 
 /**
+ * Clears a page's prior extractor batch before a replacement without losing history (#10443): every active
+ * extractor fact is expired and keeps its row, so active reads drop it while `recall --include-expired` and the
+ * open loops and `superseded_by` links that reference it keep it. A row `gbrain facts relink --conversation`
+ * linked is expired the same way, so the replacement inherits its entity (conversation-relink-carry.ts). Only the
+ * page's audit checkpoint rows are deleted. Returns the rows removed from the active batch.
  * With `windows`, only the page's anchored facts whose window key is in `keys` (`keep` false) or not in it (`keep` true),
  * and its unanchored facts when `unanchored`.
  */
@@ -662,7 +663,7 @@ async function applyEntry(tx: BrainEngine, row: WriteRequest, entry: Conversatio
   const merges = await mergedEntities(tx, row.source_id, entry.rows.map(fact => fact.entity_slug).filter((s): s is string => !!s));
   const rows = entry.rows.map(fact => ({
     ...fact, visibility: OUTCOME_SOURCES.has(fact.source) || fact.visibility === 'private' ? 'private' as const : entry.visibility, entity_slug: fact.entity_slug ? merges.get(fact.entity_slug) ?? fact.entity_slug : null,
-    valid_from: new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
+    valid_from: fact.valid_from == null ? null : new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
     embedding: vectors && fact.embedding ? new Float32Array(fact.embedding) : null,
     embedding_model: vectors && fact.embedding ? entry.embedding!.model : null,
   }));

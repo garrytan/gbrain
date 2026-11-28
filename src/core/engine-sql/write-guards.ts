@@ -75,13 +75,16 @@ export async function bindPageOrigin(exec: SqlExecutor, target: PageOriginTarget
   return changed;
 }
 
-/** Ingest provenance a write records on its page. `ingestedAt` is an ISO timestamp (or null). */
-export interface PageIngestStamp { sourceId: string; sourceKind: string | null; ingestedVia: string | null; ingestedAt: string | null }
+/**
+ * Ingest provenance a write records on its page. `ingestedAt` is an ISO timestamp (or null). `keepIngestedAt`: the page
+ * already has an `ingested_at`, which stays exactly as the column holds it (microseconds; an ISO string keeps milliseconds).
+ */
+export interface PageIngestStamp { sourceId: string; sourceKind: string | null; ingestedVia: string | null; ingestedAt: string | null; keepIngestedAt?: boolean }
 
 /** Records where page `slug` of `stamp.sourceId` came from (`source_kind`, `ingested_via`, `ingested_at`). A missing page writes nothing. */
 export async function stampPageIngest(exec: SqlExecutor, slug: string, stamp: PageIngestStamp): Promise<void> {
-  await exec.executeRaw(`UPDATE pages SET source_kind=$3,ingested_via=$4,ingested_at=$5::timestamptz
-          WHERE source_id=$1 AND slug=$2`, [stamp.sourceId, slug, stamp.sourceKind, stamp.ingestedVia, stamp.ingestedAt]);
+  await exec.executeRaw(`UPDATE pages SET source_kind=$3,ingested_via=$4,ingested_at=CASE WHEN $6::boolean THEN ingested_at ELSE $5::timestamptz END
+          WHERE source_id=$1 AND slug=$2`, [stamp.sourceId, slug, stamp.sourceKind, stamp.ingestedVia, stamp.ingestedAt, stamp.keepIngestedAt === true]);
 }
 
 /** The closing seal of a coordinated import (page-state/projections.ts `sealImportedPage`). */

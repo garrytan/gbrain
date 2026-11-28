@@ -27,7 +27,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { removeHermesTurnHook, syncHermesTurnHook } from '../core/setup/hermes-turn-hook.ts';
 import { hermesMcpStep } from './setup-hermes-mcp.ts';
 import { removeOpenclawTurnPlugin, syncOpenclawTurnPlugin } from '../core/setup/openclaw-turn-plugin.ts';
-import { describeOpenclawSkill, readOpenclawSkillState, removeOpenclawSkillPlugin, syncOpenclawSkillPlugin, type OpenclawSkillResult } from '../core/setup/openclaw-skill-plugin.ts';
+import { describeOpenclawSkill, operatorRuleProblem, readOpenclawSkillState, removeOpenclawSkillPlugin, syncOpenclawSkillPlugin, type OpenclawSkillResult, type OpenclawSkillTuning } from '../core/setup/openclaw-skill-plugin.ts';
 import { describePiSkill, readPiSkillState, removePiSkillExtension, syncPiSkillExtension } from '../core/setup/pi-skill-extension.ts';
 import { hasTurnRuleHook, isTurnRuleHarness, removeTurnRuleHook, syncTurnRuleHook, type TurnHookOutcome, type TurnRuleHarness } from '../core/setup/turn-hook.ts';
 import { inspectTurnHook, TURN_HOOK_NATIVE_INSPECT, turnHookFix, verifyTurnHook, type TurnHookVerdict } from '../core/setup/turn-hook-check.ts';
@@ -168,8 +168,8 @@ interface SetupFlags {
   skillResolver?: 'on' | 'shadow' | 'off';
   /** OpenClaw: the agents --skill-loading applies to (--agent <id>, repeatable, or --all-agents); unset means the agents already on, else main. */
   agents?: string[] | 'all';
-  /** OpenClaw rollout knobs written to the plugin's state (hot, no reload): --live-fraction, --pins-route, --owner-sender, --suggest-in. */
-  openclawTuning?: { live_fraction?: number; pins_route?: 'system' | 'first_turn'; owner_sender_ids?: string[]; suggest_classes?: Array<'owner' | 'conversation'> };
+  /** OpenClaw rollout knobs written to the plugin's state (hot, no reload): --live-fraction, --pins-route, --owner-sender, --suggest-in, --operator-rule, --conversation-operator-rule, --require-owner-sender, --owner-skill, --no-owner-skill. */
+  openclawTuning?: OpenclawSkillTuning;
   /** GST-363: whom the brain serves; several labels each person (setup-serves.ts). */
   serves?: 'one' | 'several';
   members?: string;
@@ -201,7 +201,7 @@ interface SetupFlags {
   noSuggestion: boolean;
 }
 
-export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--advertise', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--suggest-in', '--serves', '--members', '--members-file', '--stdio-member', '--owner', '--household-members', '--receipt', '--resume', ...HISTORY_VALUE_FLAGS]);
+export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--advertise', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--owner-skill', '--no-owner-skill', '--suggest-in', '--operator-rule', '--conversation-operator-rule', '--serves', '--members', '--members-file', '--stdio-member', '--owner', '--household-members', '--receipt', '--resume', ...HISTORY_VALUE_FLAGS]);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {
@@ -229,18 +229,23 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (args.includes('--instructions') && args.includes('--no-instructions')) return 'pass --instructions or --no-instructions, not both';
   const serves = value('--serves');
   if (serves !== undefined && serves !== 'one' && serves !== 'several') return `unknown --serves '${serves}'; pass one or several`;
-  if ((args.includes('--members') || args.includes('--members-file')) && serves !== 'several') return '--members and --members-file name the people of --serves several';
-  if (args.includes('--labelled-only') && serves !== 'several') return '--labelled-only applies to the people of --serves several';
-  if (args.includes('--open-history') && serves !== 'several') return '--open-history applies to the people of --serves several';
+  const named = args.includes('--members') || args.includes('--members-file');
+  if (named && serves === 'one') return '--members and --members-file name the people of a brain that serves several; drop --serves one, or drop --members for a brain for one person';
+  const several = named || serves === 'several';
+  if (args.includes('--labelled-only') && !several) return '--labelled-only applies to the people of --serves several';
+  if (args.includes('--open-history') && !several) return '--open-history applies to the people of --serves several';
   if (args.includes('--open-history') && args.includes('--labelled-only')) return 'pass --labelled-only (keep the history private) or --open-history (members read it), not both';
   const owner = value('--owner');
   const household = value('--shape') === 'household';
-  if (owner !== undefined && serves !== 'several' && !household) return '--owner names the brain owner of --serves several or --shape household';
-  if (household && serves === 'several') return '--shape household sets up the people of the household itself; drop --serves several';
+  if (owner !== undefined && !several && !household) return '--owner names the brain owner of --serves several or --shape household';
+  if (household && several) return '--shape household sets up the people of the household itself; drop --serves several and --members';
   for (const f of ['--household-members', '--status', '--resume', '--receipt']) if (args.includes(f) && !household) return `${f} applies to --shape household`;
   if (args.includes('--status') && args.includes('--resume')) return 'pass --status or --resume, not both';
   if (args.includes('--receipt') && !args.includes('--status')) return '--receipt names the receipt --status reads; --resume takes the receipt id itself';
   if (owner !== undefined && !ACCESS_ID_RE.test(owner)) return `invalid --owner '${owner}'; a member id is lower-case letters, digits, '.', '_' and '-' (1-64 characters, starting with a letter or digit)`;
+  if (named && (!['claude-code', 'codex'].includes(positionals[0] ?? '') || ['--instructions-only', '--remove', '--skills-index-only', '--wakeshift'].some((f) => args.includes(f)))) {
+    return `--members sets up per-member access only in gbrain setup claude-code or codex (not --instructions-only, --remove, --skills-index-only or --wakeshift); nothing was written. Run this setup again without --members. To label the people, preview gbrain access serves several --members <ids> with --source set to the source this harness reads, choose --labelled-only (members read only pages labelled for them) or not (they also read the pages no rule restricts), then run it again with --yes`;
+  }
   let stdioMember: string | undefined;
   try { stdioMember = parseStdioMemberFlag(args); } catch (e) { return `${(e as Error).message}; nothing was written`; }
   const noStdioMember = args.includes('--no-stdio-member');
@@ -273,15 +278,44 @@ function parseFlags(args: string[]): SetupFlags | string {
   const liveFraction = value('--live-fraction');
   const pinsRoute = value('--pins-route');
   const owners = args.flatMap((a, i) => (a === '--owner-sender' ? [args[i + 1] ?? ''] : []));
+  const ownerSkillsAdd = args.flatMap((a, i) => (a === '--owner-skill' ? [args[i + 1] ?? ''] : []));
+  const ownerSkillsRemove = args.flatMap((a, i) => (a === '--no-owner-skill' ? [args[i + 1] ?? ''] : []));
   const suggestIn = value('--suggest-in');
-  if ((liveFraction !== undefined || pinsRoute !== undefined || owners.length || suggestIn !== undefined) && !openclaw) return '--live-fraction, --pins-route, --owner-sender and --suggest-in are for openclaw only';
+  const rule = value('--operator-rule');
+  const talkRule = value('--conversation-operator-rule');
+  for (const f of ['--operator-rule', '--conversation-operator-rule']) {
+    const next = args[args.indexOf(f) + 1];
+    if (args.includes(f) && (next === undefined || next.startsWith('--'))) return `${f} needs a value: one line in quotes, or '' to clear it`;
+  }
+  const requireOwner = args.includes('--require-owner-sender') ? true : args.includes('--no-require-owner-sender') ? false : undefined;
+  if (args.includes('--require-owner-sender') && args.includes('--no-require-owner-sender')) return 'pass --require-owner-sender or --no-require-owner-sender, not both';
+  if ((liveFraction !== undefined || pinsRoute !== undefined || owners.length || ownerSkillsAdd.length || ownerSkillsRemove.length || suggestIn !== undefined || rule !== undefined || talkRule !== undefined || requireOwner !== undefined) && !openclaw) return '--live-fraction, --pins-route, --owner-sender, --owner-skill, --no-owner-skill, --suggest-in, --operator-rule, --conversation-operator-rule and --require-owner-sender are for openclaw only';
+  for (const [flag, v] of [['--operator-rule', rule], ['--conversation-operator-rule', talkRule]] as const) {
+    const problem = v ? operatorRuleProblem(v) : null;
+    if (problem) return `${flag} ${problem} (an empty value clears it)`;
+  }
   const suggestClasses = suggestIn === undefined ? undefined : [...new Set(suggestIn.split(',').map((s) => s.trim()))];
   if (suggestClasses && (!suggestClasses.length || suggestClasses.some((c) => c !== 'owner' && c !== 'conversation'))) return '--suggest-in takes owner, conversation or owner,conversation (the session classes that get skill suggestions; relay, cron, heartbeat, webhook and internal turns never do)';
   if (liveFraction !== undefined && !(/^(0(\.\d+)?|1(\.0+)?)$/.test(liveFraction))) return '--live-fraction must be a number from 0 to 1 (the share of sessions that see suggestions; the rest are logged as control)';
   if (pinsRoute !== undefined && pinsRoute !== 'system' && pinsRoute !== 'first_turn') return '--pins-route must be system (appendSystemContext, every turn) or first_turn (appendContext on a session\'s first turn and after compaction)';
   if (owners.some((o) => !/^[\x21-\x7e]{1,128}$/.test(o))) return '--owner-sender needs a sender id';
-  const openclawTuning = { ...(liveFraction !== undefined ? { live_fraction: Number(liveFraction) } : {}), ...(pinsRoute ? { pins_route: pinsRoute as 'system' | 'first_turn' } : {}), ...(owners.length ? { owner_sender_ids: owners } : {}), ...(suggestClasses ? { suggest_classes: suggestClasses as Array<'owner' | 'conversation'> } : {}) };
+  if ([...ownerSkillsAdd, ...ownerSkillsRemove].some((n) => !/^[\x21-\x7e]{1,128}$/.test(n) || /[<>]/.test(n))) return '--owner-skill and --no-owner-skill need a skill name (1-128 visible characters, no spaces, < or >)';
+  const bothWays = ownerSkillsAdd.filter((n) => ownerSkillsRemove.includes(n));
+  if (bothWays.length) return `pass --owner-skill or --no-owner-skill for ${bothWays.join(', ')}, not both`;
+  const tuningGiven = liveFraction !== undefined || pinsRoute !== undefined || owners.length > 0 || ownerSkillsAdd.length > 0 || ownerSkillsRemove.length > 0 || suggestIn !== undefined || rule !== undefined || talkRule !== undefined || requireOwner !== undefined;
+  const openclawTuning = { ...(liveFraction !== undefined ? { live_fraction: Number(liveFraction) } : {}), ...(pinsRoute ? { pins_route: pinsRoute as 'system' | 'first_turn' } : {}), ...(owners.length ? { owner_sender_ids: owners } : {}), ...(suggestClasses ? { suggest_classes: suggestClasses as Array<'owner' | 'conversation'> } : {}),
+    ...(rule !== undefined ? { operator_rule: rule } : {}), ...(talkRule !== undefined ? { conversation_operator_rule: talkRule } : {}), ...(requireOwner !== undefined ? { require_owner_sender: requireOwner } : {}),
+    ...(ownerSkillsAdd.length ? { owner_skills_add: [...new Set(ownerSkillsAdd)] } : {}), ...(ownerSkillsRemove.length ? { owner_skills_remove: [...new Set(ownerSkillsRemove)] } : {}) };
   const chosenLoading = flagLoading ?? (envLoading || undefined);
+  const tuningFlags = '--live-fraction, --pins-route, --owner-sender, --owner-skill, --no-owner-skill, --suggest-in, --operator-rule, --conversation-operator-rule and --require-owner-sender';
+  if (tuningGiven && (chosenLoading === 'off' || chosenLoading === 'spring' || args.includes('--remove'))) return `${tuningFlags} cannot be set while turning the OpenClaw skill resolver off; nothing was written`;
+  if (tuningGiven && chosenLoading !== 'resolve' && chosenLoading !== 'shadow') {
+    const stateAgents = readOpenclawSkillState(configDir())?.agents ?? {};
+    const off = agentFlags.filter((id) => (stateAgents[id]?.mode ?? 'off') === 'off');
+    if (args.includes('--all-agents')) return `${tuningFlags} with --all-agents can switch the resolver on for agents that have it off: pass --skill-loading resolve (or shadow) to choose that, or name the agents with --agent; nothing was written`;
+    if (off.length) return `the OpenClaw skill resolver is not on for agent ${off.join(', ')}, so ${tuningFlags} would switch it on there: pass --skill-loading resolve (or shadow) to choose that; nothing was written`;
+    if (!Object.values(stateAgents).some((a) => a.mode !== 'off')) return `the OpenClaw skill resolver is not on for any agent here, so ${tuningFlags} would not be kept: pass them with --skill-loading resolve (or shadow); nothing was written`;
+  }
   const cursor = positionals[0] === 'cursor';
   const skillResolver = !resolverHarness || chosenLoading === undefined || (cursor && chosenLoading === 'spring') ? undefined : chosenLoading === 'resolve' ? 'on' as const : chosenLoading === 'shadow' ? 'shadow' as const : 'off' as const;
   // resolve replaces the spring index (on Cursor the pins sit beside it, so neither run removes the other): the skills block is decided as off, explicitly, so GBRAIN_SKILL_LOADING=resolve is never read as a block mode.
@@ -309,7 +343,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     ...(skillResolver ? { skillResolver } : {}),
     ...(agentFlags.length ? { agents: agentFlags } : args.includes('--all-agents') ? { agents: 'all' as const } : {}),
     ...(Object.keys(openclawTuning).length ? { openclawTuning } : {}),
-    ...(serves ? { serves: serves as 'one' | 'several' } : {}),
+    ...(several ? { serves: 'several' as const } : serves ? { serves: serves as 'one' | 'several' } : {}),
     ...(value('--members') !== undefined ? { members: value('--members') } : {}),
     ...(value('--members-file') !== undefined ? { membersFile: value('--members-file') } : {}),
     ...(args.includes('--labelled-only') ? { labelledOnly: true } : {}),
@@ -419,7 +453,11 @@ function describeConsent(c: SetupConsent, events: string[], out: Out, harness: S
   say(out, `  providers  ${c.providers.value}${c.providers.value === 'declined' ? ' (keyless: setup configures no paid provider; accept with --providers)' : ''} ${src(c.providers.source)}`);
 }
 
-export async function runSetup(args: string[], deps: { openclaw?: { bin?: string | null; run?: OpenclawRun } } = {}): Promise<number> {
+/** The value flags setup reads in --flag=value form too (EQUALS_READERS setup); the CLI entry refuses the = form of every other one. */
+const EQUALS_FLAGS = ['--members-file', '--members'] as const;
+
+export async function runSetup(argv: string[], deps: { openclaw?: { bin?: string | null; run?: OpenclawRun } } = {}): Promise<number> {
+  const args = argv.flatMap((a) => { const flag = EQUALS_FLAGS.find((f) => a.startsWith(`${f}=`)); return flag ? [flag, a.slice(flag.length + 1)] : [a]; });
   if (args.includes('--help') || args.includes('-h') || args.length === 0) {
     console.log(SETUP_HELP);
     return 0;
@@ -544,7 +582,8 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
         actor: 'agent', argv: ['gbrain', 'bootstrap', 'harness', '--remove', '--dry-run'],
         why: 'Preview removing the bootstrap harness wiring first, or keep it and skip setup.', verify: verifyDryRun('claude-code', flags.name) }), out);
     }
-    const servesPlan = servesPreflight(flags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, binding);
+    const servesFlags = { ...flags, ...(sourceId ? { source: sourceId } : {}) };
+    const servesPlan = servesPreflight(servesFlags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
     const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'claude-code');
@@ -561,12 +600,12 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
         { step: 'hooks', action: found.hooksCurrent ? 'keep' : 'write', detail: plan.events.length ? `${plan.events.join(', ')} in ${found.settingsPath}` : `no hooks (${found.settingsPath})` },
         ...Object.entries(found.edited).map(([event]) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
       ];
-      const serves = servesApply(flags, launcher, 'claude-code', servesPlan, !!cfg, binding);
+      const serves = servesApply(servesFlags, launcher, 'claude-code', servesPlan, !!cfg, binding);
       const instructions = brainFirstFor('claude-code', flags, mcpAccess(flags.name, plan.advertise ?? surface, serves), { scope, projectDir });
       const skills = skillsFor('claude-code', flags, launcher, { scope, projectDir }, instructions);
       const resolver = await resolverFor('claude-code', flags, launcher);
       const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate);
-      const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
+      const servesDone = servesAfterLayout(serves, servesFlags, launcher, servesPlan, layout.outcome);
       return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves: servesDone, launcher, layout: layout.outcome });
     }
 
@@ -576,7 +615,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
       beforeMcp: brainCreate ? async () => { notices = runBrainInit(initArgv, out, 'claude-code'); historyReceipt(launcher, 'claude-code', flags, out); } : undefined,
     });
     for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
-    const serves = servesApply(flags, launcher, 'claude-code', servesPlan, true, binding);
+    const serves = servesApply(servesFlags, launcher, 'claude-code', servesPlan, true, binding);
     const instructions = brainFirstFor('claude-code', flags, mcpAccess(flags.name, plan.advertise ?? surface, serves), { scope, projectDir });
     const skills = skillsFor('claude-code', flags, launcher, { scope, projectDir }, instructions);
     const resolver = await resolverFor('claude-code', flags, launcher);
@@ -592,7 +631,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     const states = ['configured', ...(verify.ok ? ['connection-verified', 'native-pending'] : [])];
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('claude-code', { projectDir }) : null;
     const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate);
-    const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
+    const servesDone = servesAfterLayout(serves, servesFlags, launcher, servesPlan, layout.outcome);
     const history = await historyStep('claude-code', flags, launcher, brainCreate, !!liveOwner, scope === 'project' ? ['--scope', 'project'] : []);
     const suggestion = suggestionFor({ launcher, noSuggestion: flags.noSuggestion, dryRun: flags.dryRun, liveServe: liveOwner });
     const code = await finish(out, { dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent, steps: result.steps, states, verify, notices: withHistoryDecision(layout.notices(notices), history), notes,
@@ -811,7 +850,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
         actor: 'agent', argv: harnessLane ? ['gbrain', 'bootstrap', 'harness', '--remove', '--dry-run'] : ['gbrain', 'setup', 'codex', laneEvents.every((e) => e === 'SessionEnd') ? '--no-capture' : '--no-hooks', '--dry-run', '--json'],
         why: harnessLane ? 'Preview removing the bootstrap harness wiring first, or keep it and skip setup.' : 'Keep the bootstrap lane for those events and preview setup without them.', verify: verifyDryRun('codex', flags.name) }), out);
     }
-    const servesPlan = servesPreflight(flags, launcher, 'codex', !!cfg, !!liveOwner?.ours, binding);
+    const servesFlags = { ...flags, ...(sourceId ? { source: sourceId } : {}) };
+    const servesPlan = servesPreflight(servesFlags, launcher, 'codex', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
     const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'codex');
@@ -830,12 +870,12 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
         { step: 'trust', action: found.trustCurrent ? 'keep' : 'write', detail: `trust entries for setup's groups in ${found.configPath}` },
         ...Object.keys(found.edited).map((event) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
       ];
-      const serves = servesApply(flags, launcher, 'codex', servesPlan, !!cfg, binding);
+      const serves = servesApply(servesFlags, launcher, 'codex', servesPlan, !!cfg, binding);
       const instructions = brainFirstFor('codex', flags, mcpAccess(flags.name, plan.advertise ?? plan.surface, serves), {});
       const skills = skillsFor('codex', flags, launcher, {}, instructions);
       const resolver = await resolverFor('codex', flags, launcher);
       const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate);
-      const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
+      const servesDone = servesAfterLayout(serves, servesFlags, launcher, servesPlan, layout.outcome);
       return finish(out, { harness: 'codex', dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves: servesDone, layout: layout.outcome });
     }
 
@@ -846,7 +886,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     });
     for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
     for (const n of result.notes) say(out, `note: ${n}`);
-    const serves = servesApply(flags, launcher, 'codex', servesPlan, true, binding);
+    const serves = servesApply(servesFlags, launcher, 'codex', servesPlan, true, binding);
     const instructions = brainFirstFor('codex', flags, mcpAccess(flags.name, plan.advertise ?? plan.surface, serves), {});
     const skills = skillsFor('codex', flags, launcher, {}, instructions);
     const resolver = await resolverFor('codex', flags, launcher);
@@ -863,7 +903,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const states = ['configured', ...(verify.ok ? ['connection-verified', push === 'native-verified' && result.receipt.trust.owned.UserPromptSubmit ? 'native-verified' : 'native-pending'] : [])];
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('codex') : null;
     const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate);
-    const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
+    const servesDone = servesAfterLayout(serves, servesFlags, launcher, servesPlan, layout.outcome);
     const history = await historyStep('codex', flags, launcher, brainCreate, !!liveOwner, []);
     const suggestion = suggestionFor({ launcher, noSuggestion: flags.noSuggestion, dryRun: flags.dryRun, liveServe: liveOwner });
     const code = await finish(out, { harness: 'codex', dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent,

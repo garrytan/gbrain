@@ -11,6 +11,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { hostFix, opTransport, readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
+import { offRulePage } from '../rules/admission.ts';
 import { appendContextNote, type InferredVia } from '../facts/subject-infer.ts';
 import { inferenceNote } from '../facts/subject-infer-write.ts';
 import { resolveDefaultVisibility } from '../facts/visibility.ts';
@@ -49,7 +50,7 @@ export interface ManagedFactsResult {
 export interface ManagedFactsRefusal { slug: string; code: string; request_id: string }
 export interface ManagedFactOrigin { slug: string; pageId: number; revision: string; }
 export type FrozenExtractedFact = Omit<NewFact, 'embedding' | 'valid_from' | 'valid_until' | 'expired_at'> & {
-  embedding: number[] | null; valid_from: string; valid_until: string | null;
+  embedding: number[] | null; valid_from: string | null; valid_until: string | null;
   /** #5836: a write-time inferred subject dedups exact text only, never superseding or dropping a similar fact. */
   entity_inferred?: InferredVia;
 };
@@ -642,7 +643,7 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
   for (const fact of facts) {
     if (ctx.abortSignal?.aborted) throw new DOMException('Fact extraction was aborted before admission.', 'AbortError');
     if (ctx.notabilityFilter === 'high-only' && fact.notability !== 'high' || ctx.notabilityFilter === 'medium-and-up' && fact.notability === 'low') continue;
-    const resolved = fact.entity_slug ? await resolveEntitySlugWithSource(engine, sourceId, fact.entity_slug) : null;
+    const resolved = offRulePage(fact.entity_slug ? await resolveEntitySlugWithSource(engine, sourceId, fact.entity_slug) : null);
     const entitySlug = resolved && resolved.source !== 'fallback_slugify' ? resolved.slug : null;
     const attributed = entitySlug ?? (options.attributeFallback && resolved ? resolved.slug : null);
     // GST-2492: on a strict source a kept fallback entity is held on its holding page (its folder's under a folder rule).
@@ -657,7 +658,7 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
     // #5836: an inferred subject carries its provenance note into the fence cell and the row.
     group.push({ ...fact, entity_slug: attributed, visibility, context: fact.entity_inferred ? appendContextNote(context, inferenceNote(fact.entity_inferred)) : context,
       embedding: fact.embedding ? Array.from(fact.embedding) : null,
-      valid_from: (factEventTime(fact, ctx) ?? new Date()).toISOString(), valid_until: fact.valid_until?.toISOString() ?? null });
+      valid_from: factEventTime(fact, ctx)?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null });
     groups.set(slug, group);
   }
   const inputs: ManagedFactsEntityInput[] = [];

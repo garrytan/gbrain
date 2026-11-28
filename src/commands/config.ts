@@ -66,6 +66,7 @@ const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
   'push.allow_unverified_remote',
   'hooks.stop_push_debounce_min',
   'secrets.on_push', // GST-2988: every publisher reads it engine-free (git/redact-unpushed.ts onPushMode)
+  'secrets.on_write', // the brain host's operator alone sets it (persistence/write-secrets.ts onWriteMode)
   'backup.check_enabled',
   'backup.check_interval_days',
   // #4748: resolveMcpInstructions reads ONLY the file plane (all three MCP
@@ -431,6 +432,7 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
     if (err) { console.error(`[config] ${err}`); process.exit(1); }
   }
   if (key.startsWith('loops.')) (await import('./config/loops-values.ts')).refuseInvalidLoopsConfigValue(key, value);
+  if (key === 'google.gmail.redact_credentials') { const err = (await import('../core/google/gmail-redact.ts')).gmailRedactValueRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key === 'dream.claim_conflicts.mode') { const err = (await import('../core/facts/claim-conflicts.ts')).claimConflictsModeRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key.startsWith('recall.')) { const err = (await import('../core/facts/recall-config.ts')).recallConfigValueRefusal(key, value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key === 'sync.slug_conflicts.auto_remove') { const err = (await import('../core/repair/slug-autoheal.ts')).slugAutoRemoveValueRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
@@ -587,6 +589,14 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
       process.exit(1);
     }
     cfg.secrets = { ...(cfg.secrets ?? {}), on_push: value };
+    saveConfig(cfg);
+    console.log(`Set ${key} = ${value} (file plane: ~/.gbrain/config.json)`);
+  } else if (key === 'secrets.on_write') {
+    if (value !== 'off' && value !== 'redact' && value !== 'block') {
+      console.error(`[config] ${key} must be off (the default: remote page writes are stored as sent), redact (each secret is replaced by <REDACTED:pattern>) or block (the write is refused with secret_in_write)`);
+      process.exit(1);
+    }
+    cfg.secrets = { ...(cfg.secrets ?? {}), on_write: value };
     saveConfig(cfg);
     console.log(`Set ${key} = ${value} (file plane: ~/.gbrain/config.json)`);
   } else if (key === 'backup.check_enabled') {

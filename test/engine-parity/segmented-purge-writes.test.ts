@@ -46,7 +46,7 @@ function prepared(input: { stagingId: string; expected: number; texts: readonly 
   return {
     stagingId: input.stagingId, expectedGeneration: input.expected, newGeneration: input.expected + 1, createRows: input.createRows ?? null,
     createChunks: null, closeOccurrences: input.close ?? [], retireChunkOccurrences: input.close ?? [], unchunked: input.createRows ? input.texts.length : 0,
-    priorStale: false, body: bodyColumns(input.texts), bodyUnchanged: false,
+    priorStale: false, body: bodyColumns(input.texts), bodyUnchanged: false, textUnchanged: false,
     rows: { texts: input.texts.length, manifest: input.texts.length, chunks: input.staged?.length ?? 0 }, stagedChunkIndexes: input.staged ?? [],
   };
 }

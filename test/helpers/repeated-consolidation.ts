@@ -313,6 +313,9 @@ export async function runRepeatedConsolidation(opts: { onCycle?: (cycle: number,
     await engine.setConfig('dream.synthesize.min_chars', '200');
     await engine.setConfig('dream.synthesize.mode', 'agentic');
     await engine.setConfig('agent.use_gateway_loop', 'true');
+    // The default subagent model (claude-sonnet-5-5) is a thinking model with a 32000-token output cap per turn, so 16
+    // agentic turns estimate past the default $5 cap and the transcript is skipped; cap output the way an operator would.
+    await engine.setConfig('agent.max_output_tokens', '8192');
 
     for (let i = 0; i < CYCLES.length; i++) {
       writeFileSync(join(corpusDir, CYCLES[i].basename), CYCLES[i].transcript);

@@ -33,7 +33,7 @@
  *     for child-spawn resolution (verified on 1.3.10 — a `process.env.PATH`
  *     mutation is invisible to execFileSync lookup), so the recorder shims
  *     would never intercept `bun install`. Instead each fixture clone gets an
- *     UNTRACKED `src/cli.ts` driver that imports the real repo's runUpgrade —
+ *     UNTRACKED `src/upgrade-driver.ts` that imports the real repo's runUpgrade —
  *     the honest bun-link shape (argv[1] lives inside the checkout, so
  *     detection resolves the clone with no patching) — and the test spawns it
  *     with the shim dir already first on PATH.
@@ -105,7 +105,7 @@ interface Fixture extends BaseFixture {
   origin: string;          // local bare origin; its PATH carries the detection marker
   clone: string;           // the "bun-linked" source clone, one commit behind origin
   ahead: string;           // working copy that pushes to origin
-  driver: string;          // untracked <clone>/src/cli.ts — the bun-link entry point
+  driver: string;          // untracked <clone>/src/upgrade-driver.ts; <clone>/src/cli.ts is the recorder the checks run
   originHead: string;      // commit B (ahead)
   cloneHeadBefore: string; // commit A
 }
@@ -202,8 +202,21 @@ function buildFixture(label: string, aheadFloor = '>=1.4.0'): Fixture {
   // bun-link install: argv[1] lives inside the checkout, so detectBunLink
   // resolves THIS clone with no argv patching. The tripwire exits 3 before
   // any git/bun child if detection ever names a root outside this clone.
-  const driver = join(clone, 'src', 'cli.ts');
+  const driver = join(clone, 'src', 'upgrade-driver.ts');
   mkdirSync(join(clone, 'src'), { recursive: true });
+  // #10536: the checks after the swap run the checkout's own src/cli.ts with the running Bun, not a gbrain on PATH, so
+  // the entry is the same recorder as the PATH shim.
+  writeFileSync(
+    join(clone, 'src', 'cli.ts'),
+    [
+      "import { appendFileSync } from 'node:fs';",
+      'const args = process.argv.slice(2);',
+      'appendFileSync(' + JSON.stringify(base.argvLog) + ", 'gbrain ' + args.join(' ') + '\\n');",
+      `if (args[0] === '--version') console.log('gbrain ${SHIM_NEW_VERSION}');`,
+      "if (args[0] === '--help' && process.env.GBRAIN_TEST_HELP_EXIT) { console.error('GBrain requires Bun 1.4.0 or newer (found Bun 1.3.14).'); process.exit(Number(process.env.GBRAIN_TEST_HELP_EXIT)); }",
+      '',
+    ].join('\n'),
+  );
   writeFileSync(
     driver,
     [

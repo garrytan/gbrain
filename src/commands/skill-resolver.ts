@@ -28,7 +28,8 @@ import type { Explain } from '../core/skills/resolver/resolve.ts';
 import { readResolverConfig, resolverHarnesses, resolverSection } from '../core/setup/skill-resolver-config.ts';
 import { configuredTopGate } from '../core/skills/resolver/config.ts';
 import { catalogSkillIds, PIN_CLASSES, pinProblem, PINS_MAX, readPins, renderPinnedBlock, sessionStartPinnedBlock, writePins, type PinClass } from '../core/setup/skill-pins.ts';
-import { refreshOpenclawPins } from '../core/setup/openclaw-skill-plugin.ts';
+import { openclawLoaderVersion, refreshOpenclawPins } from '../core/setup/openclaw-skill-plugin.ts';
+import { OPENCLAW_SKILL_PLUGIN_CODE_VERSION } from '../core/setup/openclaw-skill-plugin-code.ts';
 import { PI_SKILL_CATALOG, refreshPiPins } from '../core/setup/pi-skill-extension.ts';
 import { HERMES_PINS_CATALOG, syncHermesPins } from '../core/setup/hermes-skill-pins.ts';
 import { CURSOR_PINS_CATALOG_PREFIX, cursorPinnedBlock, refreshCursorPins } from '../core/setup/cursor-skill-pins.ts';
@@ -38,7 +39,7 @@ export const SKILLS_RESOLVER_CLI = {
   index: { subcommands: ['build', 'status', 'remove'], valued: ['--catalog', '--dir', '--from-json', '--claude-plugins', '--routing', '--harness', '--scope', '--session'], booleans: ['--bundled', '--json', '--shadow'] },
   resolve: { subcommands: [], valued: ['--catalog', '--text', '--previous', '--input-json', '--session', '--harness', '--exclude', '--top-k', '--min-match', '--top-gate', '--shadow-log', '--explain-target', '--expect-catalog', '--load-hint'], booleans: ['--shadow', '--json', '--fail-open', '--reset-session', '--names-only'] },
   library: { subcommands: [], valued: ['--out'], booleans: ['--json'] },
-  pin: { subcommands: ['add', 'remove', 'list'], valued: ['--catalog', '--line', '--class'], booleans: ['--json'] },
+  pin: { subcommands: ['add', 'remove', 'list'], valued: ['--catalog', '--line', '--class'], booleans: ['--json', '--brief', '--every-turn'] },
 } as const;
 
 const HELP_INDEX = `Usage: gbrain skills index <build|status|remove> [options]
@@ -110,7 +111,7 @@ shows on every turn, and never suggested twice. gbrain ships no pins; a catalog 
 none gets no pinned block. Pins live in config.json (skills.resolver.pins.<catalog>),
 so turning the resolver off keeps them.
 
-  gbrain skills pin add <skill-id> --catalog <name> [--line "<when to use it, 100 chars>"] [--class owner|conversation|owner,conversation] [--json]
+  gbrain skills pin add <skill-id> --catalog <name> [--line "<when to use it, 100 chars>"] [--class owner|conversation|owner,conversation] [--brief|--every-turn] [--json]
   gbrain skills pin remove <skill-id> --catalog <name> [--json]
   gbrain skills pin list --catalog <name> [--json]
 
@@ -118,6 +119,8 @@ so turning the resolver off keeps them.
   --line <text>     one trigger-first line shown beside the id (no < or >)
   --class <list>    OpenClaw: the session classes the pin shows in, owner (the agent owner's own
                     sessions, the default) and conversation (groups, channels, other people's DMs)
+  --brief           OpenClaw: show the pin once per owner session (the session-start brief, again
+                    after a compaction or a reset) instead of on every turn; --every-turn moves it back
 
 An OpenClaw agent picks up a pin change on its next turn, with no reload; Claude Code
 and Codex get claude-code-user's and codex-user's pins at their next session start.
@@ -374,6 +377,9 @@ async function runPin(args: string[]): Promise<void> {
     const classes = classArg === undefined ? undefined : [...new Set(classArg.split(',').map((c) => c.trim()))] as PinClass[];
     if (classes && (!classes.length || classes.some((c) => !PIN_CLASSES.includes(c)))) usage('--class takes owner, conversation or owner,conversation.', 'Example: --class owner,conversation');
     if (classes && !catalog.startsWith('openclaw-')) usage('--class is for OpenClaw catalogs (openclaw-<agent>).', 'Drop --class.');
+    const brief = p.bools.has('--brief'), everyTurn = p.bools.has('--every-turn');
+    if (brief && everyTurn) usage('Pass --brief or --every-turn, not both.', 'Drop one of them.');
+    if ((brief || everyTurn) && !catalog.startsWith('openclaw-')) usage(`${brief ? '--brief' : '--every-turn'} is for OpenClaw catalogs (openclaw-<agent>).`, `Drop ${brief ? '--brief' : '--every-turn'}.`);
     if (sub === 'add') {
       const problem = pinProblem({ name, ...(line !== undefined ? { line } : {}) });
       if (problem) usage(problem, 'Fix the value and retry.');
@@ -383,10 +389,14 @@ async function runPin(args: string[]): Promise<void> {
       const others = pins.filter((x) => x.name !== name);
       if (others.length >= PINS_MAX) usage(`${catalog} already has ${PINS_MAX} pins.`, 'Remove one first.');
       const kept = classes ? (classes.length !== 1 || classes[0] !== 'owner' ? PIN_CLASSES.filter((c) => classes.includes(c)) : undefined) : pins.find((x) => x.name === name)?.classes;
-      pins = [...others, { name, ...(line !== undefined ? { line } : {}), ...(kept ? { classes: kept } : {}) }];
+      const inBrief = brief || (!everyTurn && !!pins.find((x) => x.name === name)?.brief);
+      if (inBrief && kept?.includes('conversation')) usage('A brief pin shows only in the owner\'s sessions, so it cannot have the conversation class.', 'Drop --class conversation, or pass --every-turn.');
+      const keptLine = line ?? (brief || everyTurn ? pins.find((x) => x.name === name)?.line : undefined);
+      pins = [...others, { name, ...(keptLine !== undefined ? { line: keptLine } : {}), ...(kept ? { classes: kept } : {}), ...(inBrief ? { brief: true as const } : {}) }];
     } else {
       if (line !== undefined) usage('--line is for pin add.', 'Drop --line.');
       if (classes) usage('--class is for pin add.', 'Drop --class.');
+      if (brief || everyTurn) usage(`${brief ? '--brief' : '--every-turn'} is for pin add.`, `Drop ${brief ? '--brief' : '--every-turn'}.`);
       pins = pins.filter((x) => x.name !== name);
     }
     writePins(read, catalog, pins);
@@ -396,17 +406,22 @@ async function runPin(args: string[]): Promise<void> {
   const laneOn = !!laneHarness && resolverHarnesses(read.state === 'ok' ? read.doc : null).includes(laneHarness);
   const laneHook = laneOn ? (await import('../core/setup/skill-resolver-hook.ts')).inspectSkillResolverHook(laneHarness).state : null;
   const rendered = cursor ? cursorPinnedBlock(home, catalog) : laneHarness ? sessionStartPinnedBlock(home, laneHarness, pins) : renderPinnedBlock(pins, { harness: catalog.startsWith('openclaw-') ? 'openclaw' : catalog === HERMES_PINS_CATALOG ? 'hermes' : catalog === PI_SKILL_CATALOG ? 'pi' : undefined, known: catalogSkillIds(home, catalog) });
-  const agents = sub === 'list' ? [] : refreshOpenclawPins(home);
+  const refreshed = sub === 'list' ? [] : refreshOpenclawPins(home);
+  const agents = refreshed ?? [];
+  const loader = catalog.startsWith('openclaw-') && pins.some((x) => x.brief) ? openclawLoaderVersion() : null;
+  const outdated = loader !== null && loader < OPENCLAW_SKILL_PLUGIN_CODE_VERSION;
   const piUpdated = sub !== 'list' && catalog === PI_SKILL_CATALOG && refreshPiPins(home);
   const hermesOn = catalog === HERMES_PINS_CATALOG && sub !== 'list' && resolverHarnesses(read.state === 'ok' ? read.doc : null).includes('hermes');
   const soul = hermesOn ? syncHermesPins({ home, hermesHome: (await import('../core/setup/skill-resolver-hook.ts')).hermesHomeDir(), dryRun: false }) : null;
   const cursorRule = cursor && sub !== 'list' ? refreshCursorPins(home, catalog) : null;
-  const doc = { catalog, pins, rendered: rendered.ids, unknown: rendered.unknown, cut: rendered.cut, block_tokens: rendered.tokens, ...(agents.length ? { openclaw_agents_updated: agents } : {}), ...(soul ? { hermes_soul: soul } : {}), ...(piUpdated ? { pi_state_updated: true } : {}), ...(laneHook === 'wired' ? { session_start_harness: laneHarness } : {}), ...(cursorRule ? { cursor_rule: { project: cursorRule.project, steps: cursorRule.steps, ...(cursorRule.error ? { error: cursorRule.error } : {}) } } : {}) };
+  const doc = { catalog, pins, rendered: rendered.ids, unknown: rendered.unknown, cut: rendered.cut, block_tokens: rendered.tokens, ...(agents.length ? { openclaw_agents_updated: agents } : {}), ...(refreshed === null ? { openclaw_refresh_pending: { user_message: 'Another gbrain setup openclaw run held the OpenClaw state lock, so the new pins are saved but not rendered for OpenClaw yet: run gbrain setup openclaw --skills-index-only once it finishes.' } } : {}), ...(outdated ? { openclaw_plugin_outdated: { installed: loader, current: OPENCLAW_SKILL_PLUGIN_CODE_VERSION, user_message: 'Rerun the setup openclaw command you installed with (same --workspace, --name and --agent flags), then restart the gateway.' } } : {}), ...(soul ? { hermes_soul: soul } : {}), ...(piUpdated ? { pi_state_updated: true } : {}), ...(laneHook === 'wired' ? { session_start_harness: laneHarness } : {}), ...(cursorRule ? { cursor_rule: { project: cursorRule.project, steps: cursorRule.steps, ...(cursorRule.error ? { error: cursorRule.error } : {}) } } : {}) };
   if (json) { await write(`${JSON.stringify(doc)}\n`); return; }
   await write([
     pins.length ? `${catalog}: ${pins.length} pin(s)` : `${catalog}: no pins`,
-    ...pins.map((x) => `  ${x.name}${x.line ? ` — ${x.line}` : ''}${catalog.startsWith('openclaw-') ? ` [${(x.classes ?? ['owner']).join(', ')}]` : ''}${rendered.unknown.includes(x.name) ? ' (not in the catalog: left out, skill_resolver_pin_unknown)' : rendered.cut.includes(x.name) ? ' (over the token cap: left out)' : ''}`),
+    ...pins.map((x) => `  ${x.name}${x.line ? ` — ${x.line}` : ''}${catalog.startsWith('openclaw-') ? ` [${[...(x.classes ?? ['owner']), ...(x.brief ? ['brief'] : [])].join(', ')}]` : ''}${rendered.unknown.includes(x.name) ? ' (not in the catalog: left out, skill_resolver_pin_unknown)' : rendered.cut.includes(x.name) ? ' (over the token cap: left out)' : ''}`),
     agents.length ? `OpenClaw agent(s) ${agents.join(', ')} use the new pins from their next turn.` : '',
+    refreshed === null ? 'Another gbrain setup openclaw run held the OpenClaw state lock, so OpenClaw does not have the new pins yet: run gbrain setup openclaw --skills-index-only once it finishes.' : '',
+    outdated ? `The installed OpenClaw plugin code (version ${loader}) is older than this gbrain's and does not deliver --brief pins: rerun gbrain setup openclaw with the flags you installed with, then restart the gateway.` : '',
     piUpdated ? 'Pi uses the new pins from its next run.' : '',
     laneHarness ? `${laneHarness === 'codex' ? 'Codex' : 'Claude Code'} ${laneHook === 'wired' ? 'gets these pins at its next session start (startup, resume, clear or compaction)' : laneOn ? `gets these pins at its next session start once its SessionStart hook is ${laneHook === 'untrusted' ? 'trusted' : 'refreshed'}: gbrain setup ${laneHarness} --skill-loading resolve` : `gets these pins at its next session start once skill loading is on: gbrain setup ${laneHarness} --skill-loading resolve`}.` : '',
     soul ? `Hermes: ${soul.action} ${soul.detail}${soul.action === 'skip' ? '' : '; Hermes reads SOUL.md at session start'}.` : '',

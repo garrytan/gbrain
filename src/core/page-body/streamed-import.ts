@@ -99,6 +99,8 @@ type StreamedImportOptions = {
   firstCommitAt?: Date;
   /** GBRA-217: a sync import's reason from Git and history-gap marker for the snapshot this import archives. */
   history?: import('../page-state/versions.ts').VersionHistory;
+  /** GST-4056: the channel of this write, stored as the page's content author; default the content's own `ingested_via`. */
+  content_author?: string | null;
   /**
    * A page write of the file's content (`gbrain put|capture --file` on the trusted local CLI), not a file import: the
    * file records no origin (no source_path or file source_uri), no other file's slug claim applies, the staging is a
@@ -467,7 +469,8 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   const meta = { type: parsed.type, title: parsed.title, frontmatter: parsed.frontmatter as JsonObject, page_kind: 'markdown' as const,
     effective_date: effectiveDate, effective_date_source: effectiveDateSource, import_filename: filename,
     ...(opts.content ? { source_path: null, source_kind: null, source_uri: null, ingested_via: null, ...opts.content.provenance }
-      : { source_path: relativePath, source_kind: null, source_uri: fileOriginUri(existing?.source_uri, sourceRoot, relativePath), ingested_via: null }) };
+      : { source_path: relativePath, source_kind: null, source_uri: fileOriginUri(existing?.source_uri, sourceRoot, relativePath), ingested_via: null }),
+    content_author: opts.content_author !== undefined ? opts.content_author : opts.content?.provenance?.ingested_via ?? null };
   const refs = prepared.body.body_flags.has_protected ? [] : [...codeRefs.refs.values()];
   const apply = async (tx: BrainEngine, preimage?: PageSnapshot | null) => {
     if (existing) await tx.createVersion(slug, preimage ? { sourceId, ...opts.history, preimage } : { sourceId, ...opts.history });

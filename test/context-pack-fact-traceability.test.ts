@@ -34,8 +34,8 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
   await asOwner(engine, async tx => {
-    await tx.insertFact({ fact: 'Project Boreal uses the colour green.', entity_slug: 'projects/boreal-example', source: 'POC-CORRECTION-2026-10-06', visibility: 'world', embedding: null } as never, { source_id: 'default' });
-    await tx.insertFact({ fact: 'Project Atlas uses the colour blue.', entity_slug: null, source: `test:${KEY}`, visibility: 'world', embedding: null } as never, { source_id: 'default' });
+    await tx.insertFact({ fact: 'Project Boreal uses the colour green.', entity_slug: 'projects/boreal-example', source: 'POC-CORRECTION-2026-10-06', visibility: 'world', valid_from: new Date('2026-01-01'), embedding: null } as never, { source_id: 'default' });
+    await tx.insertFact({ fact: 'Project Atlas uses the colour blue.', entity_slug: null, source: `test:${KEY}`, visibility: 'world', valid_from: new Date('2026-01-01'), embedding: null } as never, { source_id: 'default' });
   });
 }, 120_000);
 

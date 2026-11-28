@@ -76,6 +76,10 @@ const ALLOCATORS: &[(&str, Counter)] = &[
     ),
     ("wake_cron_runs", Counter::Seq("wake_cron_run")),
     ("wake_forgets", Counter::Seq("wake_forget")),
+    (
+        "link_transitions",
+        Counter::Meta(crate::link_queries::link_temporal::TRANSITION_ID),
+    ),
 ];
 
 /// One relation's counter against the primary's highest id.

@@ -248,16 +248,16 @@ describe('BudgetTracker.reserve', () => {
       }),
     ).not.toThrow();
     t.reserve({
-      modelId: 'claude-cli:claude-haiku-4-5-20251001',
+      modelId: 'claude-cli:claude-haiku-5-5',
       estimatedInputTokens: 1_000_000,
       maxOutputTokens: 0,
       kind: 'chat',
     });
     const audit = readAudit();
     expect(audit.map((e) => e.event)).toEqual(['reserve', 'reserve']);
-    // $1.00/1M input tokens (ANTHROPIC_PRICING['claude-haiku-4-5-20251001']);
-    // the alias and the dated id project the same cost.
-    expect(audit[0].projected_cost_usd).toBeCloseTo(1.0, 6);
+    // 1M input tokens bill at claude-haiku-5-5's long-prompt rate, $0.50/1M;
+    // the alias and the id it resolves to project the same cost.
+    expect(audit[0].projected_cost_usd).toBeCloseTo(0.5, 6);
     expect(audit[1].projected_cost_usd).toBe(audit[0].projected_cost_usd);
   });
 

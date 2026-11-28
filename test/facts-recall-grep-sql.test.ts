@@ -52,18 +52,18 @@ beforeAll(async () => {
   await engine.initSchema();
 
   await engine.insertFact(
-    { fact: NEEDLE_FACT, kind: 'preference', entity_slug: ENTITY, source: 'test', source_session: SESSION },
+    { valid_from: new Date(), fact: NEEDLE_FACT, kind: 'preference', entity_slug: ENTITY, source: 'test', source_session: SESSION },
     { source_id: 'default' },
   );
   // A literal-wildcard row for the escaping test: '100%' must be matched
   // as text, not as a LIKE pattern.
   await engine.insertFact(
-    { fact: 'alice keeps battery at 100% before travel', kind: 'fact', entity_slug: ENTITY, source: 'test', source_session: SESSION },
+    { valid_from: new Date(), fact: 'alice keeps battery at 100% before travel', kind: 'fact', entity_slug: ENTITY, source: 'test', source_session: SESSION },
     { source_id: 'default' },
   );
   for (let i = 0; i < FILLER_COUNT; i++) {
     await engine.insertFact(
-      { fact: `alice filler fact number ${i}`, kind: 'fact', entity_slug: ENTITY, source: 'test', source_session: SESSION },
+      { valid_from: new Date(), fact: `alice filler fact number ${i}`, kind: 'fact', entity_slug: ENTITY, source: 'test', source_session: SESSION },
       { source_id: 'default' },
     );
   }
@@ -118,11 +118,11 @@ describe('recall grep filters in SQL before the limit', () => {
 describe('supersessions arm keeps its client-side grep', () => {
   test('grep filters the supersession audit log', async () => {
     const old = await engine.insertFact(
-      { fact: 'bob-example lives in kirkland', kind: 'fact', entity_slug: 'people/bob-example', source: 'test' },
+      { valid_from: new Date(), fact: 'bob-example lives in kirkland', kind: 'fact', entity_slug: 'people/bob-example', source: 'test' },
       { source_id: 'default' },
     );
     await engine.insertFact(
-      { fact: 'bob-example lives in bellevue', kind: 'fact', entity_slug: 'people/bob-example', source: 'test' },
+      { valid_from: new Date(), fact: 'bob-example lives in bellevue', kind: 'fact', entity_slug: 'people/bob-example', source: 'test' },
       { source_id: 'default', supersedeId: old.id },
     );
     const hit = await recall({ supersessions: true, grep: 'kirkland' });

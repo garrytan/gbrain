@@ -445,7 +445,8 @@ test('TE1: a stored take whose prior fence did not parse is updated by its norma
 test('E33: a sync that normalizes 50 files writes one trend row with the run total; the census lists the held file once', () => each(async engine => {
   const files: Record<string, string> = { 'people/malformed.md': MALFORMED };
   for (let i = 0; i < 50; i++) files[`notes/fix-${String(i).padStart(2, '0')}.md`] = fixable(`Fix ${i}`);
-  const s = await source(engine, files);
+  // GST-3743: a checkout this host commits (durable) gets its normalized files; a foreign one keeps them database-only.
+  const s = await source(engine, files, {}, true);
   const result = await s.sync();
   expect(result).toMatchObject({ held_count: 1, fences_normalized: { count: 50 } });
   const trend = await engine.executeRaw<{ record: Record<string, unknown> }>(`SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND completed_keys->0->>'source_id'=$2`,

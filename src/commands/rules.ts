@@ -64,6 +64,7 @@ export async function runRules(engine: BrainEngine, args: string[]): Promise<voi
       if (!words[0]) throw usageError('gbrain rules approve needs <id>@<revision>.', 'gbrain rules list shows each rule\'s id and revision.');
       const r = await approveRule(engine, words[0], { sourceId });
       print(r, r.approved ? `Approved ${r.rule_id} at revision ${r.revision}; your agents load it in their standing rules.` : `Not approved: ${JSON.stringify(r.receipt)}`);
+      if (!r.approved) setCliExitVerdict((r.receipt as { state?: string } | undefined)?.state === 'pending' ? 10 : 1);
       return;
     }
     if (sub === 'retire') {
@@ -74,8 +75,9 @@ export async function runRules(engine: BrainEngine, args: string[]): Promise<voi
     }
     if (sub === 'check') {
       const r = await runRulesCheck(engine, { sourceId, ...(words[0] ? { id: words[0] } : {}) });
-      print(r, r.checked ? [`Checked ${r.checked}, failed ${r.failed}.`, ...r.results.filter(x => !x.pass).map(x => `  ${x.rule_id}: ${x.problems.join('; ')}`)].join('\n') : 'No confirmed active rules to check.');
-      if (r.failed) setCliExitVerdict(1);
+      print(r, r.not_checked ? `Not checked: ${r.not_checked.rule_id}: ${r.not_checked.why}.`
+        : r.checked ? [`Checked ${r.checked}, failed ${r.failed}.`, ...r.results.filter(x => !x.pass).map(x => `  ${x.rule_id}: ${x.problems.join('; ')}`)].join('\n') : 'No confirmed active rules to check.');
+      if (r.failed || r.not_checked) setCliExitVerdict(1);
       return;
     }
     throw usageError(`Unknown rules subcommand: ${sub}.`, 'Use one of: gbrain rules list, show, approve, retire or check.', { code: 'unknown_command' });

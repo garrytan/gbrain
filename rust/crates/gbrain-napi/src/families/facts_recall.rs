@@ -1,5 +1,5 @@
-//! The six candidate-pool reads of a fact recall: `readFactsEmbeddingColumn`, `listNearestFacts`, `listSlotRows`,
-//! `listPoolUnbackedKeys`, `listCallOffCueFacts` and `listPoolEntityPairs`.
+//! The candidate-pool reads of a fact recall: `readFactsEmbeddingColumn`, `listNearestFacts`, `listSlotRows`,
+//! `listPoolUnbackedKeys`, `listCallOffCueFacts`, `listPoolEntityPairs` and `listPooledFactRows`.
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store::facts::recall` call on the pool through
 //! `Brain::run` and resolves plain JSON. The TypeScript members (src/core/rust-engine/store-members/facts-recall.ts)
@@ -11,7 +11,9 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::recall::{CueArgs, NearestArgs, PairsArgs, SlotArgs, UnbackedArgs};
+use gbrain_store::facts::recall::{
+    CueArgs, NearestArgs, PairsArgs, PooledRowsArgs, SlotArgs, UnbackedArgs,
+};
 
 #[napi]
 impl Brain {
@@ -113,6 +115,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: PairsArgs = required(args, "listPoolEntityPairs args")?;
             s.list_pool_entity_pairs(&a)
+        })
+    }
+
+    /// `listPooledFactRows(args)`: resolves the whole rows of the ids the pool admits now.
+    #[napi]
+    pub fn list_pooled_fact_rows<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PooledRowsArgs = required(args, "listPooledFactRows args")?;
+            s.list_pooled_fact_rows(&a)
         })
     }
 }

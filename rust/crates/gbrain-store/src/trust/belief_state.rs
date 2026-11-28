@@ -86,7 +86,7 @@ fn fact_row(read: &dyn KvRead, f: &FactRecord, known: &BTreeMap<String, String>)
         "id": f.id, "entity_slug": f.entity_slug, "sms": f.source_markdown_slug,
         "entity_page_id": entity_page_id, "fact": f.fact, "th": th, "fp": fp, "kind": f.kind,
         "visibility": f.visibility, "notability": f.notability, "context": f.context,
-        "confidence": real(f.confidence), "valid_from": iso(f.valid_from_us),
+        "confidence": real(f.confidence), "valid_from": f.valid_from().map(iso),
         "valid_until": opt_iso(f.valid_until_us), "claim_metric": f.claim_metric,
         "claim_value": f.claim_value, "claim_unit": f.claim_unit, "claim_period": f.claim_period,
         "event_type": f.event_type, "dimension": f.dimension, "value": f.value,

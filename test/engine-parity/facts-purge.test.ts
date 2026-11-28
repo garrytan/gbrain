@@ -541,7 +541,7 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(Number(row.id)).toBe(byUser);
     expect(row).toMatchObject({ source_id: SRC, entity_slug: 'people/a', fact: 'likes  TEA.', visibility: 'private', attributed_to: 'user', embedding_model: 'm1', row_num: null, source_markdown_slug: null, expired_at: null, valid_until: null, confidence: 1 });
     expect(row.created_at).toBeInstanceOf(Date);
-    expect(row.valid_from).toBeInstanceOf(Date);
+    expect(row.valid_from).toBeNull(); // #10288: a fact saved with no event date keeps it unknown
     expect(typeof row.embedding).toBe('string');
     // A row of another speaker is no match; the row of no speaker still is.
     const other = await find('people/a', 'assistant', null);
@@ -788,8 +788,8 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(Number(byName('alice').claim_value)).toBe(1.5);
     expect(byName('on-gone').page_exists).toBe(false);
     expect(byName('loose').page_exists).toBe(false);
-    expect(byName('alice').valid_from).toBeInstanceOf(Date);
-    const view = (rows: typeof everywhere) => rows.map(({ id, valid_from, ...row }) => ({ ...row, id: seed.name(id), valid_from: valid_from instanceof Date }));
+    expect(byName('alice').valid_from).toBeNull();
+    const view = (rows: typeof everywhere) => rows.map(({ id, valid_from, ...row }) => ({ ...row, id: seed.name(id), valid_from: valid_from === null }));
     return { everywhere: view(everywhere), one: seed.label(one), none };
   });
 
@@ -848,10 +848,10 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(seed.label(held)).toEqual(['fenced-1', 'fenced-2']);
     expect(held[0]).toMatchObject({ row_num: 1, fact: 'fenced 1', claim_metric: 'arr', entity_slug: 'people/alice', source: 'fence', confidence: 1, attributed_to: 'user', visibility: 'private' });
     expect(Number(held[0]!.claim_value)).toBe(2);
-    expect(held[0]!.valid_from).toBeInstanceOf(Date);
+    expect(held[0]!.valid_from).toBeNull();
     expect(elsewhere).toEqual([]);
     expect(otherSource).toEqual([]);
-    return { held: held.map(({ id, valid_from, ...row }) => ({ ...row, id: seed.name(id), valid_from: valid_from instanceof Date })), elsewhere, otherSource };
+    return { held: held.map(({ id, valid_from, ...row }) => ({ ...row, id: seed.name(id), valid_from: valid_from === null })), elsewhere, otherSource };
   });
 
   /** The withdrawal fixture: one claim on an entity, a name key, a loose row, a fenced row, a member-page row and a world copy. */

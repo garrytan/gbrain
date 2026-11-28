@@ -14,7 +14,7 @@ import type {
   MinionJob, MinionJobInput, MinionJobStatus, InboxMessage, TokenUpdate,
   MinionQueueOpts, ChildDoneMessage, Attachment, AttachmentInput,
 } from './types.ts';
-import { rowToMinionJob, rowToInboxMessage, rowToAttachment, NO_JOB_ACTOR, type JobActor } from './types.ts';
+import { rowToMinionJob, rowToInboxMessage, rowToAttachment, NO_JOB_ACTOR, type JobActor, type JobOwner } from './types.ts';
 export { WATCHDOG_SUSPECT_MARK } from './watchdog-attribution.ts';
 import { decideCoalesce } from './idempotency-coalesce.ts';
 import type { CoalesceAuditEvent } from '../engine-sql/jobs.ts';
@@ -428,8 +428,8 @@ export class MinionQueue {
    *
    * Returns the *root* (the job matching id), not an arbitrary descendant.
    */
-  async cancelJob(id: number, opts?: { ownerClientId?: string; ownerActor?: JobActor }): Promise<MinionJob | null> {
-    const cancelled = await this.cancelJobs([id], { rootStatuses: NON_TERMINAL_STATUSES, ...(opts?.ownerClientId ? { ownerClientId: opts.ownerClientId, ownerActor: opts.ownerActor } : {}) });
+  async cancelJob(id: number, opts?: { owner?: JobOwner; ownerClientId?: string; ownerActor?: JobActor }): Promise<MinionJob | null> {
+    const cancelled = await this.cancelJobs([id], { rootStatuses: NON_TERMINAL_STATUSES, ...opts });
     const root = cancelled.find(j => j.id === id);
     return root ?? null;
   }
@@ -616,7 +616,7 @@ export class MinionQueue {
    * every surface keyed on a reason prefix (jobs stats, doctor) would
    * silently report zero without this parameter.
    */
-  async cancelJobs(ids: number[], opts?: { reason?: string; rootStatuses?: MinionJobStatus[]; ownerClientId?: string; ownerActor?: JobActor }): Promise<MinionJob[]> {
+  async cancelJobs(ids: number[], opts?: { reason?: string; rootStatuses?: MinionJobStatus[]; owner?: JobOwner; ownerClientId?: string; ownerActor?: JobActor }): Promise<MinionJob[]> {
     if (ids.length === 0) return [];
     // opts.rootStatuses re-checks each ROOT id's status ATOMICALLY inside the
     // cancel UPDATE's CTE seed. The waiting-TTL sweep passes ['waiting'] to
@@ -626,16 +626,16 @@ export class MinionQueue {
     // NULLed under the running handler). Operator cancels omit it — killing
     // an active job is exactly what `jobs cancel` means.
     //
-    // opts.ownerClientId (#4098) fences the CTE SEED on
-    // `data->>'__owner_client_id'`: an agent-scoped caller can cancel only
-    // roots it owns. Descendants of an owned root cascade regardless of their
-    // own data payload — the recursion follows the owned root, which is the
-    // semantic the delegating agent expects (its job tree, not per-row tags).
+    // opts.owner (#4098, GST-4010) fences the CTE SEED on the job owner (jobOwnedFragment, engine-sql/jobs-queue.ts): a fenced
+    // remote caller can cancel only roots it owns; the older ownerClientId / ownerActor pair still fences, as that OAuth
+    // client. Descendants of an owned root cascade regardless of their own data payload: the recursion follows the owned
+    // root, the delegating agent's job tree.
+    const owner: JobOwner | undefined = opts?.owner ?? (opts?.ownerClientId
+      ? { principal: { kind: 'oauth_client', id: opts.ownerClientId }, clientId: opts.ownerClientId, actor: opts.ownerActor ?? NO_JOB_ACTOR } : undefined);
     const rows = await this.engine.cancelJobs(ids, {
       reason: opts?.reason ?? null,
       rootStatuses: opts?.rootStatuses ?? null,
-      ownerClientId: opts?.ownerClientId ?? null,
-      ownerActor: opts?.ownerActor ?? NO_JOB_ACTOR,
+      owner: owner ?? null,
     });
     return rows.map(rowToMinionJob);
   }

@@ -41,7 +41,7 @@ export const PINNED_FUNCTION_NAMES = [
   'gbrain_access_state_unreadable',
   'gbrain_advance_page_revision', 'gbrain_advance_tag_revision', 'gbrain_bump_trust_generation',
   'gbrain_clear_atom_page_state', 'gbrain_concept_inputs_private', 'gbrain_count_git_canonical_sources', 'gbrain_count_modifications', 'gbrain_forget_page_retrievals',
-  'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_deferred_request', 'gbrain_guard_effect_protocol', 'gbrain_guard_guest_records', 'gbrain_guard_inserted_facts',
+  'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_content_author', 'gbrain_guard_deferred_request', 'gbrain_guard_effect_protocol', 'gbrain_guard_guest_records', 'gbrain_guard_inserted_facts',
   'gbrain_guard_protocol_activation', 'gbrain_guard_request_protocol', 'gbrain_guard_skill_publication',
   'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_note_writer', 'gbrain_owner_only_held', 'gbrain_owner_only_hold', 'gbrain_owner_only_lineage', 'gbrain_owner_only_lineage_strict',
   'gbrain_owner_only_mark_derived', 'gbrain_owner_only_marks_denied', 'gbrain_owner_only_read_mode', 'gbrain_owner_only_reads_complete', 'gbrain_owner_only_row_deleted',
