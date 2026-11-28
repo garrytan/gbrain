@@ -19,6 +19,7 @@ import { entityLinkable } from './attribution.ts';
 import { RELINK_REASONS, type RelinkReason } from './relink-reasons.ts';
 import { estimateModelTokens, judgeBatch, MODEL_BATCH_SIZE, type ModelVerdict } from './relink-model.ts';
 import { relinkFactHash, submitRelinkGroup, type RelinkIntentFact } from './relink-publish.ts';
+import { segmentedOverCeiling } from '../persistence/segmented-apply.ts';
 
 export const RELINK_DEFAULT_LIMIT = 1000;
 export const RELINK_DEFAULT_MAX_USD = 1;
@@ -153,6 +154,11 @@ export async function runFactsRelink(engine: BrainEngine, opts: RelinkOptions): 
   const linkedIds: number[] = [];
   for (const [slug, group] of groups) {
     opts.signal?.throwIfAborted();
+    const target = await engine.readPageSnapshot(slug, { sourceId: opts.sourceId });
+    if (target && segmentedOverCeiling(target.page)) {
+      for (const p of group) skip('page_too_large', byId.get(p.id)!);
+      continue;
+    }
     if (opts.dryRun) {
       for (const p of group) {
         report.linked += 1;
