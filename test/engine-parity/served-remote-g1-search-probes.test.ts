@@ -52,7 +52,7 @@ async function ask(engine: BrainEngine, op: string, params: Record<string, unkno
   return { error: out.isError === true ? text.slice(0, 300) : false, text, leaked: [...HIDDEN, 'ledger'].filter(m => text.includes(m)) };
 }
 
-parityTest('a remote search with a type filter naming only hidden pages drops the filter and lists no hidden page type', { methods: ['putPage', 'sealChunks'], timeout: 240_000 }, async (engine: BrainEngine) => {
+parityTest('a remote search with a type filter naming only hidden pages drops the filter and lists no hidden page type', { methods: ['putPage', 'sealChunks', 'probePageTypes'], timeout: 240_000 }, async (engine: BrainEngine) => {
   await seed(engine);
   const out = await ask(engine, 'search', { query: OPEN, types: ['vault'] });
   expect({ error: out.error, leaked: out.leaked }).toEqual({ error: false, leaked: [] });
@@ -61,7 +61,7 @@ parityTest('a remote search with a type filter naming only hidden pages drops th
   return { error: out.error, leaked: out.leaked, notice: /No pages have type[^"]*/.exec(out.text)?.[0] ?? null };
 });
 
-parityTest('a remote search with explain_target answers like a missing page for a hidden target and finds an open one', { methods: ['putPage', 'sealChunks'], timeout: 240_000 }, async (engine: BrainEngine) => {
+parityTest('a remote search with explain_target answers like a missing page for a hidden target and finds an open one', { methods: ['putPage', 'sealChunks', 'probeTargetRows'], timeout: 240_000 }, async (engine: BrainEngine) => {
   await seed(engine);
   const hidden = await ask(engine, 'search', { query: OPEN, explain_target: `secrets/${PRIVATE}` });
   const open = await ask(engine, 'search', { query: OPEN, explain_target: `notes/${OPEN}` });

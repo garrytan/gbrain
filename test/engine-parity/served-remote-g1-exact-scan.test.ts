@@ -52,7 +52,7 @@ function timingOut(engine: BrainEngine): BrainEngine {
   }) as BrainEngine;
 }
 
-parityTest('a remote search_exact whose batch times out names only the readable page in its gap report', { methods: ['putPage', 'sealChunks'], timeout: 240_000 }, async (engine: BrainEngine) => {
+parityTest('a remote search_exact whose batch times out names only the readable page in its gap report', { methods: ['putPage', 'sealChunks', 'nextLivePageAfter', 'probeTargetRows'], timeout: 240_000 }, async (engine: BrainEngine) => {
   await seed(engine);
   const out = await dispatchToolCall(timingOut(engine), 'search_exact', { phrase: PHRASE }, stdio());
   const text = out.content.map(c => c.text ?? '').join('\n');

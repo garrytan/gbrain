@@ -140,6 +140,18 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // served-remote-g1-exact-scan: a remote search_exact steps a timed-out batch one page at a time; remote-member-policy.ts wraps
   // this member in the output-aware guard (served/remote-scan-guard.ts), so a remote caller is handed only a readable page.
   'nextLivePageAfter',
+  // served-remote-g1-facts-recall: the slot-history arm of a remote query names its entity from the pool's unbacked name keys or
+  // from its readable page; both read under the caller's pool policy, as a recall's listSlotRows does.
+  'listPoolUnbackedKeys', 'listReadablePageSlugs',
+  'listCallOffCueFacts', // TEMP-VERIFY-ONLY (group 0 serves it)
+  // served-remote-g1-facts-recall: a remote search stems the name heads of its saved facts (a pure function of its arguments).
+  'matchHeadStems',
+  // ... and a remote recall naming an entity checks the pool's entity pairs for namesakes before it ranks.
+  'listPoolEntityPairs',
+  // ... and a remote query that matches facts dates their evidence under its read policy (readAdmittedPageDateFields).
+  'readAdmittedPageDateFields',
+  // ... and stamps the claims its matched facts supersede by reading the typed claim facts held on its result pages.
+  'listTypedClaimFactsAtPages',
 ];
 
 /**
