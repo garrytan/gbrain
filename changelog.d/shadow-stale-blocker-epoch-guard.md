@@ -6,5 +6,6 @@
 
 ### Changed
 - The pass that settles a crashed session's owed samples now does nothing for that round when one of its journals cannot be read, and runs again on its next turn. Before, it booked the owed count from the session's marker as if the journal were empty and the later fold counted the same samples again (6 counted for 3 owed). The only effect is a lower, correct count; no count, reason or status text is added or renamed.
+- The same pass now decides which crashed sessions' children are gone before it reads their journals. Before, a child that wrote its last samples and exited between those two steps had its samples counted twice (6 counted for 3 owed). The only effect is a lower, correct count.
 
 <!-- behavior-change: shadow_stale_blocker_epoch_guard -->
