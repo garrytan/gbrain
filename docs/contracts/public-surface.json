@@ -2201,6 +2201,7 @@
     "emotional_weight.high_tags",
     "emotional_weight.user_holder",
     "engine",
+    "engine.rust.multiuser",
     "entity.name_variants",
     "entity.names_references",
     "entity.record_types",
