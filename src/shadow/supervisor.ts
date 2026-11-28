@@ -317,7 +317,8 @@ export class ShadowSupervisor implements MirrorTransport {
   /**
    * The one way this process writes the session's owed file (the open marker, every full record, the keeper's publication). While the session's worker is running nothing can book its marker (an owner books it only once the worker exited or its pid is gone),
    * so the file is ours alone and the write takes no lock: a worker saving every few milliseconds holds the lock too often for a close at the end of the CLI to wait for it. Otherwise (no live worker, its exit seen, a record kept for the session) the write takes the
-   * tally lock and judges the file read again there: a booked tombstone of the session (v:2, `booked_epoch`) is never replaced by a record of ours, it stays v:2 with the larger `owed`, so an older reader keeps reading an unreadable file and the next owner pass books
+   * tally lock and judges the file read again there: a tombstone an older build left in the session's own file (v:2, `booked_epoch`) is never replaced by a record of ours, it stays v:2 with the larger `owed`. This version keeps the older-reader blocker of a booked window in a file of its own
+   * (`write-owed.window-lost-<session>.json`), which this process never writes and no path of it can replace, so the lock-free write above cannot drop it. The next owner pass books
    * the rest. A file that is there and cannot be read is a failed write (the caller keeps the record and retries): it may be a tombstone. A lock that stays held is a failed write too.
    */
   private putOwed(rec: OwedRecord): void {
