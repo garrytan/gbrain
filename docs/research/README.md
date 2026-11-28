@@ -71,3 +71,4 @@ The evidence or change that would make this worth trying again.
 |---|---|
 | [Rust rewrite research maps](rust-engine/README.md) | Maps of what TypeScript gbrain and gbrain-evals do today (storage engine, agent contract, jobs, tests, evals), pinned to a reference commit, with five maps refreshed to a later one (see the pin table in that README). The plan of record is [docs/designs/RUST_ENGINE.md](../designs/RUST_ENGINE.md) (PR #9593); the draft [PLAN.md](../plans/PLAN.md) is kept as research. |
 | [executeRaw calls on the CLI path](rust-cli-executeraw-map.md) | Each `executeRaw` call that `import`, `extract` and seven read commands make on a PGLite brain, with the typed member that can replace it on a Rust brain. Pinned to one commit. |
+| [Rust put and get member trace](rust-put-get-member-trace.md) | Recorded CLI member calls, baseline stop points, the non-managed Rust put/get result and remaining refusals. |

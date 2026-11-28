@@ -3,13 +3,13 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 The native store and addon provide explicit transaction handles, savepoints, commit, rollback and page-key
-holds (`crates/gbrain-napi/src/families/transactions.rs`). The TypeScript side is not landed: the current
-`src/core/rust-engine/store-members/transactions.ts` exports no BrainEngine member, so `engine.transaction`,
-`engine.transactionDirect`, `engine.lockPageKeys`, `readTransactionSettings` and `applyTransactionSettings` refuse
-with `engine_capability_missing` on this landing. The JavaScript callback, gating, re-entry and disconnect behaviour
-below is the intended adapter contract, not BrainEngine behaviour available now.
+holds (`crates/gbrain-napi/src/families/transactions.rs`). The TypeScript module
+`src/core/rust-engine/store-members/transactions.ts` exports `transaction`, `transactionDirect`, `lockPageKeys`,
+`readTransactionSettings`, `applyTransactionSettings` and `declarePersistence`. `beginSnapshotRead` is not exported
+and refuses with `engine_capability_missing`, so the `transactions` capability is not reported even though these
+individual members are served.
 
-`engine.transaction(fn, opts?)`, `engine.transactionDirect(fn)` and `engine.lockPageKeys(keys)` are meant to run on
+`engine.transaction(fn, opts?)`, `engine.transactionDirect(fn)` and `engine.lockPageKeys(keys)` run on
 the Rust engine with PGLite's observable behaviour. `fn` gets a transaction engine (a clone of the
 engine); every member called on it reads the transaction's own writes, and the whole transaction
 becomes visible to the brain in one commit, or not at all.
@@ -66,7 +66,7 @@ becomes visible to the brain in one commit, or not at all.
     - Any other custom name Postgres accepts, `gbrain` and one or more simple identifiers
       (`^gbrain(\.[a-z_][a-z0-9_]*)+$`), stays on the transaction too, unless schema SQL reads it.
       The names the schema's triggers and functions read and no store writer reads yet
-      (`gbrain.materializing_revision`, `writer_quiesced`, `topology_change`, `refresh_barrier`,
+      (`gbrain.materializing_revision`, `topology_change`, `refresh_barrier`,
       `trust_generation_bumped`, `guest_note`, `graduation_run`) refuse, so a caller never sets
       one that changes Postgres and nothing here.
     - `plan_cache_mode` stays on the transaction too, for the belief batch probe
@@ -109,9 +109,10 @@ read-only transaction`. A transaction becomes read-only two ways:
 - `opts.readOnly` at `transaction(fn, opts)`, Postgres's `BEGIN READ ONLY`. PGLite ignores
   `opts.readOnly`; this one is a deliberate divergence from it. Reads inside see a stable snapshot,
   and the commit writes nothing.
-- `beginSnapshotRead({ readOnly: true })` inside the transaction, Postgres's `SET TRANSACTION READ
-  ONLY`. Writes made before it stay and commit; every write after it refuses. Postgres and PGLite
-  refuse the same writes (`test/engine-parity/transaction-settings.test.ts`).
+- Native `txBrain.setTransactionReadOnly()` inside the transaction, Postgres's `SET TRANSACTION READ
+  ONLY`. Writes made before it stay and commit; every write after it refuses. The BrainEngine member
+  `beginSnapshotRead({ readOnly: true })` still refuses on Rust; Postgres and PGLite serve it
+  (`test/engine-parity/transaction-settings.test.ts`).
 
 ## How it works
 

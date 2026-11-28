@@ -203,8 +203,9 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
 ## Known differences
 
 - Link temporal state is served by the link_temporal family ([link_temporal.md](link_temporal.md)): a derived-link
-  publication takes `snapshot`, `lineGrammar`, `wanted` and `temporalBody`, then runs the temporal and wanted steps as
-  separate store calls after the link write (not one transaction). `semanticsPrimed` is ignored.
+  publication takes `snapshot`, `lineGrammar`, `wanted` and `temporalBody`. The link write, wanted rows, temporal
+  evidence and relationship state share one transaction, including every origin in a batch. Relation semantics are
+  primed before publication unless `semanticsPrimed` is true for every item.
 - `lockPageKeys` is not needed: the store's write transaction is serial.
 - `PageSourceMissingError` and the `REVISION_BACKFILL_PENDING` path do not occur: every store page has a source and a
   revision.

@@ -1803,15 +1803,17 @@ that is not connected refuses `engine_closed`. These members run on the store (`
 - Versions, chunks and timeline: `createVersion`, `getVersions`, `revertToVersion`, `upsertChunks`, `sealChunks`,
   `getChunks`, `getChunkPage`, `getChunkWindows`, `countChunklessPagesWithContent`, `listChunklessPagesWithContent`,
   `deleteChunks`, `addTimelineEntry`, `addTimelineEntriesBatch`, `getTimeline`, `getTimelineForDate`, `getSince`,
-  `getOnThisDay`, `getLastSeen` and `upsertEventProjection`. `page_versions` is reported. `timeline` is not, because
-  `removeTimelineRows`, `updateTimelineDetails`, `readRowTrustRows`, `listStoredTimelineRowsOrdered` and
-  `deleteTimelineRows` still refuse. `chunks` stays unreported, because `deleteChunksExcept`, `setChunkerVersion`, `writeTextProjectionSeal`, `moveChunkIndexes` and
-  `getChunkReuseRows` still refuse. Reads: `rust/docs/store/chunk_queries.md` and `timeline_queries.md`.
+  `getOnThisDay`, `getLastSeen`, `upsertEventProjection`, `removeTimelineRows`, `updateTimelineDetails`,
+  `listStoredTimelineRowsOrdered`, `deleteChunksExcept`, `writeTextProjectionSeal`, `moveChunkIndexes` and
+  `getChunkReuseRows`. `page_versions` is reported. `timeline` is not, because `readRowTrustRows` and
+  `deleteTimelineRows` still refuse. `chunks` stays unreported, because `setChunkerVersion`, `hasUnsealedPages` and
+  `listLiveChunksByIds` still refuse. Reads: `rust/docs/store/chunk_queries.md` and `timeline_queries.md`.
 - Links and graph: `addLink`, `addLinksBatch`, `removeLink`, `getLinks`, `getBacklinks`, `traverseGraph`,
   `traversePaths`, `traversePathsDetailed`, and the link reads in `rust/docs/store/link_queries.md` (`getBacklinkCounts`,
   `getAdjacencyBoosts`, `relationalFanout`, `findOrphanPages`, `supersedingPageSlugs`, `pagesLinkingTo`, ...). Every
-  member of `graph` is served, so `graph` is reported. `links` is not: `lockRegisteredSourceIds`, `replaceWantedLinkRows`,
-  `readLinkContextMatches`, `readLinkContextOriginPages` and `listAmendmentsNotApplied` still refuse.
+  member of `graph` is served, so `graph` is reported. `lockRegisteredSourceIds` and `replaceWantedLinkRows` are served.
+  `links` is not reported: `readLinkContextMatches`, `readLinkContextOriginPages` and `listAmendmentsNotApplied` still
+  refuse.
 - Vectors and embeddings: `searchVector` and `searchTakesVector` (an exact scan over the stored vectors, scored as
   pgvector scores them), the embedding state members (`getEmbeddingsByChunkIds`, `cosinesByChunkIds`, `listStaleChunks`,
   `setPageEmbeddingSignature`, `updateTakeEmbeddings`, ...) and `upsertChunks` and `sealChunks` with the vector a chunk
@@ -1828,8 +1830,8 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   refuses `engine_capability_missing`. Contracts: `rust/docs/store/facts.md`, `ontology.md`, `eval_capture.md`.
 - Takes, salience, stats and the ingest log, alias and slug members, and the extraction and page-listing reads:
   `rust/docs/store/takes.md`, `salience.md`, `stats.md`, `aliases.md`, `extraction.md` and `page_ops.md`. The `salience` and `ingest_log`
-  capabilities are reported; `takes` is not, because `matchTakeRows`, `deleteTakeRows`, `listLiveTakesByIds` and
-  `findTakeId` still refuse.
+  capabilities are reported. `matchTakeRows` and `deleteTakeRows` are served; `takes` is not reported, because
+  `listLiveTakesByIds` and `findTakeId` still refuse.
 - Facts and ontology claims, page operations, raw data and files, eval capture, dream verdicts, contradiction runs and
   the code call graph: `rust/docs/store/facts.md`, `ontology.md`, `page_ops.md`, `raw_files.md`, `eval_capture.md`,
   `dream.md`, `contradictions.md` and `code_edges.md`. The `facts`, `raw_data`, `files`, `eval_capture`,
@@ -1841,9 +1843,10 @@ that is not connected refuses `engine_closed`. These members run on the store (`
 - Segmented pages (a page over 1 MiB, stored in segments): `allocateBodyOccurrenceIds`, `stageSegmentTexts`,
   `readSegmentTexts`, `stageManifestRows`, `readManifest`, `stageSegmentChunks`, `createSegmentedPageShell`,
   `flipBodyGeneration`, `openBodyStaging`, `setBodyStagingState`, `readSegmentDerivations`, `upsertSegmentDerivations`,
-  `retireSegmentDerivations`, `sealSegmentedPage` and `refreshPageBody`. `sweepSegments` still refuses, and so does
-  a segmented page written inside `transaction` (the member refuses on a Rust brain; the store has a native
-  `beginTransaction` that no TypeScript member exposes), so the `page_body` capability stays unreported.
+  `retireSegmentDerivations`, `sealSegmentedPage` and `refreshPageBody`. `sweepSegments`,
+  `deleteRewrittenSegmentDerivations` and `storeSegmentDerivationsIfLive` still refuse, so the
+  `page_body` capability stays unreported. `transaction` exposes the store's native transaction handle through
+  a transaction-bound engine (`rust/docs/store/transactions.md`).
   A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`), and so does a
   plain (unsealed) `upsertChunks`, `invalid_state` before it writes.
 
@@ -1896,17 +1899,13 @@ another outcome does not count); any other case must return what PGLite returns,
 passes, and a row that stops being true fails the run). The suite
 runs on PGLite alone without the flag.
 
-**Transactions and the belief ledger.** Both stay refused on the Rust engine, on purpose.
+**Transactions and the belief ledger.**
 
-- `transaction`, `transactionDirect` and `lockPageKeys` refuse `transactions`, and so do `readTransactionSettings`,
-  `applyTransactionSettings`, `beginSnapshotRead`, `declarePersistence` and `requireSynchronousCommit`
-  (`src/core/rust-engine/members.ts`; `store-members/transactions.ts` exports nothing). The store has a native
-  transaction handle that spans several calls (`brain.beginTransaction`, `rust/crates/gbrain-napi/src/families/transactions.rs:24`);
-  no TypeScript member exposes it. `lockPageKeys` throws outside a transaction on PGLite. Code that passes settings into a
-  transaction (the write attribution, trust and maintenance settings in `src/core/persistence/context.ts`) reads and
-  applies them with the typed members `readTransactionSettings` and `applyTransactionSettings` (`context.ts:35,46`); the
-  SQL engines run them as `current_setting` and `set_config` (`src/core/engine-sql/transaction-settings.ts`), and a Rust
-  brain refuses both.
+- `transaction`, `transactionDirect`, `lockPageKeys`, `readTransactionSettings`, `applyTransactionSettings`,
+  `declarePersistence` and `requireSynchronousCommit` are served (`store-members/transactions.ts`,
+  `store-members/persistence.ts`). `transaction` opens the store's write transaction, and a call on a transaction-bound
+  engine opens a savepoint (contract: `rust/docs/store/transactions.md`). `beginSnapshotRead` still refuses
+  `transactions`, so that capability is not reported. The belief ledger stays refused on purpose:
 - `belief_ledger` is a subsystem, not a `BrainEngine` member: `src/core/belief/` appends and reads belief events through
   `executeRaw`. The Rust engine never reports `raw_sql` (design D18), so the ledger refuses until its reads and appends
   have typed members. Nothing in the Rust engine writes belief events today.

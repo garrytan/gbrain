@@ -205,8 +205,9 @@ foreign key to the texts has no cascade).
 
 The TypeScript engine refuses these with `engine_capability_missing`:
 
-- A segmented page inside `transaction`: the store has no transactions yet, so the parity cases that
-  stage inside one stop on that refusal.
+- `sweepSegments`: the native store implements the sweep, but `store-members/page-body.ts` does not
+  export a BrainEngine member for it. The staging members can run on a transaction-bound engine.
+- `deleteRewrittenSegmentDerivations` and `storeSegmentDerivationsIfLive` are not exported as TypeScript members.
 
 ## Known differences from PGLite
 

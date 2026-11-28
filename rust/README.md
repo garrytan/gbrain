@@ -195,7 +195,7 @@ Errors from the addon are real `Error` objects with a `code`:
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |
 | `page_not_found` | `addTag`, `addPageTagsById`, `createVersion`, `addLink` or `addTimelineEntry` named a page that does not exist. |
-| `page_ambiguous` | `readPageSnapshot` under `requireUnambiguous` found more than one readable page for the identifier. The addon rejects with this code. The TypeScript wrapper converts it to `PageSnapshotAmbiguousError` in `src/core/rust-engine/store-errors.ts` where that mapping exists; master's wrapper does not have it yet, so there the code stays on the error. |
+| `page_ambiguous` | `readPageSnapshot` under `requireUnambiguous` found more than one readable page for the identifier. The addon rejects with this code. The TypeScript wrapper converts it to `PageSnapshotAmbiguousError` in `src/core/rust-engine/store-errors.ts`. |
 | `constraint_violation` | A write breaks a table constraint PGLite enforces: a `linkSource` outside its CHECK, or a `deletePage` whose origin clear collides with another link. |
 | `revision_conflict` | `expectedRevision` does not match the page. |
 | `revision_required` | The page exists and the caller sent `force: false` without `expectedRevision`. |
