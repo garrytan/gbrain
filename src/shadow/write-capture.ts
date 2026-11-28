@@ -79,8 +79,12 @@ export interface WriteSampler {
 type Row = Record<string, string | null>;
 const strings = (rows: Row[], key: string): string[] => [...new Set(rows.map((r) => r[key]).filter((v): v is string => typeof v === 'string'))];
 
-/** The rows of the pages `targets` name, the links among them (all links touching them, for a delete) and the pages and sources those need. Throws `preimage_too_large`. */
-export async function readPreimage(engine: BrainEngine, op: string, targets: PageRef[], signal: { aborted: boolean } = { aborted: false }, within?: BrainEngine, softDeleted: ReadonlySet<string> = new Set()): Promise<PreImage> {
+/**
+ * The rows of the pages `targets` name, the links among them (all links touching them, for a delete or a link removal) and the pages and sources those need. Throws `preimage_too_large`.
+ * `fence`: the data fence's re-read, whose `targets` are every page the copy holds: it reads only the links among them, never every link touching them, so an unchanged
+ * link from a copied neighbour to a page the copy never held (soft-deleted, or one of hundreds) cannot fail it. The comparison reads no link outside the copy either.
+ */
+export async function readPreimage(engine: BrainEngine, op: string, targets: PageRef[], signal: { aborted: boolean } = { aborted: false }, within?: BrainEngine, softDeleted: ReadonlySet<string> = new Set(), fence = false): Promise<PreImage> {
   // The caller's deadline cannot stop a transaction that is queued or running, so each step looks at `signal` first: an abandoned read ends at its next
   // statement (and releases the connection a primary write waits behind) instead of finishing its work.
   const live = (): void => { if (signal.aborted) throw new Error('preimage_aborted'); };
@@ -100,7 +104,7 @@ export async function readPreimage(engine: BrainEngine, op: string, targets: Pag
     };
     const pages = await rowsOf('pages', '(t.source_id::text, t.slug::text) IN (SELECT * FROM unnest($1::text[], $2::text[]))', [targets.map((t) => t.source), targets.map((t) => t.slug)], MAX_PRE_PAGES);
     const ids = pages.map((p) => p.k0!);
-    const links = ids.length ? await rowsOf('links', `t.from_page_id::text = ANY($1::text[]) ${op === 'deletePage' || op === 'removeLinksByPagesAndSource' ? 'OR' : 'AND'} t.to_page_id::text = ANY($1::text[])`, [ids], MAX_PRE_LINKS) : [];
+    const links = ids.length ? await rowsOf('links', `t.from_page_id::text = ANY($1::text[]) ${!fence && (op === 'deletePage' || op === 'removeLinksByPagesAndSource') ? 'OR' : 'AND'} t.to_page_id::text = ANY($1::text[])`, [ids], MAX_PRE_LINKS) : [];
     const more = strings(links, 'from_page_id').concat(strings(links, 'to_page_id'), strings(links, 'origin_page_id')).filter((id) => !ids.includes(id));
     if (more.length) pages.push(...await rowsOf('pages', 't.id::text = ANY($1::text[])', [[...new Set(more)]], MAX_PRE_PAGES));
     if (pages.length > MAX_PRE_PAGES) throw new Error('preimage_too_large');
@@ -155,7 +159,7 @@ async function fenced(engine: BrainEngine, op: string, args: unknown[], targets:
       if (typeof wrote !== 'string' || (back.pages[0] as { knowledge_revision?: unknown } | null)?.knowledge_revision !== wrote) return 'moved';
     }
     const own = new Set(footprint(op, args, targets).pages.map((r) => `${r.source}\0${r.slug}`));
-    const again = await readPreimage(engine, op, [...targets, ...pre.pages.map((p) => ({ source: p.source_id ?? 'default', slug: p.slug ?? '' }))], undefined, undefined, own);
+    const again = await readPreimage(engine, op, [...targets, ...pre.pages.map((p) => ({ source: p.source_id ?? 'default', slug: p.slug ?? '' }))], undefined, undefined, own, true);
     return movedOutsideFootprint(op, args, pre, again, targets) ? 'moved' : 'clear';
   } catch { return 'failed'; }
 }

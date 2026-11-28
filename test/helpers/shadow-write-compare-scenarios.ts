@@ -38,7 +38,7 @@ import { declarePersistence } from '../../src/core/engine-sql/persistence-declar
 import { lockEffectClaimRow } from '../../src/core/engine-sql/embedding-install.ts';
 import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../../src/core/rust-engine.ts';
-import { LOST_NONQUALIFYING, QUALIFYING_LINE_REASONS, readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
+import { LOST_NONQUALIFYING, MAX_PRE_LINKS, QUALIFYING_LINE_REASONS, readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
 import { encodeArgs } from '../../src/shadow/codec.ts';
 import { ensureEpoch, readEpoch } from '../../src/shadow/evidence-epoch.ts';
 import { withEnv } from './with-env.ts';
@@ -476,6 +476,32 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
         const [link] = await primary().getLinks(ALICE.slug);
         await primary().addLink(ALICE.slug, 'people/dora-example', 'knows Dora', 'knows', link!.link_source!);
         await primary().addLink(ACME.slug, 'people/dora-example', 'employs Dora', 'employs', link!.link_source!); // between the two neighbours
+        await e.removeLinksByPagesAndSource([ALICE], { linkSource: link!.link_source! });
+      }, 1);
+      expect(out.inbox[0]!.moved).toBe(false);
+      expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+    }, 60_000);
+
+    // On Postgres the data fence re-reads the copy after the write. These two pin that it reads only the links among the copied pages: an unchanged link from a copied
+    // neighbour to a page the copy never held (a soft-deleted one, or one of hundreds) must not fail the fence and book the sample moved.
+    test('a neighbour\'s unchanged link to a soft-deleted page the copy never held: removing links is compared, not booked moved', async () => {
+      const out = await replay(async (e) => {
+        await primary().putPage('people/dora-example', page('Dora Example')); // not sampled: the primary, unwrapped
+        const [link] = await primary().getLinks(ALICE.slug);
+        await primary().addLink(ACME.slug, 'people/dora-example', 'employs Dora', 'employs', link!.link_source!); // a second hop from the written page
+        await primary().executeRaw(`UPDATE pages SET deleted_at = now() WHERE slug = 'people/dora-example'`);
+        await e.removeLinksByPagesAndSource([ALICE], { linkSource: link!.link_source! });
+      }, 1);
+      expect(out.inbox[0]!.moved).toBe(false);
+      expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+    }, 60_000);
+
+    test('a neighbour with more unrelated links than the copy holds: removing links is compared, not booked moved', async () => {
+      const out = await replay(async (e) => {
+        await primary().putPage('people/dora-example', page('Dora Example')); // not sampled: the primary, unwrapped
+        const [link] = await primary().getLinks(ALICE.slug);
+        await primary().executeRaw(`INSERT INTO links (from_page_id, to_page_id, link_type, link_source)
+          SELECT a.id, d.id, 'rel' || g, $3 FROM pages a, pages d, generate_series(1, ${MAX_PRE_LINKS + 1}) g WHERE a.slug = $1 AND d.slug = $2`, [ACME.slug, 'people/dora-example', link!.link_source!]);
         await e.removeLinksByPagesAndSource([ALICE], { linkSource: link!.link_source! });
       }, 1);
       expect(out.inbox[0]!.moved).toBe(false);
