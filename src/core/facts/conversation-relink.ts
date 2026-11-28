@@ -142,8 +142,12 @@ async function planPages(engine: BrainEngine, sourceId: string, slugs: string[])
       const key = `${row.slug}\u0000${row.visibility}`;
       if (!hintCache.has(key)) {
         const slugs = await conversationEntityHints(engine, sourceId, row.slug, row.visibility);
-        hintCache.set(key, slugs.length ? await engine.executeRaw<{ slug: string; title: string }>(
-          'SELECT slug, title FROM pages WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL', [sourceId, slugs]) : []);
+        const titled: Array<{ slug: string; title: string }> = [];
+        for (const slug of slugs) {
+          const hp = await engine.getPage(slug, { sourceId });
+          if (hp) titled.push({ slug, title: hp.title });
+        }
+        hintCache.set(key, titled);
       }
       const hinted = await inferSubjectFromHints(engine, sourceId, row.visibility, row.fact, hintCache.get(key)!);
       if (hinted) { page.link.push({ id: Number(row.id), fact: row.fact, entity_slug: hinted, context: appendContextNote(row.context, 'entity relinked from page links') }); continue; }
