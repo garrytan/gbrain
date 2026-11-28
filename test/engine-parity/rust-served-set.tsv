@@ -189,7 +189,9 @@ test/engine-parity/segmented-ledger-reads.test.ts	served
 test/engine-parity/segmented-mirror-effects.test.ts	served	
 test/engine-parity/segmented-purge-writes.test.ts	served	
 test/engine-parity/segmented-rewrite.test.ts	served	
+test/engine-parity/served-remote-context-reads.test.ts	served	
 test/engine-parity/served-remote-doctor.test.ts	served	
+test/engine-parity/served-remote-search-reads.test.ts	served	
 test/engine-parity/served-remote-think.test.ts	served	
 test/engine-parity/served-remote-writes.test.ts	served	
 test/engine-parity/session-state-cap.test.ts	served	

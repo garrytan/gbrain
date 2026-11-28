@@ -1030,7 +1030,6 @@ readCycleListingInstant	owner process only: a gbrain command, a job worker or cy
 readDatabaseClock	ruling A default
 readDeletePageRequest	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readDeletedPageBody	ruling A default
-readDeltaSessionRow	ruling A default
 readDerivationPurgeState	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readDoctorLastKnown	reached remotely only through run_doctor, which crosses whole: the brain server runs it as the owner (admin scope); no other remote operation reaches it
 readDoctorSources	ruling A default
@@ -1059,14 +1058,9 @@ readEmbeddingCompletion	ruling A default
 readEmbeddingIdentity	reached remotely only through run_doctor, which crosses whole: the brain server runs it as the owner (admin scope); no other remote operation reaches it
 readEmbeddingSignatureCensus	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 readEngineMigrationHistory	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
-readEntityAnchoredPages	ruling A default
-readEntityIdentityIdsForPages	ruling A default
-readEntityInboundEdges	ruling A default
-readEntityNewestFacts	ruling A default
-readEntityOpenLoops	ruling A default
+readEntityOpenLoops	not reached: a remote entity card never calls it (verbs/entity-card.ts skips it when remote); the owner CLI card reads it
 readEntityRehomeState	run_doctor and write path only: run_doctor crosses whole and the brain server runs it as the owner (admin scope); a remote caller's write crosses whole and runs on the server, or is refused
 readEventProjectionId	ruling A default
-readExactSnippetChunks	ruling A default
 readExplainPage	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readExplainScanPage	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readExportPageRows	run_doctor and write path only: run_doctor crosses whole and the brain server runs it as the owner (admin scope); a remote caller's write crosses whole and runs on the server, or is refused
@@ -1077,7 +1071,6 @@ readExtractReceiptSlot	owner process only: a gbrain command, a job worker or cyc
 readExtractRollup7d	reached remotely only through run_doctor, which crosses whole: the brain server runs it as the owner (admin scope); no other remote operation reaches it
 readExtractionLagCounts	ruling A default
 readFactActivity	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
-readFactCacheWatermark	ruling A default
 readFactEntitySlug	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readFactEntitySlugById	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 readFactForForget	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
@@ -1093,8 +1086,7 @@ readFactVisibility	run_doctor and write path only: run_doctor crosses whole and 
 readFactWithdrawalClaim	ruling A default
 readFactWithdrawnBacking	no caller in src outside the engine and its tests: no operation reaches it
 readFactWithdrawnRow	no caller in src outside the engine and its tests: no operation reaches it
-readFactsEmbeddingColumn	ruling A default
-readFactsFtsIndexState	ruling A default
+readFactsFtsIndexState	not reached: only the owner CLI reindex-search-vector reads it (facts/fts-index.ts ensureFactsKeywordIndex)
 readFalseStampedChunkCounts	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 readFederationExposedPages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readFeedbackStatus	reached remotely only through run_doctor, which crosses whole: the brain server runs it as the owner (admin scope); no other remote operation reaches it
@@ -1109,7 +1101,6 @@ readFileOwner	localOnly file operations and the CLI only: the MCP dispatch refus
 readFirstDue	reached remotely only through run_doctor, which crosses whole: the brain server runs it as the owner (admin scope); no other remote operation reaches it
 readFirstLiveSlugAtPath	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readFirstSourceId	reached remotely only through run_doctor, which crosses whole: the brain server runs it as the owner (admin scope); no other remote operation reaches it
-readFolderAccess	ruling A default
 readForecastPredictions	ruling A default
 readForgetTarget	ruling A default
 readGenerationActivationState	ruling A default
@@ -1132,7 +1123,6 @@ readGlobalMaintenanceDeaths	reached remotely only through run_doctor, which cros
 readGraduationGateRow	ruling A default
 readGroupSpendTotals	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readGuestDeleteRow	ruling A default
-readGuestMarks	ruling A default
 readGuestSourceRow	run_doctor and write path only: run_doctor crosses whole and the brain server runs it as the owner (admin scope); a remote caller's write crosses whole and runs on the server, or is refused
 readHandoverRow	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readHeadBlockerRows	run_doctor and write path only: run_doctor crosses whole and the brain server runs it as the owner (admin scope); a remote caller's write crosses whole and runs on the server, or is refused
@@ -1143,7 +1133,6 @@ readHeldConceptRows	reached remotely only through run_doctor, which crosses whol
 readHeldConfigValue	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readHeldGenerationContext	ruling A default
 readHeldGenerationProposal	run_doctor and write path only: run_doctor crosses whole and the brain server runs it as the owner (admin scope); a remote caller's write crosses whole and runs on the server, or is refused
-readHeldHitRows	ruling A default
 readHeldPageLocation	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readHeldRowVisibility	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readHeldVersionsEdited	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
@@ -1181,7 +1170,7 @@ readLatestTakeGrades	ruling A default
 readLatestVersionId	ruling A default
 readLatestVersionIdAtTier	think save and take paths and write path only: a remote think forces save and take off; a remote caller's write crosses whole and runs on the server, or is refused
 readLegacyBeliefTombstones	think save and take paths and write path only: a remote think forces save and take off; a remote caller's write crosses whole and runs on the server, or is refused
-readLegacyClaimFingerprints	ruling A default
+readLegacyClaimFingerprints	not reached: only belief state and backfill write paths read it (belief/legacy-fingerprint.ts); they run on the server or as the owner
 readLegacyJobAuthority	reached remotely only through run_doctor, which crosses whole: the brain server runs it as the owner (admin scope); no other remote operation reaches it
 readLinkRelationshipEvidence	ruling A default
 readLinkTargetPages	ruling A default
@@ -1207,13 +1196,11 @@ readLivePageIdBySlug	ruling A default
 readLivePageTypes	run_doctor and write path only: run_doctor crosses whole and the brain server runs it as the owner (admin scope); a remote caller's write crosses whole and runs on the server, or is refused
 readLivePagesByIds	ruling A default
 readLiveSlugAliases	ruling A default
-readLiveSlugs	ruling A default
 readLiveStoredBody	think save and take paths and write path only: a remote think forces save and take off; a remote caller's write crosses whole and runs on the server, or is refused
 readLiveSyncJobId	reached remotely only through run_doctor, which crosses whole: the brain server runs it as the owner (admin scope); no other remote operation reaches it
 readLiveSyncPassRows	reached remotely only through run_doctor, which crosses whole: the brain server runs it as the owner (admin scope); no other remote operation reaches it
 readLiveTakePage	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readLocalWriterMemberGrant	ruling A default
-readLongPageSizes	ruling A default
 readLoopFactState	ruling A default
 readManagedSyncCursorHeader	ruling A default
 readManagedSyncFailureRows	ruling A default
@@ -1249,11 +1236,9 @@ readNoopEmbeddingCandidates	ruling A default
 readNotifierFirstDue	no caller in src outside the engine and its tests: no operation reaches it
 readNotifierLease	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 readNotifierSources	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
-readNotifierStatusRows	ruling A default
 readOAuthClientMemberGrant	ruling A default
 readOAuthClientReceiptGrant	ruling A default
 readOauthAccessTokenRows	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
-readOauthClient	ruling A default
 readOauthClientAttest	ruling A default
 readOauthClientColumns	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readOauthClientForUpdate	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
@@ -1274,20 +1259,16 @@ readOriginIndexState	ruling A default
 readOrphanedManagedSyncFailureRows	ruling A default
 readOwnedLinks	ruling A default
 readOwnerHostBinding	ruling A default
-readOwnerOnlySourcesPresent	ruling A default
 readPageAccessAllowed	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
-readPageAliasRows	ruling A default
 readPageChunkerVersion	ruling A default
 readPageCompiledTruths	no caller in src outside the engine and its tests: no operation reaches it
 readPageDatabaseOnlyReason	ruling A default
-readPageDateFieldsByIds	ruling A default
 readPageEmbeddingBudget	ruling A default
 readPageExtractionReceipt	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readPageExtractionWatermark	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readPageFeedbackWeights	ruling A default
 readPageFileOrigin	run_doctor, think save and take paths and write path only: run_doctor crosses whole and the brain server runs it as the owner (admin scope); a remote think forces save and take off; a remote caller's write crosses whole and runs on the server, or is refused
 readPageFolderRulesAllowed	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
-readPageHiddenFromCaller	ruling A default
 readPageHiddenFromWriter	ruling A default
 readPageIdInSource	ruling A default
 readPageIdentity	reached remotely only through run_doctor, which crosses whole: the brain server runs it as the owner (admin scope); no other remote operation reaches it
@@ -1301,15 +1282,12 @@ readPagePrivacyHidden	ruling A default
 readPageProvenanceComplete	ruling A default
 readPageRedactionRow	ruling A default
 readPageRedactionRows	ruling A default
-readPageReferenceDate	ruling A default
-readPageRevisionAttribution	ruling A default
 readPageRevisionForShare	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readPageRevisionWriter	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readPageRevisions	run_doctor and write path only: run_doctor crosses whole and the brain server runs it as the owner (admin scope); a remote caller's write crosses whole and runs on the server, or is refused
 readPageSizeRows	ruling A default
 readPageSlugInSource	run_doctor and write path only: run_doctor crosses whole and the brain server runs it as the owner (admin scope); a remote caller's write crosses whole and runs on the server, or is refused
 readPageStampTimes	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
-readPageSynopses	ruling A default
 readPageTierRef	ruling A default
 readPageTierRows	ruling A default
 readPageTitle	ruling A default

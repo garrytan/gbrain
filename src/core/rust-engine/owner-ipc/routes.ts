@@ -134,6 +134,14 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   'readEntityCardRows', 'rankEntities', 'listNameVariantCardCandidates', 'readVisibleVariantPages',
   'listVisibleNameVariantCandidates', 'readRetirementHop', 'readEntityAliasRows', 'readRankCoverage', 'readReferrerTargetCounts',
   'listVersionReasonWriters',
+  // served-remote-search-reads, served-remote-context-reads (both routes): the reads a remote search, query, exact search,
+  // delta, context pack, write attribution, recall, guest read and household mark make. readPageDateFieldsByIds and
+  // readGuestMarks also pass the page-id guard (served/remote-member-policy.ts).
+  'readDeltaSessionRow', 'readEntityAnchoredPages', 'readEntityIdentityIdsForPages', 'readEntityInboundEdges',
+  'readEntityNewestFacts', 'readExactSnippetChunks', 'readFactCacheWatermark', 'readFactsEmbeddingColumn',
+  'readFolderAccess', 'readGuestMarks', 'readHeldHitRows', 'readLiveSlugs', 'readLongPageSizes',
+  'readNotifierStatusRows', 'readPageAliasRows', 'readPageDateFieldsByIds', 'readPageHiddenFromCaller',
+  'readPageReferenceDate', 'readPageRevisionAttribution', 'readPageSynopses',
 ];
 
 /**
@@ -161,6 +169,8 @@ export const OWNER_IPC_REMOTE_DENY: Readonly<Record<string, string>> = {
   ...Object.fromEntries(['readActiveAccessTokenByHash', 'readOauthCodeChallenge', 'readOauthCodeForUpdate', 'readOauthRefreshTokenForUpdate',
     'readAccessCredentials', 'listOwnerCredentialRows', 'listAttestCredentialRows'].map(m => [m, CREDENTIALS])),
   ...Object.fromEntries(['readAccessReadLog', 'listAccessReadPageRefs', 'readAccessReadsOfPages', 'tallyAccessReadsOfPages'].map(m => [m, READ_LOG])),
+  readOauthClient: 'the OAuth client row of any client id; a remote caller\'s credential checks run in the owner process',
+  readOwnerOnlySourcesPresent: 'whether any owner-only source exists, the server\'s privacy probe; a refusal reads as present (fails closed)',
   ...Object.fromEntries(['readDecideState', 'dailyDecideSpend', 'listDecideSpendBySlot', 'listDecideReceiptStats', 'getDecideProposal',
     'listDecideProposals', 'getDecideReviewProposal', 'listDecideCalibrations', 'getDecideCalibration'].map(m => [m, DECIDE])),
 };
