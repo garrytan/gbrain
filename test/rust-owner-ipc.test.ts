@@ -16,6 +16,7 @@
  * 4. Seam: none beyond the public `serveOwnerEngine` / `connectOwner` / `installOwnerClient` and the OpenRustEngine
  *    `ownerWaitMs` option the CLI path also reads.
  */
+import { STORE_MEMBERS } from '../src/core/rust-engine/store-members/index.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
@@ -1121,9 +1122,12 @@ describe('a Rust owner whose engine does not report persistence_journal', () => 
     try {
       const calls: Array<[string, (e: BrainEngine) => Promise<unknown>]> = [
         ['executeRaw', e => e.executeRaw('SELECT 1')],
-        ['transaction', e => e.transaction(async () => null)],
+        // transaction is served in process now; a client refuses it with the owner-socket refusal (tested elsewhere).
+        // A member the Rust store does not serve (raw_sql until it does): readStoredBodyBytes.
+        ['readStoredBodyBytes', e => (e as unknown as { readStoredBodyBytes(...a: unknown[]): Promise<unknown> }).readStoredBodyBytes(1)],
       ];
       for (const [member, call] of calls) {
+        expect(member in STORE_MEMBERS).toBe(false);
         const started = Date.now();
         const remote = await call(engine).then(() => null, e => e);
         expect(Date.now() - started).toBeLessThan(500);
