@@ -70,6 +70,9 @@ on:
       - '**/scripts/rust-unit-arms.ts'
       - 'test/rust-cli-parity.serial.test.ts'
       - 'test/fixtures/rust-cli-parity-brain/**'
+      - 'test/rust-cli-put.test.ts'
+      - 'test/rust-embedding-install-column.test.ts'
+      - 'test/rust-receipt-compaction-refusal.test.ts'
       - 'test/shadow-seed*.test.ts'
       - 'test/shadow-follow*.test.ts'
       - 'test/e2e/shadow-seed*.test.ts'
@@ -100,6 +103,9 @@ on:
       - '**/scripts/rust-unit-arms.ts'
       - 'test/rust-cli-parity.serial.test.ts'
       - 'test/fixtures/rust-cli-parity-brain/**'
+      - 'test/rust-cli-put.test.ts'
+      - 'test/rust-embedding-install-column.test.ts'
+      - 'test/rust-receipt-compaction-refusal.test.ts'
       - '.github/workflows/rust-engine.yml'
   workflow_dispatch:
   schedule:
@@ -316,6 +322,9 @@ jobs:
         run: |
           set -euo pipefail
           bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts test/rust-engine-store-snapshot.test.ts
+          # The Rust write path's own checks: guest admission and derived links, the embedding column width, and the receipt
+          # compaction refusal. Each runs only with GBRAIN_TEST_RUST_ARM set.
+          bun test --timeout=60000 test/rust-engine-admission-and-derived-links.test.ts test/rust-embedding-install-column.test.ts test/rust-receipt-compaction-refusal.test.ts
           for file in test/engine-parity/*.test.ts; do
             bun test --timeout=60000 "$file"
           done
@@ -365,9 +374,10 @@ jobs:
       # Each read command runs through the real CLI on a PGLite brain and a Rust brain. A command
       # that is equal, refused with engine_capability_missing, or has no Rust engine passes; a
       # diverged command (another answer, an untyped error) fails. The source-target file checks
-      # that --source reaches the Rust brain. GBRAIN_TEST_REQUIRE_RUST_ADDON makes a missing addon
-      # an error instead of a skip, and the next step fails the lane when no test ran. This job owns
-      # both files, so the stress gate does not stress them where no addon exists.
+      # that --source reaches the Rust brain, and the put file that gbrain put and get answer as on
+      # PGLite. GBRAIN_TEST_REQUIRE_RUST_ADDON makes a missing addon an error instead of a skip, and
+      # the next step fails the lane when no test ran. This job owns these files, so the stress gate
+      # does not stress them where no addon exists.
       - name: CLI parity on a Rust brain against PGLite (no diverged command)
         timeout-minutes: 15
         shell: bash
@@ -378,6 +388,7 @@ jobs:
           set -euo pipefail
           bash scripts/run-with-receipt.sh rust-cli parity -- bun test --timeout=60000 test/rust-cli-parity.serial.test.ts
           bash scripts/run-with-receipt.sh rust-cli source-target -- bun test --timeout=60000 test/rust-cli-source-target.test.ts
+          bash scripts/run-with-receipt.sh rust-cli put -- bun test --timeout=240000 test/rust-cli-put.test.ts
       - name: Fail the CLI parity lane when no test ran
         shell: bash
         run: bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" rust-cli
