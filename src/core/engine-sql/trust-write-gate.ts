@@ -128,10 +128,12 @@ export async function upsertPageWriteGateReceipt(exec: SqlExecutor, sourceId: st
   return rows[0] ? Number(rows[0].id) : null;
 }
 
+/** The one statement `deleteStalePageWriteGateReceipts` sends (write_gate_receipts only): the shadow write sampler judges the member by it (shadow/write-capture.ts). */
+export const DELETE_STALE_PAGE_WRITE_GATE_RECEIPTS_SQL = `DELETE FROM write_gate_receipts r USING pages p
+    WHERE r.target_table = 'pages' AND r.target_id = p.id::text AND p.source_id = $1 AND p.slug = $2 AND r.content_hash IS DISTINCT FROM $3`;
+
 export async function deleteStalePageWriteGateReceipts(exec: SqlExecutor, sourceId: string, slug: string, contentHash: string | null): Promise<void> {
-  await exec.executeRaw(`DELETE FROM write_gate_receipts r USING pages p
-    WHERE r.target_table = 'pages' AND r.target_id = p.id::text AND p.source_id = $1 AND p.slug = $2 AND r.content_hash IS DISTINCT FROM $3`,
-  [sourceId, slug, contentHash]);
+  await exec.executeRaw(DELETE_STALE_PAGE_WRITE_GATE_RECEIPTS_SQL, [sourceId, slug, contentHash]);
 }
 
 export async function listWriteGateReceiptsFor(exec: LegacyUnscopedRead, targetTable: string, targetId: string, limit: number): Promise<WriteGateReceiptRow[]> {

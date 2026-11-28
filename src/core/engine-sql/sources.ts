@@ -275,7 +275,16 @@ export interface SyncCheckpointAdvance {
  * differs from the run's (not read when the run keeps the pinned mode), else null.
  */
 export async function advanceSyncCheckpoint(exec: SqlExecutor, input: SyncCheckpointAdvance): Promise<{ advanced: boolean; pinnedSlugMode: string | null }> {
-  const { rows: changed } = await exec.run<{ id: string }>(sqlFragment`
+  const { rows: changed } = await exec.run<{ id: string }>(advanceSyncCheckpointFragment(input));
+  if (changed.length > 0) return { advanced: true, pinnedSlugMode: null };
+  if (input.keepPinnedSlugMode) return { advanced: false, pinnedSlugMode: null };
+  const [row] = await exec.executeRaw<{ mode: string | null }>(PINNED_SLUG_MODE_SQL, [input.sourceId, input.incarnation]);
+  return { advanced: false, pinnedSlugMode: row?.mode != null && row.mode !== input.slugMode ? row.mode : null };
+}
+
+const PINNED_SLUG_MODE_SQL = "SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id = $1 AND incarnation = $2::uuid";
+function advanceSyncCheckpointFragment(input: SyncCheckpointAdvance): SqlFragment {
+  return sqlFragment`
     UPDATE sources SET last_commit = ${input.commit}, last_sync_at = now(),
       config = jsonb_set(${trustedSql(SOURCE_CONFIG_OBJECT_SQL)}, '{slug_root_mode}',
         to_jsonb(CASE WHEN ${input.keepPinnedSlugMode}::boolean THEN COALESCE(config->>'slug_root_mode', ${input.slugMode}::text) ELSE ${input.slugMode}::text END)),
@@ -283,13 +292,13 @@ export async function advanceSyncCheckpoint(exec: SqlExecutor, input: SyncCheckp
     WHERE id = ${input.sourceId} AND incarnation = ${input.incarnation}::uuid
       AND (last_commit IS NOT DISTINCT FROM ${input.from}::text OR (${input.acceptAtCommit}::boolean AND last_commit = ${input.commit}))
       AND (${input.keepPinnedSlugMode}::boolean OR config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode' = ${input.slugMode})
-    RETURNING id`);
-  if (changed.length > 0) return { advanced: true, pinnedSlugMode: null };
-  if (input.keepPinnedSlugMode) return { advanced: false, pinnedSlugMode: null };
-  const [row] = await exec.executeRaw<{ mode: string | null }>(
-    "SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id = $1 AND incarnation = $2::uuid", [input.sourceId, input.incarnation]);
-  return { advanced: false, pinnedSlugMode: row?.mode != null && row.mode !== input.slugMode ? row.mode : null };
+    RETURNING id`;
 }
+/** Every statement `advanceSyncCheckpoint` can send (the checkpoint update of `sources` and the pinned-mode read; the fragment's values are placeholders, its text is fixed): the shadow write sampler judges the member by them (shadow/write-capture.ts). */
+export const ADVANCE_SYNC_CHECKPOINT_SQL: readonly string[] = [
+  renderFragment(advanceSyncCheckpointFragment({ sourceId: '', incarnation: '', commit: null, from: null, acceptAtCommit: false, slugMode: '', keepPinnedSlugMode: false } as SyncCheckpointAdvance)).text,
+  PINNED_SLUG_MODE_SQL,
+];
 
 /**
  * Ids of live sources whose last sync is more than seven days old by the database clock (`now()`), by id: the
