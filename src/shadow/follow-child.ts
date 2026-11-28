@@ -186,15 +186,20 @@ export class FollowChild {
     this.invalidate(keep ? 'follower_session_start' : 'not_reconciled');
     this.continuity = randomUUID();
     this.file.continuity = this.continuity;
-    try { writeFileSync(join(o.dir, FOREIGN_FILE), ''); } catch { /* no lines to miss yet */ }
-    // The seal is still on disk until this session's first write; the truncation above could make its foreign size
-    // match again. One line keeps it untakeable if this process dies first (its own line is skipped below).
-    if (seal) {
-      this.appendForeign('seal_revoked');
-      this.foreignOffset = foreignSize(o.dir) ?? 0;
+    const clear = (): boolean => { try { writeFileSync(join(o.dir, FOREIGN_FILE), ''); return true; } catch { return false; } };
+    if (!seal) {
+      clear(); // no seal on disk: the old lines name writes this session's own invalidation above already covers
+      this.write(true);
+      return;
     }
-    // Shown refused and invalid at once, with the seal removed (the blocker above covers this write failing).
-    this.write(true);
+    // The seal is still on disk until this session's first write. A blocker line appended to the existing bytes (never
+    // after a truncation, which could bring the file back to the seal's exact foreign size) keeps it untakeable if
+    // that write fails or this process dies first. Only once the seal-free file is on disk are the old lines cleared.
+    this.appendForeign('seal_revoked');
+    // The old lines and its own blocker are not read back as new writes (an unknown size: all of them are).
+    this.foreignOffset = foreignSize(o.dir) ?? 0;
+    // Shown refused and invalid at once, with the seal removed.
+    if (this.write(true) && clear()) this.foreignOffset = 0;
   }
 
   /**
