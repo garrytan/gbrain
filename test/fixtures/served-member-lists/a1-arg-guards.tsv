@@ -1,0 +1,4 @@
+# Served rows whose scope comes from arguments the client chose, with no server guard (lane L3 S4, Q1-B).
+# Per-user access (A1) must not lift while this file has rows; test/rust-served-a1-lock.test.ts enforces it.
+# Keep rows sorted (LC_ALL=C) and unique.
+member	hazard
