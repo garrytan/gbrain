@@ -23,14 +23,14 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import type { Action } from '../core/agent-output.ts';
-import { OperationError } from '../core/ops/contract.ts';
+import { OperationError, opError } from '../core/ops/contract.ts';
 import { managedBrain, readAllSourceHolds, readHoldRetryKeys, requestHoldRetry, writeHeldRetryPointer } from '../core/connectors/item-holds-store.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
 import { GIT_HOLD_OP, gitHoldFingerprint, outOfAttemptsHold, fenceAutoRepairFor, holdRepairSteps, readGitHoldRetryPaths, readGitSourceHolds, requestGitHoldRetry, type GitHoldRecord } from '../core/persistence/sync-holds.ts';
 import { readManagedSyncBacklog } from '../core/persistence/sync-drain.ts';
 import type { FenceAutoRepair } from '../core/fence-repair/hold-fix.ts';
 import { companyBrainProfile } from '../core/company-brain/policy.ts';
-import { findUnindexedFiles, refreshUnindexedFiles, unindexedScanBudgetMs, type UnindexedScan } from '../core/persistence/unindexed-files.ts';
+import { findUnindexedFiles, plainUnindexedSource, refreshUnindexedFiles, unindexedScanBudgetMs, type UnindexedScan } from '../core/persistence/unindexed-files.ts';
 
 export interface RetryHeldReceipt {
   source_id: string;
@@ -142,11 +142,15 @@ const UNINDEXED_VERIFY = { argv: ['gbrain', 'doctor', '--only', 'unindexed_files
  * on the next sync and stores the result (continuing an incomplete stored scan); a dry run lists them and writes nothing.
  */
 export async function retryUnindexed(engine: BrainEngine, sourceId: string, opts: { dryRun?: boolean; budgetMs?: number } = {}): Promise<RetryHeldReceipt> {
-  const [source] = await engine.executeRaw<{ config: Record<string, unknown> }>('SELECT config FROM sources WHERE id=$1 AND archived IS NOT TRUE', [sourceId]);
+  const [source] = await engine.executeRaw<{ config: Record<string, unknown>; local_path: string | null; last_commit: string | null }>('SELECT config,local_path,last_commit FROM sources WHERE id=$1 AND archived IS NOT TRUE', [sourceId]);
   if (!source) throw new OperationError('not_found', `Source "${sourceId}" was not found.`, 'List sources with: gbrain sources list');
   if (source.config?.kind != null || companyBrainProfile(source.config ?? {})) throw new OperationError('invalid_params',
     `Source ${sourceId} is a ${source.config?.kind != null ? 'connector' : 'company-brain'} source; --unindexed applies to managed Git sources only.`,
     `Run gbrain sources retry-held ${sourceId} without --unindexed to re-attempt its held items.`);
+  if (plainUnindexedSource(source)) throw opError('sync_not_applicable',
+    `Source ${sourceId} is a plain directory, so there is no committed Git tree to check for unindexed files.`,
+    `Run gbrain sync --source ${sourceId} to import its files; --unindexed only scans managed Git sources.`,
+    { reason: 'plain_directory' });
   const dryRun = opts.dryRun === true;
   const deadlineAt = Date.now() + (opts.budgetMs ?? await unindexedScanBudgetMs(engine, sourceId));
   let scan: UnindexedScan, scheduled: string[] = [];

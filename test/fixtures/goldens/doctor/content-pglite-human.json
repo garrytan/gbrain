@@ -290,7 +290,7 @@
       "  [OK] purge_mirror: No purge in the last 30 days to check against the purge mirror at <home>/.gbrain/purge-events.jsonl.",
       "  [OK] derivation_purge_sweeps: No fact purge has a sweep of stored derivation results pending or stalled.",
       "  [INFO] missing_recorded_files: Not applicable: no source is a classic checkout on this host (managed sources are checked by ghost_pages).",
-      "  [INFO] unindexed_files: Unindexed files are not known for default (not computed yet), notes (not computed yet). The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run gbrain sources retry-held <id> --unindexed.",
+      "  [INFO] unindexed_files: Unindexed files are not known for notes (not computed yet). The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run gbrain sources retry-held <id> --unindexed.",
       "  [OK] sync_overwritten_db_edits: No page shows a database edit that a sync import overwrote.",
       "  [INFO] sync_rows_behind_checkpoint: Not applicable: no managed source has a checkout and a sync checkpoint here (a repo-less brain keeps its pages in the database, which is the record).",
       "  [OK] sync_config_keys: No retired sync config key is stored on this brain.",

@@ -839,6 +839,7 @@ src/core/persistence/topology-recovery.ts	fs_import	1	W5: repo-less persistence 
 src/core/persistence/topology-recovery.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/topology-transaction.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/persistence/unbound-pages.ts	fs_import	1	W5: repo-less persistence for hosts
+src/core/persistence/unindexed-files.ts	fs_import	1	W5: local Git detector must prove a readable root has no checkout marker before classifying plain-directory applicability; no config or content reads
 src/core/persistence/unindexed-files.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/persistence/upload-streamed.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/worktree-lease.ts	fs_import	1	W5: repo-less persistence for hosts

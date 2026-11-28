@@ -3820,76 +3820,12 @@
         {
           "category": "brain",
           "details": {
-            "docs": "docs/guides/repair.md#unindexed-files",
-            "sources": [
-              {
-                "source_id": "default",
-                "state": "missing"
-              }
-            ]
+            "docs": "docs/guides/repair.md#unindexed-files"
           },
           "elapsed_ms": "<volatile>",
-          "fix": {
-            "actor": "agent",
-            "argv": [
-              "gbrain",
-              "sources",
-              "retry-held",
-              "default",
-              "--unindexed",
-              "--brain",
-              "host"
-            ],
-            "command": "gbrain sources retry-held default --unindexed --brain host",
-            "consent": [],
-            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
-            "next": "run",
-            "requires_exclusive": false,
-            "then": {
-              "actor": "agent",
-              "argv": [
-                "gbrain",
-                "sync",
-                "--source",
-                "default",
-                "--no-pull",
-                "--brain",
-                "host"
-              ],
-              "command": "gbrain sync --source default --no-pull --brain host",
-              "consent": [],
-              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/repair.md#unindexed-files",
-              "next": "run",
-              "requires_exclusive": false,
-              "verify": {
-                "argv": [
-                  "gbrain",
-                  "doctor",
-                  "--only",
-                  "unindexed_files",
-                  "--json",
-                  "--brain",
-                  "host"
-                ]
-              },
-              "why": "The sync re-screens the scheduled files of default: each one that passes imports, each one that refuses is recorded as a hold that gbrain sources status default lists."
-            },
-            "verify": {
-              "argv": [
-                "gbrain",
-                "doctor",
-                "--only",
-                "unindexed_files",
-                "--json",
-                "--brain",
-                "host"
-              ]
-            },
-            "why": "Finds the committed files of default with no page and no hold (bounded; it continues an incomplete scan), schedules them for a re-screen and stores the result this check reads."
-          },
-          "message": "Unindexed files are not known for default (not computed yet). The maintenance phase unindexed_files computes them on each run and continues an incomplete scan; to compute them now, run gbrain sources retry-held <id> --unindexed.",
+          "message": "Not applicable: no managed Git source is bound to a checkout.",
           "name": "unindexed_files",
-          "readiness_state": "unknown",
+          "readiness_state": "not_applicable",
           "severity": "info",
           "status": "ok"
         },

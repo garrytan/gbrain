@@ -61,6 +61,24 @@ import { readBlobContents, type TreeBlob } from './sync-blobs.ts';
 import { isWindowsColonTarget } from './native-file-target.ts';
 import { danglingLink } from './sync-entry-fault.ts';
 import { createHash } from 'node:crypto';
+import { lstatSync, realpathSync, statSync } from 'node:fs';
+import { dirname, isAbsolute, join } from 'node:path';
+
+/** Match plain-directory sync's admission: no recorded Git history and no checkout marker at or above a readable root.
+ * A failed Git probe is not proof of a plain source. Missing roots, broken marked checkouts and former Git sources
+ * remain eligible for the normal error path, rather than silently reporting their scan as complete. */
+export function plainUnindexedSource(source: { local_path: string | null; last_commit: string | null }): boolean {
+  if (source.last_commit || !source.local_path || !isAbsolute(source.local_path)) return false;
+  try {
+    const root = realpathSync(source.local_path);
+    if (!statSync(root).isDirectory()) return false;
+    for (let current = root; ; current = dirname(current)) {
+      try { lstatSync(join(current, '.git')); return false; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false; }
+      if (current === dirname(current)) return true;
+    }
+  } catch { return false; }
+}
 
 export const UNINDEXED_FILES_OP = 'unindexed-files';
 /** Paths one pass schedules for a re-screen, and the most scheduled paths a stored result names. */

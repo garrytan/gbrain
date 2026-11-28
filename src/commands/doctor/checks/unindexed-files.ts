@@ -22,7 +22,7 @@ import type { Action } from '../../../core/agent-output.ts';
 import { agentFix, checkError, doctorVerify, infoCheck } from '../check-fix.ts';
 import { connectedEngine, doctorSourceIds, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { managedPersistenceEnabled } from '../../../core/persistence/ownership.ts';
-import { judgeUnindexedFiles, type UnindexedState } from '../../../core/persistence/unindexed-files.ts';
+import { judgeUnindexedFiles, plainUnindexedSource, type UnindexedState } from '../../../core/persistence/unindexed-files.ts';
 import { gitFollowUpSync } from '../../sources-retry-held.ts';
 
 const DOCS = 'docs/guides/repair.md#unindexed-files';
@@ -75,10 +75,11 @@ async function runUnindexedFiles(ctx: DoctorContext): Promise<Check[]> {
       checks.push(infoCheck('unindexed_files', 'Not applicable: managed persistence is off, so no managed Git source is checked for unindexed files.', 'not_applicable', undefined, { docs: DOCS }));
       return checks;
     }
-    const sources = await engine.executeRaw<{ id: string; incarnation: string }>(`SELECT s.id, s.incarnation::text AS incarnation FROM sources s
+    const candidates = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; last_commit: string | null }>(`SELECT s.id, s.incarnation::text AS incarnation, s.local_path, s.last_commit FROM sources s
       WHERE s.archived IS NOT TRUE AND (s.config->>'kind') IS NULL AND s.config->'company_brain' IS NULL
         AND EXISTS (SELECT 1 FROM persistence_source_bindings b WHERE b.source_id=s.id AND b.source_incarnation=s.incarnation)
         AND ($1::text[] IS NULL OR s.id=ANY($1::text[])) ORDER BY s.id`, [doctorSourceIds(ctx) ?? null]);
+    const sources = candidates.filter(source => !plainUnindexedSource(source));
     if (!sources.length) {
       checks.push(infoCheck('unindexed_files', 'Not applicable: no managed Git source is bound to a checkout.', 'not_applicable', undefined, { docs: DOCS }));
       return checks;
