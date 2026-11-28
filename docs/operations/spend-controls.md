@@ -83,9 +83,9 @@ worker enforces it:
 |---|---|---|---|
 | `book-mirror` | one `subagent` per chapter | `authorized`, one group | the approved total, shared by the chapters |
 | `enrich --background` (Postgres) | one `enrich` per source | `authorized`, one group | the approved total, shared by the sources |
-| `jobs submit enrich\|subagent` | one | `authorized` | the approved cap |
+| `jobs submit enrich\|subagent\|embed\|embed-backfill\|embed-catch-up` | one | `authorized` | the approved cap (an embedding backfill also keeps its own `embed.backfill_max_usd` cap; the lower one stops it) |
 | jobs of those commands queued before submit-time authorization | as above | `legacy_default`, one group per job | `enrich`: the job's `--max-usd`, else $5; `subagent`: $5 |
-| everything else (`agent run`, MCP `submit_agent`/`submit_job`, `doctor --remediate`, autopilot and dream phases, `skillopt`, `import`, `reindex`, `sync`, embedding backfills) | various | none (`unrecorded`) | the producer's own budget: client daily budget, cycle budget, embedding caps, write-path embedding as configured, `--max-usd` for remediation |
+| everything else (`agent run`, MCP `submit_agent`/`submit_job`, `doctor --remediate`, autopilot and dream phases, `skillopt`, `import`, `reindex`, `sync`, automatically queued embedding backfills) | various | none (`unrecorded`) | the producer's own budget: client daily budget, cycle budget, embedding caps, write-path embedding as configured, `--max-usd` for remediation |
 
 Each provider attempt reserves its maximum cost against the group in the
 durable spend meter and settles its measured usage; an attempt that never
@@ -555,6 +555,23 @@ a negative), the operator clearly intended a cap, so the $10 default applies
 and is NEVER dropped — even for unpriced models — with a stderr warning
 naming both fixes (correct the value, or set it to `off` to remove the
 ceiling). A typo must not silently degrade to uncapped spend.
+
+### How a capped embedding run counts each request
+
+Under any dollar cap (`--max-usd`, `embed.backfill_max_usd`, the
+maintenance daily cap, an approved job), every request to the embedding
+provider is admitted on its own before it is sent. It holds the most input
+the request can bill: one token per UTF-8 byte of its text, capped per input
+by the model's input limit. Character counts are not used, because dense text
+such as Chinese or Vietnamese bills several times more tokens than its
+character count suggests. The hold settles to the tokens the provider
+reports. When the provider reports no usage, or the request failed in a way
+that may still have billed, the full hold stays charged. A request the SDK
+would split into several is sent as separate requests, each admitted on its
+own, and the SDK's hidden retries are off; gbrain's own rate-limit retries
+admit each attempt again. A run can therefore stop a little before the cap,
+with the spend it kept charged shown as estimated in the ledger. Uncapped
+runs are unchanged.
 
 ## Escape hatches at a glance
 

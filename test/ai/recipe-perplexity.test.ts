@@ -129,6 +129,18 @@ describe('perplexityCompatFetch — int8 wire shim', () => {
     expect(json.usage.prompt_tokens).toBe(4);
   });
 
+  test('usage without total_tokens is dropped, not reported as zero tokens', async () => {
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ object: 'list', model: 'pplx-embed-v1-4b', data: [{ object: 'embedding', index: 0, embedding: [1, 2] }], usage: {} }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )) as any;
+    const resp = await (perplexityCompatFetch as any)('https://api.perplexity.ai/v1/embeddings', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'pplx-embed-v1-4b', input: ['hi'] }),
+    });
+    expect((await resp.json()).usage).toBeUndefined();
+  });
+
   test('non-JSON and error responses pass through untouched', async () => {
     globalThis.fetch = (async () =>
       new Response('nope', { status: 401, headers: { 'content-type': 'text/plain' } })) as any;
