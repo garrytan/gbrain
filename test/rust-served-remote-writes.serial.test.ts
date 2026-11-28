@@ -291,6 +291,12 @@ describeAddon('remote writes over the served wire', () => {
     expect(held).toEqual(plain);
   });
 
+  test('the folder access read a remote caller\'s record needs crosses: the parity cases cannot show it, because the caller record swallows its refusal', async () => {
+    // access/caller.ts folderAccessForAll turns any error into an unreadable-rulebook narrowing, so a served client that could not send
+    // readFolderAccess would still answer; only the member itself shows the difference.
+    expect(await codeOf(worldOnly(() => client.readFolderAccess([])))).toBe('ok');
+  });
+
   test('the OAuth client row and the owner-only source probe never cross: a raw frame for either is refused with engine_capability_missing', async () => {
     const reasonOf = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => String((e as { code?: string }).code ?? (e as Error).message));
     expect({
