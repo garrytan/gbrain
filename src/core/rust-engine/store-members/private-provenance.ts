@@ -416,6 +416,14 @@ export function storePageTextPolicy(
     // grants or coverage: a page that names readers fails, and a pending prefix hides nothing (privacy.rs caller_record).
     const floor = renderForStoreCaller({ hidePrivate: true, ...(open ? { restricted: false } : {}) }, () => privatePagesFilterFragment('p'));
     if (text === normalizeConceptInputs(floor)) return { ...pagePolicyFlags(floor), identity: [], privateReadableSources: [], callerRecord: true };
+    // The remote owner's read floor (an unbound owner connection's sources_not_readable test, remoteReadFloorSql): the same
+    // floor without the owner-only test, since the owner reads its own owner-only pages. The flags read off it carry
+    // `owner_only` off, which is what the text applies.
+    if (access.owner) {
+      const ownerFloor = renderForStoreCaller({ hidePrivate: true, owner: true, restricted: !open,
+        ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) }, () => privatePagesFilterFragment('p'));
+      if (text === normalizeConceptInputs(ownerFloor)) return { ...pagePolicyFlags(ownerFloor), identity: [], privateReadableSources: [], callerRecord: true };
+    }
     // The remote read floor under a caller record that holds pending folder prefixes, and that of a labelled-only caller: the plain
     // fragment (ANDed, for a labelled-only caller, with its conjunct: remoteReadFloorSql), which reads no identity of the member-access
     // part. Rendered with the caller's record, it hides a page under a pending prefix of the record, so the prefixes are sent with
