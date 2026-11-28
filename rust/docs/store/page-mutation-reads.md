@@ -18,8 +18,12 @@ file (`readStoredPageLabels`, `readSlugFolderRules`, `memberViewPolicySql`, `hid
 policy take it as the TypeScript member renders it (`enforcedMemberPolicy`, `store-members/page-mutation-reads.ts`): the member renders the SQL
 fragment in the caller's record, compares it with the same fragment for a fresh record of just the identity, the rules the member satisfies and
 the record's pending prefixes, and sends the store the flags of that text (`identity`, `satisfiedRuleIds`, `folderCoverage`, `ownerOnly`, `open`).
-A policy that is not that text refuses `engine_capability_missing` before any read: a labelled-only grant, a read through lineage
-(`access.members_read_lineage`), an audience or an owner record.
+A policy that is not that text refuses `engine_capability_missing` before any read: a read through lineage
+(`access.members_read_lineage`), an audience or an owner record. `readMemberPageReadable` also serves a labelled-only member: its text is the
+member's policy ANDed with the labelled-only conjunct (`memberViewPolicySql` with `labelled`, `labelledOnlyForSql` for the member's identity as one
+audience entry, readers and rules, no lineage), and the member sends the store the sets that conjunct embeds (`labelledOnlyTerms`, the
+`labelledOnly` field of the policy, the form `readLinkTargetPages` takes for a labelled-only writer). The store judges the page by it as it does for a
+remote read (`page_hidden`). `readHiddenPageSlugs` (the output guard) still refuses a labelled-only record.
 
 | Member | Returns |
 | --- | --- |
@@ -28,10 +32,10 @@ A policy that is not that text refuses `engine_capability_missing` before any re
 | `brain.readSlugFolderRules(sourceId, slug)` | The `<source>:<rule id>` of every rule of the source whose prefix covers the slug, by rule id (`gbrain_access_folder_rules`), whether or not a page exists there; null when none does. A create judges its new slug by it in TypeScript. The same read is what row 32e-b-3 needs |
 | `brain.readHiddenPageSlugs(slugs, hiddenSources, policy)` | The slugs that name a page in some source and no page `policy` admits outside `hiddenSources` (a soft-deleted row counts), in byte order. It point-reads each requested slug in every source, archived ones included, and never scans the brain's pages, so it costs the slugs asked and not the size of the brain. The output guard for shared-operation results containing candidate strings. The checked shared mutations (put, edit, append, add or remove a link or tag, add a timeline entry, remember) also ask it of no slugs after their target checks and before their handlers, so an unsupported-policy refusal writes nothing. get_write_request is non-mutating and skips that preflight. A shared read that reaches this guard is refused after its read; CLI-only commands and results without candidate strings do not necessarily call it |
 
-A labelled-only member's read is not served: `readMemberPageReadable` refuses `engine_capability_missing` before any read, so a labelled-only
-member's put on a Rust brain stops before it writes anything (row ec05-1 of `docs/designs/RUST_ENGINE.md`, pinned in
-`test/rust-stop-pins/ec05-enforced-member.tsv`). Tests: `crates/gbrain-store/tests/enforced_member_reads.rs`,
-`test/engine-parity/enforced-member-reads.test.ts`, `test/token-member-cli-parity.serial.test.ts`.
+A labelled-only member's read of an existing page is served and equal to PGLite and Postgres: it reads true for a page that names the member (or one of
+its identities, or a folder rule it satisfies), false for one that does not, null for no row, soft-deleted rows included (row ec05-1 of
+`docs/designs/RUST_ENGINE.md`). Tests: `crates/gbrain-store/tests/enforced_member_reads.rs`,
+`test/engine-parity/enforced-member-reads.test.ts`, `test/enforced-member-store-refusals.test.ts`, `test/token-member-cli-parity.serial.test.ts`.
 
 `capture --file` reads the source's local path through `readSourceLocalPath`, the member
 [memory_mutation_reads.md](memory_mutation_reads.md) documents (the same statement).

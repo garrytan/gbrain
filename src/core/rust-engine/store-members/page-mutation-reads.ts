@@ -29,9 +29,10 @@ export const readStoredPageLabels: Member<'readStoredPageLabels'> = (brain, sour
  * sends it). With `labelled` the text is that fragment ANDed with the labelled-only conjunct for `identity` as one audience
  * entry (`labelledOnlyForSql`, readers and rules, no lineage: memberViewPolicySql): the rest is judged as for any member and
  * the conjunct goes to the store as data (`labelledOnlyTerms`, the sets the SQL embeds), the form a labelled-only writer's
- * policy takes (remote-links.ts `writerPolicy`).
+ * policy takes (remote-links.ts `writerPolicy`). `recordLabelled` is the output guard's form: the labelled-only grant is in the caller's
+ * record and the access part renders it (`callerAccessAllowedSql`), so the reference record carries the grant and the same terms go to the store.
  */
-function enforcedMemberPolicy(member: string, rendered: () => string, rawIdentity: readonly string[], rawSatisfied: readonly string[], labelled = false): StorePrivacyPolicy {
+function enforcedMemberPolicy(member: string, rendered: () => string, rawIdentity: readonly string[], rawSatisfied: readonly string[], labelled = false, recordLabelled = false): StorePrivacyPolicy {
   const access = currentCallerAccess();
   // The SQL renderer empties a whole set when any entry of it is invalid (readersAllowedSql: validIdentity; folderRulesAllowedSql:
   // validQualifiedRuleId), so a member holding one invalid entry reads nothing through that set. The store matches entries one by
@@ -40,7 +41,7 @@ function enforcedMemberPolicy(member: string, rendered: () => string, rawIdentit
   const { identity, satisfiedRuleIds: satisfied } = sqlAppliedSets(rawIdentity, rawSatisfied);
   if (!identity.length && satisfied.length) refuseMember(member, 'a member whose identity holds an invalid entry beside satisfied folder rules');
   const folders = { satisfiedRuleIds: [...satisfied], folderCoverage: access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })) };
-  const reference = renderForStoreCaller({ identity: [...identity], privateReadableSources: [], hidePrivate: true, owner: false, restricted: access.restricted, ...folders }, rendered);
+  const reference = renderForStoreCaller({ identity: [...identity], privateReadableSources: [], hidePrivate: true, owner: false, restricted: access.restricted, ...folders, ...(recordLabelled ? { labelledOnly: true } : {}) }, rendered);
   if (normalizeConceptInputs(rendered()) !== normalizeConceptInputs(reference)) {
     refuseMember(member, 'a member whose lineage, audience or owner record changes the read policy');
   }
@@ -48,7 +49,7 @@ function enforcedMemberPolicy(member: string, rendered: () => string, rawIdentit
   if (labelled && !reference.endsWith(` AND ${labelledOnlyForSql('p', [rawIdentity], rawSatisfied)}`)) {
     refuseMember(member, 'a labelled-only read whose policy is not the member-access policy and the labelled-only conjunct');
   }
-  const terms = labelled ? { labelledOnly: labelledOnlyTerms({ identity: [], audienceIdentities: [rawIdentity], satisfiedRuleIds: rawSatisfied }) } : {};
+  const terms = labelled || recordLabelled ? { labelledOnly: labelledOnlyTerms({ identity: [], audienceIdentities: [rawIdentity], satisfiedRuleIds: rawSatisfied }) } : {};
   return { ...pagePolicyFlags(reference), identity: [...identity], privateReadableSources: [], ...folders, callerRecord: true, ...(access.restricted ? {} : { open: true }), ...terms };
 }
 
@@ -62,7 +63,7 @@ export const readSlugFolderRules: Member<'readSlugFolderRules'> = async (brain, 
 
 export const readHiddenPageSlugs: Member<'readHiddenPageSlugs'> = async (brain, slugs, hiddenSources) => {
   const access = currentCallerAccess();
-  const policy = enforcedMemberPolicy('readHiddenPageSlugs', hiddenSlugsPolicySql, access.identity, access.satisfiedRuleIds);
+  const policy = enforcedMemberPolicy('readHiddenPageSlugs', hiddenSlugsPolicySql, access.identity, access.satisfiedRuleIds, false, access.labelledOnly === true);
   if (!slugs.length) return [];
   return await storeCall({ member: 'readHiddenPageSlugs' }, () => brain.readHiddenPageSlugs([...slugs], [...hiddenSources], policy)) as string[];
 };
