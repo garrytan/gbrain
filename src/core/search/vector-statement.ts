@@ -165,21 +165,26 @@ export const JOINED_STATEMENT_SETTINGS: Readonly<Record<string, string>> = { ena
  */
 export const DATE_FILTER_MATERIAL_OFF_MIN_CHUNKS = 375_000;
 
+/** The statement bound on the estimate's background refresh (`brainChunkEstimateLoader`). */
+export const BRAIN_CHUNK_ESTIMATE_TIMEOUT_MS = 2_000;
+
 /** `content_chunks` planner row estimate; -1 before the first ANALYZE. A catalog read, never a count. */
 export const BRAIN_CHUNK_ESTIMATE_SQL = `SELECT reltuples::float8 AS chunks FROM pg_class WHERE oid = 'content_chunks'::regclass`;
 
 /**
- * The engines' brain-wide chunk estimate: BRAIN_CHUNK_ESTIMATE_SQL at most once a minute; a failed read keeps the last
- * value. The caller passes the read, so a transaction's search reads on its own connection, and a caller arriving while
- * another caller's read is still running takes the last completed value instead of waiting on a connection it may hold.
+ * The engines' brain-wide chunk estimate. A search never waits for it: it gets the last completed value (undefined
+ * until the first read lands, which keeps the planner's plan), and a stale value starts BRAIN_CHUNK_ESTIMATE_SQL in the
+ * background through the caller's `refresh`, at most once a minute; a failed read keeps the last value. A caller with no
+ * `refresh` (a search inside a transaction, whose connection a failed read would abort) only reads the cache.
  */
-export function brainChunkEstimateLoader(): (load: () => Promise<Array<{ chunks: unknown }>>) => Promise<number | undefined> {
+export function brainChunkEstimateLoader(): (refresh?: () => Promise<Array<{ chunks: unknown }>>) => number | undefined {
   let last: number | undefined, at = -Infinity, reading = false;
-  return async load => {
-    if (reading || performance.now() - at <= 60_000) return last;
-    reading = true;
-    const previous = last;
-    last = await load().then(rows => Number(rows[0]?.chunks ?? -1), () => previous).finally(() => { at = performance.now(); reading = false; });
+  return refresh => {
+    if (refresh && !reading && performance.now() - at > 60_000) {
+      reading = true;
+      void refresh().then(rows => Number(rows[0]?.chunks ?? -1), () => last)
+        .then(value => { last = value; }).finally(() => { at = performance.now(); reading = false; });
+    }
     return last;
   };
 }

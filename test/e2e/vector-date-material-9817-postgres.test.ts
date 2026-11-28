@@ -27,9 +27,9 @@ import { hasDatabase } from './helpers.ts';
     let estimates = 0;
     const original = vectorSettings.vectorScanSettings;
     const settings = spyOn(vectorSettings, 'vectorScanSettings').mockImplementation((...args) => { const value = original(...args); applied.push(value); return value; });
-    const engineWithEstimate = engine as unknown as { brainChunkEstimate: () => Promise<number | undefined> };
+    const engineWithEstimate = engine as unknown as { brainChunkEstimate: () => number | undefined };
     const saved = engineWithEstimate.brainChunkEstimate;
-    engineWithEstimate.brainChunkEstimate = async () => { estimates++; return chunks; };
+    engineWithEstimate.brainChunkEstimate = () => { estimates++; return chunks; };
     try { await engine.searchVector(vec(11), { limit: 20, embeddingColumn: column, ...opts }); }
     finally { settings.mockRestore(); engineWithEstimate.brainChunkEstimate = saved; }
     return { applied, estimates };
@@ -62,5 +62,20 @@ import { hasDatabase } from './helpers.ts';
     const typed = await attempts({ type: 'note' }, DATE_FILTER_MATERIAL_OFF_MIN_CHUNKS * 4);
     expect(typed.estimates).toBe(0);
     for (const settings of typed.applied) { expect(settings.enable_material).toBeUndefined(); expect(settings.enable_sort).toBeUndefined(); }
+  }, 60_000);
+
+  test('a dated search refreshes the estimate in the background on the pool, never inside the caller\'s transaction', async () => {
+    const refreshes: Array<boolean> = [];
+    const engineWithEstimate = engine as unknown as { brainChunkEstimate: (refresh?: () => Promise<unknown>) => number | undefined };
+    const saved = engineWithEstimate.brainChunkEstimate;
+    engineWithEstimate.brainChunkEstimate = refresh => { refreshes.push(refresh !== undefined); return undefined; };
+    try {
+      await engine.searchVector(vec(11), { limit: 5, embeddingColumn: column, afterDate: '2000-01-01' });
+      await engine.transaction(async tx => {
+        await tx.searchVector(vec(11), { limit: 5, embeddingColumn: column, afterDate: '2000-01-01' });
+        expect(await tx.executeRaw<{ ok: number }>('SELECT 1 AS ok')).toEqual([{ ok: 1 }]);
+      });
+    } finally { engineWithEstimate.brainChunkEstimate = saved; }
+    expect(refreshes).toEqual([true, false]);
   }, 60_000);
 });

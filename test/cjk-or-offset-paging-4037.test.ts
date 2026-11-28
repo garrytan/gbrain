@@ -8,6 +8,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { hybridSearch } from '../src/core/search/hybrid.ts';
 import type { ChunkInput } from '../src/core/types.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -37,7 +38,7 @@ for (const backend of testBackends()) describe(`[${backend}] GST-4037 steady OFF
   beforeAll(async () => {
     if (backend === 'pglite') { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }
     else { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!); engine = pg.engine; closePostgres = pg.close; }
-    for (const id of ['long', 'alts', 'boost']) await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING`, [id]);
+    for (const id of ['long', 'alts', 'boost', 'hyb']) await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING`, [id]);
     // One long page whose 40 chunks each match both terms many times, beside short all-term and partial pages.
     await page('notes/long', 'long', Array.from({ length: 40 }, (_, i) => `${'席位升级'.repeat(6)} 段落${i}`));
     for (let i = 0; i < 5; i++) await page(`notes/both-${i}`, 'long', [`席位和升级 ${i}`]);
@@ -50,6 +51,9 @@ for (const backend of testBackends()) describe(`[${backend}] GST-4037 steady OFF
     // A boosted source puts both strict hits' term-frequency scores past 999; the older page repeats the terms half as often.
     await page('notes/older', 'boost', ['席位升级'.repeat(6)]);
     await page('notes/stronger', 'boost', ['席位升级'.repeat(12)]);
+    // OR alternatives where the pages matching both alternatives repeat them less often than single-alternative pages do.
+    for (let i = 0; i < 40; i++) await page(`notes/both-${i}`, 'hyb', [`京都と東京 ${i}`]);
+    for (let i = 0; i < 40; i++) await page(`notes/one-${i}`, 'hyb', [`東京東京東京 ${i}`]);
   }, 120_000);
   afterAll(async () => { await engine.disconnect(); await closePostgres?.(); }, 60_000);
 
@@ -75,8 +79,21 @@ for (const backend of testBackends()) describe(`[${backend}] GST-4037 steady OFF
     // The strict pass alone returns the retry's leading rows, in its order.
     const strict = (await engine.searchKeyword(q, { sourceId: 'alts', limit: 100 })).map(r => r.slug);
     expect(strict).toEqual(all.slice(0, 3));
-    // A strict pass returns the term-frequency score, never the matched-terms sort key.
-    for (const row of await engine.searchKeyword(q, { sourceId: 'alts', limit: 100 })) expect(row.score).toBeLessThan(1000);
+    // A strict pass with tiers returns the retry's matched-terms score, so its scores never rise down the page.
+    const scores = (await engine.searchKeyword(q, { sourceId: 'alts', limit: 100 })).map(r => r.score);
+    expect(scores).toEqual([...scores].sort((a, b) => b - a));
+  }, 120_000);
+
+  test('keyless hybrid search pages OR alternatives without repeating or skipping a page', async () => {
+    const q = '京都 OR 東京';
+    const seen: string[] = [];
+    for (let offset = 0; offset < 80; offset++) {
+      const rows = await hybridSearch(engine, q, { sourceId: 'hyb', limit: 1, offset });
+      seen.push(...rows.map(r => r.slug));
+    }
+    expect(seen).toHaveLength(80);
+    expect(new Set(seen).size).toBe(80);
+    expect(seen.slice(0, 40).every(slug => slug.startsWith('notes/both-'))).toBe(true);
   }, 120_000);
 
   test('a boosted strict hit past 999 still outranks a weaker one, and keeps its own score', async () => {

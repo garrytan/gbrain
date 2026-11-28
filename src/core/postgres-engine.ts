@@ -78,7 +78,7 @@ import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { verifySchema } from './schema-verify.ts';
 import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, supportsHnswIterativeScan } from './vector-index.ts';
 import { searchIndexWalk, searchVectorPool, readVectorPool, remainingVectorBudget, type VectorPoolAttempt, POOL_MAX_SCAN_TUPLES } from './search/vector-pool.ts';
-import { BRAIN_CHUNK_ESTIMATE_SQL, brainChunkEstimateLoader, buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_CHUNKS_SQL, SCOPE_CHUNKS_TOTAL_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, vectorStatementForms, type PageSourceStats, type ScopeChunkCount, type VectorSearchStatement } from './search/vector-statement.ts';
+import { BRAIN_CHUNK_ESTIMATE_SQL, BRAIN_CHUNK_ESTIMATE_TIMEOUT_MS, brainChunkEstimateLoader, buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_CHUNKS_SQL, SCOPE_CHUNKS_TOTAL_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, vectorStatementForms, type PageSourceStats, type ScopeChunkCount, type VectorSearchStatement } from './search/vector-statement.ts';
 import { VECTOR_SETTING_DEFAULTS, vectorAttemptFlags, vectorScanSettings } from './search/vector-settings.ts';
 import { guardSearchStatistics } from './search/projection-statistics.ts';
 import {
@@ -1867,7 +1867,8 @@ export class PostgresEngine implements BrainEngine {
     // so the HNSW index stays usable; the outer stages re-rank by source
     // factor. Statement shape, freshness placement (#5824) and pool counts
     // live in search/vector-statement.ts, shared with PGLite and doctor.
-    const [scope, brainChunks] = await Promise.all([this.vectorScope(opts), opts?.afterDate || opts?.beforeDate ? this.brainChunkEstimate(() => this.executeRaw<{ chunks: unknown }>(BRAIN_CHUNK_ESTIMATE_SQL)) : undefined]);
+    const scope = await this.vectorScope(opts);
+    const brainChunks = opts?.afterDate || opts?.beforeDate ? this.brainChunkEstimate(this._pageTransaction ? undefined : () => this.executeRaw<{ chunks: unknown }>(BRAIN_CHUNK_ESTIMATE_SQL, undefined, { timeoutMs: BRAIN_CHUNK_ESTIMATE_TIMEOUT_MS })) : undefined;
     const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, brainChunks }));
     const stmt = statementFor(true);
     const iterative = await this.vectorIterativeScanSupported();
@@ -1900,7 +1901,8 @@ export class PostgresEngine implements BrainEngine {
    */
   async explainVectorSearch(embedding: Float32Array, opts?: SearchOpts): Promise<Record<string, unknown>> {
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
-    const [scope, brainChunks] = await Promise.all([this.vectorScope(opts), opts?.afterDate || opts?.beforeDate ? this.brainChunkEstimate(() => this.executeRaw<{ chunks: unknown }>(BRAIN_CHUNK_ESTIMATE_SQL)) : undefined]);
+    const scope = await this.vectorScope(opts);
+    const brainChunks = opts?.afterDate || opts?.beforeDate ? this.brainChunkEstimate(this._pageTransaction ? undefined : () => this.executeRaw<{ chunks: unknown }>(BRAIN_CHUNK_ESTIMATE_SQL, undefined, { timeoutMs: BRAIN_CHUNK_ESTIMATE_TIMEOUT_MS })) : undefined;
     const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, brainChunks }));
     const stmt = statementFor(true);
     const iterative = await this.vectorIterativeScanSupported();

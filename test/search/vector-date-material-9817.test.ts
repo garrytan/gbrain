@@ -117,40 +117,57 @@ describe('#9817 planner flags per attempt', () => {
 });
 
 describe('#9817 the brain chunk estimate', () => {
-  test('reads the catalog estimate at most once a minute and keeps the last value when a later read fails', async () => {
-    let clock = 1_000, reads = 0, fail = false;
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  test('a search never waits: it gets the last completed value while a refresh runs in the background, at most once a minute', async () => {
+    let clock = 1_000, reads = 0;
     const now = spyOn(performance, 'now').mockImplementation(() => clock);
     try {
-      const read = async () => { reads++; if (fail) throw new Error('down'); return [{ chunks: 400_000 }]; };
+      let release!: (rows: Array<{ chunks: unknown }>) => void;
+      const read = () => { reads++; return new Promise<Array<{ chunks: unknown }>>(resolve => { release = resolve; }); };
       const estimate = brainChunkEstimateLoader();
-      expect(await estimate(read)).toBe(400_000);
-      clock += 59_000;
-      expect(await estimate(read)).toBe(400_000);
+      expect(estimate(read)).toBeUndefined();
+      expect(estimate(read)).toBeUndefined();
       expect(reads).toBe(1);
-      clock += 2_000; fail = true;
-      expect(await estimate(read)).toBe(400_000);
+      release([{ chunks: 400_000 }]); await settle();
+      expect(estimate(read)).toBe(400_000);
+      clock += 59_000;
+      expect(estimate(read)).toBe(400_000);
+      expect(reads).toBe(1);
+      clock += 2_000;
+      expect(estimate(read)).toBe(400_000);
       expect(reads).toBe(2);
-      expect(await brainChunkEstimateLoader()(async () => { throw new Error('down'); })).toBeUndefined();
+      release([{ chunks: 500_000 }]); await settle();
+      expect(estimate(read)).toBe(500_000);
     } finally { now.mockRestore(); }
   });
 
-  test('a refresh runs the read its caller passes, so a transaction reads on its own connection', async () => {
-    let clock = 1_000;
+  test('a failed refresh keeps the last value', async () => {
+    let clock = 1_000, fail = false;
     const now = spyOn(performance, 'now').mockImplementation(() => clock);
     try {
-      const calls: string[] = [];
+      const read = async () => { if (fail) throw new Error('down'); return [{ chunks: 400_000 }]; };
       const estimate = brainChunkEstimateLoader();
-      expect(await estimate(async () => { calls.push('pool'); return [{ chunks: 400_000 }]; })).toBe(400_000);
-      clock += 61_000;
-      expect(await estimate(async () => { calls.push('transaction'); return [{ chunks: 500_000 }]; })).toBe(500_000);
-      expect(calls).toEqual(['pool', 'transaction']);
-      clock += 61_000;
-      let release!: () => void;
-      const stuck = estimate(() => new Promise(resolve => { release = () => resolve([{ chunks: 600_000 }]); }));
-      expect(await estimate(async () => { calls.push('second'); return [{ chunks: 1 }]; })).toBe(500_000);
-      expect(calls).toEqual(['pool', 'transaction']);
-      release();
-      expect(await stuck).toBe(600_000);
+      estimate(read); await settle();
+      clock += 61_000; fail = true;
+      expect(estimate(read)).toBe(400_000);
+      await settle();
+      expect(estimate(read)).toBe(400_000);
+      const cold = brainChunkEstimateLoader();
+      cold(async () => { throw new Error('down'); }); await settle();
+      expect(cold()).toBeUndefined();
+    } finally { now.mockRestore(); }
+  });
+
+  test('a caller with no refresh (a search inside a transaction) only reads the cache', async () => {
+    let clock = 1_000, reads = 0;
+    const now = spyOn(performance, 'now').mockImplementation(() => clock);
+    try {
+      const estimate = brainChunkEstimateLoader();
+      expect(estimate()).toBeUndefined();
+      estimate(async () => { reads++; return [{ chunks: 400_000 }]; }); await settle();
+      clock += 120_000;
+      expect(estimate()).toBe(400_000);
+      expect(reads).toBe(1);
     } finally { now.mockRestore(); }
   });
 });
