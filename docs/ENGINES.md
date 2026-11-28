@@ -2120,7 +2120,19 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   committed write is in the store. It goes invalid on a shed, a gap in the write sequence, a failed read, a relation
   the follower cannot describe row by row (which then needs a pass for that relation), or rows the store had to
   displace. **Every session that owns the store starts invalid**, even after a clean stop, and becomes valid again
-  only when a full reconcile pass that started after the session start has proven the store. A relation marked dirty
+  only when a full reconcile pass that started after the session start has proven the store, or when it carries on a
+  seal. A serving process that closes with everything handed over and applied (`gbrain serve` included; a successful
+  `engine shadow reconcile` too) has its child write a seal into `follower.json` (`src/shadow/seal.ts`). The next
+  owner session takes the sealed obligations over only when `follower.json` was not written since, `state.json` was
+  not restarted, the evidence epoch is the same and no line was added to `follower-invalidations.jsonl`; it is still
+  invalid until its serving process confirms that the primary's writer evidence is exactly what it was at the seal (on
+  Postgres: no other connection's writer-session row added or moved, no coverage gap, every hook intact; no seal is
+  written while another connection has a write open or wrote in the last 10 minutes and is still connected). On PGLite
+  only the file checks apply. Any doubt, a failed read or a timeout leaves the watermark invalid until a full pass. A
+  write published after the follower closed, or one the child would not take, leaves an invalidation line, which
+  voids the seal. The named persistence-journal members (`JOURNAL_BOOKKEEPING_MEMBERS` in `src/shadow/follow.ts`)
+  publish the tables their statements write instead of invalidating the watermark; every other member the write map
+  does not cover still invalidates it. A relation marked dirty
   is settled by a pass for that relation that started after the mark. Only the process that owns the Rust store
   applies writes. A second process cannot apply: its child leaves a line in `follower-invalidations.jsonl` (at most
   one per second while it sees writes) and the owner reads those lines before it advances the watermark, treating the
@@ -2131,8 +2143,13 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   the primary (with a pause between intervals) and nothing is held open while the pass talks to the Rust store, so a
   pass is not one snapshot: each interval is protected by the generation taken just before its read. `reconcile` and
   `reconcile --full` both run a full pass. It needs the Rust store to be free (stop the serving process first). A full
-  pass also runs on its own a minute after a serving process starts if the watermark is still invalid, every 24 hours
-  while the follower runs, and again when the watermark is invalid and the last pass is over an hour old. A pass that
+  pass also runs on its own 5 seconds after a serving process starts (once its seal is confirmed or refused) if the
+  watermark is still invalid, no full pass ran yet, the last one is 24 hours old or one was left half done; every 24
+  hours while the follower runs; and again when the watermark is invalid and the last pass is over an hour old. A full
+  pass saves its progress (`reconcile/progress.json`) after each interval. A process that closes during a pass records
+  no pass (closing is not a failed pass, so the count of trailing clean full passes is kept) and the next session with
+  the same continuity, seed and evidence epoch finishes that pass instead of starting over; only a finished full pass
+  is recorded and counts. A seal or a resumed half never counts as a pass of its own. A pass that
   displaced rows does not restore the watermark; the relation gets another pass and the full restore waits for the
   next full pass. A displaced page also marks `tags` dirty, because its tags go with it. An interval that already
   matches is still rewritten, so its generation fence stops a follower read that began before the pass from
