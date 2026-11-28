@@ -13,6 +13,7 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { busyPreReadIsRelationLevel, driverWriteSurvivesFailedPreRead, nestedThatWaitsForALaterCallMatchesShadowOff, pgliteTemplateWriteIsSeen, writesKeepOrderBesideNestedTransaction, nestedFollowedWritesStayInTheirSavepoint, finishedNestedIsNotBusy, heldCallKeepsItsContext, heldCallRollsBackWithItsTransaction, outerWriteSurvivesNestedRollback, sampledSiblingDoesNotWaitForItself, unawaitedFollowedWriteCommits, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from './helpers/follow-producer.ts';
 import { mergeItems, type Invalidation } from '../src/shadow/invalidations.ts';
@@ -194,6 +195,20 @@ describe('raw SQL and unmapped writes', () => {
     const h = followHarness(fake as never);
     await (h.engine as unknown as { runMigration(v: number): Promise<void> }).runMigration(1);
     expect(h.batches[0]!.items).toEqual([{ kind: 'invalid', reason: 'schema_change:runMigration' }]);
+  });
+
+  // A Postgres serve start calls onCheckout to add a pool listener: no statement runs, so nothing may invalidate the
+  // follower's coverage watermark. A member nobody listed (here onPoolRelease) still publishes unmapped_write.
+  test('onCheckout publishes nothing, and an unlisted member beside it still publishes unmapped_write', async () => {
+    expect(memberKind('onCheckout')).toBe('ignored');
+    const listener = (): void => undefined;
+    const fake = { kind: 'postgres', onCheckout: async (fn: unknown) => (fn === listener ? 'added' : 'wrong'), onPoolRelease: async () => 'done', registerBeforeDisconnect() {} };
+    const h = followHarness(fake as never);
+    const e = h.engine as unknown as { onCheckout(fn: unknown): Promise<string>; onPoolRelease(): Promise<string> };
+    expect(await e.onCheckout(listener)).toBe('added');
+    expect(h.batches.flatMap((b) => b.items)).toEqual([]);
+    expect(await e.onPoolRelease()).toBe('done');
+    expect(h.batches.flatMap((b) => b.items)).toEqual([{ kind: 'invalid', reason: 'unmapped_write:onPoolRelease' }]);
   });
 
   test('a write member missing from the map publishes unmapped_write', async () => {
@@ -409,9 +424,9 @@ describe('members that write more than their arguments name', () => {
 });
 
 describe('write map coverage', () => {
-  const protoMembers = (): string[] => {
+  const protoMembers = (proto: object = PGLiteEngine.prototype): string[] => {
     const names = new Set<string>();
-    for (let p: object | null = PGLiteEngine.prototype; p && p !== Object.prototype; p = Object.getPrototypeOf(p)) {
+    for (let p: object | null = proto; p && p !== Object.prototype; p = Object.getPrototypeOf(p)) {
       for (const key of Object.getOwnPropertyNames(p)) {
         if (key === 'constructor') continue;
         const d = Object.getOwnPropertyDescriptor(p, key)!;
@@ -436,8 +451,8 @@ describe('write map coverage', () => {
     }
   });
 
-  test('every mapped, ignored, raw, schema and read-named-write entry names a real engine member', () => {
-    const real = new Set(protoMembers());
+  test('every mapped, ignored, raw, schema and read-named-write entry names a real engine member (of PGLite or Postgres)', () => {
+    const real = new Set([...protoMembers(), ...protoMembers(PostgresEngine.prototype)]);
     const listed = [...Object.keys(WRITE_MAP), ...IGNORED_MEMBERS, ...RAW_MEMBERS, ...SCHEMA_MEMBERS, ...READ_ONLY_MEMBERS, ...UNMAPPED_WRITE_MEMBERS, 'withReservedConnection'];
     expect(listed.filter((name) => !real.has(name))).toEqual([]);
   });

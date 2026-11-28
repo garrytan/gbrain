@@ -138,7 +138,19 @@ const WRITE_NAMED_TYPES: ReadonlyArray<readonly [string, readonly string[]]> = [
 ];
 const FACT_WITHDRAWALS_FAMILY = 'pages:updateSlug';
 /** A named loss, not a fix: what the sentence above does not say. It is the last line under criterion 5 and the last limit in the guide. */
-export const WRITE_COVERAGE_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
+export const WRITE_COVERAGE_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:sealImportedPage, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
+/**
+ * The tables a raw statement or a typed member outside the write map is counted under when no named type above reads them (`writeFamily`, src/shadow/write-compare.ts):
+ * side rows the comparison never reads back, and the writing process's own bookkeeping. Each gets one line, then the members that write no row.
+ */
+export const WRITE_SIDE_TABLES: readonly string[] = ['wanted_links', 'link_transitions', 'page_retrievals', 'mention_index_status', 'page_mention_state', 'memory_proposals'];
+export const WRITE_BOOKKEEPING_TABLES: readonly string[] = ['persistence_effects', 'persistence_requests', 'persistence_counters', 'persistence_consumers', 'op_checkpoints', 'op_checkpoint_paths',
+  'sync_notifier_leases', 'sync_notifier_sources', 'sync_wanted_markers', 'session_context_state', 'write_gate_receipts'];
+const NO_ROW_PREFIX = 'no_row:';
+/** Said under the lines: a sampled count is a write that was named, not compared. */
+export const WRITE_NOT_VERIFIED = 'named, not verified: each count on these lines is a sampled write that was not compared; none counts toward the comparable count or the write bar';
+/** The second named loss: the writes `writeFamily` names by the first table they write and nothing compares. The last line under criterion 5. */
+export const WRITE_TABLE_LOSS = 'Named loss: raw SQL statements and typed members outside the write map are counted under the first table they write, named, not verified: timeline_entries, takes and sources (their lines above); the side tables wanted_links, link_transitions, page_retrievals, mention_index_status, page_mention_state and memory_proposals; the process bookkeeping tables persistence_effects, persistence_requests, persistence_counters, persistence_consumers, op_checkpoints, op_checkpoint_paths, sync_notifier_leases, sync_notifier_sources, sync_wanted_markers, session_context_state and write_gate_receipts; and a member or raw statement that only sets transaction settings or takes locks, under no_row: and its name (no_row:declarePersistence, or no_row:executeRaw for raw SQL). A raw statement the parser cannot read stays raw_sql, and a typed member with no known statements is counted under unmapped: and its name.';
 /** And on which brains: a PGLite brain's single connection cannot bound the read a sampled write waits for, so it samples no writes and criterion 5 stays missing. */
 export const WRITE_PGLITE_LIMIT = 'PGLite brains record no write comparisons';
 /** And by whom: only the shadow child that owns the Rust store records; a client child adds no evidence and can never make criterion 5 pass. */
@@ -272,7 +284,7 @@ function searchArms(r: Reader): Check {
   });
 }
 
-/** The per-type lines for criterion 5: each named type with its sampled count, or "not sampled"; then every other sampled key; then the named loss. */
+/** The per-type lines for criterion 5: each named type with its sampled count, or "not sampled"; the side tables, the bookkeeping tables and the members that write no row; then every other sampled key; then that none of it is compared, and the two named losses. */
 function uncoveredWriteLines(byFamily: Record<string, unknown>): string[] {
   const count = (k: string): number => { const n = byFamily[k]; return num(n) && n > 0 ? n : 0; };
   const named = new Set(WRITE_NAMED_TYPES.flatMap(([, keys]) => keys));
@@ -281,8 +293,14 @@ function uncoveredWriteLines(byFamily: Record<string, unknown>): string[] {
     return seen.length ? `${type}: sampled ${keys.reduce((n, k) => n + count(k), 0)} (${seen.join(', ')})` : `${type}: not sampled`;
   });
   lines.splice(6, 0, `fact withdrawals: not sampled separately (counted under ${FACT_WITHDRAWALS_FAMILY} ${count(FACT_WITHDRAWALS_FAMILY)})`);
+  const group = (type: string, keys: readonly string[]): string => {
+    const seen = keys.filter(count);
+    for (const k of keys) named.add(k);
+    return seen.length ? `${type}: sampled ${seen.reduce((n, k) => n + count(k), 0)} (${seen.map((k) => `${k} ${count(k)}`).join(', ')})` : `${type}: not sampled`;
+  };
+  lines.push(group('side tables', WRITE_SIDE_TABLES), group('process bookkeeping', WRITE_BOOKKEEPING_TABLES), group('no row written', Object.keys(byFamily).filter((k) => k.startsWith(NO_ROW_PREFIX))));
   const other = Object.keys(byFamily).filter((k) => !named.has(k) && count(k)).map((k) => `${k} ${count(k)}`);
-  return [...lines, `other write families sampled: ${other.length ? other.join(', ') : 'none'}`, WRITE_COVERAGE_LOSS];
+  return [...lines, `other write families sampled: ${other.length ? other.join(', ') : 'none'}`, WRITE_NOT_VERIFIED, WRITE_COVERAGE_LOSS, WRITE_TABLE_LOSS];
 }
 
 function writeComparisons(r: Reader): Check {
