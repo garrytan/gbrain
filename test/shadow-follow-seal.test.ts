@@ -339,9 +339,10 @@ function fakeReads(o: FakeOptions = {}): ReadSource & { sql: string[]; activityP
   };
   const answer = (q: string, p: unknown[] = []): Rows[] => {
     if (q.startsWith('SET') || q.includes('pg_stat_clear_snapshot')) return [];
-    if (q.includes('server_version_num')) return o.facts === null ? [] : [{ ...FACTS, ...o.facts }];
+    // The activity read also names server_version_num (the SET ROLE reach is version dependent), so it is matched first.
     if (q.includes('pg_prepared_xacts')) activityParams.push(p);
     if (q.includes('pg_prepared_xacts')) return o.act === null ? [] : [{ ...ACTIVITY, ...o.act }];
+    if (q.includes('server_version_num')) return o.facts === null ? [] : [{ ...FACTS, ...o.facts }];
     if (q.includes('pg_stat_user_tables')) return o.rels ?? RELS;
     throw new Error(`unexpected query: ${q.slice(0, 40)}`);
   };

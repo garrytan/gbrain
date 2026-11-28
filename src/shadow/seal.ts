@@ -16,8 +16,8 @@
  *  - at the next start (`quietSince`, from `confirmSeal`) the same read must show the same token: any new write (or an
  *    aborted one), a TRUNCATE or rewrite, a relation dropped, created or replaced, a statistics reset or a restarted
  *    server refuses it. Counters only prove what the server has flushed (a backend flushes at most about a minute
- *    after a write, and at exit), so the check also refuses while another connection to this database, of a role that
- *    can write a copied relation, is not idle, went idle less than a minute ago, or cannot be seen by the reading role
+ *    after a write, and at exit), so the check also refuses while another connection to this database, of a login that
+ *    can write a copied relation itself or through a role it can SET ROLE to, is not idle, went idle less than a minute ago, or cannot be seen by the reading role
  *    (a read-only role, such as a monitoring agent, is never waited on), while a prepared transaction exists, while another connection
  *    has a write transaction open, and while a connection the hooks recorded is still connected (the cost: a writer
  *    still connected during the seal check is refused until it commits or disconnects). The same activity checks run
@@ -108,13 +108,19 @@ const FACTS_SQL = `SELECT current_setting('server_version_num')::int AS version,
   extract(epoch FROM pg_catalog.pg_postmaster_start_time())::text AS postmaster`;
 
 /**
- * Whether the role `u` (a pg_stat_activity usesysid) can change a copied relation ($3 names): only such a role can move
- * the token's counters, so only its sessions are waited on. A session with no role is counted (unknown). A role that
- * reads only (a monitoring agent) is never waited on, whether its session is visible or not.
+ * Whether the role `u` (a pg_stat_activity usesysid, the login) can change a copied relation ($3 names), itself or
+ * through any role it can switch to with SET ROLE: pg_stat_activity names the login, not the role it switched to, so a
+ * NOINHERIT login whose own grants are empty can still write as a NOLOGIN role it is a member of. The reach is the
+ * writer-evidence audit's (writer-observations.ts): pg_has_role(..., 'SET') on PostgreSQL 16 and later, membership on
+ * 15, both transitive. Only such a login can move the token's counters, so only its sessions are waited on. A session
+ * with no role is counted (unknown). A login that reaches no writer role (a monitoring agent) is never waited on,
+ * whether its session is visible or not.
  */
-const CAN_WRITE = (u: string): string => `(${u} IS NULL OR EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = current_schema() AND c.relkind = 'r' AND c.relname::text = ANY($3::text[])
-        AND (has_table_privilege(${u}, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE') OR has_any_column_privilege(${u}, c.oid, 'INSERT') OR has_any_column_privilege(${u}, c.oid, 'UPDATE'))))`;
+const CAN_WRITE = (u: string): string => `(${u} IS NULL OR EXISTS (SELECT 1 FROM pg_catalog.pg_roles r
+      WHERE (r.oid = ${u} OR CASE WHEN current_setting('server_version_num')::int >= 160000 THEN pg_has_role(${u}, r.oid, 'SET') ELSE pg_has_role(${u}, r.oid, 'MEMBER') END)
+        AND EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = current_schema() AND c.relkind = 'r' AND c.relname::text = ANY($3::text[])
+            AND (has_table_privilege(r.oid, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE') OR has_any_column_privilege(r.oid, c.oid, 'INSERT') OR has_any_column_privilege(r.oid, c.oid, 'UPDATE')))))`;
 
 /**
  * Who could have written, or still be about to be seen writing. $1 connection names left out of the open-write check,
@@ -123,8 +129,8 @@ const CAN_WRITE = (u: string): string => `(${u} IS NULL OR EXISTS (SELECT 1 FROM
  *  prepared a prepared transaction exists in this database (it holds locks and has no backend);
  *  live     a connection the hooks recorded as a writer is still connected, however old its row (its next write may not
  *           leave a new row);
- *  recent   another client connection of a role that can write a copied relation is not idle or went idle less than
- *           SETTLE_SECONDS ago (its counters may not be flushed yet);
+ *  recent   another client connection of a login that can write a copied relation (CAN_WRITE) is not idle or went
+ *           idle less than SETTLE_SECONDS ago (its counters may not be flushed yet);
  *  unseen   a backend of such a role (or of no role) whose row this role may not see: without superuser or
  *           pg_read_all_stats, another role's row shows pid, usesysid, usename and application_name but NULL state,
  *           backend_xid, state_change and backend_type (PostgreSQL 16 and 17), so neither its open write nor its
