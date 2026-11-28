@@ -78,11 +78,13 @@ const VERIFIED_WRITERS: ReadonlySet<string> = new Set(['effect', 'door']);
 class Unreadable extends Error { constructor(message: string, readonly timedOut = false) { super(message); } }
 
 type Run = ReturnType<typeof spawnSync>;
-function run(root: string, args: string[], deadline: number, opts: { input?: string; out?: number; maxBuffer?: number } = {}): Run {
+function run(root: string, args: string[], deadline: number, opts: { input?: string; out?: number; maxBuffer?: number; noGrafts?: boolean } = {}): Run {
   const timeout = deadline - Date.now();
   if (timeout <= 0) throw new Unreadable('the scan ran past its time budget', true);
   return spawnSync('git', ['-C', root, ...args], { input: opts.input ?? '', stdio: ['pipe', opts.out ?? 'pipe', 'pipe'], timeout,
-    maxBuffer: opts.maxBuffer ?? 64 * 1024 * 1024, env: gitChildEnv({ ...GIT_ENV, ...GIT_READ_ENV, LC_ALL: 'C', GIT_NO_REPLACE_OBJECTS: '1', GIT_ATTR_NOSYSTEM: '1' }) });
+    maxBuffer: opts.maxBuffer ?? 64 * 1024 * 1024, env: gitChildEnv({ ...GIT_ENV, ...GIT_READ_ENV, LC_ALL: 'C', GIT_NO_REPLACE_OBJECTS: '1', GIT_ATTR_NOSYSTEM: '1',
+      ...(opts.noGrafts ? { GIT_GRAFT_FILE: process.platform === 'win32' ? 'NUL' : '/dev/null',
+        GIT_SHALLOW_FILE: process.platform === 'win32' ? 'NUL' : '/dev/null' } : {}) }) });
 }
 /**
  * The commits the ledger records as page writes; an unreadable ledger reads as none, so everything is scanned. A commit
@@ -157,11 +159,15 @@ function attributesNeutral(root: string, deadline: number): boolean {
  * line at once for a whole-history scan, and every 10 s while any scan runs. `opts.allowlist` replaces the checkout's
  * `.gbrain-scan-allow` (a redacting publish passes the remote's, GST-2988 D10). Each commit is scanned on its own, whatever
  * the base: `opts.skip` leaves out commits a caller already scanned clean, and `opts.listed` collects the commits this scan covers.
+ * A managed `sources push` requests `includePageWrites`: unlike the automatic publisher it applies the workspace
+ * secret policy to every commit, including the page writes that the automatic publisher deliberately exempts.
  */
 export function scanRange(root: string, base: string, head: string, timeoutMs = DEFAULT_SCAN_TIMEOUT_MS, progress?: (line: string) => void,
-  opts: { allowlist?: string[]; skip?: ReadonlySet<string>; listed?: Set<string> } = {}): RangeScan {
+  opts: { allowlist?: string[]; skip?: ReadonlySet<string>; listed?: Set<string>; includePageWrites?: boolean } = {}): RangeScan {
   const started = Date.now();
   const deadline = started + timeoutMs;
+  const scanGit = (args: string[], options: { input?: string; out?: number; maxBuffer?: number } = {}) =>
+    run(root, args, deadline, { ...options, noGrafts: opts.includePageWrites });
   let reported = base ? started : 0, spoke = false;
   const report = (line: () => string) => {
     if (!progress || Date.now() - reported < PROGRESS_EVERY_MS) return;
@@ -185,13 +191,13 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
   };
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-range-scan-'));
   try {
-    prefix = must(run(root, ['rev-parse', '--show-prefix'], deadline), 'rev-parse').toString().replace(/\n$/, '');
+    prefix = must(scanGit(['rev-parse', '--show-prefix']), 'rev-parse').toString().replace(/\n$/, '');
     allowFile = `${prefix}${SCAN_ALLOW_FILENAME}`;
-    const range = must(run(root, ['rev-list', base ? `${base}..${head}` : head, '--'], deadline), 'rev-list').toString().split('\n')
+    const range = must(scanGit(['rev-list', base ? `${base}..${head}` : head, '--']), 'rev-list').toString().split('\n')
       .filter(commit => commit && !opts.skip?.has(commit));
     for (const commit of range) opts.listed?.add(commit);
     if (!range.length) return scan;
-    const pageWrites = pageWriteCommits(root, deadline);
+    const pageWrites = opts.includePageWrites ? new Set<string>() : pageWriteCommits(root, deadline);
     const commits = range.filter(commit => !pageWrites.has(commit));
     if (!commits.length) return scan;
     report(() => `reading ${commits.length} commit(s)${base ? '' : ', the whole history'}`);
@@ -217,7 +223,7 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
       const slice = commits.slice(batch, batch + DIFF_BATCH);
       const fd = openSync(join(dir, 'commits'), 'w+', 0o600);
       try {
-        must(run(root, ['cat-file', '--batch'], deadline, { input: slice.join('\n') + '\n', out: fd }), 'cat-file --batch');
+        must(scanGit(['cat-file', '--batch'], { input: slice.join('\n') + '\n', out: fd }), 'cat-file --batch');
         let position = 0;
         const readAt = (length: number) => {
           const buf = Buffer.alloc(length);
@@ -246,7 +252,7 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
     }
 
     const neutral = attributesNeutral(root, deadline);
-    const attrSource = neutral ? [`--attr-source=${must(run(root, ['hash-object', '-t', 'tree', '--stdin'], deadline), 'hash-object').toString().trim()}`] : [];
+    const attrSource = neutral ? [`--attr-source=${must(scanGit(['hash-object', '-t', 'tree', '--stdin']), 'hash-object').toString().trim()}`] : [];
     const out = join(dir, 'diff');
     const binaries: Array<{ commit: string; path: string; blob: string; added: boolean }> = [];
     let patchBytes = 0;
@@ -254,7 +260,7 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
       report(() => `read the patches of ${batch} of ${commits.length} commit(s), ${(patchBytes / 1048576).toFixed(0)} MiB`);
       const fd = openSync(out, 'w+', 0o600);
       try {
-        must(run(root, [...attrSource, ...CONFIG, ...DIFF], deadline, { input: commits.slice(batch, batch + DIFF_BATCH).join('\n') + '\n', out: fd }), 'diff-tree');
+        must(scanGit([...attrSource, ...CONFIG, ...DIFF], { input: commits.slice(batch, batch + DIFF_BATCH).join('\n') + '\n', out: fd }), 'diff-tree');
         patchBytes += fstatSync(fd).size;
         let commit = '', path: string | null = null, header = false, parents = 1, next = 0, bytes = 0, oversized = false;
         let olds: string[] = [], blob = '', added: string[] = [], at: number[] = [];
@@ -326,16 +332,16 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
     const sizes = new Map<string, number>();
     const fresh = binaries.filter(b => neutral && b.added);
     if (fresh.length) {
-      const check = must(run(root, ['cat-file', '--batch-check=%(objectname) %(objectsize)'], deadline, { input: fresh.map(b => b.blob).join('\n') + '\n' }), 'cat-file --batch-check');
+      const check = must(scanGit(['cat-file', '--batch-check=%(objectname) %(objectsize)'], { input: fresh.map(b => b.blob).join('\n') + '\n' }), 'cat-file --batch-check');
       for (const row of check.toString().split('\n')) { const [name, size] = row.split(' '); if (name && size) sizes.set(name, Number(size)); }
     }
     for (const b of binaries) {
       if (allowed(b.path)) continue;
       if (neutral && b.added && (sizes.get(b.blob) ?? Infinity) <= BIG_FILE_THRESHOLD) continue;
-      const sniff = run(root, ['cat-file', 'blob', b.blob], deadline, { maxBuffer: SNIFF_BYTES });
+      const sniff = scanGit(['cat-file', 'blob', b.blob], { maxBuffer: SNIFF_BYTES });
       if ((sniff.error as NodeJS.ErrnoException | undefined)?.code !== 'ENOBUFS') must(sniff, 'cat-file blob');
       if ((sniff.stdout as Buffer).subarray(0, SNIFF_BYTES).includes(0)) continue;
-      const whole = run(root, ['cat-file', 'blob', b.blob], deadline, { maxBuffer: SCAN_MAX_FILE_BYTES });
+      const whole = scanGit(['cat-file', 'blob', b.blob], { maxBuffer: SCAN_MAX_FILE_BYTES });
       if ((whole.error as NodeJS.ErrnoException | undefined)?.code === 'ENOBUFS') { scan.unscanned.push({ path: b.path, commit: b.commit }); continue; }
       scanned(b.path, b.commit, must(whole, 'cat-file blob').toString('utf8'));
     }

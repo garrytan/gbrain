@@ -24,8 +24,8 @@
  *   gbrain sources git-gap <id> — read-only census of the database against the commit at HEAD (sources-git-gap.ts)
  *   gbrain sources reindex <id> --from-git — a strict source's re-derive from Git, preview then apply (sources-reindex.ts)
  *   gbrain sources canonical <id> --to git|mixed — convert a source to git-canonical or back, preview then apply (sources-canonical.ts)
- *   gbrain sources push [<id>|--path <dir>] — scan-gated add→commit→pull→push
- *                               (agent-bootstrap; core in src/core/workspace-push.ts)
+ *   gbrain sources push [<id>|--path <dir>] — managed: scanned committed HEAD only;
+ *                               unmanaged: scan-gated add→commit→pull→push
  *
  * NOT in scope for Step 6 (deferred per plan):
  *   - import-from-github (needs SSRF + clone integration)
@@ -81,6 +81,7 @@ import { isSyncStrategy } from '../core/sync.ts';
 import { pullStrategyOf } from '../core/git-remote.ts';
 import { isValidSourceId } from '../core/source-id.ts';
 import { opError } from '../core/ops/contract.ts';
+import { runManagedSourcesPush } from './sources-push-managed.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -558,12 +559,9 @@ function deriveBrainId(created: OpsSourceRow, localPath: string): string {
 
 // ── Subcommand: push (agent-bootstrap D6/G6/G8/G14) ─────────
 //
-// `gbrain sources push [<id>|--path <dir>]` — scan-gated add→commit→pull→push
-// of a workspace repo. The heavy lifting (single-flight lock, deny-glob
-// backstop, secret scan, commit-first-then-pull ordering, remote-privacy
-// refusal, push-status.json) lives in src/core/workspace-push.ts; this
-// wrapper only parses args, resolves <id> → local_path, and maps statuses
-// to exit codes:
+// `gbrain sources push [<id>|--path <dir>]`: a managed checkout publishes
+// only its scanned committed HEAD under its owner's lock. An unmanaged workspace
+// keeps the legacy add→commit→pull→push route in src/core/workspace-push.ts.
 //   0  pushed / skipped (push already in flight — clean single-flight skip)
 //   5  blocked (secrets / tracked deny-glob / the commits it would push) or refused (unverified remote)
 //   1  pull conflict / push failure / other error
@@ -610,6 +608,10 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
     dir = src.local_path;
     pullStrategy = pullStrategyOf(parseConfig(src.config));
   }
+
+  // Check managed ownership before entering the legacy workspace writer.
+  if (await runManagedSourcesPush(engine, { id, dir: dir!, branch, message, allowUnverified, json,
+    ...(scanTimeout ? { scanTimeoutMs: Number(scanTimeout) * 1000 } : {}) })) return;
 
   const { workspacePush, formatBlockedSecrets } = await import('../core/workspace-push.ts');
   const { SCAN_ALLOW_FILENAME } = await import('../core/secret-scan.ts');
@@ -1959,7 +1961,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     // v0.42.44 brain-repo git durability
     case 'harden':     { const { runHarden } = await import('./sources-harden.ts'); return runHarden(engine, rest); }
     case 'pull':       { const { runPull } = await import('./sources-harden.ts'); return runPull(engine, rest); }
-    // agent-bootstrap: scan-gated workspace push
+    // Managed committed-HEAD retry, or unmanaged workspace push.
     case 'push':       return runPush(engine, rest);
     case 'unharden':   { const { runUnharden } = await import('./sources-harden.ts'); return runUnharden(engine, rest); }
     // undefined / --help / -h are handled by the guards above, before this
@@ -2093,24 +2095,30 @@ Subcommands:
                                     --path is DB-free (the harden cron's entry).
   push <id> | --path <dir> [--branch <b>] [--message <m>]
        [--allow-unverified-remote] [--scan-timeout <s>] [--json]
-                                    Scan-gated add→commit→pull→push of a workspace
-                                    repo; every commit it pushes is scanned
+                                    Managed: scan and push only the committed HEAD
+                                    under the owner lock; never stage, commit,
+                                    pull, integrate or run hooks. Dirty files stay local.
+                                    --branch, --message and --allow-unverified-remote
+                                    are for unmanaged workspaces only.
+                                    Unmanaged: scan-gated add→commit→pull→push.
+                                    Every commit it pushes is scanned
                                     (--scan-timeout: the scan's budget, default
                                     300 s). Blocks on secret-scan findings (override
                                     per finding via .gbrain-scan-allow) and on
-                                    tracked deny-list files (*.pglite, .env*,
-                                    *.pem, *.key, .gbrain/**). Refuses remotes not
-                                    verifiably private — verified via REST, falling
-                                    back to pure git protocol where gh is blocked
+                                    deny-list paths (*.pglite, .env*,
+                                    *.pem, *.key, .gbrain/**). Unmanaged push
+                                    refuses remotes not verifiably private,
+                                    verified via REST and falling back to pure git
+                                    protocol where gh is blocked
                                     (cloud proxies); private verdicts cached 1h.
                                     Unverified-remote overrides (self-hosted git
                                     you trust; every use warns loudly): the flag
                                     above, GBRAIN_ALLOW_UNVERIFIED_REMOTE=1, or
                                     "gbrain config set push.allow_unverified_remote
                                     true" (file-plane — reaches detached hook
-                                    children). Single-flight (a concurrent push
-                                    exits 0 as "skipped"); pushes even on a clean
-                                    tree. Writes per-root status under
+                                    children). An unmanaged single-flight push
+                                    can skip a concurrent run, pushes even on a
+                                    clean tree, and writes per-root status under
                                     ~/.gbrain/bootstrap/.
   unharden <id>                     Remove durability cron/hook/credential wiring.
 
