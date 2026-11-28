@@ -130,7 +130,8 @@ image row and a row with no vector, so a vector never lands in the wrong space. 
 refuses (`engine_capability_missing`, before any write) a `halfvec` descriptor (Postgres rounds to half precision; the
 store keeps float32). The store refuses the whole batch (`invalid_argument`, as upsertChunks) when any row's vector
 length differs from the width upsertChunks takes (the config `embedding_dimensions`, 1536 when unset), so the two
-writes never leave the store with two widths that vector search cannot compare. The descriptor's `dimensions` is not
+writes never leave the store with two widths that vector search cannot compare, and when any component is not a
+finite 32-bit float (1e40; PGLite refuses it with 22003), so such a value is never stored as another. The descriptor's `dimensions` is not
 compared (see Known edges). A refused batch writes nothing, so no chunk is ever marked complete from a short vector. The store keeps a sha256
 text hash where PGLite keeps md5; both answer "the text has not changed since the vector was computed".
 `readEmbeddingCompletion` receives only the column's name, so it checks the name alone; it writes nothing.

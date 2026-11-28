@@ -4,9 +4,10 @@
  * (lockEmbeddingSwitch) and one batch of the vector install (installChunkEmbeddings).
  *
  * The store has one vector column, `embedding`, of 32-bit floats, and no image vectors: another column, a `halfvec`
- * descriptor, a vector of another width than the store keeps or an image row is refused before anything is written,
- * not stored in the wrong space; the store refuses a vector of another width than upsertChunks takes. The store write is exclusive, so the two locks need no row lock: the claim check is the
- * read, and the switch lock does nothing (the switch cannot flip inside the write that installs).
+ * descriptor or an image row is refused here, and the store refuses a batch with a vector of another width than
+ * upsertChunks takes or a value that is not a finite 32-bit float, all before anything is written. The store write is
+ * exclusive, so the two locks need no row lock: the claim check is the read, and the switch lock does nothing (the
+ * switch cannot flip inside the write that installs).
  *
  * What each member answers and why: rust/docs/store/embeddings.md ("Embedding install").
  */

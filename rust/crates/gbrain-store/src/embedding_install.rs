@@ -29,7 +29,8 @@ pub struct CompletionOptions {
 pub struct InstallRow {
     pub id: u64,
     pub chunk_text: String,
-    pub embedding: Vec<f32>,
+    /// Read as 64-bit floats, so a component outside the 32-bit range is seen and refused, not rounded.
+    pub embedding: Vec<f64>,
     pub model: Option<String>,
     pub input_hash: Option<String>,
 }
@@ -78,7 +79,8 @@ impl Store {
     /// no model keeps the chunk's old one. Every row's vector must have the width upsertChunks takes
     /// (`embedding_dimensions`, 1536 when unset), skipped rows too, as PGLite casts the whole batch:
     /// one of another width refuses the batch before anything is written, so the store never holds
-    /// two widths that vector search cannot compare.
+    /// two widths that vector search cannot compare. A component that is not a finite 32-bit float
+    /// (1e40) refuses the batch the same way: it is never stored as another value.
     pub fn install_chunk_embeddings(&self, page_id: u64, rows: &[InstallRow]) -> Result<()> {
         let now = self.env.now_micros();
         self.write(|tx| {
@@ -89,8 +91,23 @@ impl Store {
                     row.embedding.len()
                 )));
             }
+            // PGLite refuses such a batch with 22003 (`... is out of range for type vector`).
+            let vectors = rows
+                .iter()
+                .map(|row| {
+                    row.embedding
+                        .iter()
+                        .map(|&v| Some(v as f32).filter(|n| n.is_finite()).ok_or(v))
+                        .collect::<std::result::Result<Vec<f32>, f64>>()
+                })
+                .collect::<std::result::Result<Vec<_>, f64>>()
+                .map_err(|v| {
+                    StoreError::invalid(format!(
+                        "a chunk embedding must hold finite numbers: {v:e} is out of range for a 32-bit float vector"
+                    ))
+                })?;
             let mut chunks = read_chunks(&*tx, page_id)?;
-            for row in rows {
+            for (row, vector) in rows.iter().zip(&vectors) {
                 let Some(chunk) = chunks
                     .iter_mut()
                     .find(|c| c.id == row.id && c.chunk_text == row.chunk_text)
@@ -111,7 +128,7 @@ impl Store {
                 chunk.embed.input_hash = row.input_hash.clone();
                 chunk.embed.pending_since_us = None;
                 put_json(tx, &keys::chunk(page_id, chunk.chunk_index), &*chunk)?;
-                put_chunk_vector(tx, page_id, chunk.chunk_index, &model, now, &row.embedding)?;
+                put_chunk_vector(tx, page_id, chunk.chunk_index, &model, now, vector)?;
             }
             Ok(())
         })
