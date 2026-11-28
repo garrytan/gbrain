@@ -415,6 +415,7 @@ test/large-pages/segmented-get-page-parity.test.ts
 test/large-pages/segmented-leads.test.ts
 test/large-pages/segmented-loser-chunks.test.ts
 test/large-pages/segmented-maintenance-commands.test.ts
+test/large-pages/segmented-markdown-cross-cut-10589.test.ts
 test/large-pages/segmented-prior-view.test.ts
 test/large-pages/segmented-read-refusals.test.ts
 test/large-pages/segmented-real-size.slow.test.ts

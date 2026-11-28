@@ -33,7 +33,8 @@ import type { Page } from '../types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { withoutBody } from '../page-body/page-shape.ts';
 import { ledgerApplies } from '../page-body/segment-ledger.ts';
-import { openSegmentedBody, projectedLayout, projectedOutline, projectedUnits, readBodyRange, type SegmentedBody } from '../page-body/read-range.ts';
+import { readEntryState } from '../page-body/entry-state.ts';
+import { openSegmentedBody, projectedLayout, projectedOutline, projectedUnits, readBodyRange, trustedSegments, type SegmentedBody } from '../page-body/read-range.ts';
 import { remoteReadStrips } from '../remote-body.ts';
 import { TIMELINE_SEPARATOR, spanHoldsChunk } from './document.ts';
 import { DATE, sliceWindow, slabWindow, windowAround, windowForBytes, windowFrom, type DocumentSlab, type OutlineEntry, type PageOutline, type WindowSlice } from './window.ts';
@@ -262,16 +263,56 @@ export async function segmentedMarkdownDocument(engine: BrainEngine, body: Segme
       return Buffer.concat(parts);
     };
   } else {
-    const measured = new Map<number, { bytes: number; newlines: number }>();
+    const rowEnds = new Map<number, number>();
+    const rowUnits: Array<Omit<DocumentUnit, 'start'>> = [];
     segmentedReadWork.units += body.rows.length;
     if (ledgerApplies(body.ledger)) {
-      for (const [i, row] of body.rows.entries()) {
-        if (!row.hasFacts) continue;
-        const text = await trustedBytes(engine, body, row.byteStart, row.byteStart + row.byteLen);
-        measured.set(i, { bytes: text.length, newlines: newlinesIn(text) });
+      // Entry states identify complete withdrawal runs without reading unrelated
+      // text. Pin metadata to the body generation, not the page's live manifest.
+      const manifest = await engine.readManifest(body.pageId, { generation: body.generation });
+      const states = new Map(manifest.map(row => [row.occurrenceId, readEntryState(row.entryState)]));
+      const indexes = new Map(body.rows.map((row, i) => [row.occurrenceId, i]));
+      for (const region of ['truth', 'timeline'] as const) {
+        const rows = body.rows.filter(row => row.region === region);
+        // Missing/old metadata cannot establish safe boundaries. Preserve the
+        // full-region measurement path rather than treating those rows as raw.
+        const fallback = rows.some(row => {
+          const state = states.get(row.occurrenceId);
+          return !state || state.region !== region || typeof state.withdrawal?.open !== 'boolean'
+            || typeof state.withdrawal?.carry !== 'string';
+        });
+        for (let i = 0; i < rows.length;) {
+          let end = i + 1;
+          while (end < rows.length) {
+            const state = states.get(rows[end]!.occurrenceId);
+            if (!fallback && !state!.withdrawal.open && !state!.withdrawal.carry) break;
+            end++;
+          }
+          const group = rows.slice(i, end);
+          i = end;
+          if (!fallback && group.length === 1 && !group[0]!.hasFacts) {
+            const row = group[0]!;
+            rowUnits.push({ bytes: row.byteLen, newlines: row.lineCount, row: indexes.get(row.occurrenceId)! });
+            continue;
+          }
+          // Size and address the same complete runs trustedSegments overlays,
+          // including split markers on rows with no facts slots of their own.
+          for await (const segment of trustedSegments(engine, body, group)) {
+            const row = indexes.get(segment.row.occurrenceId)!;
+            let bytes = 0, newlines = 0;
+            for (const piece of segment.pieces) {
+              const text = Buffer.from(piece.text, 'utf8');
+              bytes += text.length;
+              newlines += newlinesIn(text);
+            }
+            rowUnits.push({ bytes, newlines, row });
+            rowEnds.set(row, segment.row.byteStart + segment.row.byteLen);
+          }
+        }
       }
+    } else {
+      body.rows.forEach((row, i) => rowUnits.push({ bytes: row.byteLen, newlines: row.lineCount, row: i }));
     }
-    const rowUnits = body.rows.map((row, i) => ({ bytes: row.byteLen, newlines: row.lineCount, ...measured.get(i), row: i }));
     rowUnits.filter(u => body.rows[u.row]!.region === 'truth').forEach(push);
     const timeline = rowUnits.filter(u => body.rows[u.row]!.region === 'timeline');
     if (timeline.some(u => u.bytes > 0)) {
@@ -288,8 +329,9 @@ export async function segmentedMarkdownDocument(engine: BrainEngine, body: Segme
         if (u.row < 0) { parts.push(Buffer.from(u.text!, 'utf8')); i++; continue; }
         let j = i;
         while (j + 1 < units.length && units[j + 1]!.row >= 0 && units[j + 1]!.start < end) j++;
-        const last = body.rows[units[j]!.row]!;
-        parts.push(await trustedBytes(engine, body, body.rows[u.row]!.byteStart, last.byteStart + last.byteLen));
+        const endRow = units[j]!.row;
+        const last = body.rows[endRow]!;
+        parts.push(await trustedBytes(engine, body, body.rows[u.row]!.byteStart, rowEnds.get(endRow) ?? last.byteStart + last.byteLen));
         i = j + 1;
       }
       return Buffer.concat(parts).subarray(start - base, end - base);
