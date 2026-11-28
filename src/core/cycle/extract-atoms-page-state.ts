@@ -207,8 +207,9 @@ export function renamedPrivateReofferSql(): string {
 /**
  * GST-4061 (GBRA-161 D4, narrowed): the page's own live atoms (managed or not, as the source is) an empty rescan retires.
  * An empty answer still retires nothing on its own; an atom goes only when a world withdrawal of the page's claims was
- * recorded after the page's last completed scan and after the atom was written, and the atom's verified quote is no longer
- * in the complete model input `promptContent` (the withdrawal took it out). An atom with no verified quote stays.
+ * recorded after the page's last completed scan (stamped when its input was read, so a withdrawal during that scan's model
+ * call counts; with no scan, after the atom was written), and the atom's verified quote is no longer in the complete model
+ * input `promptContent` (the withdrawal took it out). An atom with no verified quote stays.
  */
 export async function withdrawnQuoteAtoms(engine: SqlEngine, sourceId: string, item: AtomPageInput, promptContent: string,
   managed: boolean): Promise<string[]> {
@@ -219,9 +220,8 @@ export async function withdrawnQuoteAtoms(engine: SqlEngine, sourceId: string, i
         AND (COALESCE(a.frontmatter->>'managed_extraction', '') = 'true') = $5::boolean
         AND a.frontmatter->>'source_quote_verified' = 'true' AND COALESCE(a.frontmatter->>'source_quote', '') <> ''
         AND EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=$1 AND w.visibility='world' AND w.subject IN ('*', $2)
-          AND w.withdrawn_at > a.updated_at
           AND w.withdrawn_at > COALESCE((SELECT max(st.updated_at) FROM extract_atoms_page_state st
-            WHERE st.source_incarnation=$3::uuid AND st.page_id=$4 AND st.tombstoned), '-infinity'::timestamptz))
+            WHERE st.source_incarnation=$3::uuid AND st.page_id=$4 AND st.tombstoned), a.updated_at))
       ORDER BY a.slug`,
     [sourceId, item.slug, item.identity.sourceIncarnation, item.identity.pageId, managed]);
   return rows.filter(row => !promptContent.includes(row.quote)).map(row => row.slug);

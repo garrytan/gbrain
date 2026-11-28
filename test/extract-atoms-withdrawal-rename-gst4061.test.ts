@@ -261,7 +261,7 @@ describe('GST-4061 managed extract_atoms after withdrawals and renames', () => {
     // Every page is written before the brain is managed; later writes go through `unmanaged`.
     const pages = [`${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN), fact(2, RETAINED)])}`,
       `${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN)])}`, PROSE('canaryrename4061'),
-      `${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN), fact(2, RETAINED)])}`];
+      `${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN), fact(2, RETAINED)])}`, `${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN)])}`];
     for (const [i, body] of pages.entries()) {
       await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [`gst4061-managed-${i + 1}`]);
       await put(engine, `gst4061-managed-${i + 1}`, body);
@@ -316,6 +316,21 @@ describe('GST-4061 managed extract_atoms after withdrawals and renames', () => {
     expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(1);
     await run(engine, sourceId, inner.chat);
     expect(inner.prompts.length).toBe(2);
+    expect(await atomText(engine, sourceId)).not.toContain('canarywithdrawn4061');
+    expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(0);
+  }), 120_000);
+
+  test('case 1 race: an empty managed rescan after a withdrawal during the model call retires the withdrawn atom', () => managed(5, async sourceId => {
+    const inner = copyingChat();
+    let first = true;
+    const chat = async (opts: ChatOpts) => {
+      if (first) { first = false; await withdraw(engine, sourceId, WITHDRAWN); }
+      return inner.chat(opts);
+    };
+    await run(engine, sourceId, chat);
+    expect(await atomText(engine, sourceId)).toContain('canarywithdrawn4061');
+    expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(1);
+    await run(engine, sourceId, copyingChat(true).chat);
     expect(await atomText(engine, sourceId)).not.toContain('canarywithdrawn4061');
     expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(0);
   }), 120_000);
