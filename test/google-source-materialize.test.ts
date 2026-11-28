@@ -184,7 +184,7 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
       const tid = threadMatch[1];
       fx.threadFetches++;
       fx.onThreadFetch?.();
-      if (fx.failThreads.has(tid)) return json({ error: { code: 500, message: 'backend error' } }, 500);
+      if (fx.failThreads.has(tid)) return json({ error: { code: 500, message: 'backend error' } }, 500, { 'retry-after': '0' });
       if (fx.rateLimitThreads.has(tid)) {
         // retry-after: 0 → the client's real (patient) retry loop still
         // runs its full attempt budget, but with zero actual delay.

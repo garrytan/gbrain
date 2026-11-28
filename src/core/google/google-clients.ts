@@ -12,6 +12,12 @@
  *    under backfill burst load is common and self-clearing; giving up after
  *    two tries used to poison threads that would have succeeded a few
  *    seconds later.
+ *  - 500/502/503/504 and transient socket failures (ECONNRESET, ETIMEDOUT,
+ *    EAI_AGAIN, "socket connection was closed unexpectedly", ...) get a
+ *    small retry budget (DEFAULT_TRANSIENT_RETRIES) with jittered backoff,
+ *    Retry-After honored when Google sends one. Every request here is an idempotent GET, so
+ *    a retry cannot double-apply anything; before this, one Google 5xx or
+ *    one dropped connection failed a whole source sweep.
  *  - 403 accessNotConfigured / SERVICE_DISABLED → GoogleApiDisabledError
  *    ('api_not_enabled') naming the API, the project and the enable link
  *    Google put in the error body (the client id's project number otherwise)
@@ -64,6 +70,58 @@ const DEFAULT_RETRIES = 2;
  */
 const DEFAULT_RATE_LIMIT_RETRIES = 6;
 
+/**
+ * Retry budget for a transient server/network failure (HTTP 500/502/503/504,
+ * a reset or timed-out socket). Small on purpose: these clear in seconds when
+ * they are transient, and a real outage should still surface fast.
+ */
+const DEFAULT_TRANSIENT_RETRIES = 3;
+
+/** Backoff ceiling for a transient retry with no Retry-After header. */
+const TRANSIENT_BACKOFF_CAP_MS = 16_000;
+
+const TRANSIENT_HTTP_STATUSES = new Set([500, 502, 503, 504]);
+
+/**
+ * Exponential backoff with equal jitter for transient failures:
+ * attempt 0 → [0.5s, 1s], 1 → [1s, 2s], 2 → [2s, 4s], capped at 16s.
+ */
+export function transientBackoffMs(attempt: number): number {
+  const base = Math.min(TRANSIENT_BACKOFF_CAP_MS, 2 ** attempt * 1_000);
+  const half = base / 2;
+  return Math.round(half + Math.random() * half);
+}
+
+/**
+ * A fetch that threw because the connection failed, not because the caller
+ * aborted. Structured `code` / `TimeoutError` through the cause chain first,
+ * message match as the fallback for wrappers that strip the code (Bun reports
+ * a reset as "ECONNRESET: The socket connection was closed unexpectedly").
+ *
+ * @internal exported for unit tests.
+ */
+export function isTransientNetworkError(e: unknown): boolean {
+  const TRANSIENT_CODES = /^(ECONNRESET|ECONNREFUSED|ECONNABORTED|EPIPE|ETIMEDOUT|ESOCKETTIMEDOUT|EAI_AGAIN|DNS_ETIMEOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|UND_ERR_SOCKET)$/;
+  let cur: unknown = e;
+  for (let depth = 0; depth < 5 && cur !== undefined && cur !== null; depth++) {
+    const obj = cur as { code?: unknown; name?: unknown; cause?: unknown };
+    if (obj.name === 'AbortError') return false;
+    if (typeof obj.code === 'string' && TRANSIENT_CODES.test(obj.code)) return true;
+    if (obj.name === 'TimeoutError') return true;
+    cur = obj.cause;
+  }
+  const msg = e instanceof Error ? e.message : String(e);
+  return /\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE)\b|socket connection was closed unexpectedly|socket hang up|fetch failed/i.test(msg);
+}
+
+/** Sleep that a caller's abort cuts short. */
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+  });
+}
+
 /** Backoff ceiling for a rate-limit retry with no Retry-After header. */
 const RATE_LIMIT_BACKOFF_CAP_MS = 60_000;
 
@@ -91,7 +149,7 @@ interface GoogleErrorBody {
 
 type ApiHint = 'gmail' | 'calendar-json' | 'people';
 
-/** Shared request core with auth, refresh-retry, and rate-limit handling. */
+/** Shared request core with auth, refresh-retry, rate-limit and transient-failure handling. */
 export class GoogleApiClient {
   constructor(
     protected readonly tokens: GoogleAccessProvider,
@@ -104,7 +162,7 @@ export class GoogleApiClient {
   async fetchJSON<T>(
     url: string,
     apiHint: ApiHint,
-    opts: { signal?: AbortSignal; retries?: number; rateLimitRetries?: number; maxResponseBytes?: number } = {},
+    opts: { signal?: AbortSignal; retries?: number; rateLimitRetries?: number; transientRetries?: number; maxResponseBytes?: number } = {},
   ): Promise<T> {
     const retries = opts.retries ?? DEFAULT_RETRIES;
     // Rate-limit-class failures get their OWN (larger) retry budget — see
@@ -112,13 +170,29 @@ export class GoogleApiClient {
     // whichever budget is larger; each branch below still checks its own
     // budget, so a plain 401 exhausts at `retries` exactly as before.
     const rateLimitRetries = opts.rateLimitRetries ?? DEFAULT_RATE_LIMIT_RETRIES;
-    const maxAttempt = Math.max(retries, rateLimitRetries);
+    // Transient 5xx / socket failures get a third, small budget (same shared
+    // `attempt` counter; each branch checks its own budget).
+    const transientRetries = opts.transientRetries ?? DEFAULT_TRANSIENT_RETRIES;
+    const maxAttempt = Math.max(retries, rateLimitRetries, transientRetries);
     for (let attempt = 0; attempt <= maxAttempt; attempt++) {
       const token = await this.tokens.getAccessToken();
-      const res = await this.fetchImpl(url, {
-        headers: { authorization: `Bearer ${token}` },
-        ...(opts.signal ? { signal: opts.signal } : {}),
-      });
+      let res: Response;
+      try {
+        res = await this.fetchImpl(url, {
+          headers: { authorization: `Bearer ${token}` },
+          ...(opts.signal ? { signal: opts.signal } : {}),
+        });
+      } catch (e) {
+        if (opts.signal?.aborted || attempt >= transientRetries || !isTransientNetworkError(e)) throw e;
+        const waitMs = transientBackoffMs(attempt);
+        this.log(
+          `[google] ${e instanceof Error ? e.message : String(e)} on ${apiHint}; retrying in ${Math.round(waitMs / 1000)}s ` +
+            `(transient, attempt ${attempt + 1}/${transientRetries})`,
+        );
+        await abortableSleep(waitMs, opts.signal);
+        if (opts.signal?.aborted) throw e;
+        continue;
+      }
       const readJSON = () => opts.maxResponseBytes
         ? readBoundedHttpBody(new Response(res.body), opts.maxResponseBytes, opts.signal ?? new AbortController().signal)
           .then(bytes => JSON.parse(bytes.toString('utf8')))
@@ -154,13 +228,21 @@ export class GoogleApiClient {
             `[google] HTTP ${res.status}; retrying in ${Math.round(waitMs / 1000)}s ` +
               `(rate limit, attempt ${attempt + 1}/${rateLimitRetries})`,
           );
-          await new Promise<void>((resolve) => {
-            const t = setTimeout(resolve, waitMs);
-            opts.signal?.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
-          });
+          await abortableSleep(waitMs, opts.signal);
           continue;
         }
         throw new CredentialError('rate_limited', undefined, `HTTP ${res.status} on ${url}`);
+      }
+      if (TRANSIENT_HTTP_STATUSES.has(res.status) && attempt < transientRetries) {
+        const waitMs = parseRetryAfterMs(res.headers.get('retry-after')) ?? transientBackoffMs(attempt);
+        this.log(
+          `[google] HTTP ${res.status} on ${apiHint}; retrying in ${Math.round(waitMs / 1000)}s ` +
+            `(transient, attempt ${attempt + 1}/${transientRetries})`,
+        );
+        // An abort during the sleep makes the next fetch throw AbortError,
+        // which is not transient and propagates as before.
+        await abortableSleep(waitMs, opts.signal);
+        continue;
       }
       // 404 / 410 surface to callers — cursor-expiry handling is theirs.
       if (res.status === 404 || res.status === 410) {

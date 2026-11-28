@@ -147,8 +147,8 @@ function b64url(s: string): string {
 }
 
 function buildFetch(fx: FakeGoogle): FetchImpl {
-  const json = (body: unknown, status = 200): Response =>
-    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
 
   return async (url: string): Promise<Response> => {
     const u = new URL(url);
@@ -180,7 +180,7 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
     }
 
     if (u.pathname.endsWith('/users/me/labels')) {
-      if (fx.labels === 'fail') return json({ error: { code: 500, message: 'backend error' } }, 500);
+      if (fx.labels === 'fail') return json({ error: { code: 500, message: 'backend error' } }, 500, { 'retry-after': '0' });
       return json({ labels: fx.labels });
     }
 
@@ -196,7 +196,7 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
       const tid = threadMatch[1];
       fx.threadFetches++;
       if (fx.vanishedThreads.has(tid)) return json({ error: { code: 404, message: 'Not Found' } }, 404);
-      if (fx.failThreads.has(tid)) return json({ error: { code: 500, message: 'backend error' } }, 500);
+      if (fx.failThreads.has(tid)) return json({ error: { code: 500, message: 'backend error' } }, 500, { 'retry-after': '0' });
       const msgs = fx.messages
         .filter((m) => m.threadId === tid)
         .sort((a, b) => b.internalDateMs - a.internalDateMs);
