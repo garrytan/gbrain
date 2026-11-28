@@ -112,7 +112,7 @@ export function isGitHubSourceConfig(config: Record<string, unknown>): boolean {
 export { gitHubStateFile } from './github-sweep-state.ts';
 
 function readGitHubState(dir: string): GitHubState {
-  return parseGitHubState(existsSync(gitHubStateFile(dir)) ? readFileSync(gitHubStateFile(dir), 'utf-8') : '');
+  try { return parseGitHubState(readFileSync(gitHubStateFile(dir), 'utf-8')); } catch { return parseGitHubState(''); }
 }
 
 /** Written beside itself and renamed into place, so a crash mid-write never leaves a torn state file (which reads as no state). */
@@ -1159,7 +1159,7 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
 
     const since = opts.full ? undefined : state.last_sweep_at ?? undefined;
     const keepPaths = new Set<string>();
-    const succeededRepos = new Set<string>();
+    const succeededRepos = new Set<string>(), unfinishedRepos = new Set<string>();
     // Pages counted in pass 1 must not be counted again when pass 2 replaces
     // them in the same run (added/modified describe distinct page outcomes).
     const countedSlugs = new Set<string>();
@@ -1178,7 +1178,7 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
         meta: { title: item.list?.title ?? null, upstream_at: item.updated_at || null } });
       deps.client.log?.(`[github] item ${repo}#${item.number}${what} failed: ${err instanceof Error ? err.message : String(err)}`);
       summary.failedFiles++;
-      if (blocking) summary.status = 'partial';
+      if (blocking) { summary.status = 'partial'; unfinishedRepos.add(repo); }
       progress.tick(1, `${repo}#${item.number} failed`);
     };
 
@@ -1325,7 +1325,7 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
         }
         keepPaths.add(relative(cfg.dir, repoCardPath(cfg.dir, repo)).replace(/\\/g, '/'));
         await refreshRepoCard(deps, repo, summary, activePack);
-        if (!opts.signal?.aborted) succeededRepos.add(`gh/${repo}`);
+        if (!opts.signal?.aborted && !unfinishedRepos.has(repo)) succeededRepos.add(`gh/${repo}`);
       } catch (err) {
         if (managed) rethrowConnectorWriteError(err);
         if (opts.signal?.aborted) { summary.status = 'partial'; break; }

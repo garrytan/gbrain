@@ -8,7 +8,7 @@
  * Classic runs on PGLite; the managed case runs on PGLite, and on Postgres too when DATABASE_URL is set.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -134,6 +134,28 @@ describe('classic GitHub sweep ledger', () => {
     expect(calls).not.toContain('/repos/acme/app/issues/2');
     expect((await engine.getPage('gh/acme/app/1', { sourceId: 'ghsrc' }))?.compiled_truth).toContain('Changed upstream.');
     expect(state().sweep_progress).toBeUndefined();
+  }), 120_000);
+
+  test('a newly added repo with a failed item is not marked bootstrapped, so the next run lists its history again', () => withEnv({ GH_TOKEN: 'test-token' }, async () => {
+    const items = issues(2, repo);
+    writeFileSync(join(dir, '.github-source.json'), JSON.stringify({ last_sweep_at: '2026-03-01T00:00:00Z', repos: [] }));
+    const calls: string[] = [];
+    const fetchImpl = api(repo, items, calls);
+    const failing = async (url: string, init?: RequestInit) => url.endsWith('/issues/2') ? json({ message: 'synthetic failure' }, 500) : fetchImpl(url, init);
+    expect((await runGitHubSync(engine, 'ghsrc', cfg, { sourceId: 'ghsrc', noExtract: true, noEmbed: true }, failing)).status).toBe('partial');
+    expect((JSON.parse(readFileSync(join(dir, '.github-source.json'), 'utf-8')) as { repos: string[] }).repos).toEqual([]);
+    calls.length = 0;
+    await runGitHubSync(engine, 'ghsrc', cfg, { sourceId: 'ghsrc', noExtract: true, noEmbed: true }, fetchImpl);
+    expect(calls).toContain('/repos/acme/app/issues/2');
+    expect(await detailed(2)).toBe(true);
+  }), 120_000);
+
+  test('an unreadable state file reads as no state instead of stopping the sweep', () => withEnv({ GH_TOKEN: 'test-token' }, async () => {
+    writeFileSync(join(dir, '.github-source.json'), '{}');
+    chmodSync(join(dir, '.github-source.json'), 0o000);
+    const calls: string[] = [];
+    expect(['synced', 'first_sync']).toContain((await runGitHubSync(engine, 'ghsrc', cfg, { sourceId: 'ghsrc', noExtract: true, noEmbed: true }, api(repo, issues(1, repo), calls))).status);
+    expect(calls).toContain('/repos/acme/app/issues/1');
   }), 120_000);
 
   test('a damaged ledger is ignored and every item is checked again', () => withEnv({ GH_TOKEN: 'test-token' }, async () => {
