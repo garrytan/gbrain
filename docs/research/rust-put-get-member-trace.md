@@ -35,6 +35,12 @@ brain, and what master plus import parts A and B still refuse. It is a measureme
   now carries `precedence` (Rust: `cli_reads/precedence.rs`; no store format change).
 - `hasExtractedEvents` and `pageAwaitsRederive` are served by `put_reads.rs` and answer `false`: master's store has
   no extracted-event or rederive state, so `false` is the true answer there (no store format bump).
+- A put of a note that links to another page reads the source's slug aliases (`listSlugAliases`) and which link
+  targets are live pages (`listLinkEndpointPages`) to follow a renamed page's old slug, and builds the source's basename
+  index from `getAllSlugs` on an engine without raw SQL (`persistence/links-preparation.ts`). A put in a source with a
+  shared skill pack reads the page's origin row (`readPageOrigin`, now with `source_uri`) in
+  `shared-skills/knowledge-guard.ts`. `test/rust-cli-put.test.ts` (a wikilinked put through the CLI) and
+  `test/engine-parity/page-write-readers.test.ts` (alias, basename and skill-pack cases) pin them on all three engines.
 - Refusals that remain on the path, none of which changes the output:
   - Receipt compaction: `listCompactableReceipts` is not served, because `compactReceipt` runs `SET LOCAL` and raw SQL
     per receipt. `compactWriteReceiptsDetailed` refuses up front with `engine_capability_missing` (nothing read or
