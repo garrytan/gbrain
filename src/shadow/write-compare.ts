@@ -135,6 +135,10 @@ export interface WriteTallyFile {
   /** The part of `settled` that was page and link writes (`QUALIFYING` lines, `sampleQualifyingWeight`), written in the same rename as `settled` and carried with it. Only a credit known to be one counts, so orphan recovery books more
    * lost page and link writes than it would otherwise, never fewer. */
   settled_qualifying?: Record<string, number>;
+  /** The credit a session had settled BEFORE its `settled` entry restarted (and the page and link part of it): the owner banks it in the same rename that deletes the entry (`removeSettledOwed`, under the tally lock), so `settled` and this are never counted twice and a
+   * session's total is always their sum: no reader infers whether one includes the other from their sizes. An older writer keeps a field it does not know when it saves and prunes only `settled`, so the credit outlives its prune; the blocker's `booked_through` is a copy of it
+   * (the larger of the two counts, for a writer that starts an epoch and drops what it does not know). Carried into a new epoch with `settled`; pruned with it once the session and its blocker are gone. */
+  settled_before?: Record<string, number>; settled_before_qualifying?: Record<string, number>;
   /** The highest line number (`n`) of each writer's (`w`, `<pid>.<nonce>`) credited lost lines this file has taken: a line retried after a partial append carries the same numbers, so it is added once however much of the first try reached the file. Travels with `settled` and `lost_applied`. */
   line_seq?: Record<string, number>;
   /** Lost lines of this epoch that name no session (an older writer's): their obligation is unknown, so status reads no evidence for the epoch. */
@@ -151,7 +155,7 @@ function loadTally(dir: string): WriteTallyFile | null {
   let text: string;
   try { text = readFileSync(writeTallyPath(dir), 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; }
   const f = JSON.parse(text) as WriteTallyFile;
-  if (!(f?.version === 1 && typeof f.epoch_id === 'string' && OUTCOMES.every((o) => count(f[o])) && counts(f.capability_missing_by_family) && counts(f.uncomparable_by_reason) && (f.applied === undefined || counts(f.applied)) && (f.lost_applied === undefined || counts(f.lost_applied)) && (f.settled === undefined || counts(f.settled)) && (f.settled_qualifying === undefined || counts(f.settled_qualifying)) && (f.line_seq === undefined || counts(f.line_seq)) && (f.legacy_lines === undefined || count(f.legacy_lines)) && Array.isArray(f.in_flight) && f.in_flight.every(Number.isInteger))) throw new Error('not a write tally');
+  if (!(f?.version === 1 && typeof f.epoch_id === 'string' && OUTCOMES.every((o) => count(f[o])) && counts(f.capability_missing_by_family) && counts(f.uncomparable_by_reason) && (f.applied === undefined || counts(f.applied)) && (f.lost_applied === undefined || counts(f.lost_applied)) && (f.settled === undefined || counts(f.settled)) && (f.settled_qualifying === undefined || counts(f.settled_qualifying)) && (f.settled_before === undefined || counts(f.settled_before)) && (f.settled_before_qualifying === undefined || counts(f.settled_before_qualifying)) && (f.line_seq === undefined || counts(f.line_seq)) && (f.legacy_lines === undefined || count(f.legacy_lines)) && Array.isArray(f.in_flight) && f.in_flight.every(Number.isInteger))) throw new Error('not a write tally');
   return f;
 }
 
@@ -297,23 +301,49 @@ export const withTallyLock = <T>(dir: string, fn: () => T, waitMs: number): T =>
  * own end-of-input booking and the tally fold write it, and only the owner pass and `removeSettledOwed` remove it, always under the tally lock. It names its epoch from its first byte (there is no unstamped state), and it is written BEFORE the window is
  * booked. A real session id is 16 hex characters and the keeper's refusal session is `r` plus hex, so no session can carry the prefix.
  * `window_target` (T): the open marker's `owed` when the blocker was written (the samples accepted plus one that stands for the window). The window is booked LAST of the first T samples, so the session's settled count reaches T only once the window is
- * booked. `booked_through` and `booked_qualifying`: the settled count (and its page and link part) the owner saw when it removed the session's settled file: a credit anchor that outlives the tally's own `settled` entry, which an older tally writer prunes
- * once the session's file is gone. The window is booked iff max(settled, `booked_through`) >= T. A blocker whose window never got booked (the owner died between the two) is not a loss: the next pass books it, or drops it when the marker turned into a record that closed normally.
+ * booked. `booked_through` and `booked_qualifying`: the settled count (and its page and link part) the owner saw when it removed the session's settled file, a copy of what it banked in the tally's `settled_before` in the same hold (the larger of the two
+ * counts is the credit before the tally's own `settled` entry restarted: that entry and the credit are disjoint, so a session's total is their sum and nothing is inferred from their sizes). The window is booked iff that total >= T. `serving_pid`: the session's
+ * serving process (the owner's pid when it was not known): an earlier epoch's blocker is removed only once that process is gone, since its delayed record may still come. A blocker whose window never got booked (the owner died between the two) is not a loss: the next
+ * pass books it, or drops it when the marker turned into a record that closed normally.
  */
 export const WINDOW_BLOCKER_PREFIX = 'window-lost-';
 const blockerKey = (key: string): string => `${WINDOW_BLOCKER_PREFIX}${key}`;
 const isBlockerKey = (key: string): boolean => key.startsWith(WINDOW_BLOCKER_PREFIX);
 const blockerPath = (dir: string, key: string): string => owedPath(dir, blockerKey(key));
-function putBlocker(dir: string, key: string, epoch: string, target: number, through: number, throughQualifying: number): void {
-  writeOwed(dir, { v: 2, session: blockerKey(key), serving_pid: process.pid, owed: 0, closed: true, child_exited: true, open_until: 0, booked_epoch: epoch, window_target: target, booked_through: through, booked_qualifying: throughQualifying });
+function putBlocker(dir: string, key: string, epoch: string, target: number, through: number, throughQualifying: number, servingPid: number = process.pid): void {
+  writeOwed(dir, { v: 2, session: blockerKey(key), serving_pid: servingPid, owed: 0, closed: true, child_exited: true, open_until: 0, booked_epoch: epoch, window_target: target, booked_through: through, booked_qualifying: throughQualifying });
 }
 /** The blocker of `key` that names `epoch`: null when there is none for that epoch (none at all, or another epoch's, which is stale), `'unreadable'` when the file is there and cannot be used. */
 function blockerFor(dir: string, key: string, epoch: string): OwedRecord | null | 'unreadable' {
   const b = parseOwed(blockerPath(dir, key));
   return b === null || b === 'unreadable' ? b : b.booked_epoch === epoch ? b : null;
 }
-/** A session's settled count: the tally's entry plus the lines nobody has folded. An entry LOWER than its blocker's credit anchor is one an older tally writer pruned and then started again: what it holds is only the credit since, so the anchor is added to it. */
-const settledOf = (entry: number, unfolded: number, anchor: number): number => (entry >= anchor ? entry : anchor + entry) + unfolded;
+/** The credit a session had settled before its tally entry restarted: the tally's `settled_before` or the blocker's copy of it, whichever is larger (they are the same number written together; one is older when a write between them was cut short). */
+const anchorOf = (tally: WriteTallyFile | null | undefined, blocker: OwedRecord | null | 'unreadable' | undefined, key: string): number => Math.max(tally?.settled_before?.[key] ?? 0, blocker !== null && blocker !== undefined && blocker !== 'unreadable' ? blocker.booked_through ?? 0 : 0);
+const anchorQualifyingOf = (tally: WriteTallyFile | null | undefined, blocker: OwedRecord | null | 'unreadable' | undefined, key: string): number => Math.max(tally?.settled_before_qualifying?.[key] ?? 0, blocker !== null && blocker !== undefined && blocker !== 'unreadable' ? blocker.booked_qualifying ?? 0 : 0);
+/** A session's settled count: the credit banked before its tally entry restarted, the entry (credit since), and the lines nobody has folded. The three are disjoint: a sum, never a comparison of sizes. */
+const settledOf = (entry: number, unfolded: number, anchor: number): number => anchor + entry + unfolded;
+/**
+ * Banks a session's settled entry into `settled_before` (the tally's file, in one rename, under the lock the caller holds) so the credit it holds survives an older writer's prune and the entry restarts at zero: `total` is the session's whole settled count
+ * (`settledOf`), `totalQualifying` its page and link part. Nothing to do when there is no tally file or the credit is banked already.
+ */
+function bankSettled(dir: string, key: string, tally: WriteTallyFile | null, total: number, totalQualifying: number): void {
+  if (tally === null) return;
+  const entry = tally.settled?.[key] ?? 0; const entryQ = tally.settled_qualifying?.[key] ?? 0;
+  if (entry === 0 && entryQ === 0 && (tally.settled_before?.[key] ?? 0) >= total && (tally.settled_before_qualifying?.[key] ?? 0) >= totalQualifying) return;
+  (tally.settled_before ??= {})[key] = Math.max(tally.settled_before[key] ?? 0, total);
+  if (totalQualifying > 0) (tally.settled_before_qualifying ??= {})[key] = Math.max(tally.settled_before_qualifying?.[key] ?? 0, totalQualifying);
+  if (tally.settled) { delete tally.settled[key]; if (!Object.keys(tally.settled).length) delete tally.settled; }
+  if (tally.settled_qualifying) { delete tally.settled_qualifying[key]; if (!Object.keys(tally.settled_qualifying).length) delete tally.settled_qualifying; }
+  tally.updated_at = new Date().toISOString();
+  const tmp = `${writeTallyPath(dir)}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(tally) + '\n', { mode: 0o600 });
+  flushFile(tmp);
+  renameSync(tmp, writeTallyPath(dir));
+  flushDirectory(dir);
+}
+/** The serving process of a session's owed record (the owner's own pid when there is none to read): the blocker carries it. */
+function servingPidOf(dir: string, key: string): number { const o = parseOwed(owedPath(dir, key)); return o === null || o === 'unreadable' ? process.pid : o.serving_pid; }
 /**
  * Under the tally lock, makes sure `key` has a blocker for `epoch` BEFORE its window is booked: the one that exists; or, over another epoch's blocker whose window was never booked, that blocker taken over for `epoch` (same target and anchor); or a new one whose target
  * is the owed count of the session's open marker (re-read here). Null when nothing could be held: a window another epoch's blocker already booked (it is that epoch's window, never this one's), no marker any more (it was replaced by a record that closed normally, so
@@ -329,13 +359,14 @@ export function holdBlocker(dir: string, key: string, epoch: string): OwedRecord
       const prior = parseOwed(blockerPath(dir, key)); // another epoch's (blockerFor found none for this one)
       if (prior === 'unreadable') return null;
       if (prior !== null) {
-        if (settledOf(loadTally(dir)?.settled?.[key] ?? 0, 0, prior.booked_through ?? 0) >= (prior.window_target ?? 0)) return null; // booked in its own epoch: not a window of this one, and its blocker is not overwritten
-        putBlocker(dir, key, epoch, prior.window_target ?? 0, prior.booked_through ?? 0, prior.booked_qualifying ?? 0);
+        const tally = loadTally(dir);
+        if (settledOf(tally?.settled?.[key] ?? 0, 0, anchorOf(tally, prior, key)) >= (prior.window_target ?? 0)) return null; // booked in its own epoch: not a window of this one, and its blocker is not overwritten
+        putBlocker(dir, key, epoch, prior.window_target ?? 0, prior.booked_through ?? 0, prior.booked_qualifying ?? 0, prior.serving_pid);
         return blockerFor(dir, key, epoch) as OwedRecord;
       }
       const rec = parseOwed(join(dir, `write-owed.${key}.json`));
       if (rec === null || rec === 'unreadable' || rec.v !== 2 || rec.booked_epoch !== undefined) return null;
-      putBlocker(dir, key, epoch, rec.owed, 0, 0);
+      putBlocker(dir, key, epoch, rec.owed, 0, 0, rec.serving_pid);
       return blockerFor(dir, key, epoch) as OwedRecord;
     }, REMOVER_LOCK_WAIT_MS);
   } catch { return null; } // silent-read-ok: no window is booked now; the pass tries again
@@ -343,7 +374,7 @@ export function holdBlocker(dir: string, key: string, epoch: string): OwedRecord
 /**
  * The one way a session's owed file is removed: under the tally lock, with no marker for the session, the record on disk read again (a republished, higher record is not the one that was judged settled) and the tally's settled count read again, the file is
  * removed only if everything it owes is settled (and, for the worker's own `finish()`, it was closed). The serving process publishes a record and clears its marker under the same lock. False when the file stays: unsettled, marked, unreadable or the lock stayed held.
- * In the same lock hold the session's blocker for `epoch` is brought up to date BEFORE the file goes: its credit anchor is raised to the settled count (so the credit outlives the tally's entry); a blocker whose window was never booked, and whose marker is
+ * In the same lock hold the session's blocker for `epoch` is brought up to date BEFORE the file goes: the settled count is banked in the tally's `settled_before` (one rename that also restarts the entry, so the credit outlives an older writer's prune and is never added to the entry) and copied into the blocker's anchor; a blocker whose window was never booked, and whose marker is
  * now a record that closed normally, is dropped (no window was lost); a settled open marker no blocker accounts for (an older build left it) is claimed for `epoch`, fail closed, as the older builds stamped it. A marker a blocker of ANOTHER epoch accounts for is the
  * window of that epoch: it is removed without a claim. A tombstone in the session file (an older build's) stays as it is.
  */
@@ -358,16 +389,20 @@ function removeSettledOwed(dir: string, key: string, requireClosed: boolean, epo
       if (rec.booked_epoch !== undefined) return (loadTally(dir)?.settled?.[key] ?? 0) >= rec.owed; // an older build's tombstone in the session file: it stays for its epoch
       const blocker = parseOwed(blockerPath(dir, key));
       if (blocker === 'unreadable') return false;
-      const tally = loadTally(dir); // the credit anchor of the session's blocker counts whatever epoch the blocker names: settlement is the ledger of every epoch
-      const settled = settledOf(tally?.settled?.[key] ?? 0, 0, blocker?.booked_through ?? 0); const settledQ = settledOf(tally?.settled_qualifying?.[key] ?? 0, 0, blocker?.booked_qualifying ?? 0);
+      const tally = loadTally(dir); // the credit banked before the entry restarted counts whatever epoch the blocker names: settlement is the ledger of every epoch
+      const settled = settledOf(tally?.settled?.[key] ?? 0, 0, anchorOf(tally, blocker, key)); const settledQ = settledOf(tally?.settled_qualifying?.[key] ?? 0, 0, anchorQualifyingOf(tally, blocker, key));
       if (settled < rec.owed) return false;
       if (blocker !== null && blocker.booked_epoch === epoch) {
         const target = blocker.window_target ?? 0;
         if (settled < target) removeOwed(dir, blockerKey(key)); // never booked, and the marker closed normally
-        else if ((blocker.booked_through ?? 0) < settled || (blocker.booked_qualifying ?? 0) < settledQ) putBlocker(dir, key, epoch, target, Math.max(blocker.booked_through ?? 0, settled), Math.max(blocker.booked_qualifying ?? 0, settledQ));
+        else { // booked: the credit is banked in the tally (one rename that also restarts the entry), then copied into the blocker, before the session's file goes
+          bankSettled(dir, key, tally, settled, settledQ);
+          if ((blocker.booked_through ?? 0) < settled || (blocker.booked_qualifying ?? 0) < settledQ) putBlocker(dir, key, epoch, target, Math.max(blocker.booked_through ?? 0, settled), Math.max(blocker.booked_qualifying ?? 0, settledQ), blocker.serving_pid);
+        }
       } else if (blocker === null && rec.v === 2) {
         if (readEpoch(dir)?.epoch_id !== epoch) return false; // the epoch moved: the next owner decides
-        putBlocker(dir, key, epoch, rec.owed, settled, settledQ);
+        bankSettled(dir, key, tally, settled, settledQ);
+        putBlocker(dir, key, epoch, rec.owed, settled, settledQ, rec.serving_pid);
       }
       removeOwed(dir, key); return true;
     }, REMOVER_LOCK_WAIT_MS);
@@ -387,6 +422,7 @@ function removeStaleTomb(dir: string, key: string, epoch: string): boolean {
       const rec = parseOwed(join(dir, `write-owed.${key}.json`));
       if (rec === null) return true;
       if (rec === 'unreadable' || rec.v !== 2 || rec.booked_epoch === undefined || rec.booked_epoch === epoch) return false;
+      if (session !== key && rec.serving_pid > 1 && running(rec.serving_pid)) return false; // the session's serving process is alive: its delayed record (the cumulative count) may still be published, and this blocker is what keeps the samples it already settled from being booked again
       removeOwed(dir, key); return true;
     }, REMOVER_LOCK_WAIT_MS);
   } catch { return false; } // silent-read-ok: the file stays; the next pass tries again
@@ -488,10 +524,10 @@ export function readWriteSnapshot(dir: string, epoch: string | null, between?: (
       if (rec.booked_epoch !== undefined && rec.booked_epoch !== epoch) continue; // a tombstone or blocker of another epoch: nothing of this one
       if (isBlockerKey(key)) { // a blocker: a lost window once it is booked (an unbooked one is the session's open marker, which is outstanding on its own)
         const session = key.slice(WINDOW_BLOCKER_PREFIX.length);
-        if (settledOf(writes?.settled?.[session] ?? 0, lines.bySession[session] ?? 0, rec.booked_through ?? 0) >= (rec.window_target ?? 0)) windows.add(session);
+        if (settledOf(writes?.settled?.[session] ?? 0, lines.bySession[session] ?? 0, anchorOf(writes, rec, session)) >= (rec.window_target ?? 0)) windows.add(session);
         continue;
       }
-      const own = blockers.get(key); const anchor = own !== undefined && own !== 'unreadable' ? own.booked_through ?? 0 : 0; // the credit anchor of the session's blocker, whatever epoch it names: it outlives a settled entry an older writer pruned
+      const anchor = anchorOf(writes, blockers.get(key), key); // the credit banked before the entry restarted (the session's blocker, whatever epoch it names): it outlives a settled entry an older writer pruned
       if (rec.owed > settledOf(writes?.settled?.[key] ?? 0, lines.bySession[key] ?? 0, anchor)) outstanding.push(`write-owed.${key}.json`);
       else if (rec.v === 2) { const b = blockers.get(key); if (b === undefined || (b !== 'unreadable' && b.booked_epoch === epoch)) windows.add(key); } // a tombstone in the session file, or a settled marker nothing accounts for; a blocker of another epoch owns the marker: not this epoch's window
     }
@@ -519,7 +555,7 @@ export const running = (pid: number): boolean => { try { process.kill(pid, 0); r
 export const SAVE_FAILURE_EXIT_MS = 60_000;
 const NO_EPOCH_REASON = 'no_epoch';
 const RETIRED_REASON = 'epoch_retired';
-interface Batch { seq: number; delta: WriteTallyFile; credit: number; creditQualifying: number; ending: boolean }
+interface Batch { seq: number; delta: WriteTallyFile; credit: number; creditQualifying: number; windowCredit: number; ending: boolean }
 
 /**
  * The write tally (swap criterion 5). The file changes only inside one cross-process lock, as a read-modify-write of THIS child's unsaved verdicts
@@ -576,7 +612,7 @@ export class WriteTally {
         if (current.epoch_id !== epoch) { retiredNow = true; return; } // a child of a retired epoch must not replace the current epoch's file
         const saved = loadTally(this.dir);
         // A new epoch starts its outcomes at zero and keeps the settlement ledger whole: `settled`, the cursors that stop its sources being added again (`lost_applied`, `applied`) travel together.
-        const file = saved?.epoch_id === epoch ? saved : { ...blank(epoch), ...(saved?.settled ? { settled: { ...saved.settled } } : {}), ...(saved?.settled_qualifying ? { settled_qualifying: { ...saved.settled_qualifying } } : {}), ...(saved?.lost_applied ? { lost_applied: { ...saved.lost_applied } } : {}), ...(saved?.line_seq ? { line_seq: { ...saved.line_seq } } : {}), ...(saved?.applied ? { applied: { ...saved.applied } } : {}) };
+        const file = saved?.epoch_id === epoch ? saved : { ...blank(epoch), ...(saved?.settled ? { settled: { ...saved.settled } } : {}), ...(saved?.settled_qualifying ? { settled_qualifying: { ...saved.settled_qualifying } } : {}), ...(saved?.settled_before ? { settled_before: { ...saved.settled_before } } : {}), ...(saved?.settled_before_qualifying ? { settled_before_qualifying: { ...saved.settled_before_qualifying } } : {}), ...(saved?.lost_applied ? { lost_applied: { ...saved.lost_applied } } : {}), ...(saved?.line_seq ? { line_seq: { ...saved.line_seq } } : {}), ...(saved?.applied ? { applied: { ...saved.applied } } : {}) };
         file.applied ??= {};
         const dead = file.in_flight.filter((p) => (p === this.pid ? fresh : !running(p)));
         for (const p of dead) applyVerdict(file, 'unexplained_difference', undefined, 1);
@@ -585,12 +621,6 @@ export class WriteTally {
         const todo = batches.filter((b) => b.seq > (file.applied![this.id] ?? 0));
         const lost = readLost(this.dir, epoch, file.lost_applied).filter((l) => l.end > (file.lost_applied?.[l.name] ?? 0) && (l.lines.some((x) => x.thisEpoch || x.session) || l.unreadable)); // the serving processes' lost samples, taken once under the same lock; a file holding only another epoch's lines that settle no session has nothing to fold: it is left as it is (no tally is written for it)
         if (!change && !dead.length && !todo.length && !lost.length) { if (this.sealed > 0) { flushFile(writeTallyPath(this.dir)); flushDirectory(this.dir); } return; } // a save that may have landed (renamed, directory flush failed) is durable only once this flush has succeeded
-        if (lost.length || todo.some((b) => b.credit > 0)) for (const bk of listOwed(this.dir).keys) { // before anything is credited: a settled entry an older writer pruned (and started again) is made whole from the blocker's credit anchor
-          if (!isBlockerKey(bk)) continue; const b = parseOwed(join(this.dir, `write-owed.${bk}.json`)); const k = bk.slice(WINDOW_BLOCKER_PREFIX.length);
-          if (b === null || b === 'unreadable' || !b.booked_through) continue; // whatever epoch the blocker names: settlement is the ledger of every epoch
-          if ((file.settled?.[k] ?? 0) < b.booked_through) (file.settled ??= {})[k] = b.booked_through + (file.settled[k] ?? 0);
-          if (b.booked_qualifying && (file.settled_qualifying?.[k] ?? 0) < b.booked_qualifying) (file.settled_qualifying ??= {})[k] = b.booked_qualifying + (file.settled_qualifying?.[k] ?? 0);
-        }
         file.lost_applied ??= {};
         const credited = new Set<string>(); const windowLines = new Map<string, string>(); // sessions a client child's lost line says lost a window, with the epoch the line names
         file.line_seq ??= {};
@@ -611,15 +641,22 @@ export class WriteTally {
         }
         for (const [session, lineEpoch] of windowLines) { // a client child has no epoch and cannot hold a blocker: the owner holds it here, for the epoch the line names, before the credit is saved, so a later epoch can never read the settled marker as its own
           const have = parseOwed(blockerPath(this.dir, session));
-          if (have === 'unreadable' || (have !== null && (have.booked_epoch === lineEpoch || lineEpoch !== epoch))) continue; // one for that epoch is there; or an older epoch's line never replaces another epoch's blocker
-          putBlocker(this.dir, session, lineEpoch, 1, 0, 0); // intent only: no credit is published before the tally that holds it is renamed (the owner's cleanup raises the anchor from the committed ledger)
+          if (have === 'unreadable') throw new Error('window blocker unreadable'); // not knowing whether the blocker is there, the fold commits nothing (no credit, no journal cursor): the lines are read again on the next pass, and the lookup with them
+          if (have !== null && (have.booked_epoch === lineEpoch || lineEpoch !== epoch)) continue; // one for that epoch is there; or an older epoch's line never replaces another epoch's blocker
+          putBlocker(this.dir, session, lineEpoch, 1, have?.booked_through ?? 0, have?.booked_qualifying ?? 0, servingPidOf(this.dir, session)); // intent only: no credit is published before the tally that holds it is renamed (the owner's cleanup banks the credit from the committed ledger)
         }
         for (const w of Object.keys(file.line_seq)) if (w !== this.id && !running(Number.parseInt(w, 10))) delete file.line_seq[w]; // a gone writer's numbers: its file was taken to the end above
         if (!Object.keys(file.line_seq).length) delete file.line_seq;
-        if (file.settled) { // a session whose owed file is gone is settled for good (it was credited on an earlier save): its entry goes
+        if (file.settled || file.settled_before) { // a session whose owed file is gone is settled for good (it was credited on an earlier save): its entry goes; the credit banked before it restarted stays while the session's blocker does
           const owed = listOwed(this.dir); const pending = listPending(this.dir); // a session with a marker is not gone: the serving process still holds an obligation its record does not state
-          if (!owed.failed && !pending.failed) for (const k of Object.keys(file.settled)) if (!owed.keys.includes(k) && !owed.keys.includes(blockerKey(k)) && !pending.keys.includes(k) && !credited.has(k)) { delete file.settled[k]; if (file.settled_qualifying) delete file.settled_qualifying[k]; }
+          const gone = (k: string): boolean => !owed.keys.includes(k) && !owed.keys.includes(blockerKey(k)) && !pending.keys.includes(k) && !credited.has(k);
+          if (!owed.failed && !pending.failed) {
+            for (const k of Object.keys(file.settled ?? {})) if (gone(k)) { delete file.settled![k]; if (file.settled_qualifying) delete file.settled_qualifying[k]; }
+            for (const k of Object.keys(file.settled_before ?? {})) if (gone(k)) { delete file.settled_before![k]; if (file.settled_before_qualifying) delete file.settled_before_qualifying[k]; }
+          }
           if (file.settled_qualifying && !Object.keys(file.settled_qualifying).length) delete file.settled_qualifying;
+          if (file.settled_before && !Object.keys(file.settled_before).length) delete file.settled_before;
+          if (file.settled_before_qualifying && !Object.keys(file.settled_before_qualifying).length) delete file.settled_before_qualifying;
         }
         change?.(file);
         file.updated_at = new Date().toISOString();
@@ -643,7 +680,7 @@ export class WriteTally {
     if (this.pending.length === 0) return true;
     let taken = 0;
     try { taken = loadTally(this.dir)?.applied?.[this.id] ?? 0; } catch { return false; } // silent-read-ok: an unreadable file cannot say which batches it took; they stay until it can
-    for (const b of this.pending) if (b.seq > taken && b.credit > 0 && this.key) this.addJournal(RETIRED_REASON, true, b.credit);
+    for (const b of this.pending) if (b.seq > taken && b.credit - b.windowCredit > 0 && this.key) this.addJournal(RETIRED_REASON, true, b.credit - b.windowCredit); // the window's credit is not retired credit: its verdict was never saved, so the next epoch's owner books it
     this.pending = []; this.sealed = 0;
     return true;
   }
@@ -719,8 +756,8 @@ export class WriteTally {
         const orphaned = rec.child_exited || (rec.child_pid !== undefined && rec.child_pid > 1 && !running(rec.child_pid)) || (rec.closed && age > STALE_RECEIPT_MS) || (rec.serving_pid > 1 && !running(rec.serving_pid) && age > STALE_RECEIPT_MS);
         if (!orphaned && !rec.closed) continue;
         const prior = parseOwed(blockerPath(this.dir, key)); if (prior === 'unreadable') continue; // the window blocker of this session, of whatever epoch: its credit anchor settles the session either way, and a window it booked is that epoch's, never this one's
-        const settled = settledOf(tally?.settled?.[key] ?? 0, lines.bySession[key] ?? 0, prior?.booked_through ?? 0); // the credit anchor outlives the tally's own entry
-        const settledQualifying = settledOf(tally?.settled_qualifying?.[key] ?? 0, lines.qualifyingBySession[key] ?? 0, prior?.booked_qualifying ?? 0);
+        const settled = settledOf(tally?.settled?.[key] ?? 0, lines.bySession[key] ?? 0, anchorOf(tally, prior, key)); // the credit banked before the entry restarted outlives the tally's own entry
+        const settledQualifying = settledOf(tally?.settled_qualifying?.[key] ?? 0, lines.qualifyingBySession[key] ?? 0, anchorQualifyingOf(tally, prior, key));
         const missing = rec.owed - settled;
         const due = prior !== null ? settled < (prior.window_target ?? 0) && rec.owed >= (prior.window_target ?? 0) : rec.v === 2; // the window is not booked yet: an open marker (v:2) nobody has started on, or a blocker (of this epoch or an earlier one) its credit has not reached whose record still owes the samples of that window (a record that owes fewer closed normally: no window was lost)
         if (orphaned && missing > 0) { // an open marker (v:2) left by a crash: one of the missing samples stands for the whole lost window, booked after the first `target - settled` samples and only once its blocker is on disk (a retry after a partial booking finds what is left, so it books the window exactly once)
@@ -763,14 +800,15 @@ export class WriteTally {
     if (!this.alive()) return;
     if (epoch === null || this.retired) { // a client child (another process owns the store), or a child whose epoch was retired: it records nothing in the tally; its verdict is written as lost lines for the owner to add up
       const settles = this.key ? Math.min(n, credit) : 0;
-      if (this.retired) this.addJournal(RETIRED_REASON, true, settles); // a retired epoch's outcome counts nowhere: only what it settles matters
+      if (this.retired) this.addJournal(RETIRED_REASON, true, key === WINDOW_LOST_REASON ? 0 : settles); // a retired epoch's outcome counts nowhere: only what it settles matters, and never the window (the next epoch's owner books it)
       else { this.addJournal(NO_EPOCH_REASON, true, settles); this.addJournal(NO_EPOCH_REASON, false, n - settles); }
       return;
     }
     let batch = this.pending.at(-1);
-    if (!batch || this.pending.length === this.sealed) this.pending.push(batch = { seq: ++this.seq, delta: blank(epoch), credit: 0, creditQualifying: 0, ending: false });
+    if (!batch || this.pending.length === this.sealed) this.pending.push(batch = { seq: ++this.seq, delta: blank(epoch), credit: 0, creditQualifying: 0, windowCredit: 0, ending: false });
     applyVerdict(batch.delta, outcome, key, n);
     batch.credit += credit; batch.creditQualifying += Math.min(credit, creditQualifying);
+    if (key === WINDOW_LOST_REASON) batch.windowCredit += credit; // the window's own credit is kept apart: a batch that never saved before its epoch was retired must not stand for a booked window
     batch.ending ||= ends;
     this.update();
   }
@@ -804,7 +842,7 @@ export class WriteTally {
     if (rec === null) return true;
     const epoch = this.epoch(); const open = rec !== 'unreadable' && rec.v === 2 && !rec.closed; // an open marker (v:2) the child settled at the end of its input: it goes like a closed record, and the blocker this child's booking held names the epoch it was booked in
     if (rec === 'unreadable' || (!rec.closed && !open) || epoch === null || (open && this.retired)) return false;
-    try { if ((loadTally(this.dir)?.settled?.[this.key] ?? 0) < rec.owed) return false; } catch { return false; } // silent-read-ok: the file stays; status reads its deficit
+    try { const t = loadTally(this.dir); if (settledOf(t?.settled?.[this.key] ?? 0, 0, anchorOf(t, parseOwed(blockerPath(this.dir, this.key)), this.key)) < rec.owed) return false; } catch { return false; } // silent-read-ok: the file stays; status reads its deficit
     return removeSettledOwed(this.dir, this.key, !open, epoch); // the same checks again under the lock: a higher record the serving process published meanwhile stays; the window's blocker (held when the window was booked) stays, the settled marker goes
   }
 }
