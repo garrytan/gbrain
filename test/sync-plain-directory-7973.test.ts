@@ -22,6 +22,9 @@ import { runImport } from '../src/commands/import.ts';
 import { randomUUID } from 'node:crypto';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
+import { syncLockId, tryAcquireDbLock } from '../src/core/db-lock.ts';
+import { SyncLockBusyError } from '../src/core/sync-lock.ts';
+import { withSourceFilesystemLock } from '../src/core/minions/source-filesystem.ts';
 
 const backends: Array<string | undefined> = [undefined, ...(process.env.DATABASE_URL ? [process.env.DATABASE_URL] : [])];
 const engineName = (url: string | undefined) => url ? 'postgres' : 'pglite';
@@ -46,6 +49,72 @@ async function putPerson(ctx: ManagedBrain['ctx'], engine: ManagedBrain['engine'
 }
 
 describe.each(backends.map(url => [engineName(url), url] as const))('plain-directory sync (%s)', (_name, url) => {
+  test('a plain-directory sync cannot import while its source lease is held (#8362)', () => withPlainSource(url, async ({ engine }) => {
+    const sourceId = 'source-a';
+    const lock = await tryAcquireDbLock(engine, syncLockId(sourceId));
+    expect(lock).not.toBeNull();
+    try {
+      await expect(performSync(engine, { sourceId, noPull: true, noEmbed: true })).rejects.toBeInstanceOf(SyncLockBusyError);
+      expect(await engine.getPage('people/alice-example', { sourceId })).toBeNull();
+      expect(await performSync(engine, { sourceId, dryRun: true, noEmbed: true })).toMatchObject({ status: 'dry_run', added: 1 });
+      const [source] = await engine.executeRaw<{ last_sync_at: unknown }>('SELECT last_sync_at FROM sources WHERE id=$1', [sourceId]);
+      expect(source!.last_sync_at).toBeNull();
+    } finally { await lock!.release(); }
+    expect(await performSync(engine, { sourceId, noPull: true, noEmbed: true })).toMatchObject({ status: 'synced', added: 1 });
+    expect((await engine.getPage('people/alice-example', { sourceId }))?.compiled_truth).toContain('Works at acme-example.');
+    const next = await tryAcquireDbLock(engine, syncLockId(sourceId));
+    expect(next).not.toBeNull();
+    await next!.release();
+  }), 180_000);
+
+  test('concurrent plain imports share a lease through publication (#8362)', () => withPlainSource(url, async ({ engine }) => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const original = engine.getConfig;
+    let gated = false;
+    engine.getConfig = async function (key, ...args) {
+      if (key === 'embedding_disabled' && !gated) {
+        gated = true;
+        entered.resolve();
+        await release.promise;
+      }
+      return original.call(this, key, ...args);
+    };
+    const first = performSync(engine, { sourceId: 'source-a', noPull: true, noEmbed: true });
+    try {
+      await entered.promise;
+      await expect(performSync(engine, { sourceId: 'source-a', noPull: true, noEmbed: true })).rejects.toBeInstanceOf(SyncLockBusyError);
+      expect(await engine.getPage('people/alice-example', { sourceId: 'source-a' })).toBeNull();
+    } finally {
+      release.resolve();
+      engine.getConfig = original;
+      await first;
+    }
+    expect((await engine.getPage('people/alice-example', { sourceId: 'source-a' }))?.compiled_truth).toContain('Works at acme-example.');
+    expect(await performSync(engine, { sourceId: 'source-a', noPull: true, noEmbed: true })).toMatchObject({ status: 'synced', added: 0 });
+  }), 180_000);
+
+  test('plain sync preserves scoped leases, explicit lock identity and an enclosing lock (#8362)', () => withPlainSource(url, async ({ engine, root }) => {
+    const other = join(root, '..', 'other-plain'); mkdirSync(other);
+    writeFileSync(join(other, 'note.md'), '# Other source\n\nIndependent progress.\n');
+    expect(await runManagedSourceLifecycle(engine, { operation: 'add', sourceId: 'source-b', path: other })).toMatchObject({ state: 'committed' });
+    const held = await tryAcquireDbLock(engine, syncLockId('source-a'));
+    expect(held).not.toBeNull();
+    try {
+      expect(await performSync(engine, { sourceId: 'source-b', noEmbed: true })).toMatchObject({ status: 'synced', added: 1 });
+      expect((await engine.getPage('note', { sourceId: 'source-b' }))?.compiled_truth).toContain('Independent progress.');
+      // The caller may already own the broader lock; do not reacquire its source lease.
+      expect(await performSync(engine, { sourceId: 'source-a', noEmbed: true, skipLock: true })).toMatchObject({ status: 'synced', added: 1 });
+    } finally { await held!.release(); }
+    const lockId = 'plain-sync-explicit-lock';
+    const custom = await tryAcquireDbLock(engine, lockId);
+    expect(custom).not.toBeNull();
+    try {
+      await expect(performSync(engine, { sourceId: 'source-a', noEmbed: true, lockId })).rejects.toBeInstanceOf(SyncLockBusyError);
+    } finally { await custom!.release(); }
+    expect(await performSync(engine, { sourceId: 'source-a', noEmbed: true, lockId })).toMatchObject({ status: 'synced', added: 0 });
+  }), 180_000);
+
   test('an unchanged file never overwrites a database-only edit (#8079)', () => withPlainSource(url, async ({ engine, ctx }, dir) => {
     const sync = () => performSync(engine, { sourceId: 'source-a', noPull: true, noEmbed: true });
     const body = async () => (await engine.getPage('people/alice-example', { sourceId: 'source-a' }))?.compiled_truth;
@@ -195,6 +264,41 @@ describe('classic brain', () => {
   afterAll(async () => {
     await engine.disconnect();
   });
+
+  test('classic plain sync waits for the filesystem writer and cancels without importing (#8362)', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-plain-lock-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        const dir = join(home, 'plain-notes'); mkdirSync(dir);
+        writeFileSync(join(dir, 'note.md'), '# Example note\n\nMust not import under another writer.\n');
+        const sourceId = 'plain-lock';
+        await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,\'{}\')', [sourceId, dir]);
+        const entered = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const holder = withSourceFilesystemLock(engine, dir, async () => { entered.resolve(); await release.promise; });
+        try {
+          await entered.promise;
+          const signal = AbortSignal.timeout(200);
+          const result = await performSync(engine, { sourceId, noEmbed: true, signal });
+          expect(result).toMatchObject({ status: 'partial', added: 0 });
+          expect(signal.aborted).toBe(true);
+          expect(await engine.getPage('note', { sourceId })).toBeNull();
+          const [source] = await engine.executeRaw<{ last_sync_at: unknown }>('SELECT last_sync_at FROM sources WHERE id=$1', [sourceId]);
+          expect(source!.last_sync_at).toBeNull();
+        } finally { release.resolve(); await holder; }
+        expect(await performSync(engine, { sourceId, noEmbed: true })).toMatchObject({ status: 'synced', added: 1 });
+        const lock = await tryAcquireDbLock(engine, syncLockId(sourceId));
+        expect(lock).not.toBeNull();
+        try {
+          writeFileSync(join(dir, 'note.md'), '# Example note\n\nA later file edit.\n');
+          await expect(performSync(engine, { sourceId, noEmbed: true })).rejects.toBeInstanceOf(SyncLockBusyError);
+          expect((await engine.getPage('note', { sourceId }))?.compiled_truth).not.toContain('later file edit');
+        } finally { await lock!.release(); }
+        expect(await performSync(engine, { sourceId, noEmbed: true })).toMatchObject({ status: 'synced', added: 1 });
+        expect((await engine.getPage('note', { sourceId }))?.compiled_truth).toContain('later file edit');
+      });
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  }, 120_000);
 
   test('a classic (unmanaged) brain syncs a forced plain directory the same way', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-plain-classic-'));

@@ -95,9 +95,14 @@ async function routeSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResul
   if (opts.repoPath) assertNotOwnedRoot(opts.repoPath, 'gbrain sync refuses the root');
   const plainRoot = await plainDirectorySyncRoot(engine, opts, managed);
   if (plainRoot) assertNotOwnedRoot(plainRoot, 'gbrain sync refuses the root');
-  if (plainRoot) return finish(await performPlainDirectorySync(engine, opts, plainRoot, managed), true);
-  if (managed) return performManagedBranch(engine, opts);
-  const filesystemRoot = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
+  if (plainRoot && opts.dryRun) return finish(await performPlainDirectorySync(engine, opts, plainRoot, managed));
+  if (managed && !plainRoot) return performManagedBranch(engine, opts);
+  // Plain imports share the source lease with Git sync. Managed imports publish through
+  // the coordinator; only classic imports take the legacy filesystem-writer lock.
+  const work = (options: SyncOpts) => plainRoot
+    ? performPlainDirectorySync(engine, options, plainRoot, managed)
+    : performSyncInner(engine, options);
+  const filesystemRoot = managed ? null : plainRoot || opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
   if (filesystemRoot) assertNotOwnedRoot(filesystemRoot, 'gbrain sync refuses the root');
   if (filesystemRoot && !hasSourceFilesystemLock(filesystemRoot)) {
     let entered = false;
@@ -121,7 +126,7 @@ async function routeSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResul
   // Per-source leases protect the commit/bookmark window. A caller may
   // skip this lease only when its broader scope already serializes the work.
   if (opts.skipLock) {
-    return finish(await performSyncInner(engine, opts), true);
+    return finish(await work(opts), true);
   }
 
   const lockKey = opts.lockId ?? syncLockId(opts.sourceId ?? 'default');
@@ -129,7 +134,7 @@ async function routeSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResul
   // Renewal loss aborts the import loop and prevents a successful bookmark
   // result, including callers that did not supply their own cancellation.
   try {
-    return finish(await withRefreshingLock(engine, lockKey, signal => performSyncInner(engine, {
+    return finish(await withRefreshingLock(engine, lockKey, signal => work({
       ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, signal]) : signal,
     })), true);
   } catch (err) {
