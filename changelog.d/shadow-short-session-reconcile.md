@@ -6,4 +6,7 @@
 - A serving process that closes with everything handed over and applied seals the follower. The next session carries the watermark on only when the follower files are unchanged and, on Postgres, the writer evidence of every other connection, the coverage gaps and the writer hooks are exactly as they were at the seal. Any doubt, read failure or timeout leaves the watermark invalid until a full pass, as before. On PGLite only the file checks apply.
 - Eight named persistence-journal members (`declarePersistence` and the journal's counter, completion, effect and lock members) no longer invalidate the whole watermark: they publish the tables their statements write. `onCheckout`, a pool listener that sends no statement, is ignored. Every other member the write map does not cover still invalidates it.
 
+### Changed
+- Swap readiness criterion 1 now also needs the newest clean full reconcile pass to have finished under 24 hours ago. Three clean passes followed by days without one no longer read as ready. A carried seal or a half-done pass is never such a pass. The rule is applied by the readiness check itself: the readiness policy, its hash and the shadow evidence epoch are unchanged. `engine shadow status --json` shows the time as `reconcile.last_clean_full_pass_at`; a status from an older build without it reads as missing evidence.
+
 <!-- behavior-change: shadow_short_session_watermark -->
