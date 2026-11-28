@@ -428,11 +428,11 @@ export class OwnWriteCounter {
    * text in call order: inside the caller's transaction START goes ahead of the first write and IMMEDIATE and END
    * ahead of its COMMIT; an autocommit write runs as BEGIN, START, write, IMMEDIATE, END, COMMIT, the write held until
    * BEGIN answers (`alone`). Statements go on the connection in call order: one the caller sends while an autocommit
-   * write waits for its BEGIN waits behind it, so nothing lands among them. Left out (uncounted, so a seal refuses):
+   * write waits for its BEGIN waits behind it, so nothing lands among them (`idle` gates conn.transaction too). Left out (uncounted, so a seal refuses):
    * a connection that does not pipeline (a transaction-mode pooler can refuse BEGIN and run the rest in autocommit),
    * and everything after a text that mixes transaction control with other statements.
    */
-  reserved(reserved: Sql, pool: Sql): (query: string, params?: unknown[], prepare?: boolean) => Promise<unknown> {
+  reserved(reserved: Sql, pool: Sql): ((query: string, params?: unknown[], prepare?: boolean) => Promise<unknown>) & { idle: () => Promise<void> } {
     const counter = this;
     // A reserved handle has no options of its own: the pool it came from says whether its connections pipeline.
     const pipelines = Number((pool.options as { max_pipeline?: number } | undefined)?.max_pipeline) > 0;
@@ -486,7 +486,7 @@ export class OwnWriteCounter {
       q.catch(() => { /* the caller reads it */ });
       return { result: q, queued };
     };
-    return (query, params, prepare) => {
+    const counted = (query: string, params?: unknown[], prepare?: boolean): Promise<unknown> => {
       if (!tail) {
         const s = step(query, params, prepare);
         if (s.queued) after(s.queued);
@@ -503,6 +503,9 @@ export class OwnWriteCounter {
       }));
       return result.then(s => { if (s.ok) return s.value; throw s.error; });
     };
+    // `idle`: settles once every statement sent so far is on the connection; a transaction the caller opens on the same
+    // connection (conn.transaction) waits for it, so its BEGIN never lands inside a counted write's transaction.
+    return Object.assign(counted, { idle: (): Promise<void> => tail ?? Promise.resolve() });
   }
 
   /**
@@ -540,17 +543,26 @@ export class OwnWriteCounter {
     const begun = settle(now(conn.unsafe('BEGIN')));
     this.startOn(one);
     let done: Promise<unknown> | undefined;
+    let failed: { error: unknown } | undefined;
+    // Never rejects: a caller queued behind it must still run. A statement that cannot be enqueued fails `q`, and the
+    // transaction it may have opened is rolled back.
     const queued = begun.then((b) => {
       if (!b.ok) return;
-      send(q);
-      this.endOn(one);
-      done = now(conn.unsafe('COMMIT'));
+      try {
+        send(q);
+        this.endOn(one);
+        done = now(conn.unsafe('COMMIT'));
+      } catch (error) {
+        failed = { error };
+        try { now(conn.unsafe('ROLLBACK')); } catch { /* unusable connection */ } // silent-read-ok: the connection cannot take a statement, so its next one fails and nothing is booked
+      }
     });
     void (async () => {
       const b = await begun;
       await queued;
       // BEGIN failed, or the connection closed: `q` was never sent.
       if (!b.ok) { await settle(one.start!); return reject(b.error); }
+      if (failed) return reject(failed.error);
       const [mine, c] = [await own, await settle(done!)];
       const start = await settle(one.start!), end = await settle(endOf(one));
       // COMMIT failed, or the connection closed: nothing proves the write committed.

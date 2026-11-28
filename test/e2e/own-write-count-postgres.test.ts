@@ -344,4 +344,20 @@ d('the own-write count on Postgres', () => {
       expect(counter.ledger.since(0).get('own_parent')).toEqual([1n, 0n, 0n]);
     } finally { reserved.release(); }
   }, 60_000);
+
+  test('a reserved connection: conn.transaction opened right behind an unawaited write waits for that write\'s transaction to close', async () => {
+    let rolledBack = false;
+    await engine.withReservedConnection(async (conn) => {
+      const wrote = conn.executeRaw(`INSERT INTO own_parent (id, v) VALUES (93, 'autocommit')`);
+      await (conn as typeof conn & ReservedTransactions).transaction(async (tx) => {
+        await tx.executeRaw(`INSERT INTO own_parent (id, v) VALUES (94, 'rolled back')`);
+        throw new Error('roll the transaction back');
+      }).catch(() => { rolledBack = true; });
+      await wrote;
+    });
+    expect(rolledBack).toBe(true);
+    const ids = (await observer`SELECT id FROM own_parent WHERE id IN (93, 94) ORDER BY id`).map(r => Number(r.id));
+    expect(ids).toEqual([93]); // 94 stayed inside its own transaction, which rolled back
+    expect(own(0).own_parent).toEqual(['1', '0', '0']);
+  }, 60_000);
 });

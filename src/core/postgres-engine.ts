@@ -964,7 +964,7 @@ export class PostgresEngine implements BrainEngine {
           return rows as unknown as R[];
         },
       };
-      return await fn(Object.assign(conn, { transaction: <R>(run: (engine: BrainEngine) => Promise<R>, opts?: TransactionOptions) => this.transactionOn(this.counted(reservedTransactions(reserved)), run, opts) } satisfies ReservedTransactions));
+      return await fn(Object.assign(conn, { transaction: async <R>(run: (engine: BrainEngine) => Promise<R>, opts?: TransactionOptions) => { await counted?.idle(); return this.transactionOn(this.counted(reservedTransactions(reserved)), run, opts); } } satisfies ReservedTransactions));
     } finally {
       // Counter/gauge decrements run regardless of release() throwing
       // (double-release or socket error must not permanently leak a permit
