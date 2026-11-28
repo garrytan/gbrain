@@ -53,6 +53,7 @@ mod page_index;
 mod page_projection;
 mod page_withdrawals;
 pub mod pages;
+pub mod primary;
 pub mod read_shared;
 pub mod redb_kv;
 pub mod retrieval_feedback;
@@ -323,6 +324,8 @@ pub struct Store {
     pub(crate) last_position: Arc<Mutex<Option<CommitPosition>>>,
     /// `OpenOptions::multiuser` as the brain was opened; bound and sibling stores copy it.
     multiuser: bool,
+    /// The primary's write fence (`primary.rs`), shared with bound and sibling stores.
+    pub(crate) primary: Arc<primary::PrimarySlot>,
 }
 
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
@@ -409,9 +412,24 @@ impl Store {
         Store::open_dir_in(dir, options, OPENED_FORMATS)
     }
 
+    /// `open_dir` on the clock `env` instead of the system clock: a promotion opens the brain on the clock it judged
+    /// the old primary's lease on (`follower.rs`).
+    pub fn open_dir_with_env(dir: &Path, options: OpenOptions, env: Arc<dyn Env>) -> Result<Store> {
+        Store::open_dir_on(dir, options, OPENED_FORMATS, env)
+    }
+
     /// `open_dir` for a build that opens only the formats in `known`: the seam the older-build
     /// tests use (`format::check_version_in`).
     pub(crate) fn open_dir_in(dir: &Path, options: OpenOptions, known: &[u32]) -> Result<Store> {
+        Store::open_dir_on(dir, options, known, Arc::new(SystemEnv))
+    }
+
+    fn open_dir_on(
+        dir: &Path,
+        options: OpenOptions,
+        known: &[u32],
+        env: Arc<dyn Env>,
+    ) -> Result<Store> {
         fs::create_dir_all(dir)
             .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
         // FORMAT is judged before the record file is opened: a newer brain is never touched.
@@ -452,7 +470,7 @@ impl Store {
         let kv = open_records(dir, concurrent)?;
         let mut store = Store::open_kv_in(
             kv,
-            Arc::new(SystemEnv),
+            env.clone(),
             options.clone(),
             known,
             OpenMode::Write { dir: Some(dir) },
@@ -462,13 +480,14 @@ impl Store {
             // The config row turned multi-user mode on but could not be read before the open (redb
             // recovered the file first): open again, now on the concurrent store the mode needs.
             drop(store);
-            return Store::open_dir_in(
+            return Store::open_dir_on(
                 dir,
                 OpenOptions {
                     concurrent_writes: true,
                     ..options
                 },
                 known,
+                env,
             );
         }
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
@@ -704,6 +723,13 @@ impl Store {
             kv.begin_write()?.commit()?;
         }
         let commit_log_on = kv.commit_log_enabled();
+        // A logged brain whose records hold a primary lease starts fail-closed (`primary.rs`); any
+        // other store is never armed and reads nothing more.
+        let primary_state = if commit_log_on && !read_only {
+            primary::state_at_open(&*kv.snapshot()?)?
+        } else {
+            primary::PrimaryState::NeverArmed
+        };
         Ok(Store {
             kv,
             env,
@@ -728,6 +754,7 @@ impl Store {
             stamp_rows: multiuser.write_origin && origin.is_some(),
             origin,
             multiuser: multiuser_on,
+            primary: Arc::new(primary::PrimarySlot::new(primary_state)),
         })
         .inspect(|store| {
             if index.needs_build && store.runs_builder {
@@ -755,6 +782,7 @@ impl Store {
             log_since: self.log_since,
             last_position: self.last_position.clone(),
             multiuser: self.multiuser,
+            primary: self.primary.clone(),
         }
     }
 
@@ -829,6 +857,7 @@ impl Store {
             log_since: self.log_since,
             last_position: self.last_position.clone(),
             multiuser: self.multiuser,
+            primary: self.primary.clone(),
         }
     }
 
@@ -927,14 +956,20 @@ impl Store {
             let trust = stamp_trust()?;
             let meta = self.meta_scope(&trust);
             let _trust = crate::write_trust::stamp_context::open(trust);
+            let token = self.primary_fence()?;
             return tx.statement(|w| {
+                let fence = match &token {
+                    Some(token) => Some(self.primary_commit_fence(&*w, token)?),
+                    None => None,
+                };
                 let value = write_chain(w, &mut f)?;
-                if let Some(meta) = meta.meta() {
+                if let Some(meta) = with_fence(meta.meta(), fence) {
                     w.set_commit_meta(meta);
                 }
                 Ok(value)
             });
         }
+        let token = self.primary_fence()?;
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
         let mut attempt = 0u32;
         // One absolute deadline for every run (multi-user mode only; `None` waits as before).
@@ -952,9 +987,13 @@ impl Store {
                 let trust = stamp_trust()?;
                 let meta = self.meta_scope(&trust);
                 let _trust = crate::write_trust::stamp_context::open(trust);
-                match write_chain(&mut *tx, &mut f) {
-                    Ok(value) => {
-                        if let Some(meta) = meta.meta() {
+                let fence = match &token {
+                    Some(token) => self.primary_commit_fence(&*tx, token).map(Some),
+                    None => Ok(None),
+                };
+                match fence.and_then(|fence| write_chain(&mut *tx, &mut f).map(|v| (v, fence))) {
+                    Ok((value, fence)) => {
+                        if let Some(meta) = with_fence(meta.meta(), fence) {
                             tx.set_commit_meta(meta);
                         }
                         tx.commit_position().map(|at| {
@@ -1114,6 +1153,20 @@ impl MetaScope {
             self.request_id.clone(),
             self.writer.clone(),
         ))
+    }
+}
+
+/// A run's commit meta with the primary fence it was written under (`primary.rs`), if any.
+fn with_fence(
+    meta: Option<commit_log::CommitMeta>,
+    fence: Option<commit_log::CommitFence>,
+) -> Option<commit_log::CommitMeta> {
+    match (meta, fence) {
+        (meta, None) => meta,
+        (meta, Some(fence)) => Some(commit_log::CommitMeta {
+            fence: Some(fence),
+            ..meta.unwrap_or_default()
+        }),
     }
 }
 

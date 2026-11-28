@@ -164,13 +164,38 @@ commit time. Its cursor is its own log's `newest`, written in the same redb tran
 | `apply_page(&LogPage)` / `apply_raw(lineage, &[(position, record bytes)])` | Applies the records after the cursor in one redb transaction: data ops, the records, the log meta, the sequence (pinned to the primary's) and `M\0ctime`. Records at or before the cursor are skipped, so applying twice is a no-op. A gap, a cursor the log no longer reaches, or another history refuses `snapshot_required` and changes nothing. |
 | `install_snapshot(dir, manifest)` | Validates and copies a snapshot (`Store::snapshot_to`) from one held read state, in one redb transaction that replaces every key. Refused, changing nothing: no log, another brain, a manifest mismatch, an inconsistent log, or a snapshot behind the follower on the same history. On another history it may move the follower back. |
 | `cursor()`, `lineage()`, `sequence()`, `last_commit_time()`, `records()` | What the follower holds. |
-| `promote(options)` | Starts a new timeline at the cursor and opens the brain as a logged multi-user `Store`. Its next commit is `(cursor.sequence + 1, 0)`; its commit clock starts above max(`M\0ctime`, the newest record's time). |
+| `promote(options)` / `promote_with(options, env, settings, stopped)` | Fenced (below), then starts a new timeline at the cursor and opens the brain as a logged multi-user `Store` on `env`. The new timeline's first commit, `(cursor.sequence + 1, 0)`, is its promotion note (`M promotion/<timeline>`: who promoted, from where, on what basis); its commit clock starts above max(`M\0ctime`, the newest record's time). A refusal changes nothing; an error after the new timeline is written is `promotion_partial` (open the brain with `Store::open_dir`, then `serve_as_primary`). |
 
 History: the log meta keeps `lineage`, the timelines `{ id, from }` the log went through after its first one (absent
 until a promotion). Every `LogPage` carries it. A follower continues only when its own lineage is a prefix of the
-page's and every newer timeline starts at or after its cursor (`commit_log::lineage_continues`). Fencing the old
-primary before a promotion is the caller's job (lane L5's leases); the store does not fence it. Cost: a snapshot
+page's and every newer timeline starts at or after its cursor (`commit_log::lineage_continues`). Cost: a snapshot
 install is one redb transaction the size of the brain.
+
+### The promotion fence and the primary's write fence
+
+A primary serves under the lease `primary` (lane L5's leases, `takeover::PRIMARY_LEASE`): `Store::serve_as_primary`
+takes it and arms the store's write fence (`primary.rs`), `renew_primary` renews it and `release_primary` hands it over.
+While armed, every write of the store, its bound transactions and its builder reads the lease inside its own write
+transaction, and the record file accepts the commit only while its commit time is before the lease's end
+(`commit_log::CommitFence`, checked in the pipeline's batch write and the single-writer commit). So a primary whose
+lease lapsed, was released or was taken over is refused `lease_lost` at commit and writes nothing. A store opened on
+records that hold a primary lease refuses writes (`lease_lost`, reason `primary_not_served`) until it serves; a store
+whose records never held one is never fenced.
+
+The lease record replicates with the data, and a promotion judges it on the promoting machine's clock:
+
+| The old primary's lease, as the follower holds it | Promotion |
+|---|---|
+| released (a clean hand-over) | promotes at once |
+| live | refused `primary_live` |
+| lapsed and not released, or no primary lease | refused `primary_unconfirmed`, unless the caller passes `OldPrimaryStopped` |
+| lapsed, with `OldPrimaryStopped` | refused `primary_live` until the lease's end plus `TakeoverSettings::margin_ms` (default `DEFAULT_TAKEOVER_MARGIN_MS`, 2 000), then promotes; the promotion note records the reason |
+
+A lapse alone proves nothing: the old primary may have renewed in a commit the follower never applied. Only the caller
+knows the old primary stopped, so nothing builds `OldPrimaryStopped` on its own, and no napi, TypeScript or CLI path
+reaches a promotion (guarded by `tests/takeover.rs`). Not covered: clock skew larger than the margin; and two
+primaries after a wrong attestation during a network cut, or after two followers both promote, which is phase M4
+(work item 9e3753d4).
 
 ## Tests
 
@@ -180,4 +205,8 @@ under 8 writers; retention, full trim, restart and cursor boundaries; explicit t
 activation, interrupted activation, log-off refusal, read-only open; a logged base-7 brain whose upgrade and open-time
 upkeep are logged and replay; journal origin on and off; the accept hook. `tests/occ_history.rs` and `tests/sim.rs`:
 `logged_*` crash and fsync-fault sweeps that replay the recovered log against the recovered records, beside the
-existing acknowledged/in-doubt check, and a crash at every I/O call of one group commit.
+existing acknowledged/in-doubt check, and a crash at every I/O call of one group commit. `tests/takeover.rs`: the
+promotion fence (live, lapsed, attested with margin 0 and the default margin, hand-over), the primary's write fence on
+both record adapters and every write kind (lapse, commit after the lease's end, release, reopen), invalid inputs,
+`promotion_partial` recovery, stale-primary lineage, and the no-product-path guards. `tests/follower.rs`: a crash at
+every I/O call of a promotion's durable step.

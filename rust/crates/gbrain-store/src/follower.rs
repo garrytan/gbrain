@@ -14,26 +14,49 @@
 //! - `install_snapshot`: replaces the whole record file with a snapshot of the same brain
 //!   (`Store::snapshot_to`) in one redb transaction, validated and copied from one held read state.
 //!   It never moves the follower backwards.
-//! - `promote`: starts a new timeline at the cursor and opens the brain as a logged multi-user
-//!   `Store`. Its commit clock starts above max(`M\0ctime`, the newest record's time). Fencing the
-//!   old primary is the caller's job (lane L5's leases); the store does not do it.
+//! - `promote` / `promote_with`: fenced (below), then starts a new timeline at the cursor and opens
+//!   the brain as a logged multi-user `Store`. The new timeline's first commit is its promotion
+//!   note (`promotion_key`), written in the same redb transaction as the new timeline, so it
+//!   replicates to every follower of the new timeline. Its commit clock starts above
+//!   max(`M\0ctime`, the newest record's time).
+//!
+//! The promotion fence (lane L2; Ember's ruling A, 2026-11-27). The old primary's lease
+//! (`takeover::PRIMARY_LEASE`) is replicated with the data, and promotion judges it on the
+//! promoting machine's clock:
+//! - released (the old primary handed over, `Store::release_primary`): promotes at once;
+//! - live: refused, `primary_live`;
+//! - lapsed but not released, or no primary lease at all: refused, `primary_unconfirmed`, unless
+//!   the caller passes [`OldPrimaryStopped`]: then it promotes once the lease's end plus
+//!   `TakeoverSettings::margin_ms` has passed (`primary_live` before), and the promotion note
+//!   records the reason.
+//!
+//! A lapse alone proves nothing: the old primary may have renewed in a commit this follower never
+//! applied. Only the caller can know that the old primary stopped, so nothing builds an
+//! `OldPrimaryStopped` on its own (no timer, no health check, no default). Two primaries after a
+//! wrong attestation, or after two followers both promote, is phase M4 (work item 9e3753d4); no
+//! product path reaches promotion.
 //!
 //! A follower never opens a `Store` for writing while it follows: that would make commits of its
 //! own the primary's log never had.
 
 use crate::commit_log::{
-    self, CommitPosition, CommitRecord, LogMeta, LogPage, LogSettings, LogState, Timeline,
-    decode_record, is_log_key, read_meta,
+    self, CommitPosition, CommitRecord, LogMeta, LogOpRef, LogPage, LogSettings, LogState,
+    Timeline, decode_record, is_log_key, read_meta,
 };
+use crate::env::{Env, SystemEnv};
 use crate::error::{INVALID_STATE, Result, STORE_CORRUPT, StoreError};
 use crate::format;
 use crate::kv::{Kv, KvRead};
+use crate::leases::read_lease_record;
 use crate::redb_kv::{RedbKv, RedbReadOnlyKv, read_commit_time};
 use crate::snapshot::SnapshotManifest;
+use crate::takeover::{PRIMARY_LEASE, TakeoverSettings};
+use crate::write_origin::WriteOrigin;
 use crate::{OpenOptions, Store, StoredFormat, get_json, keys};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// The code of every refusal that needs a snapshot first: a gap, a cursor the log no longer
 /// reaches, or another history.
@@ -57,6 +80,119 @@ pub struct Follower {
     /// The follower's own log bookkeeping (retention), `None` while it holds no brain yet.
     state: Mutex<Option<LogState>>,
     retention_bytes: u64,
+}
+
+/// The refusal of a promotion while the old primary's lease is live (or inside the margin after it).
+pub const PRIMARY_LIVE: &str = "primary_live";
+/// The refusal of a promotion that has no proof the old primary stopped.
+pub const PRIMARY_UNCONFIRMED: &str = "primary_unconfirmed";
+/// A promotion that wrote its new timeline but did not finish (`promote_with`, `takeover::take_over_with`).
+pub const PROMOTION_PARTIAL: &str = "promotion_partial";
+
+/// The caller's word that the old primary of a brain is stopped and will not write again (`promote_with`). Promotion
+/// needs it when the old primary did not hand its lease over. It is a claim the store cannot check; the promotion
+/// note records it. Only the caller that knows builds one: nothing in the store or the engine does it on its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OldPrimaryStopped {
+    reason: String,
+}
+
+impl OldPrimaryStopped {
+    /// `reason`: how the caller knows (1 to 512 bytes of text without NUL), kept in the promotion note.
+    pub fn attest(reason: &str) -> Result<OldPrimaryStopped> {
+        if reason.trim().is_empty() || reason.len() > 512 || reason.contains('\0') {
+            return Err(StoreError::invalid(
+                "an old-primary-stopped attestation needs a reason of 1 to 512 bytes of text without NUL",
+            ));
+        }
+        Ok(OldPrimaryStopped {
+            reason: reason.to_owned(),
+        })
+    }
+
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+}
+
+/// What the new timeline's first commit records about the promotion (`promotion_key`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromotionNote {
+    pub timeline: String,
+    /// The last commit the new timeline shares with the old one.
+    pub from: CommitPosition,
+    pub host_id: String,
+    /// `handover` (the old primary released its lease), or `attested` (`OldPrimaryStopped`).
+    pub basis: String,
+    /// The attestation's reason, for `attested`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attested: Option<String>,
+    /// The old primary's lease epoch, when the brain had one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_epoch: Option<u64>,
+    pub promoted_at_us: i64,
+}
+
+/// The key of the promotion note of `timeline`.
+pub fn promotion_key(timeline: &str) -> Vec<u8> {
+    keys::meta(&format!("promotion/{timeline}"))
+}
+
+fn refused(code: &str, why: String) -> StoreError {
+    StoreError::new(INVALID_STATE, format!("{code}: {why}"))
+}
+
+/// Whether the old primary may be taken over now (module docs): `(basis, attested reason, lease epoch)`.
+fn promotion_basis(
+    read: &dyn KvRead,
+    now: i64,
+    margin_us: i64,
+    stopped: Option<&OldPrimaryStopped>,
+) -> Result<(&'static str, Option<String>, Option<u64>)> {
+    let lease = read_lease_record(read, PRIMARY_LEASE)?;
+    if let Some(rec) = &lease {
+        if rec.released {
+            return Ok(("handover", None, Some(rec.epoch)));
+        }
+        if rec.expires_at_us > now {
+            return Err(refused(
+                PRIMARY_LIVE,
+                format!(
+                    "the old primary holds its lease (epoch {}) until {} µs on this machine's clock",
+                    rec.epoch, rec.expires_at_us
+                ),
+            ));
+        }
+    }
+    let Some(stopped) = stopped else {
+        return Err(refused(
+            PRIMARY_UNCONFIRMED,
+            match &lease {
+                Some(rec) => format!(
+                    "the old primary's lease (epoch {}) lapsed but was not handed over, and it may have renewed in a commit this follower never applied; promote only with an OldPrimaryStopped attestation",
+                    rec.epoch
+                ),
+                None => "the brain has no primary lease, so nothing shows the old primary stopped; promote only with an OldPrimaryStopped attestation".into(),
+            },
+        ));
+    };
+    if let Some(rec) = &lease {
+        let ready = rec.expires_at_us.saturating_add(margin_us);
+        if now < ready {
+            return Err(refused(
+                PRIMARY_LIVE,
+                format!(
+                    "the old primary's lease (epoch {}) ended at {} µs; with the takeover margin, promotion waits until {ready} µs on this machine's clock",
+                    rec.epoch, rec.expires_at_us
+                ),
+            ));
+        }
+    }
+    Ok((
+        "attested",
+        Some(stopped.reason.clone()),
+        lease.map(|r| r.epoch),
+    ))
 }
 
 fn snapshot_required(why: String) -> StoreError {
@@ -255,6 +391,17 @@ impl Follower {
         records: &[(CommitPosition, Vec<u8>)],
     ) -> Result<Applied> {
         let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        self.apply_locked(&mut guard, brain_id, lineage, records)
+    }
+
+    /// `apply_raw` under the state lock the caller holds.
+    fn apply_locked(
+        &self,
+        guard: &mut MutexGuard<'_, Option<LogState>>,
+        brain_id: &str,
+        lineage: &[Timeline],
+        records: &[(CommitPosition, Vec<u8>)],
+    ) -> Result<Applied> {
         let Some(state) = guard.as_mut() else {
             return Err(snapshot_required(
                 "this follower holds no brain yet: install a snapshot first".into(),
@@ -338,7 +485,7 @@ impl Follower {
             Err(e) => {
                 // The bookkeeping is reloaded from what the file holds now, under the same lock.
                 if let Ok(fresh) = self.load_state() {
-                    *guard = fresh;
+                    **guard = fresh;
                 }
                 Err(e)
             }
@@ -522,31 +669,54 @@ impl Follower {
         Ok(meta.newest)
     }
 
-    /// Promotes the follower: starts a new timeline at its cursor (so followers that hold commits
-    /// past it are told to install a snapshot) and opens the brain as a logged multi-user `Store`
-    /// with `options` (which must turn on multi-user mode and the commit log). Fence the old
-    /// primary first: the store does not.
+    /// Promotes the follower when the old primary handed its lease over ([`Follower::promote_with`] with this
+    /// machine's clock, the default margin and no attestation).
     pub fn promote(self, options: OpenOptions) -> Result<Store> {
+        self.promote_with(
+            options,
+            Arc::new(SystemEnv),
+            &TakeoverSettings::default(),
+            None,
+        )
+    }
+
+    /// Promotes the follower, fenced (module docs): judged on `env` (this machine's clock) with `settings`, and with
+    /// `stopped` when the old primary did not hand over. Starts a new timeline at the cursor, whose first commit is the
+    /// promotion note, and opens the brain as a logged multi-user `Store` on `env` (`options` must turn on multi-user
+    /// mode and the commit log). A store whose brain holds a primary lease starts fail-closed until it serves as
+    /// primary (`Store::serve_as_primary`).
+    ///
+    /// Outcomes: a refusal or an error before the new timeline is written leaves the follower as it was. An error
+    /// after it is `promotion_partial`: the brain is already promoted; open it with `Store::open_dir` (and serve as
+    /// primary). A second promotion of that directory starts one more timeline and loses nothing.
+    pub fn promote_with(
+        self,
+        options: OpenOptions,
+        env: Arc<dyn Env>,
+        settings: &TakeoverSettings,
+        stopped: Option<&OldPrimaryStopped>,
+    ) -> Result<Store> {
         let Some(dir) = self.dir.clone() else {
             return Err(StoreError::new(
                 INVALID_STATE,
                 "a follower without a directory cannot be promoted",
             ));
         };
+        let margin_us = settings.margin_us()?;
         if !(options.multiuser && options.multiuser_writes.commit_log) {
             return Err(StoreError::invalid(
                 "promotion needs multi-user mode and the commit log (GBRAIN_RUST_MULTIUSER=1, GBRAIN_RUST_COMMIT_LOG=1)",
             ));
         }
         // Every check the open will make that could refuse it, before the follower changes.
-        if options
+        let Some(host_id) = options
             .multiuser_writes
             .host_id
-            .as_deref()
-            .is_none_or(str::is_empty)
-        {
+            .clone()
+            .filter(|h| !h.is_empty())
+        else {
             return Err(StoreError::invalid(crate::HOST_ID_REQUIRED));
-        }
+        };
         if let (Some(on_disk), Some(mine)) = (format::read(&dir)?, self.brain_id()?)
             && on_disk.brain_id != mine
         {
@@ -555,28 +725,76 @@ impl Follower {
                 "FORMAT names a different brain than the follower's records",
             ));
         }
-        {
-            let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            let Some(state) = guard.as_mut() else {
-                return Err(StoreError::new(
-                    INVALID_STATE,
-                    "an empty follower cannot be promoted",
-                ));
-            };
-            let cursor = state.meta().newest;
-            let mut lineage = state.meta().lineage.clone();
-            lineage.push(Timeline {
-                id: commit_log::uuid_v7(&crate::env::SystemEnv),
-                from: cursor,
-            });
-            let sequence = self.kv.version()?;
-            let mut meta = state.meta().clone();
-            meta.lineage = lineage;
-            self.kv.replica_write(sequence, None, |tx| {
-                tx.put(&commit_log::meta_key(), &serde_json::to_vec(&meta)?)
-            })?;
-        }
+        let timeline = self.start_timeline(&*env, margin_us, &host_id, stopped)?;
         drop(self);
-        Store::open_dir(&dir, options)
+        Store::open_dir_with_env(&dir, options, env).map_err(|e| {
+            refused(
+                PROMOTION_PARTIAL,
+                format!(
+                    "the follower is promoted (timeline {timeline}) but the brain did not open: {e}; open it with Store::open_dir"
+                ),
+            )
+        })
+    }
+
+    /// The fenced half of a promotion: judges the old primary's lease and, when it may, writes the new timeline and
+    /// its promotion note in one redb transaction (the follower's own apply). Returns the timeline id. Tests run it on
+    /// a simulated disk (a follower without a directory).
+    #[doc(hidden)]
+    pub fn start_timeline(
+        &self,
+        env: &dyn Env,
+        margin_us: i64,
+        host_id: &str,
+        stopped: Option<&OldPrimaryStopped>,
+    ) -> Result<String> {
+        let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(state) = guard.as_ref() else {
+            return Err(StoreError::new(
+                INVALID_STATE,
+                "an empty follower cannot be promoted",
+            ));
+        };
+        let cursor = state.meta().newest;
+        let mut lineage = state.meta().lineage.clone();
+        let read = self.kv.snapshot()?;
+        let now = env.clock_micros();
+        let (basis, attested, lease_epoch) = promotion_basis(&*read, now, margin_us, stopped)?;
+        let brain_id = get_json::<StoredFormat>(&*read, &keys::meta("format"))?
+            .map(|f| f.brain_id)
+            .unwrap_or_default();
+        let floor = commit_log::floor_time(&*read)?;
+        drop(read);
+        let id = commit_log::uuid_v7(env);
+        let time = now.max(floor.saturating_add(1));
+        let note = PromotionNote {
+            timeline: id.clone(),
+            from: cursor,
+            host_id: host_id.to_owned(),
+            basis: basis.to_owned(),
+            attested,
+            lease_epoch,
+            promoted_at_us: time,
+        };
+        let value = serde_json::to_vec(&note)?;
+        let key = promotion_key(&id);
+        let origin = WriteOrigin {
+            host_id: host_id.to_owned(),
+            incarnation: id.clone(),
+            writer_id: "promotion".into(),
+        };
+        let record = commit_log::encode_record(
+            &origin,
+            time,
+            &[],
+            [(key.as_slice(), LogOpRef::Put(&value))],
+        );
+        lineage.push(Timeline {
+            id: id.clone(),
+            from: cursor,
+        });
+        let position = CommitPosition::new(cursor.sequence.saturating_add(1), 0);
+        self.apply_locked(&mut guard, &brain_id, &lineage, &[(position, record)])?;
+        Ok(id)
     }
 }

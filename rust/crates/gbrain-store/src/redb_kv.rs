@@ -627,7 +627,19 @@ impl KvWrite for Writer {
         let position = CommitPosition::new(current + 1, 0);
         if let Some(clock) = &clock {
             // The accept step: this writer holds redb's write lock, so no later commit is accepted first.
-            self.commit_time = Some(clock.accept(position, None));
+            let time = clock.time_for(None);
+            // A commit written under the primary lease (`primary.rs`) is accepted only inside it;
+            // refused, it is dropped here and nothing of it is written or reported.
+            if let Some(fence) = logged.as_ref().and_then(|l| l.meta.fence.as_ref()) {
+                fence.admit(time)?;
+            }
+            clock.report(position, time);
+            self.commit_time = Some(time);
+        } else if logged.as_ref().is_some_and(|l| l.meta.fence.is_some()) {
+            return Err(StoreError::new(
+                STORE_CORRUPT,
+                "a fenced commit needs the commit clock",
+            ));
         }
         // With the log on: the record of this commit, its trims and the meta record go into the
         // same redb transaction as the records (`commit_log.rs`).

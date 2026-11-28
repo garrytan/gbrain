@@ -125,6 +125,33 @@ pub struct CommitMeta {
     pub origin: Option<WriteOrigin>,
     /// The persistence request ids the commit carries, in the order they were noted.
     pub write_ids: Vec<String>,
+    /// The primary lease the commit was written under (`primary.rs`): the record file accepts the
+    /// commit only while its commit time is before the lease's end. Not written to the record.
+    pub fence: Option<CommitFence>,
+}
+
+/// The primary lease a commit was written under, as the writing transaction read it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitFence {
+    pub name: String,
+    pub epoch: u64,
+    /// The lease's end on the store clock: a commit timed at or after it is refused.
+    pub expires_at_us: i64,
+}
+
+impl CommitFence {
+    /// `lease_lost` (`expired`) unless a commit timed `commit_time` is still inside the lease.
+    pub(crate) fn admit(&self, commit_time: i64) -> crate::error::Result<()> {
+        if commit_time >= self.expires_at_us {
+            return Err(crate::leases::lease_lost(
+                crate::leases::LostReason::Expired,
+                &self.name,
+                self.epoch,
+                Some(self.epoch),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl CommitMeta {
@@ -138,10 +165,19 @@ impl CommitMeta {
         if self.origin.is_none() {
             self.origin = other.origin;
         }
+        // A transaction is fenced by the earliest lease end any of its statements read.
+        if let Some(fence) = other.fence
+            && self
+                .fence
+                .as_ref()
+                .is_none_or(|mine| fence.expires_at_us < mine.expires_at_us)
+        {
+            self.fence = Some(fence);
+        }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.origin.is_none() && self.write_ids.is_empty()
+        self.origin.is_none() && self.write_ids.is_empty() && self.fence.is_none()
     }
 }
 
@@ -602,12 +638,17 @@ impl CommitClock {
         *self.hook.lock().unwrap_or_else(|p| p.into_inner()) = hook;
     }
 
-    /// The commit time of the transaction accepted at `position`, after `prev` (the time given to
-    /// the transaction accepted just before it in the same record-file commit) or, for the first,
-    /// after the newest durable time; reported to the hook.
-    pub(crate) fn accept(&self, position: CommitPosition, prev: Option<i64>) -> i64 {
+    /// The commit time of a transaction accepted after `prev` (the time given to the transaction
+    /// accepted just before it in the same record-file commit) or, for the first, after the newest
+    /// durable time. Nothing is reported yet: the caller may still refuse the commit (a fenced
+    /// commit past its lease, `CommitFence::admit`), and reports it with `report` once accepted.
+    pub(crate) fn time_for(&self, prev: Option<i64>) -> i64 {
         let floor = prev.unwrap_or_else(|| *self.last.lock().unwrap_or_else(|p| p.into_inner()));
-        let time = self.clock.clock_micros().max(floor.saturating_add(1));
+        self.clock.clock_micros().max(floor.saturating_add(1))
+    }
+
+    /// Reports a commit accepted at `position` with `time` (from `time_for`) to the hook.
+    pub(crate) fn report(&self, position: CommitPosition, time: i64) {
         let hook = self.hook.lock().unwrap_or_else(|p| p.into_inner()).clone();
         if let Some(hook) = hook {
             hook(Accepted {
@@ -615,7 +656,6 @@ impl CommitClock {
                 commit_time: time,
             });
         }
-        time
     }
 
     /// Takes in the newest time of a record-file commit that succeeded.
@@ -936,6 +976,7 @@ pub(crate) mod scope {
                 writer_id: writer_id.unwrap_or_default(),
             }),
             write_ids: ids,
+            fence: None,
         }
     }
 }

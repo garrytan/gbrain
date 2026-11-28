@@ -9,11 +9,12 @@ mod common;
 use common::TempDir;
 use gbrain_sim::{CrashMode, FaultPlan, SimDisk, SimFile};
 use gbrain_store::commit_log::CommitPosition;
-use gbrain_store::follower::{Follower, SNAPSHOT_REQUIRED};
+use gbrain_store::follower::{Follower, OldPrimaryStopped, SNAPSHOT_REQUIRED};
 use gbrain_store::journal::PageMutation;
 use gbrain_store::kv::Kv;
 use gbrain_store::redb_kv::{RedbKv, RedbReadOnlyKv, read_commit_time};
 use gbrain_store::snapshot::{SnapshotManifest, SnapshotOp};
+use gbrain_store::takeover::TakeoverSettings;
 use gbrain_store::{Env, MultiUserWrites, OpenOptions, Store};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -23,6 +24,18 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 const HOST: &str = "d0000000-0000-4000-8000-0000000000d1";
 const MODES: [bool; 2] = [false, true];
+
+/// Promotes a follower whose primary never took the primary lease (these cases drop the primary):
+/// the caller attests it stopped (`follower.rs`, promotion fence).
+fn promote_dropped(follower: Follower, options: OpenOptions) -> gbrain_store::Result<Store> {
+    let stopped = OldPrimaryStopped::attest("test: the primary was dropped before the promotion")?;
+    follower.promote_with(
+        options,
+        Arc::new(gbrain_store::SystemEnv),
+        &TakeoverSettings::default(),
+        Some(&stopped),
+    )
+}
 
 fn mu(concurrent: bool) -> OpenOptions {
     OpenOptions {
@@ -277,18 +290,24 @@ fn promotion_continues_the_positions_and_starts_the_clock_above_the_floor() {
         assert!(floor >= last_record && floor >= far);
         drop(copy);
         // Promotion on a machine whose clock is far behind.
-        let promoted = follower.promote(mu(concurrent)).unwrap();
+        let promoted = promote_dropped(follower, mu(concurrent)).unwrap();
         promoted.set_config("test.after", "1").unwrap();
         let page = promoted.read_commit_log(Some(cursor), 10).unwrap();
-        assert_eq!(page.records.len(), 1);
-        let next = &page.records[0];
+        // The new timeline's first commit is its promotion note, then the write.
+        assert_eq!(page.records.len(), 2);
+        let (note, next) = (&page.records[0], &page.records[1]);
         assert_eq!(
-            next.position,
+            note.position,
             CommitPosition::new(cursor.sequence + 1, 0),
             "concurrent {concurrent}"
         );
+        assert_eq!(
+            next.position,
+            CommitPosition::new(cursor.sequence + 2, 0),
+            "concurrent {concurrent}"
+        );
         assert!(
-            next.commit_time > floor,
+            note.commit_time > floor && next.commit_time > note.commit_time,
             "the clock went back across the promotion"
         );
         assert_eq!(page.lineage.len(), 1);
@@ -321,7 +340,7 @@ fn a_follower_ahead_of_a_promoted_follower_is_told_to_install_a_snapshot_and_rec
             _dir,
         } = p;
         drop(primary);
-        let promoted = a.promote(mu(concurrent)).unwrap();
+        let promoted = promote_dropped(a, mu(concurrent)).unwrap();
         for n in 40..42 {
             step(&promoted, n);
         }
@@ -603,7 +622,7 @@ fn a_refused_promotion_leaves_the_follower_unchanged() {
     let _ = primary;
     let mut no_host = mu(false);
     no_host.multiuser_writes.host_id = None;
-    assert!(follower.promote(no_host).is_err());
+    assert!(promote_dropped(follower, no_host).is_err());
     let follower = Follower::open(&dir).unwrap();
     assert_eq!(
         image_of(follower.records()),
@@ -905,7 +924,7 @@ fn a_follower_carries_the_clock_floor_and_a_promotion_starts_above_it() {
         );
         drop(primary);
         let cursor = follower.cursor().unwrap();
-        let promoted = follower.promote(mu(concurrent)).unwrap();
+        let promoted = promote_dropped(follower, mu(concurrent)).unwrap();
         promoted.set_config("test.after", "1").unwrap();
         // The first commit after the cursor (the promotion open's own upkeep commit, if any), not the newest one.
         let first = promoted.read_commit_log(Some(cursor), 1).unwrap();
@@ -917,5 +936,97 @@ fn a_follower_carries_the_clock_floor_and_a_promotion_starts_above_it() {
             promoted.clock_high_water().unwrap() > high,
             "concurrent {concurrent}: the promoted clock floor went back"
         );
+    }
+}
+
+/// A fixed clock and UUID source, so a promotion's timeline and note are the same bytes on every run.
+struct FixedEnv(i64);
+
+impl Env for FixedEnv {
+    fn now_micros(&self) -> i64 {
+        self.0
+    }
+    fn new_uuid(&self) -> String {
+        "0f0e0d0c-0b0a-4908-8706-050403020100".into()
+    }
+}
+
+/// A crash at every I/O call of a promotion's durable step (`Follower::start_timeline`: the new timeline and its
+/// promotion note in one redb transaction): after the reboot the follower is exactly as it was, or exactly promoted
+/// (the new timeline with its note); never one without the other. From either it then finishes the promotion.
+#[test]
+fn a_crash_at_every_io_of_a_promotion_leaves_the_follower_as_it_was_or_promoted() {
+    let modes = [
+        CrashMode::DropUnsynced,
+        CrashMode::TearLast,
+        CrashMode::Subset,
+    ];
+    let stopped = OldPrimaryStopped::attest("test: the primary was dropped").unwrap();
+    for concurrent in MODES {
+        let (p, _) = pair("crash-promote", concurrent);
+        for n in 0..3 {
+            step(&p.primary, n);
+        }
+        let (installed, manifest) = primary_image(&p.primary, &p.root.join("snap-promote"));
+        let snap = p.root.join("snap-promote");
+        let env = FixedEnv(gbrain_store::SystemEnv.now_micros() + 3_600_000_000);
+        // Calibration: the I/O of the promotion's durable step on an honest disk.
+        let honest = SimDisk::new(13, FaultPlan::none());
+        let f = sim_follower(&honest);
+        f.install_snapshot(&snap, Some(&manifest)).unwrap();
+        let start = honest.stats().io_ops;
+        let id = f.start_timeline(&env, 0, HOST, Some(&stopped)).unwrap();
+        let end = honest.stats().io_ops;
+        let promoted = image_of(f.records());
+        assert_ne!(promoted, installed);
+        assert_eq!(f.lineage().last().unwrap().id, id);
+        drop(f);
+        let mut outcomes = BTreeMap::new();
+        for k in start..=end {
+            let disk = SimDisk::new(13, FaultPlan::none());
+            let f = sim_follower(&disk);
+            f.install_snapshot(&snap, Some(&manifest)).unwrap();
+            assert_eq!(disk.stats().io_ops, start);
+            disk.set_plan(FaultPlan {
+                fsync_error_pm: 0,
+                fsync_lie_pm: 0,
+                crash_at_op: Some(k + 1),
+                crash_mode: modes[(k as usize) % modes.len()],
+            });
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = f.start_timeline(&env, 0, HOST, Some(&stopped));
+            }));
+            disk.crash_now();
+            drop(f);
+            disk.reboot();
+            disk.set_plan(FaultPlan::none());
+            let f = sim_follower(&disk);
+            let image = image_of(f.records());
+            let at = if image == installed {
+                assert!(
+                    f.lineage().is_empty(),
+                    "crash at I/O {k}: a lineage without its note"
+                );
+                let again = f.start_timeline(&env, 0, HOST, Some(&stopped)).unwrap();
+                assert_eq!(again, id);
+                assert_eq!(
+                    image_of(f.records()),
+                    promoted,
+                    "crash at I/O {k}: finishing the promotion"
+                );
+                "as_it_was"
+            } else if image == promoted {
+                assert_eq!(f.lineage().last().unwrap().id, id);
+                "promoted"
+            } else {
+                panic!("crash at I/O {k}: the follower is neither as it was nor promoted");
+            };
+            *outcomes.entry(at).or_insert(0) += 1;
+        }
+        eprintln!(
+            "concurrent {concurrent}: {} crash points: {outcomes:?}",
+            end - start + 1
+        );
+        assert!(outcomes.contains_key("as_it_was") && outcomes.contains_key("promoted"));
     }
 }

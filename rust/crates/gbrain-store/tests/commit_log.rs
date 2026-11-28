@@ -659,6 +659,7 @@ fn a_forced_group_commit_gives_each_transaction_its_own_position_and_record() {
         tx.set_commit_meta(CommitMeta {
             origin: None,
             write_ids: vec![meta.to_string()],
+            ..CommitMeta::default()
         });
         std::thread::spawn(move || tx.commit_position())
     };
