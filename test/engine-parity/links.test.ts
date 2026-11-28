@@ -320,6 +320,33 @@ describe('engine parity: links', () => {
   );
 
   parityTest(
+    'a derived-link replacement that fails inside a caller\'s transaction keeps the old edges while the caller commits',
+    { methods: ['transaction', 'replaceDerivedLinks', 'replaceDerivedLinksBatch', 'readPageSnapshot', 'getLinks', 'putPage', 'setConfig', 'getConfig'] },
+    async (engine) => {
+      await seedPages(engine, ['n/origin', 'n/old', 'n/new']);
+      const origin = async (e: BrainEngine) => {
+        const snap = await e.readPageSnapshot('n/origin', { sourceId: 'default' });
+        return { slug: 'n/origin', sourceId: 'default', expectedRevision: snap!.revision, sourceIncarnation: snap!.sourceIncarnation };
+      };
+      await engine.replaceDerivedLinks(await origin(engine), [{ from_slug: 'n/origin', to_slug: 'n/old', link_type: 'cites', link_source: 'markdown' }]);
+      const errors = await engine.transaction(async (tx) => {
+        const single = await tx.replaceDerivedLinks(await origin(tx),
+          [{ from_slug: 'n/origin', to_slug: 'n/new', link_type: 'cites', link_source: 'markdown' }], { wanted: badWanted })
+          .then(() => 'resolved', (e: Error) => e.message);
+        const batch = await tx.replaceDerivedLinksBatch([{ origin: await origin(tx),
+          links: [{ from_slug: 'n/origin', to_slug: 'n/new', link_type: 'cites', link_source: 'markdown' }], opts: { wanted: badWanted } }])
+          .then(() => 'resolved', (e: Error) => e.message);
+        await tx.setConfig('parity.nested_probe', 'committed');
+        return { single, batch };
+      });
+      const after = sortedLinks(await engine.getLinks('n/origin')).map(linkKey);
+      expect(after).toEqual(['n/origin>n/old:cites:markdown']);
+      expect(await engine.getConfig('parity.nested_probe')).toBe('committed');
+      return { errors, after };
+    },
+  );
+
+  parityTest(
     'getLinks/getBacklinks hide soft-deleted endpoints and respect source scope',
     { methods: ['getLinks', 'getBacklinks', 'addLink', 'softDeletePage', 'restorePage', 'putPage'] },
     async (engine, backend) => {

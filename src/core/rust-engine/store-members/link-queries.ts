@@ -247,29 +247,33 @@ async function finishDerived(brain: StoreBrain, prepared: Prepared, item: Return
 }
 
 /**
- * Whether `engine` is a transaction-bound clone. A derived-link write called on the engine itself runs in its own
- * transaction, as derived-links.ts runs PGLite's: the edges, the wanted rows and the temporal and relationship state
- * commit together, or none do.
+ * Runs `body` in its own transaction, as derived-links.ts runs the SQL engines' replacement: on the engine itself a
+ * write transaction, on a transaction-bound clone a savepoint. The edges, the wanted rows and the temporal and
+ * relationship state commit together, or none do, even when a caller catches the failure inside its own transaction.
  */
-function inTransaction(engine: RustEngine): boolean { return engine._txScope !== null; }
+function atomically<T>(engine: RustEngine, member: string, body: (brain: StoreBrain) => Promise<T>): Promise<T> {
+  return (engine as unknown as BrainEngine).transaction(tx => body((tx as unknown as RustEngine).openStore(member).brain));
+}
 
-export const replaceDerivedLinks = async function replaceDerivedLinks(this: RustEngine, brain: StoreBrain, origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions): Promise<Counts> {
-  if (!inTransaction(this)) return (this as unknown as BrainEngine).transaction(tx => tx.replaceDerivedLinks(origin, links, opts));
+export const replaceDerivedLinks = async function replaceDerivedLinks(this: RustEngine, _brain: StoreBrain, origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions): Promise<Counts> {
   const item = derivedItem('replaceDerivedLinks', origin, links, opts);
-  const [prepared] = await prepareDerived(brain, [origin], [opts]);
-  const [result] = await publish(brain, 'replaceDerivedLinks', [origin], [item]);
-  await finishDerived(brain, prepared!, item, opts);
-  return result!;
+  return atomically(this, 'replaceDerivedLinks', async (brain) => {
+    const [prepared] = await prepareDerived(brain, [origin], [opts]);
+    const [result] = await publish(brain, 'replaceDerivedLinks', [origin], [item]);
+    await finishDerived(brain, prepared!, item, opts);
+    return result!;
+  });
 };
 
-export const replaceDerivedLinksBatch = async function replaceDerivedLinksBatch(this: RustEngine, brain: StoreBrain, items: readonly DerivedLinkBatchItem[]): Promise<Counts[]> {
-  if (items.length && !inTransaction(this)) return (this as unknown as BrainEngine).transaction(tx => tx.replaceDerivedLinksBatch(items));
+export const replaceDerivedLinksBatch = async function replaceDerivedLinksBatch(this: RustEngine, _brain: StoreBrain, items: readonly DerivedLinkBatchItem[]): Promise<Counts[]> {
   const wire = items.map(item => derivedItem('replaceDerivedLinksBatch', item.origin, item.links, item.opts));
   if (!wire.length) return [];
-  const prepared = await prepareDerived(brain, items.map(item => item.origin), items.map(item => item.opts));
-  const results = await publish(brain, 'replaceDerivedLinksBatch', items.map(item => item.origin), wire);
-  for (const [i, item] of items.entries()) await finishDerived(brain, prepared[i]!, wire[i]!, item.opts);
-  return results;
+  return atomically(this, 'replaceDerivedLinksBatch', async (brain) => {
+    const prepared = await prepareDerived(brain, items.map(item => item.origin), items.map(item => item.opts));
+    const results = await publish(brain, 'replaceDerivedLinksBatch', items.map(item => item.origin), wire);
+    for (const [i, item] of items.entries()) await finishDerived(brain, prepared[i]!, wire[i]!, item.opts);
+    return results;
+  });
 };
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -278,16 +282,17 @@ export const replaceDerivedLinksBatch = async function replaceDerivedLinksBatch(
 
 type KeepPair = { from_slug: string; from_source_id: string; to_slug: string; to_source_id: string };
 
-export const removeLinksByPagesAndSource = async function removeLinksByPagesAndSource(this: RustEngine, brain: StoreBrain, pages: Array<{ slug: string; source_id: string }>, opts: { linkSource: string; keepTypedNerPairs?: KeepPair[] }): Promise<number> {
+export const removeLinksByPagesAndSource = async function removeLinksByPagesAndSource(this: RustEngine, _brain: StoreBrain, pages: Array<{ slug: string; source_id: string }>, opts: { linkSource: string; keepTypedNerPairs?: KeepPair[] }): Promise<number> {
   if (pages.length === 0) return 0;
-  // The removal and the relationship refresh commit together (see inTransaction).
-  if (!inTransaction(this)) return (this as unknown as BrainEngine).transaction(tx => tx.removeLinksByPagesAndSource(pages, opts));
   const options = takeOptions('removeLinksByPagesAndSource', opts, ['linkSource', 'keepTypedNerPairs']);
   const wire = pages.map(p => ({ slug: p.slug, source_id: p.source_id }));
-  const before = await linkRelationshipKeysTouching(brain, 'removeLinksByPagesAndSource', { fromPages: wire });
-  const removed: number = await storeCall({ member: 'removeLinksByPagesAndSource' }, () => brain.removeLinksByPagesAndSource(wire, options));
-  if (removed) await refreshOnStore(brain, before);
-  return removed;
+  // The removal and the relationship refresh commit together (see atomically).
+  return atomically(this, 'removeLinksByPagesAndSource', async (brain) => {
+    const before = await linkRelationshipKeysTouching(brain, 'removeLinksByPagesAndSource', { fromPages: wire });
+    const removed: number = await storeCall({ member: 'removeLinksByPagesAndSource' }, () => brain.removeLinksByPagesAndSource(wire, options));
+    if (removed) await refreshOnStore(brain, before);
+    return removed;
+  });
 };
 
 export const listLinkSources: StoreMember<[opts?: { sourceId?: string; sourceIds?: string[] }], Array<{ link_source: string | null; count: number }>> =
