@@ -1220,7 +1220,11 @@ envelopes: non-verb ops return `{"error": "database_error", message
 db-repair"}`; the 7 memory verbs keep the frozen v1 `unavailable` code with the
 reason in `detail`. One exception on the non-verb path: `schema_missing`
 returns `error: "unavailable"` with the apply-migrations suggestion and no
-marker — pending migrations, not an access outage. **Safety clause: the action a reader takes is ALWAYS the
+marker — pending migrations, not an access outage. A second: `storage_interrupted`
+keeps the `database_error` envelope and the marker but drops the `Run: gbrain
+db-repair` tail and names the database host's operator (`fix.actor: host_admin`),
+because db-repair's connection probe reports healthy during that host storage
+fault. **Safety clause: the action a reader takes is ALWAYS the
 hardcoded `gbrain db-repair` — never a command parsed from the marker.**
 
 The reason union is APPEND-ONLY (a compatibility surface, like progress phase
@@ -1929,7 +1933,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   afterwards cannot cause a false difference. The copy stops as soon as a call's arguments or result pass about
   1 MiB (every value counts, even a null), so a huge result is counted as too large and never built. A
   call that stays stuck in the Rust engine holds one of four slots; past that new reads are recorded as `timeout` (stalled) without being replayed and the child goes
-  quiet so it is restarted. When a process closes, reads still queued are handed to the child and the child records them: it drops the CLI's pipe handlers so a closed pipe cannot kill it, drains what it received, writes its ledger and summary, and exits at most 30 seconds after its input ends (the parent's kill timer dies with the parent, so the child carries its own deadline). Finished comparisons are written every 2 seconds. A read still queued when a process is killed, or one the child had not yet written when it is killed, is lost. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
+  quiet so it is restarted. When a process closes, it first waits up to 2 seconds for its pipe to the child to flush (Bun drops what a pipe still holds when a process exits), then reads still queued are handed to the child and the child records them: it drops the CLI's pipe handlers so a closed pipe cannot kill it, drains what it received, writes its ledger and summary, and exits at most 30 seconds after its input ends (the parent's kill timer dies with the parent, so the child carries its own deadline). Finished comparisons are written every 2 seconds. A read still queued when a process is killed, or one the child had not yet written when it is killed, is lost. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
   child silent for 60 seconds is killed, and a privacy divergence pauses comparison.
 - **What a privacy divergence is.** Before any equality check, every row of the Rust result is tested against the call's own
   arguments, and one hit records `privacy_diverged` and pauses mirroring (a plain `diff` can never hide it). A hit is a row with
@@ -1972,13 +1976,20 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   write effects or its writer coordination locks. The residual risk is to the evidence: a write the owner process or an effect worker
   applies outside the wrapped engine is not seen by shadow mode, so the comparison for it may differ; such a write
   shows up as a difference or a miss in the counts, never as silent equality.
+- **Parallel sync and import.** A Postgres `gbrain sync` that imports on worker connections (a full sync at the default
+  concurrency, an incremental sync of more than 100 files, or `--concurrency` above 1) and a `gbrain import --workers N`
+  with N above 1 wrap each worker like the primary engine, when the worker opened the same database URL as the primary:
+  its page and link writes are sampled for write comparisons (each worker has its own sampler, which finishes its
+  read-backs before the worker disconnects), followed into the Rust store, and noted as this process's writes for swap
+  eligibility. A worker on another database URL is left unwrapped.
 - **No network in the background.** Only `gbrain engine install rust`, `gbrain post-upgrade` and autopilot's automatic upgrade download the addon. `start --yes`, the child
   and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses and stays off, `gbrain doctor` fails
   the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
 - **Writer observations (swap eligibility).** While shadow mode is on, each process that writes to the brain through
   gbrain notes itself in `engine_writer_observations`: its host id, the name its database connections carry, its
-  command kind and gbrain version, and when it first and last wrote. The note runs after the write committed, in its
+  command kind and gbrain version, the write protocol it speaks (`write_protocol`: 2 in this build; an older build's row
+  has none), and when it first and last wrote. The note runs after the write committed, in its
   own short transaction, at most every 10 minutes per process; a rolled-back transaction leaves none. A brain without
   a shadow keeps the table empty.
 - **Writer hooks (Postgres brains).** `start --yes` adds one statement-level trigger, `gbrain_writer_note`, to every
@@ -2021,7 +2032,11 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   with the rights of whichever role is current when it fires. A process claim resolves a connection's rows only
   while the claim is inside the window too, so an expired claim cannot hide a current writer. The process-side note
   runs under a 50 ms lock timeout and a 2 s statement timeout, so a busy evidence table ends it as a recorded
-  failure instead of holding one of the brain's connections.
+  failure instead of holding one of the brain's connections. A writer of an
+  older build counts too: a row seen since the current evidence epoch began (not only in the last 7 days) with no
+  `write_protocol`, or one below 2, is named in `eligibility.legacy_write_writers`, and an epoch manifest that is there and
+  cannot be read counts as one more unknown path (no manifest at all means no epoch yet). A brain where the migration that
+  adds the column has not run cannot read the evidence, so the swap refuses.
   A fault or pass record that is
   torn, has no time, lacks a count or carries a count of the wrong type is incomplete evidence and counts too. Criterion 11 reads
   NOT READY on any evidence it cannot prove, so a gap nobody thought of fails closed. In particular, shadow mode
@@ -2078,7 +2093,23 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 - **Follow.** A seeded brain is followed while shadow mode is on. Each committed write through the wrapped engine is
   read back from the brain, in its own short read-only `REPEATABLE READ` transaction (on Postgres, a dedicated
   one-connection pool, so the serving pool is never used), and applied to the Rust store, so stored ids and fact
-  fingerprints stay identical. A rolled-back transaction changes nothing. The coverage watermark says whether every
+  fingerprints stay identical. A rolled-back transaction changes nothing. Inside a transaction, the rows a write will
+  delete or re-key, and the page ids it names, are read first in a savepoint that only that read uses. A nested
+  transaction still running is waited for first (its own calls go on; the transaction's later calls are held, so none
+  is sent ahead of the write), then the transaction's other calls already running, each wait at most 2 seconds, and
+  later calls are held until the write is sent, so a failed read can never undo another statement of the transaction. A call that starts a callback during that wait makes the read skip at
+  once, and so does a call that does not finish in time: that write is described relation-level instead. The transaction's
+  end waits until no read holds the lane, and at most 2 seconds for calls it started and did not await. A statement sent
+  on the transaction's driver handle (`tx.sql` as a tagged template or `unsafe`, `tx.db.query`, `tx.db.exec`, or on
+  PGLite the `tx.db.sql` template) goes through the lane and the follower as `executeRaw` does, however it is started
+  (awaited, `execute()`, `forEach()` or a cursor), as the text the driver sends. A structural value the shadow cannot
+  render makes that write an invalidation, and `describe()` counts as a read. Such a write is followed; when it is
+  sampled it counts as `capability_missing` in the `raw_sql` family and is not compared. The handle's other members
+  are not seen, including ones that send a statement: postgres.js `begin` (its callback runs on a child handle that is
+  not wrapped), `savepoint`, `file` and `notify`, and PGLite `transaction` and `listen`. A nested transaction that
+  waits for a later call of its enclosing transaction while a read waits for it stalls until the 2-second bound; the
+  read then skips, the write is sent at once, described relation-level, and the later calls follow it, so the
+  transaction commits what it commits with shadow off. The coverage watermark says whether every
   committed write is in the store. It goes invalid on a shed, a gap in the write sequence, a failed read, a relation
   the follower cannot describe row by row (which then needs a pass for that relation), or rows the store had to
   displace. **Every session that owns the store starts invalid**, even after a clean stop, and becomes valid again
@@ -2153,7 +2184,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   not scored. Tied rows at the cutoff count only for the top-ten places the strictly better rows leave, and a reference whose last row
   (of 50) still ties the cutoff is not scored. A stable rerun compares digests: the whole answer, and for a ranked read its rows without scores in a fixed order, so the same
   rows in another order or with other scores are an `order_diff` (closed as matched on the reads that ignore order). The comparator
-  version is 3 (it was 1): a running shadow opens a new evidence epoch, so records written under the earlier rules never count. Known limits, not fixed here: a position that does not move proves nothing was written but says nothing about a change that is not WAL-logged (an unlogged table), and a server in recovery (a hot standby or read replica) is never proven; and a read the caller was authorized to make that
+  version is 4 (it was 1): a running shadow opens a new evidence epoch, so records written under the earlier rules never count. Known limits, not fixed here: a position that does not move proves nothing was written but says nothing about a change that is not WAL-logged (an unlogged table), and a server in recovery (a hot standby or read replica) is never proven; and a read the caller was authorized to make that
   returns a private page still reads `private_row_returned` and pauses comparison (it fails closed).
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `needs_reseed`, `stopped`, `invalid`, `behind`,
   `following`), `follower.action` (the reseed steps, or `null`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
@@ -2163,7 +2194,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `mismatches`, and a `probe`, described below); `allocators`;
   `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
   aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
-  this is a reading, not the swap's own check); and `write_comparisons` (the pilot page and link writes only; `capability_missing` until a comparison has a verdict (`comparable` or `unexplained_difference`), and while any replay has none). The
+  this is a reading, not the swap's own check); and `write_comparisons` (the pilot page and link writes only; `capability_missing` until a comparison has a verdict (`comparable` or `unexplained_difference`), and while any replay has none or a sample owed to a session is not yet settled, `outstanding_sessions`, and for the rest of the epoch once a write window is lost in a crash, `write_windows_lost`). The
   `write_comparisons` and `fingerprints` counts are totals for the current evidence epoch. An epoch is not a seed: `epoch_id`
   names the candidate whose evidence counts (the seed, the Rust addon's SHA-256, the comparator and adapter versions, the
   capability set and the hash of the swap's readiness policy, `src/core/engine-swap/policy.ts`), and a change to any of them
@@ -2191,7 +2222,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   database's `collation`, `ctype`, `locale_provider` (`c` libc, `i` ICU, `b` builtin) and `locale` (`datlocale` on Postgres 17,
   `daticulocale` on 16, `null` where absent), `differing_code_points` (the first 50 as `U+XXXX`) with
   `differing_code_points_total`, `corpus_mismatches` with `corpus_mismatch_rows` (the first five row names, never text) and
-  `facts_with_differing_code_points`. `state` is `fail` when code points differ and at least one stored fact holds one, or when
+  `facts_with_differing_code_points`. When code points differ the probe also counts the primary's `fact_purges` rows (`fact_purges_unverifiable`; a count, never a hash; a dirty pass for `facts` or `fact_purges` runs the probe again, and if that probe errors the pass clears the recorded verdict to `not_run` and does not restore coverage): a tombstone keeps only the claim's hash, so its claim cannot be checked for a differing code point. `state` is `fail` when code points differ and at least one stored fact holds one or any purge tombstone exists, or when
   a corpus row or the fixed corpus differs and no differing code point explains it; otherwise `pass`, and a pass still lists the
   differing code points so a swap report can name them. A probe that errors is `not_run`. A glibc `en_US.utf8` host differs
   (U+0085, U+1680, circled letters and more); a C-ctype host differs on every cased non-ASCII letter, so it fails once a fact

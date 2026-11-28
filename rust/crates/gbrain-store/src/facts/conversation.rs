@@ -13,7 +13,7 @@
 //! - `listHeldFactSlots(sourceId, slug)`: the page's rows with a dimension, in id order, each
 //!   `{ entity_slug, dimension, value_hash, valid_from }` (`valid_from` as ISO text).
 //! - `countActiveConversationFacts(sourceId, slug)`: the page's conversation rows, audit rows
-//!   aside, with no `expired_at`. `countPageConversationFacts` counts expired rows too.
+//!   aside, with no `expired_at`. `countPageConversationFacts` counts the same rows (#10443).
 //! - `countConversationWindowFacts(sourceId, slug, key)`: the page's conversation rows with no
 //!   `expired_at` anchored to window `key` (audit rows included, as the statement has no test).
 //! - `countConversationFactsOutsideWindows(sourceId, slug, keys)`: the page's conversation rows,
@@ -24,23 +24,19 @@
 //!   page's conversation rows whose window key is `from`; every move matches the keys as they were
 //!   before the call, so a chain of moves applies at once.
 //! - `deleteConversationOutcomeRows(sourceId, slug)`: deletes the page's audit rows, `[{ id }]`.
-//! - `clearConversationPageFacts(sourceId, slug, windows?)`: the five statements of the batch
-//!   clear in order, each judged on the rows as the statement before it left them: delete the
-//!   expired relinked rows nothing references; unslot the expired slotted rows; expire and unslot
-//!   the active relinked rows; expire and unslot the active referenced rows; delete the rows that
-//!   are not referenced, not retired by `gbrain repair conversation-labels` and not relinked. The
-//!   answer is the sum of the last three counts. A row is referenced when an open loop names it or
-//!   another row names it as its successor.
+//! - `clearConversationPageFacts(sourceId, slug, windows?)`: the three statements of the batch
+//!   clear in order (#10443), each judged on the rows as the statement before it left them:
+//!   unslot the expired slotted rows (audit rows aside); delete the page's audit rows (a window
+//!   clear leaves them); expire and unslot every active row that is not an audit row. The
+//!   expired rows keep their row, so active reads drop them while the open loops and
+//!   `superseded_by` links that name them still resolve. The answer is the sum of the last two
+//!   counts.
 //!
 //! Every write runs in one store transaction and writes through [`write_fact`] / [`delete_fact`],
 //! so the trust stamp, the purge refusal and the indexes stay as every other fact write keeps
 //! them; a delete clears `superseded_by` on the rows that named the row.
 
-use super::loops::loop_fact_ids;
-use super::{
-    AUDIT_ROW_SOURCES, FactRecord, bigint, delete_fact, ids_under, page_rows, read_fact,
-    refs_prefix, write_fact,
-};
+use super::{AUDIT_ROW_SOURCES, FactRecord, bigint, delete_fact, page_rows, read_fact, write_fact};
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
@@ -51,12 +47,9 @@ use crate::timeline_queries::jsonb_field_text;
 use crate::trust::WriteTrust;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
 
 /// `RELINKED_DERIVED_ROW`'s context marker.
 const RELINKED_MARKER: &str = "entity relinked from ";
-/// `LABEL_RETIRED_MARKER`: the context mark `gbrain repair conversation-labels` leaves.
-const LABEL_RETIRED_MARKER: &str = "retired: conversation-labels";
 
 /// A page of a source: the arguments of most page members.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -187,11 +180,6 @@ fn unslot(row: &mut FactRecord) {
     row.dim_status = None;
 }
 
-/// `REFERENCED_SQL`: an open loop names the row, or another row names it as its successor.
-fn referenced(read: &dyn KvRead, loops: &BTreeSet<u64>, id: u64) -> Result<bool> {
-    Ok(loops.contains(&id) || !ids_under(read, &refs_prefix(id))?.is_empty())
-}
-
 /// The page predicate of a clear: the page's conversation rows, or with `windows` its derived
 /// rows that the window test (`CASE WHEN source_window IS NULL ...`) takes.
 fn cleared_by(row: &FactRecord, windows: Option<&ClearWindows>) -> bool {
@@ -259,7 +247,7 @@ impl Store {
     /// `countPageConversationFacts(sourceId, slug)`.
     pub fn count_page_conversation_facts(&self, a: &ConversationPageArgs) -> Result<i64> {
         a.check("countPageConversationFacts")?;
-        self.count_conversation_page_rows(a, derived_row)
+        self.count_conversation_page_rows(a, |r| derived_row(r) && r.expired_at_us.is_none())
     }
 
     /// `countConversationWindowFacts(sourceId, slug, key)`.
@@ -388,7 +376,6 @@ impl Store {
         let trust = &self.write_trust()?;
         self.write(|tx| {
             let now = self.env.now_micros();
-            let loops = loop_fact_ids(&*tx, OP)?;
             let page = |tx: &dyn KvRead| -> Result<Vec<FactRecord>> {
                 Ok(page_rows(tx, &a.source_id, &a.slug)?
                     .into_iter()
@@ -396,58 +383,37 @@ impl Store {
                     .collect())
             };
             // Each step picks its rows first, as one statement sees the rows before it runs.
-            let mut picked = Vec::new();
-            for r in page(&*tx)? {
-                if r.expired_at_us.is_some() && relinked(&r) && !referenced(&*tx, &loops, r.id)? {
-                    picked.push(r.id);
-                }
-            }
-            delete_ids(tx, trust, &picked)?;
-
             let picked: Vec<u64> = page(&*tx)?
                 .into_iter()
-                .filter(|r| r.expired_at_us.is_some() && r.dimension.is_some())
+                .filter(|r| !r.audit_row() && r.expired_at_us.is_some() && r.dimension.is_some())
                 .map(|r| r.id)
                 .collect();
             update_ids(tx, trust, &picked, unslot)?;
 
+            // The audit checkpoint rows are the only rows a clear deletes; a window clear leaves them.
+            let picked: Vec<u64> = if windows.is_some() {
+                Vec::new()
+            } else {
+                page(&*tx)?
+                    .into_iter()
+                    .filter(FactRecord::audit_row)
+                    .map(|r| r.id)
+                    .collect()
+            };
+            let audit_n = picked.len();
+            delete_ids(tx, trust, &picked)?;
+
             let picked: Vec<u64> = page(&*tx)?
                 .into_iter()
-                .filter(|r| r.expired_at_us.is_none() && relinked(r))
+                .filter(|r| !r.audit_row() && r.expired_at_us.is_none())
                 .map(|r| r.id)
                 .collect();
-            let relinked_n = picked.len();
-            update_ids(tx, trust, &picked, |r| {
-                r.expired_at_us = Some(now);
-                unslot(r);
-            })?;
-
-            let mut picked = Vec::new();
-            for r in page(&*tx)? {
-                if r.expired_at_us.is_none() && referenced(&*tx, &loops, r.id)? {
-                    picked.push(r.id);
-                }
-            }
             let expired_n = picked.len();
             update_ids(tx, trust, &picked, |r| {
                 r.expired_at_us = Some(now);
                 unslot(r);
             })?;
-
-            let mut picked = Vec::new();
-            for r in page(&*tx)? {
-                let retired = r
-                    .context
-                    .as_deref()
-                    .unwrap_or("")
-                    .contains(LABEL_RETIRED_MARKER);
-                if !retired && !relinked(&r) && !referenced(&*tx, &loops, r.id)? {
-                    picked.push(r.id);
-                }
-            }
-            let deleted_n = picked.len();
-            delete_ids(tx, trust, &picked)?;
-            Ok((relinked_n + expired_n + deleted_n) as i64)
+            Ok((audit_n + expired_n) as i64)
         })
     }
 }
@@ -639,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn a_whole_clear_expires_relinked_rows_keeps_retired_rows_and_deletes_the_rest() {
+    fn a_whole_clear_expires_every_active_row_and_deletes_only_the_audit_rows() {
         let store = store();
         insert(
             &store,
@@ -674,11 +640,18 @@ mod tests {
                 windows: None,
             })
             .unwrap();
-        // relinked (expired) + plain and the outcome row (deleted).
+        // The plain and the relinked row (expired) and the outcome row (deleted).
         assert_eq!(n, 3);
-        assert_eq!(live_facts(&store), vec!["relinked", "retired", "fenced"]);
+        assert_eq!(
+            live_facts(&store),
+            vec!["plain", "relinked", "old relinked", "retired", "fenced"]
+        );
         assert_eq!(
             store.count_active_conversation_facts(&page_args()).unwrap(),
+            0
+        );
+        assert_eq!(
+            store.count_page_conversation_facts(&page_args()).unwrap(),
             0
         );
         assert_eq!(

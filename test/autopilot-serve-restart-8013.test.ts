@@ -114,3 +114,15 @@ describe('hostExecutor run (#8013)', () => {
     expect(r.output).toContain('err');
   });
 });
+
+describe('hostExecutor runs gbrain steps as this build (#10536)', () => {
+  test('a restart step naming gbrain starts this build\'s own invocation, not a PATH lookup; other commands are unchanged', async () => {
+    const exec = hostExecutor('/nonexistent/supervisor.pid', 10_000, ['sh', '-c', 'echo "self:$*"', 'self']);
+    const own = await exec.run(['gbrain', 'jobs', 'supervisor', 'stop']);
+    expect(own.status).toBe(0);
+    expect(own.output).toContain('self:jobs supervisor stop');
+    const other = await exec.run(['sh', '-c', 'echo plain']);
+    expect(other.output).toContain('plain');
+    expect(other.output).not.toContain('self:');
+  });
+});

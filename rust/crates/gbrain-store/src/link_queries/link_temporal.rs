@@ -48,7 +48,7 @@ use std::rc::Rc;
 const RELATIONSHIP: u8 = b'R';
 /// The sub-tag after `q <source> \0` that marks a transition row.
 const TRANSITION: u8 = b'T';
-const TRANSITION_ID: &str = "link_transition_id";
+pub(crate) const TRANSITION_ID: &str = "link_transition_id";
 const SCOPES: [&str; 2] = ["all", "world"];
 const SEMANTICS: [&str; 2] = ["state", "event"];
 const STATUSES: [&str; 6] = [
@@ -1052,7 +1052,9 @@ pub(crate) type DateRange = (Option<String>, Option<String>);
 /// One referrer of a group, before ordering: effective date (us), source id, slug, page id, page type.
 type ReferrerGroupEntry = (i64, String, String, u64, String);
 
-/// Parses a `datemultirange` literal of half-open ranges (`[a,b)`, `(,b)`, `[a,)`, `(,)`).
+/// Parses a `datemultirange` literal of half-open ranges (`[a,b)`, `(,b)`, `[a,)`, `(,)`). A bound may also be the explicit
+/// date `-infinity` (lower, `[-infinity,b)`) or `infinity` (upper, `[a,infinity)`), which Postgres keeps apart from an
+/// omitted bound; the text order of a date puts both where they belong (`-infinity` before and `infinity` after every date).
 pub(crate) fn parse_multirange(text: &str) -> Result<Vec<DateRange>> {
     let bad = || invalid(format!("malformed multirange literal: \"{text}\""));
     let inner = text
@@ -1071,12 +1073,12 @@ pub(crate) fn parse_multirange(text: &str) -> Result<Vec<DateRange>> {
         let (lower, upper) = body.split_once(',').ok_or_else(bad)?;
         let lower = match (open, lower) {
             ("(", "") | ("[", "") => None,
-            ("[", d) if is_date(d) => Some(d.to_string()),
+            ("[", d) if is_date(d) || d == "-infinity" => Some(d.to_string()),
             _ => return Err(bad()),
         };
         let upper = match upper {
             "" => None,
-            d if is_date(d) => Some(d.to_string()),
+            d if is_date(d) || d == "infinity" => Some(d.to_string()),
             _ => return Err(bad()),
         };
         out.push((lower, upper));
@@ -1307,6 +1309,102 @@ pub(crate) fn put_moved_transition(tx: &mut dyn KvWrite, record: &TransitionReco
         return Err(crate::links::unique_violation());
     }
     put_json(tx, &transition_row_key(record), record)
+}
+
+/// The shadow seed (`seed/state.rs`): stores a `link_relationships` row copied from another engine, with its own
+/// `recorded_at` and `refreshed_at`, under the source of its from page (`from_source`), as `writeLinkRelationshipState` keys
+/// it. The CHECK lists of the table apply and `valid_ranges` is kept in its canonical text. `false` when the row is held.
+pub(crate) fn seed_relationship(
+    tx: &mut dyn KvWrite,
+    from_source: &str,
+    record: &RelationshipRecord,
+) -> Result<bool> {
+    check_no_nul("link_type", &record.link_type)?;
+    check_one_of("scope", &record.scope, &SCOPES)?;
+    check_one_of("semantics", &record.semantics, &SEMANTICS)?;
+    check_one_of("status_now", &record.status_now, &STATUSES)?;
+    let key = RelationshipKey::new(record.from_page_id, record.to_page_id, &record.link_type);
+    let mut row_key = pair_prefix(from_source, RELATIONSHIP, &key);
+    row_key.extend_from_slice(record.scope.as_bytes());
+    if tx.get(&row_key)?.is_some() {
+        return Ok(false);
+    }
+    let record = RelationshipRecord {
+        valid_ranges: canonical_multirange(&record.valid_ranges)?,
+        ..record.clone()
+    };
+    put_json(tx, &row_key, &record)?;
+    Ok(true)
+}
+
+/// The shadow follow (`seed/follow/remove_state.rs`): removes the state row of `(from, to, link_type, scope)`, found under
+/// the source of its from page. `false` when there is none.
+pub(crate) fn remove_relationship(
+    tx: &mut dyn KvWrite,
+    from_page_id: u64,
+    to_page_id: u64,
+    link_type: &str,
+    scope: &str,
+) -> Result<bool> {
+    let Some(source) = key_source(&*tx, from_page_id)? else {
+        return Ok(false);
+    };
+    let key = RelationshipKey::new(from_page_id, to_page_id, link_type);
+    let mut row_key = pair_prefix(&source, RELATIONSHIP, &key);
+    row_key.extend_from_slice(scope.as_bytes());
+    if tx.get(&row_key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&row_key)?;
+    Ok(true)
+}
+
+/// The shadow seed (`seed/state.rs`): stores a `link_transitions` row copied from another engine, with its own id and
+/// `created_at`, and raises the id counter past the id. The row is keyed by the source of its from page, where the evidence
+/// reads look (a row whose own `source_id` differs keeps that value in its record). `false` when the id, or a row of the
+/// same identity (`origin, from, to, link_type, link_source, kind, occurred_on, producer`), is held.
+pub(crate) fn seed_transition(tx: &mut dyn KvWrite, record: &TransitionRecord) -> Result<bool> {
+    check_no_nul("link_type", &record.link_type)?;
+    check_transition(
+        &record.kind,
+        &record.occurred_on,
+        &record.date_precision,
+        &record.producer,
+    )?;
+    let key = record.key();
+    let keyed = key_source(&*tx, record.from_page_id)?.unwrap_or_else(|| record.source_id.clone());
+    let prefix = pair_prefix(&keyed, TRANSITION, &key);
+    let held = scan_under::<TransitionRecord>(&*tx, &prefix)?;
+    if held
+        .iter()
+        .any(|(_, t)| t.id == record.id || t.same_identity(record))
+    {
+        return Ok(false);
+    }
+    let mut row_key = prefix;
+    row_key.extend_from_slice(&record.id.to_be_bytes());
+    put_json(tx, &row_key, record)?;
+    crate::seed::raise_counter(tx, TRANSITION_ID, record.id)?;
+    Ok(true)
+}
+
+/// The shadow follow (`seed/follow/remove_state.rs`): removes the transition `id` of the pair, found under the source of its
+/// from page (`source_id`, the row's own, when that page is gone). `false` when there is none.
+pub(crate) fn remove_transition(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    pair: (u64, u64, &str),
+    id: u64,
+) -> Result<bool> {
+    let key = RelationshipKey::new(pair.0, pair.1, pair.2);
+    let keyed = key_source(&*tx, pair.0)?.unwrap_or_else(|| source_id.to_owned());
+    let mut row_key = pair_prefix(&keyed, TRANSITION, &key);
+    row_key.extend_from_slice(&id.to_be_bytes());
+    if tx.get(&row_key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&row_key)?;
+    Ok(true)
 }
 
 fn check_transition(kind: &str, occurred_on: &str, precision: &str, producer: &str) -> Result<()> {
@@ -2653,7 +2751,29 @@ mod tests {
             c("{[2021-01-01,2024-01-01),[2022-01-01,2023-01-01)}"),
             "{[2021-01-01,2024-01-01)}"
         );
+        // An explicit infinite bound is kept apart from an omitted one, as Postgres prints it, and merges as it does.
+        assert_eq!(c("{[2020-01-01,infinity)}"), "{[2020-01-01,infinity)}");
+        assert_eq!(c("{[-infinity,2020-01-01)}"), "{[-infinity,2020-01-01)}");
+        assert_eq!(
+            c("{[2021-01-01,infinity),[2019-01-01,2019-06-01)}"),
+            "{[2019-01-01,2019-06-01),[2021-01-01,infinity)}"
+        );
+        assert_eq!(
+            c("{[2020-01-01,infinity),[2021-01-01,)}"),
+            "{[2020-01-01,)}"
+        );
+        assert!(multirange_contains("{[2020-01-01,infinity)}", "9999-12-31"));
+        assert!(!multirange_contains(
+            "{[2020-01-01,infinity)}",
+            "2019-12-31"
+        ));
+        assert!(multirange_contains(
+            "{[-infinity,2020-01-01)}",
+            "1900-01-01"
+        ));
         assert!(canonical_multirange("{[2021-01-01,2022-01-01]}").is_err());
+        assert!(canonical_multirange("{[infinity,2022-01-01)}").is_err());
+        assert!(canonical_multirange("{[2021-01-01,-infinity)}").is_err());
         assert!(canonical_multirange("[2021-01-01,)").is_err());
         assert!(canonical_multirange("{[2021-13-01,)}").is_err());
     }

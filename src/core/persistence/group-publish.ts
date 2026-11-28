@@ -788,7 +788,7 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
           // The member's signal reaches its preparer through its clock (enterClaimStep), never as a blanket statement signal: see the memo rule.
           const prep = startPreparation(async signal => {
             signal.addEventListener('abort', () => cancels[offset]!.abort(signal.reason), { once: true });
-            await faultPoint('consumer:preparing', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation, signal });
+            await faultPoint('consumer:preparing', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation, signal, clock: clocks[i] });
             return run.prepare(row, reads, undefined, clocks[i]);
           }, budget, { onDeadline: () => {
             if (!ordered) return;

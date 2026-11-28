@@ -462,13 +462,13 @@ export function withPublishPending(pending: number, result: PhaseResult, deferra
  * not fail or skip, only when this source has pending outputs no postprocess attempted since `startedAt`.
  */
 export async function finishDeferredPostprocess(engine: BrainEngine,
-  opts: { dryRun: boolean; sourceId?: string; brainDir: string; deadlineAtMs?: number | null; signal?: AbortSignal; date?: string; cycleDate?: string; now?: () => Date },
+  opts: { dryRun: boolean; sourceId?: string; brainDir: string | null; deadlineAtMs?: number | null; signal?: AbortSignal; date?: string; cycleDate?: string; now?: () => Date },
   startedAt: number, result: PhaseResult, loadConfig: (engine: BrainEngine) => Promise<{ quoteVerify: boolean; meetingTranscriptsDir: string | null }>): Promise<PhaseResult> {
   if (opts.dryRun || result.status === 'fail' || result.status === 'skipped') return result;
   const sourceId = opts.sourceId ?? 'default';
   const entry = (await readPostprocessDeferrals(engine))[sourceId];
   if (!entry?.pending?.length || Date.parse(entry.last_attempt_at) >= startedAt) return result;
-  const authority = await maintenancePreflight(engine, sourceId, opts.brainDir, { deadlineAtMs: opts.deadlineAtMs });
+  const authority = await maintenancePreflight(engine, sourceId, opts.brainDir ?? undefined, { deadlineAtMs: opts.deadlineAtMs });
   if (!authority) return result;
   const config = await loadConfig(engine);
   const processed = await postprocessManagedSynthesis(engine, authority, [], [], new Map(), [], {

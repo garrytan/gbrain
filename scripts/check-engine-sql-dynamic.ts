@@ -66,6 +66,7 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   UNVERIFIED_ARCHIVE_SQL: 'src/core/engine-sql/sources.ts: constant missing-or-epoch archive-time predicate over sources (no input)',
   CREDENTIAL_RESEAL_HELD: 'src/core/page-state/credential-reseal-hold.ts: constant live-credential-re-chunk-hold predicate over the pages alias p; the op and producer are module constants (no input)',
   NOT_CONVERSATION_SLOT_SQL: 'src/core/chronicle/ontology.ts: constant conversation-source prefix exclusion over the facts source column (no input)',
+  NON_TEXT_FRONTMATTER_KEYS_SQL: 'src/core/persistence/content-author-schema.ts: constant text[] literal of the code-constant NON_TEXT_FRONTMATTER_KEYS (GST-4056); no values',
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
@@ -266,6 +267,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   projectionEligibleSql: 'src/core/eligibility/sql.ts: read-eligibility predicate over a caller alias; splices only closed tier and reason-family vocabularies (no values)',
   pageEligibleSql: 'src/core/eligibility/sql.ts: page trust-floor and activation predicate over a caller alias; closed vocabularies only',
   relationshipFilterSql: 'src/core/link-validity.ts: relationship-state probe over a caller alias; dates pass isCalendarDate and inline as DATE literals, status/scope are literals',
+  textFrontmatterSql: 'src/core/persistence/content-author-schema.ts: constant CASE removing NON_TEXT_FRONTMATTER_KEYS_SQL from a code-provided frontmatter expression (GST-4056); no values',
 };
 
 const SQL_ARG_METHODS: Record<string, number> = { query: 0, unsafe: 0, executeRaw: 0 };

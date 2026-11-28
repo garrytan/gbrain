@@ -134,6 +134,36 @@ describe('bounded vector candidate safety', () => {
     expect(attempts[0]!.maxScanTuples * 0.1).toBeGreaterThanOrEqual(attempts[0]!.innerLimit);
   });
 
+  test('#10500: an HNSW-ordered window that comes back short goes straight to the exact fallback instead of widening', async () => {
+    const attempts: VectorPoolAttempt[] = [];
+    const events: PoolMeta[] = [];
+    const rows = await searchVectorPool(50, 250, true, true, 'postgres', async attempt => {
+      attempts.push(attempt);
+      return attempt.exact
+        ? { rows: Array.from({ length: 50 }, (_, page_id) => ({ page_id })), candidatePool: 50, exhausted: true }
+        : { rows: Array.from({ length: 27 }, (_, page_id) => ({ page_id })), candidatePool: 27 };
+    }, async () => true, meta => events.push(meta), true);
+    expect(rows).toHaveLength(50);
+    expect(attempts.map(a => [a.innerLimit, a.exact])).toEqual([[250, false], [250, true]]);
+    expect(events).toEqual([]);
+    const widened: VectorPoolAttempt[] = [];
+    await searchVectorPool(50, 250, true, true, 'postgres', async attempt => {
+      widened.push(attempt);
+      return { rows: [], candidatePool: attempt.exact ? 0 : 27, exhausted: attempt.exact };
+    }, async () => true, () => {});
+    expect(widened.map(a => [a.innerLimit, a.exact])).toEqual([[250, false], [1000, false], [4000, false], [16000, false], [16000, true]]);
+  });
+
+  test('#10500: an HNSW-ordered short window keeps its rows when the exact fallback runs out of deadline', async () => {
+    const events: PoolMeta[] = [];
+    const rows = await searchVectorPool(50, 250, true, true, 'postgres', async attempt => {
+      if (attempt.exact) throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+      return { rows: Array.from({ length: 27 }, (_, page_id) => ({ page_id })), candidatePool: 27 };
+    }, async () => true, meta => events.push(meta), true);
+    expect(rows).toHaveLength(27);
+    expect(events).toEqual([{ underfilled: true, incomplete: true, reason: 'deadline', escalations: 0, innerLimit: 250, candidatePool: 27, exactFallback: true }]);
+  });
+
   test('#5824: eligible_pool is read next to the raw candidate_pool', () => {
     expect(readVectorPool([{ page_id: 3, candidate_pool: 100, eligible_pool: 12 }])).toEqual({
       rows: [{ page_id: 3, candidate_pool: 100, eligible_pool: 12 }], candidatePool: 100, eligiblePool: 12 });

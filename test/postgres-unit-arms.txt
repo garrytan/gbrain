@@ -113,6 +113,7 @@ test/conversation-facts-keep-quiet-gst3170.test.ts
 test/conversation-facts-outcome-marker-purge-7778.test.ts
 test/conversation-facts-oversized-sidecar.test.ts
 test/conversation-facts-purged-claim-7438.test.ts
+test/conversation-facts-soft-expire-10443.test.ts
 test/cycle-world-fence-rows.test.ts
 test/cycle/derived-write-through-commit.test.ts
 test/cycle/dream-reverse-write-commit.test.ts
@@ -180,6 +181,7 @@ test/engine-parity/alias-trust.test.ts
 test/engine-parity/attendance-pages.test.ts
 test/engine-parity/attest-rights.test.ts
 test/engine-parity/attested-actor-link.test.ts
+test/engine-parity/backlinks-hidden-target.test.ts
 test/engine-parity/backup-readiness-callers.test.ts
 test/engine-parity/belief-ledger.test.ts
 test/engine-parity/belief-purge-ledger.test.ts
@@ -350,6 +352,7 @@ test/engine-parity/handover-reads.test.ts
 test/engine-parity/harness-consumer-stop.test.ts
 test/engine-parity/held-fact-folder-rule.test.ts
 test/engine-parity/held-fence-cells.test.ts
+test/engine-parity/hidden-exact-identity.test.ts
 test/engine-parity/hidden-refusals-2.test.ts
 test/engine-parity/hidden-refusals.test.ts
 test/engine-parity/holding-page-purges.test.ts
@@ -678,6 +681,7 @@ test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-concurrent-run-7923.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
 test/extract-atoms-raised-cap-drain-7391.test.ts
+test/extract-atoms-scan-input-gst4020.test.ts
 test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
@@ -702,6 +706,7 @@ test/facts-home-review-gst2492.test.ts
 test/facts-insert-guards-7105.test.ts
 test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
+test/facts-unknown-event-date-10288.test.ts
 test/federation-exposure-private-9068.test.ts
 test/fence-absent-append-keeps-rows.test.ts
 test/fence-fact-append.test.ts
@@ -789,6 +794,7 @@ test/import-frontmatter-key-order-5158.test.ts
 test/import-inline-chunk-keep.test.ts
 test/import-revision-concurrency.test.ts
 test/import-write-barrier.test.ts
+test/importer-trust-spoof-gst4056.test.ts
 test/ingest-capture-keeps-readers.test.ts
 test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
@@ -978,6 +984,7 @@ test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
 test/notifier-sync-disabled-gst2515.test.ts
 test/ns-read-move-parity.test.ts
+test/oauth-refresh-grace-9364.test.ts
 test/on-commit-embedding.serial.test.ts
 test/onboarding-ops.test.ts
 test/oneshot-consumer-direct-route.test.ts
@@ -1014,6 +1021,7 @@ test/page-purge-journal-timeout-6511.test.ts
 test/page-spend-reservation.test.ts
 test/page-state-engine.test.ts
 test/page-visibility-create-reads.test.ts
+test/pages-prune-history-9737.test.ts
 test/pages-source-created-idx-7379.test.ts
 test/pages-status-7179.test.ts
 test/parallel-projection-drain-9192.test.ts
@@ -1297,7 +1305,10 @@ test/setup-company-access.test.ts
 test/setup-serves-several.test.ts
 test/share-about-member-gst2897.test.ts
 test/shared-content-freshness.test.ts
+test/shared-skills-adoption-keeps-files.test.ts
+test/shared-skills-case-collisions.test.ts
 test/shared-skills-catalog.test.ts
+test/shared-skills-import-closure.test.ts
 test/shared-skills-retention-capacity.test.ts
 test/shared-skills-source-opt-out.test.ts
 test/shared-skills-writer-boundary.test.ts
@@ -1417,6 +1428,7 @@ test/timeline-date-parity.test.ts
 test/timeline-placement-drift.test.ts
 test/token-member-cli-parity.serial.test.ts
 test/transcript-redaction-key-names.test.ts
+test/transcripts-accept-fences-9427.test.ts
 test/trust-channel-writes.test.ts
 test/trust-claim-chronicle-9284.test.ts
 test/trust-claim-chronicle-timeline-10176.test.ts

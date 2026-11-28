@@ -62,7 +62,7 @@ import { verifySchema } from './schema-verify.ts';
 import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, supportsHnswIterativeScan } from './vector-index.ts';
 import { searchIndexWalk, searchVectorPool, readVectorPool, remainingVectorBudget, type VectorPoolAttempt, POOL_MAX_SCAN_TUPLES } from './search/vector-pool.ts';
 import {
-  buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_CHUNKS_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, vectorStatementForms,
+  buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_CHUNKS_SQL, SCOPE_CHUNKS_TOTAL_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, vectorStatementForms,
   type PageSourceStats, type ScopeChunkCount, type VectorSearchStatement,
 } from './search/vector-statement.ts';
 import { VECTOR_SETTING_DEFAULTS, vectorScanSettings } from './search/vector-settings.ts';
@@ -525,7 +525,7 @@ export class PostgresEngine implements BrainEngine {
   private vectorIterativeScan?: Promise<boolean>;
   private keywordStatementTimeout?: Promise<string>;
   private keywordTimeouts = new KeywordTimeoutNegativeCache(Date.now, undefined, () => keywordRerunPoolIdle(enginePoolStats(this), this._disconnectPromise)); // #7082
-  private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL), ids => this.executeRaw<ScopeChunkCount>(SCOPE_CHUNKS_SQL, [ids]));
+  private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL), (ids, total) => this.executeRaw<ScopeChunkCount>(total ? SCOPE_CHUNKS_TOTAL_SQL : SCOPE_CHUNKS_SQL, [ids]));
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
   readonly kind = 'postgres' as const;
@@ -2078,6 +2078,7 @@ export class PostgresEngine implements BrainEngine {
   countConversationWindowFacts(sourceId: string, slug: string, key: string) { return factsConversationImpl.countConversationWindowFacts(this.executeRaw.bind(this), sourceId, slug, key); }
   countConversationFactsOutsideWindows(sourceId: string, slug: string, keys: readonly string[]) { return factsConversationImpl.countConversationFactsOutsideWindows(this.executeRaw.bind(this), sourceId, slug, keys); }
   clearConversationPageFacts(sourceId: string, slug: string, windows?: { keys: readonly string[]; keep: boolean; unanchored: boolean }) { return factsConversationImpl.clearConversationPageFacts(this.executeRaw.bind(this), sourceId, slug, windows); }
+  narrowConversationExpiredCopies(sourceId: string, slug: string, facts: string[]) { return factsConversationImpl.narrowConversationExpiredCopies(this.executeRaw.bind(this), sourceId, slug, facts); }
   findSameClaimFenceRow(sourceId: string, slug: string, fact: string, source: string | null) { return factsConversationImpl.findSameClaimFenceRow(this.executeRaw.bind(this), sourceId, slug, fact, source); }
   findOntologyTwin(sourceId: string, slug: string, factId: number) { return factsConversationImpl.findOntologyTwin(this.executeRaw.bind(this), sourceId, slug, factId); }
   readRelinkSource(sourceId: string) { return factsConversationImpl.readRelinkSource(this.executeRaw.bind(this), sourceId); }
@@ -2129,6 +2130,7 @@ export class PostgresEngine implements BrainEngine {
   listCallOffCueFacts(scope: factsTrustImpl.FactPoolScope, pairs: ReadonlyArray<{ source_id: string; entity_slug: string }>) { return factsRecallImpl.listCallOffCueFacts(this.executeRaw.bind(this), scope, pairs); }
   listPoolEntityPairs(scope: factsTrustImpl.FactPoolScope, filters: factsTrustImpl.FactPoolFilters) { return factsRecallImpl.listPoolEntityPairs(this.executeRaw.bind(this), scope, filters); }
   listFactRowsByIds(sourceIds: readonly string[], ids: readonly number[]) { return factsRecallImpl.listFactRowsByIds(this.executeRaw.bind(this), sourceIds, ids); }
+  listPooledFactRows(scope: factsTrustImpl.FactPoolScope, filters: factsTrustImpl.FactPoolFilters | undefined, ids: readonly number[]) { return factsRecallImpl.listPooledFactRows(this.executeRaw.bind(this), scope, filters, ids); }
   listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string) { return factsTrustImpl.listOntologyStreamSlugs(this.executeRaw.bind(this), sourceId, entitySlug, dimension); }
   readOntologyRival(sourceId: string, entitySlug: string, dimension: string, excludeId: number) { return factsTrustImpl.readOntologyRival(this.executeRaw.bind(this), sourceId, entitySlug, dimension, excludeId); }
   listBeliefStreamSlugs(table: 'facts' | 'takes' | 'pages', ids: readonly number[]) { return factsTrustImpl.listBeliefStreamSlugs(this.executeRaw.bind(this), table, ids); }
@@ -3587,6 +3589,7 @@ export class PostgresEngine implements BrainEngine {
         }, { alwaysTransaction: true, jitOff: true, settings: () => ({ statement_timeout: String(remainingVectorBudget(deadline)) }) });
       },
       opts?.onVectorPoolMeta,
+      !!stmt.indexWalkSql && opts?.hnswIterativeScan !== 'off',
     );
     return rows.map(rowToSearchResult);
   }
@@ -3642,12 +3645,13 @@ export class PostgresEngine implements BrainEngine {
     const deadline = performance.now() + remainingMs;
     const shape = statementFor(true);
     const walk = indexWalk && !!shape.indexWalkSql;
+    const joined = !!shape.indexWalkSql && !walk && !(scopeScan && shape.scopeScanSql) && !exact;
     return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async tx => {
       const stmt = statementFor(await chunkManifestReads(this, this.engineSqlOn(tx)));
       const bound = [...stmt.params];
       bound[stmt.innerLimitIdx] = exact ? null : innerLimit;
       return run(tx, (scopeScan && stmt.scopeScanSql) || (walk && stmt.indexWalkSql) || (exact ? stmt.exactSql : stmt.sql), bound as Parameters<typeof tx.unsafe>[1]);
-    }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? shape.indexWalkOverfetch : undefined, !!shape.indexWalkSql && !walk && !(scopeScan && shape.scopeScanSql) && !exact) });
+    }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? shape.indexWalkOverfetch : undefined, joined, joined) });
   }
 
   async getEmbeddingsByChunkIds(ids: number[], column: string = 'embedding'): Promise<Map<number, Float32Array>> {
@@ -5004,6 +5008,7 @@ export class PostgresEngine implements BrainEngine {
   readPageVersionRow(versionId: number, pageId: number) { return overwriteReads.readPageVersionRow(this, versionId, pageId); }
   async replaceVersionChangeReasons(sourceId: string, rows: ReadonlyArray<{ id: number; reason: string }>, replacement: string) { return versionReasons.replaceVersionChangeReasons(this, sourceId, rows, replacement); }
   async pruneHoldingPageVersions(pageId: number) { return versionPrune.pruneHoldingPageVersions(this, pageId); }
+  async pruneInlineVersionsById(page: { pageId: number; sourceId: string; slug: string; type?: string | null; keep?: number | null }, versionIds: readonly number[]) { return versionPrune.pruneInlineVersionsById(this, page, versionIds); }
 
   async revertToVersion(
     slug: string,
@@ -5735,7 +5740,7 @@ export class PostgresEngine implements BrainEngine {
   // Engine migration source reads (engine-sql/engine-migration.ts).
   async readEngineMigrationHistory() { return engineMigration.readEngineMigrationHistory(this); }
   async readMigrationRows(table: engineMigration.MigrationTable) { return engineMigration.readMigrationRows(this, table); }
-  async readMigrationPageColumns(slug: string, sourceId: string) { return engineMigration.readMigrationPageColumns(this, slug, sourceId); }
+  async readMigrationPageColumns(slug: string, sourceId: string, contentHash?: string | null) { return engineMigration.readMigrationPageColumns(this, slug, sourceId, contentHash ?? null); }
   async listManualLinkTransitions(slug: string, sourceId: string) { return engineMigration.listManualLinkTransitions(this, slug, sourceId); }
   async countLiveTimelineEntries() { return engineMigration.countLiveTimelineEntries(this); }
 

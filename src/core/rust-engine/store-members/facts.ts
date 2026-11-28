@@ -51,7 +51,8 @@ const LIST_OPTIONS = ['activeOnly', 'unconsolidatedOnly', 'limit', 'offset', 'ki
  */
 const factPolicy = (member: string, excludePrivate: unknown) =>
   storePrivacyPolicy(member, excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true });
-const RECALL_OPTIONS = [...LIST_OPTIONS, 'entitySlug', 'sourceMarkdownSlug'] as const;
+/** `includeUndated` changes nothing here: the store fills `valid_from` on every insert below, so it holds no undated row (#10288). */
+const RECALL_OPTIONS = [...LIST_OPTIONS, 'entitySlug', 'sourceMarkdownSlug', 'includeUndated'] as const;
 
 /** A string the SQL path binds inside a JSONB document: a lone surrogate becomes U+FFFD. */
 const wellFormed = <T>(s: T): T => (typeof s === 'string' ? ensureWellFormed(s) as T : s);

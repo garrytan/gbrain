@@ -133,6 +133,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('needs_rederive', 'user_data', 'Derived rows hidden by purge pending re-derivation (#5575); dropping them would resurface purged-derived content.'),
     carry('oauth_clients', 'security', 'OAuth clients and their grants; client secrets stay valid.'),
     carry('oauth_grant_audit', 'security', 'OAuth grant change audit trail.'),
+    carry('oauth_refresh_rotations', 'security', 'Rotated refresh token hashes per sign-in family; dropping them loses reuse detection and the short reuse grace (#9364).'),
     carry('oauth_tokens', 'security', 'Issued OAuth access and refresh token hashes.'),
     carry('op_checkpoint_paths', 'operational', 'Resumable operation checkpoints.'),
     carry('op_checkpoints', 'operational', 'Resumable operation checkpoints.'),
@@ -158,7 +159,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('page_segment_derivation_purges', 'operational', 'Recorded purge sweeps of segment derivation rows still in progress, with their cursor and claim; without them a graduated brain stops refusing claimed text and never finishes sweeping it out of copied derivation rows.'),
     carry('page_segment_texts', 'user_data', 'Segment texts of segmented page bodies, stored once per source; without them a large page has no body.'),
     carry('page_versions', 'user_data', 'Page revision history with attribution.'),
-    carry('page_write_guards', 'user_data', 'Page write guards per source incarnation and slug.'),
+    carry('page_write_guards', 'operational', 'Lock anchors a page write inserts and then locks (INSERT ... ON CONFLICT DO NOTHING, SELECT ... FOR UPDATE), per source incarnation and slug; they hold no data, so a lost row is made again by the next write. The Rust shadow seed does not copy them (a lock anchor, rust/docs/store/seed.md): the Rust store holds the same lock on the page key.'),
     carry('pages', 'user_data', 'Pages with ids, knowledge_revision, revision attribution and timestamps.'),
     carry('persistence_counters', 'operational', 'Request admission counters; carried and recomputable from the carried requests.'),
     carry('persistence_effects', 'operational', 'Postcommit outbox; orphaned claims reset so the target worker can claim them, delayed effects keep next_attempt_at.', {

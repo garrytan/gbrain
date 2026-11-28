@@ -235,10 +235,10 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
     throw pageIdentityError(Boolean(snapshot && !snapshot.page.deleted_at), `The page h${hold.id} is bound to is not the page this release was admitted for; the fact stays held.`);
   }
   const entity = hold.page_id !== null && str(p.entity_slug) === hold.slug ? row.slug : str(p.entity_slug);
-  const fact: NewFact & { valid_from: Date } = {
+  const fact: NewFact & { valid_from: Date | null } = {
     fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as NewFact['kind'], entity_slug: entity ?? (isHoldingSlug(row.slug) ? null : row.slug),
     visibility: p.visibility === 'world' ? 'world' : 'private', source: str(p.source) ?? `trust release h${hold.id}`, context: str(p.context),
-    source_session: str(p.source_session), confidence: 1, valid_from: str(p.valid_from) ? new Date(String(p.valid_from)) : new Date(),
+    source_session: str(p.source_session), confidence: 1, valid_from: str(p.valid_from) ? new Date(String(p.valid_from)) : null,
     valid_until: str(p.valid_until) ? new Date(String(p.valid_until)) : null, embedding: null, embedding_model: null, ...claimColumns(p as never),
   };
   const claim = { fact: fact.fact, kind: fact.kind ?? 'fact', visibility: fact.visibility ?? 'private', entity_slug: fact.entity_slug ?? null };

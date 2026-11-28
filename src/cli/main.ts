@@ -75,6 +75,7 @@ import { printRouterHelp } from './router-help.ts';
 import { strictArgsRefusal, strictSpecFor } from './strict-args.ts';
 import { migrationCliArgumentError } from '../core/embedding-migration-cli.ts';
 import { VERSION } from '../version.ts';
+import { telemetryAfterCli } from './telemetry-hook.ts';
 import { bigintToStringReplacer } from '../core/utils.ts';
 import {
   CLI_ONLY,
@@ -2867,7 +2868,9 @@ export function printOpHelp(op: OperationMeta, invokedName?: string) {
 export function runCli(): void {
   main().then(
     () => {
-      if (shouldForceExitAfterMain()) flushThenExit(currentExitCode());
+      if (!shouldForceExitAfterMain()) return;
+      telemetryAfterCli(currentExitCode());
+      flushThenExit(currentExitCode());
     },
     exitOnFatalCliError,
   );
@@ -2886,5 +2889,6 @@ export function exitOnFatalCliError(e: any): void {
   } catch {
     console.error(e?.message || e);
   }
+  telemetryAfterCli(exitCode, e);
   flushThenExit(exitCode);
 }

@@ -22,6 +22,13 @@
  *   `embedding_disabled`, `embedding_unconfigured`, `projection_pending`,
  *   `no_replacement_obligation`).
  *
+ * A single-page effect of a former binding (its worktree retired by
+ * `writer deactivate` or replaced by a transfer, #10434) settles only through
+ * the read-only `reconciled` and `superseded` proofs, run under this host's
+ * current binding of the same source incarnation after the source guard passes
+ * again for that binding; its outcome names the former worktree. A multi-target
+ * or scan effect, or one that would need a retry, stays `owner_unavailable`.
+ *
  * Every state change is a compare-and-set on state, attempts, execution token
  * and recovery. A candidate that changed since planning is `changed_since_preview`.
  * Two failed effects are not candidates (GBRA-130 A-15): one with parked targets
@@ -37,6 +44,7 @@ import { EmbeddingDisabledError } from '../embedding-dim-check.ts';
 import { MAX_RATE_LIMIT_RETRIES } from '../embed-retry.ts';
 import { digest } from './digest.ts';
 import { guardEffectSource } from './effect-recovery.ts';
+import { getWorktreeBinding } from './ownership.ts';
 import { assertEmbeddingEffectEnabled, readEmbeddingEffectProjection, selectedEffectPage } from './effects.ts';
 import { targetedWithdrawalEffect } from './effect-targets.ts';
 import type { PersistenceEffect } from './effect-model.ts';
@@ -92,14 +100,16 @@ function settleInTransaction(engine: BrainEngine, candidate: Pick<EmbeddingCandi
   opts: { dryRun: boolean; config: GBrainConfig | null; hostId: string; runId?: string }, settled: (requestId: string) => void): Promise<EmbeddingSettlement> {
   return engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
-    const [effect] = await tx.executeRaw<PersistenceEffect & { request_state: string }>(`SELECT e.*, r.state AS request_state
+    let [effect] = await tx.executeRaw<PersistenceEffect & { request_state: string }>(`SELECT e.*, r.state AS request_state
       FROM persistence_effects e JOIN persistence_requests r ON r.id = e.request_id WHERE e.id = $1 FOR UPDATE OF e`, [candidate.effect_id]);
     if (!effect || effect.kind !== 'embedding' || effect.request_state !== 'committed' || effect.state !== candidate.state
       || Number(effect.attempts) !== candidate.attempts || effect.execution_token !== null || effect.recovery) {
       return { outcome: 'changed_since_preview' };
     }
+    let formerWorktreeId: string | null = null;
     const commit = async (outcome: Record<string, unknown>): Promise<boolean> => {
       if (opts.dryRun) return true;
+      if (formerWorktreeId) outcome = { ...outcome, former_worktree_id: formerWorktreeId };
       const rows = await tx.executeRaw(`UPDATE persistence_effects SET state='committed', error_code=NULL, claim_expires_at=NULL,claim_owner=NULL,
           outcome=$3::text::jsonb, data=data-'repair_requeued_at', updated_at=now()
         WHERE id=$1 AND state=$2 AND attempts=$4 AND execution_token IS NULL AND recovery IS NULL RETURNING id`,
@@ -114,10 +124,25 @@ function settleInTransaction(engine: BrainEngine, candidate: Pick<EmbeddingCandi
     }
     try { await guardEffectSource(tx, effect, opts.hostId); }
     catch (error) {
-      if (error instanceof OperationError && ['owner_unavailable', 'source_changed'].includes(error.code)) return { outcome: 'blocked', reason: 'owner_unavailable' };
-      throw error;
+      if (!(error instanceof OperationError && ['owner_unavailable', 'source_changed'].includes(error.code))) throw error;
+      // #10434: an effect recorded under a worktree that deactivate or a transfer replaced can never run there again. When this
+      // host owns the source's current binding for the same incarnation, the read-only proofs below run under that binding;
+      // anything that would need a retry stays blocked.
+      const current = await getWorktreeBinding(tx, effect.source_id, opts.hostId);
+      if (!effect.worktree_id || !current || current.worktree_id === effect.worktree_id || current.state !== 'active'
+        || current.owner_host_id !== opts.hostId || current.source_incarnation !== effect.source_incarnation) {
+        return { outcome: 'blocked', reason: 'owner_unavailable' };
+      }
+      formerWorktreeId = effect.worktree_id;
+      effect = { ...effect, worktree_id: current.worktree_id };
+      try { await guardEffectSource(tx, effect, opts.hostId); }
+      catch (retry) {
+        if (retry instanceof OperationError && ['owner_unavailable', 'source_changed'].includes(retry.code)) return { outcome: 'blocked', reason: 'owner_unavailable' };
+        throw retry;
+      }
     }
     const scanning = targetedWithdrawalEffect(effect) || effect.data.source_scan === true;
+    if (formerWorktreeId && scanning) return { outcome: 'blocked', reason: 'owner_unavailable' };
     const snapshot = await selectedEffectPage(tx, effect);
     let pendingChunks: number | undefined;
     if (scanning) {
@@ -164,6 +189,7 @@ function settleInTransaction(engine: BrainEngine, candidate: Pick<EmbeddingCandi
       }
       pendingChunks = pending.length;
     }
+    if (formerWorktreeId) return { outcome: 'blocked', reason: 'owner_unavailable' };
     await tx.executeRaw("SELECT key FROM config WHERE key='embedding_disabled' FOR SHARE");
     try { await assertEmbeddingEffectEnabled(tx, opts.config); }
     catch (error) {

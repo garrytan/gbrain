@@ -766,6 +766,33 @@ describe('google-source materialize', () => {
     }
   });
 
+  test('#10473 aborted backfill: a floor banked on a thread dated mid-second does not list that thread again', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-floor-ms-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    const tids = ['17aa00000000f101', '17aa00000000f102', '17aa00000000f103', '17aa00000000f104'];
+    tids.forEach((tid, i) => fx.messages.push(gmsg(`18c2f4a9b3d21f1${i + 1}`, tid, daysAgoMs(40 + i) + 250, {
+      headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Archive item ${i}` },
+      body: `Archive item body ${i}.`,
+    })));
+    const fetches = (tid: string) => fx.calls.filter((c) => c.includes(`/threads/${tid}`)).length;
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        const controller = new AbortController();
+        fx.onThreadFetch = () => { if (fx.threadFetches >= 2) controller.abort(); };
+        await sweep(dir, fx, vault, { signal: controller.signal }, 'gmail');
+        expect(readGoogleState(dir).gmail_backfill_floor_ms).toBe(daysAgoMs(41));
+        fx.onThreadFetch = undefined;
+        expect((await sweep(dir, fx, vault, {}, 'gmail')).added).toBe(2);
+        expect(tids.map(fetches)).toEqual([1, 1, 1, 1]);
+        expect(readGoogleState(dir).gmail_backfill_done).toBe(true);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('aborted delta drain banks landed threads; the next run resumes only the remainder', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-delta-abort-'));
     const fx = emptyFx();
@@ -1017,6 +1044,42 @@ describe('google-source materialize', () => {
     }
   });
 
+  test('#10473 backfill: a thread rate limited inside the first batch on every run still lets the floor move past the threads that landed ahead of it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-10473-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    // Four single-message threads, days 40..43 ago; the third is rate limited on every fetch.
+    const tids = ['17aa00000000e001', '17aa00000000e002', '17aa00000000e003', '17aa00000000e004'];
+    tids.forEach((tid, i) => fx.messages.push(gmsg(`18c2f4a9b3d21d0${i + 1}`, tid, daysAgoMs(40 + i), {
+      headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Archive note ${i}` },
+      body: `Archive note body ${i}.`,
+    })));
+    fx.rateLimitThreads.add(tids[2]);
+    const fetches = (tid: string) => fx.calls.filter((c) => c.includes(`/threads/${tid}`)).length;
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        expect((await sweep(dir, fx, vault, {}, 'gmail')).status).toBe('partial');
+        expect(readGoogleState(dir).gmail_backfill_floor_ms).toBe(daysAgoMs(41));
+        expect([fetches(tids[0]), fetches(tids[1]), fetches(tids[3])]).toEqual([1, 1, 0]);
+
+        // The next run resumes at the throttled thread: the landed prefix is not walked again.
+        expect((await sweep(dir, fx, vault, {}, 'gmail')).status).toBe('partial');
+        expect(readGoogleState(dir).gmail_backfill_floor_ms).toBe(daysAgoMs(41));
+        expect([fetches(tids[0]), fetches(tids[1]), fetches(tids[3])]).toEqual([1, 1, 0]);
+
+        fx.rateLimitThreads.clear();
+        expect((await sweep(dir, fx, vault, {}, 'gmail')).status).toBe('synced');
+        const state = readGoogleState(dir);
+        expect(state.gmail_backfill_done).toBe(true);
+        expect([fetches(tids[0]), fetches(tids[1]), fetches(tids[3])]).toEqual([1, 1, 1]);
+        expect((await slugsWhere(`slug LIKE 'emails/%'`)).length).toBe(4);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('contacts: bare tombstone deletes by google_contact_id; a rename moves the page; an unknown tombstone is a no-op', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-contacts-tomb-'));
     const fx = emptyFx();
@@ -1119,6 +1182,53 @@ describe('google-source materialize', () => {
         expect(after.length).toBe(1);
         expect(after[0].status).toBe('done');
         expect(after[0].closed_by).toBe('reply_detected');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('#10094 loops.owner_addresses: mail from a configured owner mailbox opens no loop, and a reply from it closes one as reply_detected', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-owner-addresses-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    fx.messages.push(
+      gmsg('18c2f4a9b3d21e11', T_A, daysAgoMs(3), {
+        headers: { From: 'A Other <owner@example.net>', To: 'a@example.com', Subject: 'Fwd: Travel receipts' },
+        body: 'Forwarding the travel receipts to myself so they are in one inbox.',
+      }),
+      gmsg('18c2f4a9b3d21e03', T_B, daysAgoMs(3), {
+        headers: { From: 'Dana Example <dana@example.com>', To: 'a@example.com', Subject: 'Contract question' },
+        body: 'Could you confirm the contract terms?',
+      }),
+    );
+    try {
+      await insertGoogleSource(dir);
+      await engine.setConfig('loops.owner_addresses', 'A Other <Owner@Example.net>, other@example.org');
+      await withHome(async () => {
+        await sweep(dir, fx, vault, {}, 'gmail');
+        const open = await engine.executeRaw<{ loop_type: string; status: string; counterparty_email: string; thread_id: string }>(
+          `SELECT loop_type, status, counterparty_email, thread_id FROM open_loops WHERE source_id = 'gsrc' ORDER BY thread_id`,
+        );
+        expect(open.map((l) => [l.thread_id, l.loop_type, l.status, l.counterparty_email])).toEqual([
+          [T_B, 'unanswered_inbound', 'open', 'dana@example.com'],
+        ]);
+
+        // The owner answers from the forwarded mailbox: no SENT label on the connected account.
+        fx.messages.push(
+          gmsg('18c2f4a9b3d21e17', T_B, hoursAgoMs(2), {
+            headers: { From: 'A Other <owner@example.net>', To: 'dana@example.com', Subject: 'Re: Contract question' },
+            body: 'Confirmed, terms attached.',
+          }),
+        );
+        fx.history = [[T_B]];
+        fx.historyResponseId = '1010';
+        await sweep(dir, fx, vault, {}, 'gmail');
+
+        const after = await engine.executeRaw<{ thread_id: string; status: string; closed_by: string | null }>(
+          `SELECT thread_id, status, closed_by FROM open_loops WHERE source_id = 'gsrc' AND loop_type = 'unanswered_inbound'`,
+        );
+        expect(after).toEqual([{ thread_id: T_B, status: 'done', closed_by: 'reply_detected' }]);
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

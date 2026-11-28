@@ -39,6 +39,14 @@ const each = <T>(rows: readonly T[] | undefined, f: (row: T) => Target[]): Targe
 
 const linkSide = (from: string, to: string, fromSource?: string | null, toSource?: string | null, del = false): Target =>
   ({ relation: 'links', sel: { from_page_id: ref(from, fromSource), to_page_id: ref(to, toSource) }, del });
+/**
+ * The relationship state a link write refreshes inside the engine (`refreshRelationships`, which runs on the engine itself and
+ * not on the wrapper): the rows of the link's pair, which the refresh can write or remove.
+ */
+const pairState = (from: string, to: string, fromSource?: string | null, toSource?: string | null): Target =>
+  ({ relation: 'link_relationships', sel: { from_page_id: ref(from, fromSource), to_page_id: ref(to, toSource) }, del: true });
+/** Link writes whose pairs the arguments do not name (derived links by origin, links by link source): the whole state is re-read. */
+const LINK_STATE: Target[] = whole('link_relationships', 'link_transitions');
 const originLinks = (slug: string, source: string, del: boolean, extra: Record<string, string> = {}): Target[] => [
   { relation: 'links', sel: { origin_page_id: ref(slug, source), ...extra }, del },
   { relation: 'links', sel: { from_page_id: ref(slug, source), ...extra }, del },
@@ -113,18 +121,21 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   stageSegmentChunks: { tables: ['content_chunks'], plan: (a) => [childById('content_chunks', a[0])] },
   sweepSegments: { tables: ['content_chunks'] },
   // Links
-  addLink: { tables: ['links'], plan: (a) => [linkSide(a[0], a[1], a[7]?.fromSourceId, a[7]?.toSourceId)] },
-  removeLink: { tables: ['links'], plan: (a) => [linkSide(a[0], a[1], a[4]?.fromSourceId, a[4]?.toSourceId, true)] },
+  addLink: { tables: ['links', 'link_relationships'], plan: (a) => [linkSide(a[0], a[1], a[7]?.fromSourceId, a[7]?.toSourceId), pairState(a[0], a[1], a[7]?.fromSourceId, a[7]?.toSourceId)] },
+  removeLink: { tables: ['links', 'link_relationships'], plan: (a) => [linkSide(a[0], a[1], a[4]?.fromSourceId, a[4]?.toSourceId, true), pairState(a[0], a[1], a[4]?.fromSourceId, a[4]?.toSourceId)] },
   removeLinksByPagesAndSource: {
-    tables: ['links'],
-    plan: (a) => each<any>(a[0], (p) => originLinks(p.slug, p.source_id, true, { link_source: a[1]?.linkSource })),
+    tables: ['links', 'link_relationships'],
+    plan: (a) => [...each<any>(a[0], (p) => originLinks(p.slug, p.source_id, true, { link_source: a[1]?.linkSource })), ...whole('link_relationships')],
   },
   addLinksBatch: {
-    tables: ['links'],
-    plan: (a) => each<any>(a[0], (l) => [{ relation: 'links', sel: { from_page_id: ref(l.from_slug, l.from_source_id) } }]),
+    tables: ['links', 'link_relationships'],
+    plan: (a) => each<any>(a[0], (l) => [
+      { relation: 'links', sel: { from_page_id: ref(l.from_slug, l.from_source_id) } },
+      pairState(l.from_slug, l.to_slug, l.from_source_id, l.to_source_id),
+    ]),
   },
-  replaceDerivedLinks: { tables: ['links', 'wanted_links', 'pages'], plan: (a) => derivedLinks(a[0]) },
-  replaceDerivedLinksBatch: { tables: ['links', 'wanted_links', 'pages'], plan: (a) => each<any>(a[0], (item) => derivedLinks(item.origin)) },
+  replaceDerivedLinks: { tables: ['links', 'wanted_links', 'pages', 'link_relationships', 'link_transitions'], plan: (a) => [...derivedLinks(a[0]), ...LINK_STATE] },
+  replaceDerivedLinksBatch: { tables: ['links', 'wanted_links', 'pages', 'link_relationships', 'link_transitions'], plan: (a) => [...each<any>(a[0], (item) => derivedLinks(item.origin)), ...LINK_STATE] },
   replaceWantedLinkRows: { tables: ['wanted_links'], plan: (a) => [{ relation: 'wanted_links', sel: { origin_page_id: id(a[0]?.pageId) }, del: true }] },
   // Timeline
   addTimelineEntry: { tables: ['timeline_entries'], plan: (a) => [child('timeline_entries', a[0], a[2]?.sourceId)] },
@@ -377,8 +388,9 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'markGenerationActivated', 'markJobWatchdogSuspect', 'markNeedsRederive', 'markProjectionRebuildFailed',
   'markRevertedEdgeProposals', 'markSourceSynced', 'markSpendUsageUnknown', 'mintBeliefLifetime',
   'moveConversationSourceWindows', 'moveFactToPage', 'moveFactWithdrawalSubject', 'moveKeptFactRows',
+  'narrowConversationExpiredCopies',
   'openPageEmbeddingHold', 'openWakeWatch', 'parkEffectRow', 'patchOauthClient', 'pauseJob', 'persistOauthClientGrant',
-  'placeRelinkedFact', 'postInboxMessage', 'promoteDelayedJobs', 'pruneAccessReadLog', 'pruneHoldingPageVersions', 'pruneJobs',
+  'placeRelinkedFact', 'postInboxMessage', 'promoteDelayedJobs', 'pruneAccessReadLog', 'pruneHoldingPageVersions', 'pruneInlineVersionsById', 'pruneJobs',
   'persistenceUpkeepStore', 'pruneMcpRequestLogBatch', 'pruneSatisfiedWantedMarkers', 'publicationJournalStore', 'purgeCalibrationProfilesByWave',
   'purgeStaleCheckpoints', 'queuePageProjectionJob', 'queueWakeForget', 'queueWithdrawalReview', 'rearmLinksEffects',
   'reattributeSessionFacts', 'rebindSharedSkillMember', 'reclaimStalledJobs', 'recordAccessMigrationPhase',

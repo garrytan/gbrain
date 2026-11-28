@@ -401,7 +401,9 @@ that no longer apply at `<head>` are audited at the merge commit itself.
 
 Results use the helper's vocabulary (`discriminates`, `does_not_discriminate`,
 `vacuous_failure`) plus `setup_failed`, `conflict` and `not_audited`, with a
-reason. Human verdicts (`accept`, `rework`, `reject`, `not_yet_proven`) live in
+reason. A nonzero run with no individual Bun `(fail) <name>` lines is
+`vacuous_failure`, even when Bun's summary counts an unhandled error as a
+failure. Human verdicts (`accept`, `rework`, `reject`, `not_yet_proven`) live in
 a separate `--verdicts` file and print in their own column. It also runs
 `wave-security-scan` (range and each PR) and `check:postgres-lanes` (head and
 each trial merge) from the trusted checkout; `--skip-security` and

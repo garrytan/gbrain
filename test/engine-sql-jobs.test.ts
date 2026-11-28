@@ -21,12 +21,12 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { renderFragment } from '../src/core/engine-sql/fragment.ts';
 import { LEGACY_SPEND_PREDICATE_SQL } from '../src/core/engine-sql/jobs.ts';
-import { DREAM_INLINE_PRIVATE_QUEUE_PREFIX, jobActorFragment, UNREVIEWED_LIVE_JOBS_WHERE } from '../src/core/engine-sql/jobs-queue.ts';
+import { DREAM_INLINE_PRIVATE_QUEUE_PREFIX, jobActorFragment, jobOwnedFragment, UNREVIEWED_LIVE_JOBS_WHERE } from '../src/core/engine-sql/jobs-queue.ts';
 import { WALL_CLOCK_THRESHOLD_MS_SQL } from '../src/core/minions/handler-timeouts.ts';
 import { LEASE_BEACON_QUEUE } from '../src/core/minions/protected-names.ts';
 import { LEGACY_SPEND_KEY_PREFIXES } from '../src/core/minions/spend-authorization.ts';
 import { LIVE_JOB_STATUSES } from '../src/core/minions/submission-authority.ts';
-import { jobActorSql } from '../src/core/minions/types.ts';
+import { jobActorSql, jobOwnedSql, jobOwnerParams } from '../src/core/minions/types.ts';
 import { appendSuspectMarkSql, markedJobSql } from '../src/core/minions/watchdog-attribution.ts';
 
 /** A module's source with whitespace runs collapsed, so a copied SQL fragment matches across re-indentation. */
@@ -72,6 +72,16 @@ describe('engine-sql/jobs.ts copied constants', () => {
     const { text, params } = renderFragment(jobActorFragment(['sys', 'ext', 'mem', 'aud']));
     expect(text).toBe(jobActorSql(1));
     expect(params).toEqual(['sys', 'ext', 'mem', 'aud']);
+  });
+
+  test('the job owner fragment renders as jobOwnedSql, with and without an alias', () => {
+    const owner = { principal: { kind: 'oauth_client', id: 'c1' }, clientId: 'c1', actor: ['sys', 'ext', 'mem', 'aud'] as const };
+    for (const alias of [undefined, 'j']) {
+      const { text, params } = renderFragment(jobOwnedFragment(owner, alias));
+      expect(text).toBe(jobOwnedSql(1, alias));
+      expect(params).toEqual(jobOwnerParams(owner));
+    }
+    expect(renderFragment(jobActorFragment(['s', 'e', 'm', 'a'], 'p')).text).toBe(jobActorSql(1, 'p'));
   });
 
   test('the claim gate population names exactly the LIVE_JOB_STATUSES', () => {

@@ -37,6 +37,7 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage, pageBodyOverCeilingError } from '../page-body/page-shape.ts';
 import { materializedPage, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
+import { refuseRuleFactTarget } from '../rules/admission.ts';
 import type { CompanionPage, PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { normalizeTargetFences } from '../fence-repair/import-step.ts';
@@ -47,7 +48,7 @@ import { withPendingFenceRows } from '../eligibility/fence-overlay.ts';
 import { withPageTierKept } from '../trust/fence-append.ts';
 import { newHoldingPageFrontmatter } from '../trust/page-write.ts';
 import type { TrustTier } from '../trust/tier.ts';
-import { extractFactsFromFenceText } from './extract-from-fence.ts';
+import { extractFactsFromFenceText, pageFactDate } from './extract-from-fence.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
 import { rememberAcceptsPageCreatedSince } from '../persistence/page-identity.ts';
 import { fenceRowOf, withHeldFactsFence, type FenceRowInput } from './unfenced-facts.ts';
@@ -57,7 +58,7 @@ import { withdrawnFact } from './withdrawal-overlay.ts';
 
 export type FenceFactAppendInput = {
   /** The facts row to publish; `row_num` and `source_markdown_slug` are the helper's. kind and visibility default as insertFacts does. */
-  fact: NewFact & { valid_from: Date };
+  fact: NewFact & { valid_from: Date | null };
   /** The tier the new row's chunks are cut at until its facts row exists (`withPendingFenceRows`); append only. */
   pendingTier: TrustTier;
 } & (
@@ -111,7 +112,8 @@ function fenceCellFor(fact: FenceFactAppendInput['fact'], rowNum: number, slug: 
  * write created first makes this attempt conflict, and the retry appends to it. File before facts row, as an append.
  */
 export async function prepareFenceFactCreate(engine: BrainEngine, row: WriteRequest, config: GBrainConfig,
-  input: { fact: NewFact & { valid_from: Date }; pendingTier: TrustTier; frontmatter: string; heading: string; storedVisibility?: string }, signal?: AbortSignal): Promise<FenceFactAppend> {
+  input: { fact: NewFact & { valid_from: Date | null }; pendingTier: TrustTier; frontmatter: string; heading: string; storedVisibility?: string }, signal?: AbortSignal): Promise<FenceFactAppend> {
+  refuseRuleFactTarget(row.slug, input.fact.entity_slug);
   const page = { sourceId: row.source_id, slug: row.slug };
   const rowNum = (await engine.maxFenceRowNum(row.source_id, row.slug)) + 1;
   const { expected_revision: _ignored, ...intent } = row.intent ?? {};
@@ -132,6 +134,7 @@ export async function prepareFenceFactCreate(engine: BrainEngine, row: WriteRequ
 export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, snapshot: PageSnapshot | null,
   input: FenceFactAppendInput, signal?: AbortSignal): Promise<FenceFactAppend> {
   const { fact } = input;
+  refuseRuleFactTarget(row.slug, fact.entity_slug);
   const page = { sourceId: row.source_id, slug: row.slug };
   if (!snapshot && (!isHoldingSlug(row.slug) || input.mode === 'index-existing')) {
     throw opError('storage_error', 'The facts fence target page does not exist.',
@@ -143,6 +146,8 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   const base = snapshot ? await materializedPage(engine, snapshot.page)
     : { slug: row.slug, source_id: row.source_id, type: 'note', title: 'Unattributed memory', compiled_truth: '', timeline: '', frontmatter: newHoldingPageFrontmatter(row) } as unknown as Page;
   const insert = (tx: BrainEngine, rowNum: number, indexed: NewFact) => insertFenceFactRow(tx, row, rowNum, indexed);
+  // #10288: a row with an empty date cell is indexed at the page's fact date, as its projection is.
+  const pageDate = pageFactDate({ slug: row.slug, frontmatter: base.frontmatter, timeZone: await engine.getConfig('brain.timezone') });
 
   if (input.mode === 'index-existing') {
     const { rowNum } = input;
@@ -156,7 +161,7 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
         { reason, detail: JSON.stringify({ slug: row.slug, row_num: rowNum, problem: reason }),
           fix: readFix(`Reads ${row.slug} with its current facts fence, read-only.`, { argv: ['gbrain', 'get', '--source', row.source_id, '--', row.slug] }) });
     }
-    const [{ superseded_by_row: _superseded, ...derived }] = extractFactsFromFenceText([cell], row.slug, row.source_id);
+    const [{ superseded_by_row: _superseded, ...derived }] = extractFactsFromFenceText([cell], row.slug, row.source_id, { pageEffectiveDate: pageDate ?? undefined });
     const indexed: NewFact = { ...derived, embedding: fact.embedding ?? null, embedding_model: fact.embedding_model ?? null, source_session: fact.source_session ?? null };
     return { prepared: null, rowNum, fencesNormalized: {}, apply: async tx => ({ id: await insert(tx, rowNum, indexed) }) };
   }
@@ -192,7 +197,8 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   return { prepared, rowNum, fencesNormalized, apply: async tx => {
     const pageReceipt = await withPageTierKept(tx, page, () => prepared.apply(tx));
     if (snapshot && isHoldingSlug(row.slug) && !isSegmentedPage(snapshot.page)) await tx.pruneHoldingPageVersions(snapshot.page.id);
-    return { id: await insert(tx, rowNum, input.storedVisibility ? { ...fact, visibility: input.storedVisibility as NewFact['visibility'] } : fact), pageReceipt };
+    const indexed = { ...fact, valid_from: fact.valid_from ?? pageDate };
+    return { id: await insert(tx, rowNum, input.storedVisibility ? { ...indexed, visibility: input.storedVisibility as NewFact['visibility'] } : indexed), pageReceipt };
   } };
 }
 

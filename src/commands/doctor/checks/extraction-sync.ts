@@ -623,10 +623,15 @@ async function brainShapeCanCarryCycleStamps(engine: BrainEngine): Promise<boole
  * at runtime; this counts DB pages only — labeled in details. No
  * synthesize_concepts sibling this wave (Codex #12: that phase is a stub with
  * no real eligibility predicate; a check would be a fake signal).
+ * #9888: pages of a source with `extract_atoms` off are not backlog; the check names them apart (cycle/source-atom-policy.ts).
  */
-export async function computeExtractAtomsBacklogCheck(
+export async function computeExtractAtomsBacklogCheck(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
+  return (await import('../../../core/cycle/source-atom-policy.ts')).withSourcePolicyNote(engine, await extractAtomsBacklogCheck(engine, opts), opts.sourceIds);
+}
+
+async function extractAtomsBacklogCheck(
   engine: BrainEngine,
-  opts: { sourceIds?: string[] } = {},
+  opts: { sourceIds?: string[] },
 ): Promise<Check> {
   const name = 'extract_atoms_backlog';
   const approx = 'page backlog only; transcript corpus not counted';

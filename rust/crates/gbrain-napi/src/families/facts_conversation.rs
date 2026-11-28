@@ -360,7 +360,7 @@ impl Brain {
         })
     }
 
-    /// `listClearedRelinkedFacts`: resolves `{ fact, entity_slug, context }` rows.
+    /// `listClearedRelinkedFacts`: resolves `{ fact, entity_slug, context, carried }` rows.
     #[napi]
     pub fn list_cleared_relinked_facts<'env>(
         &self,

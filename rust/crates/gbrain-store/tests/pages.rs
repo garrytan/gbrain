@@ -7,8 +7,8 @@ use common::{TempDir, open};
 use gbrain_store::cli_reads::import::{PageTrustKey, PageTrustLookup};
 use gbrain_store::error::*;
 use gbrain_store::pages::{
-    PageFilters, PageInput, PageTrustRestore, PutPageOptions, ReadScope, VersionReasonStamp,
-    VersionsOptions, validate_slug,
+    PageFilters, PageInput, PageTrustRestore, PruneByIdSpec, PutPageOptions, ReadScope,
+    VersionReasonStamp, VersionsOptions, validate_slug,
 };
 use gbrain_store::{Store, sources::SourceInput};
 use serde_json::{Value, json};
@@ -824,6 +824,143 @@ fn the_holding_prune_keeps_the_newest_five_versions_and_marks_the_gap() {
 }
 
 #[test]
+fn prune_inline_versions_by_id_deletes_exactly_the_named_inline_versions_of_the_live_page() {
+    let dir = TempDir::new("pages-prune-by-id");
+    let store = open(&dir);
+    let page = put(&store, "notes/history", "held");
+    let page_id = page["id"].as_i64().unwrap();
+    let source = page["source_id"].as_str().unwrap().to_string();
+    let ids: Vec<i64> = (0..8)
+        .map(|_| {
+            store.create_version("notes/history", None).unwrap()["id"]
+                .as_i64()
+                .unwrap()
+        })
+        .collect();
+    let kept = || -> Vec<i64> {
+        store
+            .get_versions("notes/history", &VersionsOptions::default())
+            .unwrap()
+            .iter()
+            .map(|v| v["id"].as_i64().unwrap())
+            .collect()
+    };
+    let spec = |v: Value| -> PruneByIdSpec {
+        let mut base = json!({"pageId": page_id, "sourceId": source, "slug": "notes/history", "versionIds": []});
+        base.as_object_mut()
+            .unwrap()
+            .extend(v.as_object().unwrap().clone());
+        serde_json::from_value(base).unwrap()
+    };
+    let before = kept();
+    // Nothing named, the wrong slug or source, the wrong type fence and an unknown page delete nothing.
+    assert_eq!(
+        store.prune_inline_versions_by_id(&spec(json!({}))).unwrap(),
+        0
+    );
+    assert_eq!(
+        store
+            .prune_inline_versions_by_id(&spec(
+                json!({"versionIds": [ids[0]], "slug": "notes/moved"})
+            ))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store
+            .prune_inline_versions_by_id(&spec(
+                json!({"versionIds": [ids[0]], "sourceId": "other"})
+            ))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store
+            .prune_inline_versions_by_id(&spec(json!({"versionIds": [ids[0]], "type": "person"})))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store
+            .prune_inline_versions_by_id(&spec(json!({"versionIds": [ids[0]], "pageId": 987_654})))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store
+            .prune_inline_versions_by_id(&spec(json!({"versionIds": [ids[0]], "pageId": -1})))
+            .unwrap(),
+        0
+    );
+    assert_eq!(kept(), before);
+    // keep spares the newest versions: of ids[0] (oldest) and ids[7] (newest) with keep 7, only the oldest goes.
+    assert_eq!(
+        store
+            .prune_inline_versions_by_id(&spec(
+                json!({"versionIds": [ids[0], ids[7], 424_242], "keep": 7})
+            ))
+            .unwrap(),
+        1
+    );
+    assert_eq!(kept(), ids[1..].iter().rev().copied().collect::<Vec<_>>());
+    // The type fence passes when it names the page's type; the named ids go, the others stay, and a repeat deletes none.
+    let named = json!({"versionIds": [ids[2], ids[3], ids[3]], "type": "note"});
+    assert_eq!(
+        store
+            .prune_inline_versions_by_id(&spec(named.clone()))
+            .unwrap(),
+        2
+    );
+    assert_eq!(kept(), vec![ids[7], ids[6], ids[5], ids[4], ids[1]]);
+    assert_eq!(store.prune_inline_versions_by_id(&spec(named)).unwrap(), 0);
+    // A soft-deleted page keeps every version.
+    store.soft_delete_page("notes/history", None).unwrap();
+    assert_eq!(
+        store
+            .prune_inline_versions_by_id(&spec(json!({"versionIds": [ids[1]]})))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn prune_inline_versions_by_id_never_touches_an_agent_policy_page() {
+    let dir = TempDir::new("pages-prune-by-id-policy");
+    let store = open(&dir);
+    let page_id = store
+        .put_page(
+            "policy/agent",
+            &PageInput {
+                page_type: "agent_policy".into(),
+                ..input("policy/agent", "rules")
+            },
+            &PutPageOptions::default(),
+        )
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    let ids: Vec<i64> = (0..3)
+        .map(|_| {
+            store.create_version("policy/agent", None).unwrap()["id"]
+                .as_i64()
+                .unwrap()
+        })
+        .collect();
+    let spec: PruneByIdSpec = serde_json::from_value(json!({
+        "pageId": page_id, "sourceId": "default", "slug": "policy/agent", "versionIds": ids
+    }))
+    .unwrap();
+    assert_eq!(store.prune_inline_versions_by_id(&spec).unwrap(), 0);
+    assert_eq!(
+        store
+            .get_versions("policy/agent", &VersionsOptions::default())
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[test]
 fn no_version_prune_touches_an_agent_policy_page() {
     let dir = TempDir::new("pages-policy-prune");
     let store = open(&dir);
@@ -1168,6 +1305,69 @@ fn resolve_alias_follows_a_rename_alias_and_require_unambiguous_refuses_two_cand
         read(json!({ "resolveAlias": true, "preserveExactIdentity": true, "sourceId": "default" }))
             .unwrap()
             .is_none()
+    );
+}
+
+/// A page the caller may not see at an aliased slug fails closed: the read answers nothing, and the
+/// alias target never stands in for it. A slug that holds no page answers the alias. A page the
+/// caller may see keeps its identity, and a read with no `excludePrivate` (a trusted local caller)
+/// is unchanged.
+#[test]
+fn a_hidden_page_at_an_aliased_slug_fails_closed() {
+    let dir = TempDir::new("pages-alias-hidden-exact");
+    let store = open(&dir);
+    let private: PageInput = serde_json::from_value(json!({
+        "type": "person", "title": "Hidden", "compiled_truth": "hidden",
+        "frontmatter": { "visibility": "private" },
+    }))
+    .unwrap();
+    let readers: PageInput = serde_json::from_value(json!({
+        "type": "person", "title": "Readers", "compiled_truth": "readers",
+        "frontmatter": { "readable_by": ["bob-example"] },
+    }))
+    .unwrap();
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let read = |slug: &str, exclude: bool| {
+        let mut v = json!({
+            "resolveAlias": true, "preserveExactIdentity": true,
+            "requireLiveSource": true, "sourceId": "default",
+        });
+        if exclude {
+            v["excludePrivate"] = policy.clone();
+        }
+        store
+            .read_page_snapshot(slug, &scope(v))
+            .unwrap()
+            .map(|s| s["page"]["slug"].as_str().unwrap().to_string())
+    };
+    for (old, new) in [
+        ("people/never-written", "people/target-missing"),
+        ("people/hidden-private", "people/target-private"),
+        ("people/hidden-readers", "people/target-readers"),
+        ("people/open-twin", "people/target-open"),
+    ] {
+        put(&store, old, "before the move");
+        assert_eq!(store.update_slug(old, new, None).unwrap(), 1);
+    }
+    for (slug, input) in [
+        ("people/hidden-private", &private),
+        ("people/hidden-readers", &readers),
+    ] {
+        store
+            .put_page(slug, input, &PutPageOptions::default())
+            .unwrap();
+    }
+    put(&store, "people/open-twin", "recreated");
+    let missing = read("people/never-written", true);
+    assert_eq!(missing.as_deref(), Some("people/target-missing"));
+    for hidden in ["people/hidden-private", "people/hidden-readers"] {
+        assert_eq!(read(hidden, true), None);
+        // The trusted local read still sees the page at the slug itself.
+        assert_eq!(read(hidden, false).as_deref(), Some(hidden));
+    }
+    assert_eq!(
+        read("people/open-twin", true).as_deref(),
+        Some("people/open-twin")
     );
 }
 

@@ -147,7 +147,7 @@ function freeBytes(path: string): number | null {
   try { const s = statfsSync(path); return Number(s.bavail) * Number(s.bsize); } catch { return null; }
 }
 
-export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatus' | 'now' | 'policy' | 'rustServes'> {
+export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatus' | 'now' | 'policy' | 'rustServes' | 'clock' | 'sleep'> {
   env?: Readonly<Record<string, string | undefined>>;
   home?: string;
   /** Directory whose file system the plan reports free space for (default: home). */
@@ -314,7 +314,7 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     const plan = await planEngineSwap(engine, {
       // The one status builder `gbrain engine shadow status --json` prints (src/shadow/status-document.ts).
       readShadowStatus: deps.readShadowStatus ?? (async (primary) => (await readConfiguredShadowStatus(() => (configured ? toEngineConfig(configured) : null), deps.now, primary)) as ShadowStatus | null),
-      now: deps.now, policy: deps.policy, rustServes: deps.rustServes,
+      now: deps.now, policy: deps.policy, rustServes: deps.rustServes, clock: deps.clock, sleep: deps.sleep,
       envNames, services,
       disk: { path: dataDir, free_bytes: dataDir ? freeBytes(dataDir) : null },
       remoteMcpConfigured: !!configured?.remote_mcp,

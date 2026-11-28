@@ -1,5 +1,6 @@
-//! The six candidate-pool reads of a fact recall (`engine-sql/facts-recall.ts`): `readFactsEmbeddingColumn`,
-//! `listNearestFacts`, `listSlotRows`, `listPoolUnbackedKeys`, `listCallOffCueFacts` and `listPoolEntityPairs`.
+//! The candidate-pool reads of a fact recall (`engine-sql/facts-recall.ts`): `readFactsEmbeddingColumn`,
+//! `listNearestFacts`, `listSlotRows`, `listPoolUnbackedKeys`, `listCallOffCueFacts`, `listPoolEntityPairs` and
+//! `listPooledFactRows`.
 //!
 //! Every pool read admits a row exactly as `listFactsForRelevance` does (`facts/trust.rs`, `Pool::admits`): the source,
 //! the expiry clauses unless `includeExpired`, the audit sources, a quarantined provenance page, the visibility and
@@ -16,11 +17,14 @@
 //! - `listCallOffCueFacts`: for each `(source, entity)` pair, the newest 50 pool rows whose text holds a retraction or
 //!   call-off phrase (`\m(...)\M`, case-insensitive).
 //! - `listPoolEntityPairs`: the distinct `(source, entity)` pairs of the pool rows that have an entity.
+//! - `listPooledFactRows`: the whole rows of the given ids that the pool admits (recall's second read of its ranked ids,
+//!   #10225), in id order.
 
 use super::embedding::{cosine_distance, parse_vector, to_halfvec};
+use super::forget::fact_number;
 use super::saved_match::word_char;
 use super::trust::{Pool, PoolArgs, VectorArg, pool_row, similarity};
-use super::{FactRecord, count_arg, invalid, source_rows};
+use super::{FactRecord, count_arg, invalid, read_fact, source_rows};
 use crate::Store;
 use crate::chunks::embedding_dimensions;
 use crate::error::Result;
@@ -120,6 +124,14 @@ pub struct CueArgs {
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct PairsArgs {
     pub pool: PoolArgs,
+}
+
+/// `listPooledFactRows`: the fact `ids` to read again under the pool.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct PooledRowsArgs {
+    pub pool: PoolArgs,
+    pub ids: Vec<f64>,
 }
 
 /// `text ~* '\m(<phrases>)\M'`: some phrase starts at a word start and ends at a word end.
@@ -332,6 +344,29 @@ impl Store {
             .into_iter()
             .map(|(source, entity)| json!({ "source_id": source, "entity_slug": entity }))
             .collect())
+    }
+
+    /// `listPooledFactRows`: the whole rows of `ids` that the pool admits now (a fact whose visibility, provenance or
+    /// trust narrowed since the pool read is left out), in id order, a repeated id once and an id below 1 naming no row.
+    pub fn list_pooled_fact_rows(&self, args: &PooledRowsArgs) -> Result<Vec<Value>> {
+        const OP: &str = "listPooledFactRows";
+        let mut ids = BTreeSet::new();
+        for id in &args.ids {
+            if let Some(id) = fact_number(OP, *id)? {
+                ids.insert(id);
+            }
+        }
+        let read = self.read()?;
+        let pool = Pool::new(OP, &args.pool, self.env.now_micros())?;
+        let mut out = Vec::new();
+        for id in ids {
+            if let Some(row) = read_fact(&*read, id)?
+                && pool.admits(&*read, &row)?
+            {
+                out.push(row.to_json(false, false));
+            }
+        }
+        Ok(out)
     }
 }
 

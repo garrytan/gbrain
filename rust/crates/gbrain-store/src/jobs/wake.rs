@@ -516,6 +516,35 @@ fn write_settled(r: &RequestRecord) -> bool {
     }
 }
 
+/// GST-4010 (`job_visible` of `listDueWakeWatches`): the watcher submitted the job. The job's recorded principal
+/// is the watcher's credential (kind and id), or, with no principal recorded, the job's `__owner_client_id`
+/// stamp is the watcher's OAuth client id; and the job's grant names no attested actor, system, member or
+/// audience (a watch is kept to the credential, so a job submitted for a person or an audience is not its own).
+fn job_submitted_by(job: &JobRecord, w: &WatchRecord) -> bool {
+    let principal = job
+        .submission_authority
+        .as_ref()
+        .and_then(|a| a.get("principal"));
+    let text = |v: Option<&Value>| v.and_then(jsonb_field_text);
+    let by_principal = principal.is_some_and(|p| {
+        text(p.get("kind")).as_deref() == Some(w.principal_kind.as_str())
+            && text(p.get("id")).as_deref() == Some(w.principal_id.as_str())
+    });
+    let by_stamp = principal.is_none()
+        && w.principal_kind == "oauth_client"
+        && text(job.data.get("__owner_client_id")).as_deref() == Some(w.principal_id.as_str());
+    let grant = job
+        .submission_authority
+        .as_ref()
+        .and_then(|a| a.get("grant"));
+    let no_actor = ["system", "external_id", "member"].iter().all(|key| {
+        text(grant.and_then(|g| g.get("actor")).and_then(|a| a.get(*key)))
+            .unwrap_or_default()
+            .is_empty()
+    });
+    (by_principal || by_stamp) && no_actor && grant.and_then(|g| g.get("actingFor")).is_none()
+}
+
 impl Store {
     /// `openWakeWatch`: record a watch and return its id. A second open watch of one
     /// (`wakeUser`, `wsSubscriptionId`) keeps its row and takes the new expiry. The id sequence
@@ -991,6 +1020,13 @@ impl Store {
                 ("job_id", json!(job.as_ref().map(|j| j.id))),
                 ("job_name", json!(job.as_ref().map(|j| j.name.clone()))),
                 ("job_status", json!(job.as_ref().map(|j| j.status.clone()))),
+                (
+                    "job_visible",
+                    json!(
+                        w.principal_kind == "local_stdio"
+                            || job.as_ref().is_some_and(|j| job_submitted_by(j, &w))
+                    ),
+                ),
                 (
                     "started_at",
                     json!(at(job.as_ref().and_then(|j| j.started_at))),

@@ -6,7 +6,7 @@
 import type { GmailThreadData } from './types.ts';
 import type { ThreadLoopVerdict } from './loop-detect.ts';
 import { pendingLoopsExtractDepth, type LoopsEnqueueReport } from './loop-catchup.ts';
-import { myAddressSet, type GoogleSyncDeps } from './sweep-shared.ts';
+import type { GoogleSyncDeps } from './sweep-shared.ts';
 import type { GmailClient } from './google-clients.ts';
 import { excludedLabelTokens, NO_EXCLUSION, resolveExcludedLabels, storeLoopsExclusion, type LoopsExclusionPolicy } from './loops-exclusion.ts';
 import { loopsSpendGate } from './loops-spend.ts';
@@ -161,7 +161,7 @@ export async function applyLoopDetection(
 ): Promise<ThreadLoopVerdict | null> {
   try {
     const { applyThreadLoopVerdict } = await import('./loop-detect.ts');
-    return await applyThreadLoopVerdict(deps.engine, deps.sourceId, thread, myAddressSet(deps.entry), pageSlug, new Date(), deps.exclusion);
+    return await applyThreadLoopVerdict(deps.engine, deps.sourceId, thread, deps.myAddresses, pageSlug, new Date(), deps.exclusion);
   } catch (e) {
     // An engine that cannot serve detection refuses the sweep: skipping every thread would report no open loops.
     rethrowCapabilityRefusal(e);

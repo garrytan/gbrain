@@ -12,6 +12,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { joinFragments, renderFragment, sqlFragment, type SqlFragment } from './fragment.ts';
+import { jobOwnedFragment, type JobOwnerSpec } from './jobs-queue.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -19,10 +20,10 @@ const num = (v: unknown): number => (v == null ? 0 : Number(v));
 
 // ---------------------------------------------------------------- spend tree
 
-/** What `readJobSpendTree` reads: the described jobs and an owner-fenced caller's client id (null for none). */
+/** What `readJobSpendTree` reads: the described jobs and the owner-fenced caller (GST-4010, `jobOwnedFragment`; null for none). */
 export interface JobSpendTreeSpec {
   jobIds: readonly number[];
-  owner: string | null;
+  owner: JobOwnerSpec | null;
 }
 
 /** One described job's spend over one part of its tree: itself (`self`) or its descendants. */
@@ -42,21 +43,24 @@ export interface SpendTreeRow {
  */
 export async function readJobSpendTree(tx: Raw, spec: JobSpendTreeSpec): Promise<SpendTreeRow[]> {
   if (spec.jobIds.length === 0) return [];
-  const rows = await tx.executeRaw<{
-    root: number | string; self: boolean; settled_cents: number | string | null; priced: number | string; unsettled: number | string;
-  }>(
-    `WITH RECURSIVE tree(root, id, owner, depth) AS (
-       SELECT id, id, data->>'__owner_client_id', 0 FROM minion_jobs WHERE id = ANY($1::int[])
+  // An unfenced caller owns every row, as `true`; a fenced one owns the rows `jobOwnedFragment` matches.
+  const owned = (alias: string): SqlFragment => spec.owner
+    ? sqlFragment`COALESCE((${jobOwnedFragment(spec.owner, alias)}), false)` : sqlFragment`true`;
+  const { text, params } = renderFragment(sqlFragment`WITH RECURSIVE tree(root, id, owned, depth) AS (
+       SELECT s.id, s.id, ${owned('s')}, 0 FROM minion_jobs s WHERE s.id = ANY(${[...spec.jobIds]}::int[])
        UNION ALL
-       SELECT t.root, c.id, c.data->>'__owner_client_id', t.depth + 1 FROM minion_jobs c JOIN tree t ON c.parent_job_id = t.id WHERE t.depth < 20
+       SELECT t.root, c.id, ${owned('c')}, t.depth + 1 FROM minion_jobs c JOIN tree t ON c.parent_job_id = t.id WHERE t.depth < 20
      )
      SELECT t.root, (t.id = t.root) AS self,
             sum(r.actual_cents) FILTER (WHERE r.status = 'settled' AND r.actual_cents IS NOT NULL) AS settled_cents,
             count(*) FILTER (WHERE r.status = 'settled' AND r.actual_cents IS NOT NULL) AS priced,
             count(*) FILTER (WHERE r.status <> 'settled' OR r.actual_cents IS NULL) AS unsettled
        FROM tree t JOIN mcp_spend_reservations r ON r.job_id = t.id
-      WHERE t.id = t.root OR $2::text IS NULL OR t.owner = $2::text
-      GROUP BY 1, 2 ORDER BY 1, 2`, [spec.jobIds, spec.owner]);
+      WHERE t.id = t.root OR t.owned
+      GROUP BY 1, 2 ORDER BY 1, 2`);
+  const rows = await tx.executeRaw<{
+    root: number | string; self: boolean; settled_cents: number | string | null; priced: number | string; unsettled: number | string;
+  }>(text, params);
   return rows.map(r => ({
     root: Number(r.root), self: r.self, settled_cents: r.settled_cents == null ? null : Number(r.settled_cents),
     priced: num(r.priced), unsettled: num(r.unsettled),

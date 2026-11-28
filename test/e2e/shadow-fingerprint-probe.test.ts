@@ -88,6 +88,23 @@ const clearFacts = (host: Host) => host.engine.executeRaw('DELETE FROM facts');
     }, 60_000);
   });
 
+  describe('glibc en_US.utf8 with purge tombstones', () => {
+    test('a purge tombstone fails the probe while code points differ, because its claim text is gone', async () => {
+      const host = hosts.en_US!;
+      await clearFacts(host);
+      await addFact(host, 'Bob likes C++ and .NET, v3.5.');
+      await host.engine.executeRaw(`DELETE FROM fact_purges`);
+      expect((await probe(host)).fact_purges_unverifiable).toBe(0);
+      await host.engine.executeRaw(`INSERT INTO fact_purges (source_id, visibility, subject, fact_hash) VALUES ('default', 'world', '*', gbrain_fact_fingerprint('Alice\u1680owes Acme money'))`);
+      const record = await probe(host);
+      expect(record.facts_with_differing_code_points).toBe(0);
+      expect(record.fact_purges_unverifiable).toBe(1);
+      expect(record.state).toBe('fail');
+      await host.engine.executeRaw(`DELETE FROM fact_purges`);
+      expect((await probe(host)).state).toBe('pass');
+    }, 60_000);
+  });
+
   describe('C ctype', () => {
     test('with ASCII facts only the probe passes, and the record says what differs', async () => {
       await clearFacts(hosts.C!);

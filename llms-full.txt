@@ -100,6 +100,8 @@ and read a degraded notice before concluding the brain has nothing.
 
 Recall relevant saved context before answering. Resolve a person (an email sender, an attendee) only by an exact match (`gbrain whois <email or name>`), never a search's top hit ([identity rule](skills/conventions/brain-first.md#identity-exact-match)). Save explicit requests to remember with provenance; confirm corrections against the stored record. Automatic capture requires opt-in; the [conversation archive](docs/guides/conversation-archive.md) (one redacted page per conversation per day) is on by default on a personal brain and off with `gbrain transcripts archive off`. Withdrawal (`forget`) removes a fact from active memory; history, source material, and private backups may remain. Never promise physical erasure. Verify changes with actual GBrain calls and distinguish a local test from a new-conversation test in the harness.
 
+Usage telemetry is off until the person answers. Relay the question `gbrain init` or `gbrain setup` prints, run `gbrain telemetry anonymous|community|off` only with the answer they gave, and never choose one yourself, including on `--yes` or unattended installs ([telemetry](docs/guides/telemetry.md)).
+
 Durable preferences and facts belong in shared memory when the user wants them
 recalled later. Transient task state, credentials, local configuration, and harness
 activation state do not. Remote `put_page` saves references as text without inline
@@ -1112,7 +1114,8 @@ whenever the user gives one. Capture
 them. A coded refusal (`setup_owner_conflict`, `setup_hosted_connection`) means
 another owner or a hosted brain holds the target; follow its `fix`.
 When the brain will answer several people (a team bot, a shared channel), ask the
-user who they are and add `--serves several --members <id,...>`: each gets a member,
+user who they are and add `--members <id,...>` (claude-code and codex; for another
+harness, preview `gbrain access serves several --members <id,...>`, then apply it with `--yes`): each gets a member,
 a folder `people/<member>/` only they read and a bound key
 (`~/.gbrain/member-keys/<member>.key`; relay paths, never keys). On
 `setup_serves_several`, rerun with its fix. Add `--stdio-member <member>`
@@ -4071,6 +4074,14 @@ flowchart LR
 
 **Why the graph matters.** Vector search finds similar text; graph retrieval follows stored relationships. Extracted edges are evidence to inspect, not proof that a relationship is true. Graph freshness depends on the write path and maintenance described in [memory boundaries](docs/guides/memory-boundaries.md#page-writes-and-the-graph-are-separate-outcomes). Deep dive: [retrieval architecture](docs/architecture/RETRIEVAL.md); [entity recall](docs/guides/entity-recall.md).
 
+## Privacy & telemetry
+
+gbrain sends no automatic usage reports unless you say yes. This release ships no telemetry address, so by default it sends nothing and setup doesn't ask. To test a server, set `GBRAIN_TELEMETRY_URL` in your own environment and supply its publishable key in `GBRAIN_TELEMETRY_KEY` if it needs one. A repository's `.env` cannot set these. Once a release ships an address, your agent asks you once on first setup. Any setup or upgrade results from before you answer wait in a local file (at most 50, for 7 days), are sent only if you say yes, and are deleted if you say no.
+
+A yes sends your answer, which harness setup ran and whether it worked, upgrade results, the doctor score band, counts of commands and error codes, the gbrain version, OS and, unless you pick `anonymous`, a random install id. It never sends your pages, slugs, titles, queries, file paths, source names, hostnames or error messages. `gbrain telemetry show` prints what is waiting, the next payload and a summary of recent sends; add `--json` to see their payloads. `gbrain telemetry off` turns off reporting and deletes the queue. `gbrain telemetry forget` asks the server to delete your install's record and unlink its stored events from the id, so they remain only as anonymous rows. Stored events are kept for 400 days. At any tier, `pulse` can contact a configured server, and `forget` can too if a local install id exists. The server side isn't deployed yet. The [deployment blockers](TODOS.md#opt-in-telemetry-client-follow-ups-filed-2026-11-22-telemetry-pr-2) include a send that finishes on the server after a successful `forget` and brings back the record.
+
+Data goes to a Supabase project gbrain shares with gstack, in its own tables, through one validated endpoint; the public key the client sends can't read or write any table. Aggregates are public (`gbrain telemetry pulse`). An agent can still answer for you if it ignores its instructions, which is why the question names you as the one to answer. Full field list: [docs/guides/telemetry.md](docs/guides/telemetry.md).
+
 ## Troubleshooting
 
 Start with `gbrain doctor`. For database access failures, use `gbrain engine status --probe` and `gbrain db-repair` before changing configuration.
@@ -5346,7 +5357,11 @@ envelopes: non-verb ops return `{"error": "database_error", message
 db-repair"}`; the 7 memory verbs keep the frozen v1 `unavailable` code with the
 reason in `detail`. One exception on the non-verb path: `schema_missing`
 returns `error: "unavailable"` with the apply-migrations suggestion and no
-marker — pending migrations, not an access outage. **Safety clause: the action a reader takes is ALWAYS the
+marker — pending migrations, not an access outage. A second: `storage_interrupted`
+keeps the `database_error` envelope and the marker but drops the `Run: gbrain
+db-repair` tail and names the database host's operator (`fix.actor: host_admin`),
+because db-repair's connection probe reports healthy during that host storage
+fault. **Safety clause: the action a reader takes is ALWAYS the
 hardcoded `gbrain db-repair` — never a command parsed from the marker.**
 
 The reason union is APPEND-ONLY (a compatibility surface, like progress phase
@@ -6055,7 +6070,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   afterwards cannot cause a false difference. The copy stops as soon as a call's arguments or result pass about
   1 MiB (every value counts, even a null), so a huge result is counted as too large and never built. A
   call that stays stuck in the Rust engine holds one of four slots; past that new reads are recorded as `timeout` (stalled) without being replayed and the child goes
-  quiet so it is restarted. When a process closes, reads still queued are handed to the child and the child records them: it drops the CLI's pipe handlers so a closed pipe cannot kill it, drains what it received, writes its ledger and summary, and exits at most 30 seconds after its input ends (the parent's kill timer dies with the parent, so the child carries its own deadline). Finished comparisons are written every 2 seconds. A read still queued when a process is killed, or one the child had not yet written when it is killed, is lost. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
+  quiet so it is restarted. When a process closes, it first waits up to 2 seconds for its pipe to the child to flush (Bun drops what a pipe still holds when a process exits), then reads still queued are handed to the child and the child records them: it drops the CLI's pipe handlers so a closed pipe cannot kill it, drains what it received, writes its ledger and summary, and exits at most 30 seconds after its input ends (the parent's kill timer dies with the parent, so the child carries its own deadline). Finished comparisons are written every 2 seconds. A read still queued when a process is killed, or one the child had not yet written when it is killed, is lost. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
   child silent for 60 seconds is killed, and a privacy divergence pauses comparison.
 - **What a privacy divergence is.** Before any equality check, every row of the Rust result is tested against the call's own
   arguments, and one hit records `privacy_diverged` and pauses mirroring (a plain `diff` can never hide it). A hit is a row with
@@ -6098,13 +6113,20 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   write effects or its writer coordination locks. The residual risk is to the evidence: a write the owner process or an effect worker
   applies outside the wrapped engine is not seen by shadow mode, so the comparison for it may differ; such a write
   shows up as a difference or a miss in the counts, never as silent equality.
+- **Parallel sync and import.** A Postgres `gbrain sync` that imports on worker connections (a full sync at the default
+  concurrency, an incremental sync of more than 100 files, or `--concurrency` above 1) and a `gbrain import --workers N`
+  with N above 1 wrap each worker like the primary engine, when the worker opened the same database URL as the primary:
+  its page and link writes are sampled for write comparisons (each worker has its own sampler, which finishes its
+  read-backs before the worker disconnects), followed into the Rust store, and noted as this process's writes for swap
+  eligibility. A worker on another database URL is left unwrapped.
 - **No network in the background.** Only `gbrain engine install rust`, `gbrain post-upgrade` and autopilot's automatic upgrade download the addon. `start --yes`, the child
   and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses and stays off, `gbrain doctor` fails
   the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
 - **Writer observations (swap eligibility).** While shadow mode is on, each process that writes to the brain through
   gbrain notes itself in `engine_writer_observations`: its host id, the name its database connections carry, its
-  command kind and gbrain version, and when it first and last wrote. The note runs after the write committed, in its
+  command kind and gbrain version, the write protocol it speaks (`write_protocol`: 2 in this build; an older build's row
+  has none), and when it first and last wrote. The note runs after the write committed, in its
   own short transaction, at most every 10 minutes per process; a rolled-back transaction leaves none. A brain without
   a shadow keeps the table empty.
 - **Writer hooks (Postgres brains).** `start --yes` adds one statement-level trigger, `gbrain_writer_note`, to every
@@ -6147,7 +6169,11 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   with the rights of whichever role is current when it fires. A process claim resolves a connection's rows only
   while the claim is inside the window too, so an expired claim cannot hide a current writer. The process-side note
   runs under a 50 ms lock timeout and a 2 s statement timeout, so a busy evidence table ends it as a recorded
-  failure instead of holding one of the brain's connections.
+  failure instead of holding one of the brain's connections. A writer of an
+  older build counts too: a row seen since the current evidence epoch began (not only in the last 7 days) with no
+  `write_protocol`, or one below 2, is named in `eligibility.legacy_write_writers`, and an epoch manifest that is there and
+  cannot be read counts as one more unknown path (no manifest at all means no epoch yet). A brain where the migration that
+  adds the column has not run cannot read the evidence, so the swap refuses.
   A fault or pass record that is
   torn, has no time, lacks a count or carries a count of the wrong type is incomplete evidence and counts too. Criterion 11 reads
   NOT READY on any evidence it cannot prove, so a gap nobody thought of fails closed. In particular, shadow mode
@@ -6204,7 +6230,23 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 - **Follow.** A seeded brain is followed while shadow mode is on. Each committed write through the wrapped engine is
   read back from the brain, in its own short read-only `REPEATABLE READ` transaction (on Postgres, a dedicated
   one-connection pool, so the serving pool is never used), and applied to the Rust store, so stored ids and fact
-  fingerprints stay identical. A rolled-back transaction changes nothing. The coverage watermark says whether every
+  fingerprints stay identical. A rolled-back transaction changes nothing. Inside a transaction, the rows a write will
+  delete or re-key, and the page ids it names, are read first in a savepoint that only that read uses. A nested
+  transaction still running is waited for first (its own calls go on; the transaction's later calls are held, so none
+  is sent ahead of the write), then the transaction's other calls already running, each wait at most 2 seconds, and
+  later calls are held until the write is sent, so a failed read can never undo another statement of the transaction. A call that starts a callback during that wait makes the read skip at
+  once, and so does a call that does not finish in time: that write is described relation-level instead. The transaction's
+  end waits until no read holds the lane, and at most 2 seconds for calls it started and did not await. A statement sent
+  on the transaction's driver handle (`tx.sql` as a tagged template or `unsafe`, `tx.db.query`, `tx.db.exec`, or on
+  PGLite the `tx.db.sql` template) goes through the lane and the follower as `executeRaw` does, however it is started
+  (awaited, `execute()`, `forEach()` or a cursor), as the text the driver sends. A structural value the shadow cannot
+  render makes that write an invalidation, and `describe()` counts as a read. Such a write is followed; when it is
+  sampled it counts as `capability_missing` in the `raw_sql` family and is not compared. The handle's other members
+  are not seen, including ones that send a statement: postgres.js `begin` (its callback runs on a child handle that is
+  not wrapped), `savepoint`, `file` and `notify`, and PGLite `transaction` and `listen`. A nested transaction that
+  waits for a later call of its enclosing transaction while a read waits for it stalls until the 2-second bound; the
+  read then skips, the write is sent at once, described relation-level, and the later calls follow it, so the
+  transaction commits what it commits with shadow off. The coverage watermark says whether every
   committed write is in the store. It goes invalid on a shed, a gap in the write sequence, a failed read, a relation
   the follower cannot describe row by row (which then needs a pass for that relation), or rows the store had to
   displace. **Every session that owns the store starts invalid**, even after a clean stop, and becomes valid again
@@ -6279,7 +6321,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   not scored. Tied rows at the cutoff count only for the top-ten places the strictly better rows leave, and a reference whose last row
   (of 50) still ties the cutoff is not scored. A stable rerun compares digests: the whole answer, and for a ranked read its rows without scores in a fixed order, so the same
   rows in another order or with other scores are an `order_diff` (closed as matched on the reads that ignore order). The comparator
-  version is 3 (it was 1): a running shadow opens a new evidence epoch, so records written under the earlier rules never count. Known limits, not fixed here: a position that does not move proves nothing was written but says nothing about a change that is not WAL-logged (an unlogged table), and a server in recovery (a hot standby or read replica) is never proven; and a read the caller was authorized to make that
+  version is 4 (it was 1): a running shadow opens a new evidence epoch, so records written under the earlier rules never count. Known limits, not fixed here: a position that does not move proves nothing was written but says nothing about a change that is not WAL-logged (an unlogged table), and a server in recovery (a hot standby or read replica) is never proven; and a read the caller was authorized to make that
   returns a private page still reads `private_row_returned` and pauses comparison (it fails closed).
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `needs_reseed`, `stopped`, `invalid`, `behind`,
   `following`), `follower.action` (the reseed steps, or `null`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
@@ -6289,7 +6331,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `mismatches`, and a `probe`, described below); `allocators`;
   `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
   aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
-  this is a reading, not the swap's own check); and `write_comparisons` (the pilot page and link writes only; `capability_missing` until a comparison has a verdict (`comparable` or `unexplained_difference`), and while any replay has none). The
+  this is a reading, not the swap's own check); and `write_comparisons` (the pilot page and link writes only; `capability_missing` until a comparison has a verdict (`comparable` or `unexplained_difference`), and while any replay has none or a sample owed to a session is not yet settled, `outstanding_sessions`, and for the rest of the epoch once a write window is lost in a crash, `write_windows_lost`). The
   `write_comparisons` and `fingerprints` counts are totals for the current evidence epoch. An epoch is not a seed: `epoch_id`
   names the candidate whose evidence counts (the seed, the Rust addon's SHA-256, the comparator and adapter versions, the
   capability set and the hash of the swap's readiness policy, `src/core/engine-swap/policy.ts`), and a change to any of them
@@ -6317,7 +6359,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   database's `collation`, `ctype`, `locale_provider` (`c` libc, `i` ICU, `b` builtin) and `locale` (`datlocale` on Postgres 17,
   `daticulocale` on 16, `null` where absent), `differing_code_points` (the first 50 as `U+XXXX`) with
   `differing_code_points_total`, `corpus_mismatches` with `corpus_mismatch_rows` (the first five row names, never text) and
-  `facts_with_differing_code_points`. `state` is `fail` when code points differ and at least one stored fact holds one, or when
+  `facts_with_differing_code_points`. When code points differ the probe also counts the primary's `fact_purges` rows (`fact_purges_unverifiable`; a count, never a hash; a dirty pass for `facts` or `fact_purges` runs the probe again, and if that probe errors the pass clears the recorded verdict to `not_run` and does not restore coverage): a tombstone keeps only the claim's hash, so its claim cannot be checked for a differing code point. `state` is `fail` when code points differ and at least one stored fact holds one or any purge tombstone exists, or when
   a corpus row or the fixed corpus differs and no differing code point explains it; otherwise `pass`, and a pass still lists the
   differing code points so a swap report can name them. A probe that errors is `not_run`. A glibc `en_US.utf8` host differs
   (U+0085, U+1680, circled letters and more); a C-ctype host differs on every cased non-ASCII letter, so it fails once a fact
@@ -6889,6 +6931,39 @@ gbrain doctor --alert --json | jq '.alert'
 echo "Dream cycle complete at $(date)"
 ```
 
+### Resume synthesis without processing the backlog
+
+Set `dream.synthesize.since` before turning synthesis back on. Both
+`gbrain dream` and autopilot use this inclusive cutoff. Use a calendar date
+(`YYYY-MM-DD`, midnight UTC) or an ISO-8601 timestamp (UTC if no offset is
+given). An invalid value fails the synthesize phase. Unset the key to allow
+the retained history again.
+
+```bash
+gbrain config set dream.synthesize.since 2026-09-02T12:00:00Z
+gbrain dream --dry-run --json
+gbrain config set dream.synthesize.enabled true
+```
+
+In the synthesize result, `details.since` shows the cutoff,
+`details.transcripts_discovered` counts transcripts that made it through
+discovery, and `details.synthesis_state.candidates` excludes ones already
+synthesized. A paused or cooling synthesize phase reports those counts
+without calling the triage model.
+
+Conversation pages use their frontmatter `date`; pages with no usable date
+are left out. A filename date, or a quoted date with no time of day, counts as
+the whole UTC day, so a session dated on the cutoff day stays in. Corpus files
+use a leading `YYYY-MM-DD` in the filename, then their frontmatter `date`,
+then the file's modification time. Copying or restoring a corpus without
+keeping modification times makes its undated files look new, so preview with
+`gbrain dream --dry-run --json` after a restore. The cutoff also applies to `--input` and combines with any
+`--date` / `--from` / `--to` window. For undated writeback files, those
+windows use the file's modification day in UTC.
+
+The cutoff does not delete transcripts, change extraction or cancel jobs
+already queued.
+
 ## Tricky Spots
 
 1. **The dream cycle is NOT optional.** Without it, signal leaks out of every
@@ -7160,7 +7235,7 @@ A `drain_stalled` stop with `cause: owner_wedged_here` is the same situation see
 
 <a id="serve-build-drift"></a>**Doctor warns `serve_build_drift` ("serve is running an older build than this checkout; restart serve and workers")?** Upgrading or pulling the checkout does not restart the processes already running from it. Every live consumer on this host writes its gbrain version into its `persistence_consumers` heartbeat row, and the check compares the live `serve`, `sync`, `jobs`, `autopilot` and `mcp` rows with this binary's version in one read. Until they restart, one-shot commands from the checkout (`gbrain sync`, `bun run src/cli.ts …`) run newer code against an older consumer. The check prints the restart for the serve: `systemctl --user restart gbrain-serve.service` or `launchctl kickstart -k gui/<uid>/com.gbrain.serve` when that service is installed, otherwise the pid to stop and start again the way it was launched. Restart each other listed process (the jobs worker, autopilot) the same way, after the user agrees; nothing restarts automatically. A serve older than the heartbeat table writes no row, so this check reads ok beside it and [`consumers_without_heartbeat`](#consumers-without-heartbeat) names it once it holds claims. A serve newer than this checkout is reported, not warned: upgrade the checkout before running one-shot commands from it. Verify with `gbrain doctor --only serve_build_drift --json`; on PGLite there is one process and the check reads ok.
 
-<a id="runtime-build-skew"></a>**Doctor fails `runtime_build_skew` (several gbrain builds are running on this host)?** Run `gbrain upgrade --restart-only` after the user agrees: it restarts every gbrain process on this host onto the installed build and verifies one build runs and the warm CLI socket accepts it ([restart](upgrades-auto-update.md#restart)); `--dry-run --json` previews it. Each long-running process keeps the build it loaded when it started, but `gbrain jobs run-child` starts a fresh process from the install on disk for every job, so after a checkout reset, a pull or an upgrade on disk one host can run serve, the supervisor and its workers, and their job children on different builds. The check reads each process's own record: serve and the other resident consumers from their heartbeat rows (Postgres), the supervisor from its PID file, each `gbrain jobs work` from its worker-registry entry, and the job children from the `job_build_skew:` line a child writes into a job's history (`gbrain jobs get <id>`) when its build differs from its worker's. It fails when the running builds differ, warns when only a process's install holds another build, and lists every process with its pid and version (never a path). By hand, the message names one restart, serve first, then the supervisor, then a worker: restart serve with its service command, stop the supervisor with `gbrain jobs supervisor stop` and start it again with `gbrain jobs supervisor start --detach`, or stop a worker's pid (SIGTERM drains its jobs, and its supervisor starts a fresh one). A job child whose worker needs a readiness protocol or feature the child lacks refuses the job: the job is released without counting an attempt and the worker stops on a configuration block until it is restarted on one build. A process started before builds were recorded is named as unrecorded; restarting it makes it report one. `/health` on `gbrain serve --http` carries `build` (`version`, `installed_version`, `restart_pending`) on every 200. Verify with `gbrain doctor --only runtime_build_skew --json`.
+<a id="runtime-build-skew"></a>**Doctor fails `runtime_build_skew` (several gbrain builds are running on this host)?** Run `gbrain upgrade --restart-only` after the user agrees: it restarts every gbrain process on this host onto the installed build and verifies one build runs and the warm CLI socket accepts it ([restart](upgrades-auto-update.md#restart)); `--dry-run --json` previews it. Each long-running process keeps the build it loaded when it started, but `gbrain jobs run-child` starts a fresh process from the install on disk for every job, so after a checkout reset, a pull or an upgrade on disk one host can run serve, the supervisor and its workers, and their job children on different builds. The check reads each process's own record: serve and the other resident consumers from their heartbeat rows (Postgres), the supervisor from its PID file, each `gbrain jobs work` from its worker-registry entry, and the job children from the `job_build_skew:` line a child writes into a job's history (`gbrain jobs get <id>`) when its build differs from its worker's. It fails when the running builds differ, warns when only a process's install holds another build, and lists every process with its pid and version (never a path). By hand, the message names one restart, serve first, then the supervisor, then a worker: restart serve with its service command, stop the supervisor with `gbrain jobs supervisor stop` and start it again with `gbrain jobs supervisor start --detach`, or stop a worker's pid (SIGTERM drains its jobs, and its supervisor starts a fresh one). A job child whose worker needs a readiness protocol or feature the child lacks refuses the job: the job is released without counting an attempt and the worker stops on a configuration block until it is restarted on one build. A process started before builds were recorded is named as unrecorded; restarting it makes it report one. `/health` on `gbrain serve --http` carries `build` (`version`, `installed_version`, `restart_pending`) on every 200. `gbrain sync` does not hand its run to a serve whose heartbeat shows an older build (Postgres): it runs beside it and prints the restart; a delegated run that fails inside an older serve on a missing export stops with `serve_build_skew`, and `GBRAIN_SYNC_NO_DELEGATE=1` runs the sync beside the serve until it restarts. Verify with `gbrain doctor --only runtime_build_skew --json`.
 
 <a id="host-identity-mismatch"></a>**Doctor warns `host_identity_mismatch`, or fence repair, chronicle and other maintenance jobs have reported `owner_unavailable` with reason `host_mismatch` for days?** Host identity is a file, `host.json` under the persistence home (`GBRAIN_HOME`, else `$HOME/.gbrain`). A job worker or container launched with a different `HOME` or without `GBRAIN_HOME` mints a new identity after every restart and sees the binding as another host's, so its writes never reach the owner while every health signal stays green. Doctor flags it when this process's identity differs from the binding owner's and the owner's checkout resolves on this filesystem (same machine id or volume), or, for a container without a stable machine id, when the checkout is present at the binding's path and this `host.json` was minted after the binding under a different `HOME`/`GBRAIN_HOME`. The check names both files, the environment each was minted under (`minted_under: {home, gbrain_home, hostname, machine_id}`; `unknown` for a file minted before it was recorded) and the one-line fix: set `GBRAIN_HOME` on that process's supervisor to the owner's home (the printed value; config appends `.gbrain` itself) and restart it. Nothing re-derives or rewrites an existing `host.json`: re-owning the binding would break every other host sharing the brain. Verify with `gbrain doctor --only host_identity_mismatch --json`.
 
@@ -7404,7 +7479,7 @@ records completion and leaves every page as it was.
 
 <a id="embedding-plane-disagreement"></a>**Doctor warns `embedding_plane_disagreement`, or a brain that had semantic search went keyword-only after a re-setup?** The config file says `embedding_disabled: true`, but the database does not disable embeddings and already holds vectors. A re-init from a new `GBRAIN_HOME` or a restarted container with no provider key in reach used to write that flag. Init now keeps the database's model and width when it holds vectors and prints the key to set; a fresh keyless install, a keyless brain with no vectors and an explicit `--no-embedding` still write the flag. The check prints the model and width the vectors use and the enable command for exactly that model (`gbrain embeddings enable --embedding-model <model> --embedding-dimensions <N>`, the same on every engine; effects `credentials` and `paid`). Set the provider key, run it after the user agrees, then `gbrain embed --stale` embeds pages written meanwhile. Pages and vectors are kept. When the stored model is unrecorded, the check points at `gbrain migrate embeddings --status` first. Verify with `gbrain doctor --only embedding_plane_disagreement --json`.
 
-<a id="embedding-identity-unqualified"></a>**`facts-absorb` dies with `embedding_configuration` ("records its embedding model without a provider") while `gbrain config get embedding_model` shows a valid `provider:model`, or doctor `embedding_identity_unqualified` warns?** The brain's database `config` row `embedding_model` holds a bare model name from an older install (for example `text-embedding-3-small`), and managed fact extraction reads only that row. `gbrain config set` cannot change it. The doctor check prints the preview with the configured model filled in: run `gbrain migrate embeddings --to <provider:model> --dry-run` (read-only), show the user the cost, and only after they approve run it without `--dry-run`, with `--yes --max-cost-usd <cap>`. It re-embeds active facts even when the model is unchanged, so it is a paid step. When no model is configured outside the database, the check asks for the provider-qualified id instead. **Say to your agent:** *"Why did facts extraction stop with an embedding configuration error?"*
+<a id="embedding-identity-unqualified"></a>**`facts-absorb` dies with `embedding_configuration` ("records its embedding model without a provider") while `gbrain config get embedding_model` shows a valid `provider:model`, or doctor `embedding_identity_unqualified` warns?** The brain's database `config` row `embedding_model` holds a bare model name from an older install (for example `text-embedding-3-small`), and managed fact extraction reads only that row. `gbrain config set` cannot change it. The doctor check prints the preview with the configured model filled in: run `gbrain migrate embeddings --to <provider:model> --dry-run` (read-only), show the user the cost, and only after they approve run it without `--dry-run`, with `--yes --max-cost-usd <cap>`. When the stored name is the same model at the same width and carries no tag, the run keeps current fact and take vectors; a tagged stored name (for example `qwen3-embedding:8b`) or a model change still re-embeds them. Either way the live run probes the provider, so it is a paid step. When no model is configured outside the database, the check asks for the provider-qualified id instead. **Say to your agent:** *"Why did facts extraction stop with an embedding configuration error?"*
 
 ## Embedding state
 

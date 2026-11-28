@@ -44,7 +44,7 @@ export interface WriteAuthority {
    * lift the privacy part of the writer's read policy only while storedOwnerWrite still holds; member access always applies.
    */
   ownerWrite?: string;
-  databaseOnlyReason?: 'subagent_sandbox' | 'disabled_by_config' | 'no_repo_configured' | 'relative_root' | 'connector_database' | 'unbound_source' | 'overwrite_restore' | 'detached' | 'entity_page_missing';
+  databaseOnlyReason?: 'subagent_sandbox' | 'disabled_by_config' | 'no_repo_configured' | 'relative_root' | 'connector_database' | 'unbound_source' | 'overwrite_restore' | 'detached' | 'entity_page_missing' | 'foreign_checkout';
   autoLinkTrusted?: boolean;
   restrictedNamespace?: boolean;
   sourceId: string;

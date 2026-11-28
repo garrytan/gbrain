@@ -14,7 +14,7 @@ import { AUDIT_ROW_SOURCES, NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE 
 import { retiredPageSql } from '../entities/resolve.ts';
 import { folderRestrictedSql } from '../search/private-visibility.ts';
 import { ACTIVE_UNLINKED_FACT_SQL, UNBACKED_FACT_SQL, derivedConversationFragment } from './fact-relink-writes.ts';
-import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 
 export type { EngineRawRead } from './cli-reads-ops.ts';
@@ -32,8 +32,6 @@ const CONVERSATION_SOURCE_SQL = `f.source LIKE 'cli:extract-conversation-facts%'
 const CONVERSATION_SLOT_SQL = `COALESCE(source, '') LIKE 'cli:extract-conversation-facts%'`;
 /** The window key of an anchored fact: its occurrence, ordinal and text digest. */
 const WINDOW_KEY_SQL = `(f.source_window->>'occurrence_id') || ':' || (f.source_window->>'window_ordinal') || ':' || (f.source_window->>'window_text_sha')`;
-/** A clear's two OR-ed reasons to expire a row instead of deleting it: an open loop or a later fact points at it. */
-const REFERENCED_SQL = 'EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id=f.id) OR EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by=f.id)';
 /** GBRA-574 B2: a row kept expired gives up its slot, so the replacement can hold the same slot key. */
 const UNSLOT_SQL = 'dimension=NULL, value=NULL, value_hash=NULL, dim_status=NULL';
 
@@ -134,12 +132,15 @@ export async function countActiveConversationFacts(raw: EngineRawRead, sourceId:
   return Number(row?.n ?? 0);
 }
 
-/** The value hash of the slot's latest conversation-source value at or before `validFrom`, null when there is none. */
+/**
+ * The value hash of the slot's latest conversation-source value at or before `validFrom`, null when there is none. A row with no
+ * event date (#10288) is as of its save time; the caller passes the incoming row's date, or now when it has none.
+ */
 export async function readConversationSlotValueHash(raw: EngineRawRead, sourceId: string, entitySlug: string, dimension: string,
   validFrom: Date | string): Promise<{ value_hash: string } | null> {
   const { text, params } = renderFragment(sqlFragment`SELECT value_hash FROM facts
       WHERE source_id=${sourceId} AND entity_slug=${entitySlug} AND dimension=${dimension} AND value_hash IS NOT NULL AND expired_at IS NULL AND superseded_by IS NULL AND ${trustedSql(CONVERSATION_SLOT_SQL)}
-        AND valid_from <= ${new Date(validFrom).toISOString()}::timestamptz ORDER BY valid_from DESC, id DESC LIMIT 1`);
+        AND COALESCE(valid_from, created_at) <= ${new Date(validFrom).toISOString()}::timestamptz ORDER BY COALESCE(valid_from, created_at) DESC, id DESC LIMIT 1`);
   const [prior] = await raw<{ value_hash: string }>(text, params);
   return prior ?? null;
 }
@@ -174,10 +175,10 @@ export async function listHeldFactSlots(raw: EngineRawRead, sourceId: string, sl
     'SELECT entity_slug, dimension, value_hash, valid_from FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND dimension IS NOT NULL', [sourceId, slug]);
 }
 
-/** The page's conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
+/** The page's active conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
 export async function countPageConversationFacts(raw: EngineRawRead, sourceId: string, slug: string): Promise<number> {
   const { text, params } = renderFragment(sqlFragment`SELECT count(*)::text AS count FROM facts f WHERE f.source_id=${sourceId} AND f.source_markdown_slug=${slug}
-    AND ${trustedSql(CONVERSATION_SOURCE_SQL)} AND NOT (f.source = ANY(${[...AUDIT_ROW_SOURCES]}::text[]))`);
+    AND ${trustedSql(CONVERSATION_SOURCE_SQL)} AND f.expired_at IS NULL AND NOT (f.source = ANY(${[...AUDIT_ROW_SOURCES]}::text[]))`);
   const [row] = await raw<{ count: string }>(text, params);
   return Number(row?.count ?? 0);
 }
@@ -200,32 +201,35 @@ export async function countConversationFactsOutsideWindows(raw: EngineRawRead, s
 }
 
 /**
- * Clears a page's prior extractor batch before a replacement, keeping the history other records depend on: a row an open loop
- * or another fact's `superseded_by` references is expired, never deleted, and rows `gbrain repair conversation-labels` retired
- * stay expired. A row `gbrain facts relink --conversation` linked is expired too, so the replacement inherits its entity; the
- * previous clear's expired relinked rows go first. With `windows`, only the page's anchored facts whose window key is in `keys`
- * (`keep` false) or not in it (`keep` true), and its unanchored facts when `unanchored`. Returns the rows removed from the
- * active batch.
+ * #10443: narrows the page's expired extractor copies of the claims `facts` to private, matched by claim fingerprint, so history
+ * never shows a claim wider than the active row that replaced it.
+ */
+export async function narrowConversationExpiredCopies(raw: EngineRawRead, sourceId: string, slug: string, facts: string[]): Promise<void> {
+  await raw(`UPDATE facts SET visibility='private' WHERE source_id=$1 AND source_markdown_slug=$2
+    AND source LIKE 'cli:extract-conversation-facts%' AND expired_at IS NOT NULL AND visibility <> 'private'
+    AND gbrain_fact_fingerprint(fact) IN (SELECT gbrain_fact_fingerprint(n) FROM unnest($3::text[]) AS n)`, [sourceId, slug, facts]);
+}
+
+/**
+ * Clears a page's prior extractor batch before a replacement without losing history (#10443): every active extractor fact is
+ * expired and keeps its row, so active reads drop it while `recall --include-expired` and the open loops and `superseded_by`
+ * links that reference it keep it. A row `gbrain facts relink --conversation` linked is expired the same way, so the replacement
+ * inherits its entity (conversation-relink-carry.ts). Only the page's audit checkpoint rows are deleted (a window clear leaves
+ * them). With `windows`, only the page's anchored facts whose window key is in `keys` (`keep` false) or not in it (`keep` true),
+ * and its unanchored facts when `unanchored`. Returns the rows removed from the active batch.
  */
 export async function clearConversationPageFacts(raw: EngineRawRead, sourceId: string, slug: string,
   windows?: { keys: readonly string[]; keep: boolean; unanchored: boolean }): Promise<number> {
-  const page = windows
-    ? sqlFragment`f.source_id=${sourceId} AND f.source_markdown_slug=${slug} AND ${trustedSql(CONVERSATION_SOURCE_SQL)} AND NOT (f.source = ANY(${[...AUDIT_ROW_SOURCES]}::text[])) AND (CASE WHEN f.source_window IS NULL THEN ${windows.unanchored}::boolean ELSE (${trustedSql(WINDOW_KEY_SQL)} = ANY(${[...windows.keys]}::text[])) <> ${windows.keep}::boolean END)`
-    : sqlFragment`f.source_id=${sourceId} AND f.source_markdown_slug=${slug} AND ${trustedSql(CONVERSATION_SOURCE_SQL)}`;
-  const run = (fragment: SqlFragment) => {
-    const { text, params } = renderFragment(fragment);
-    return raw<{ count: string }>(text, params);
-  };
-  await run(sqlFragment`DELETE FROM facts f WHERE ${page} AND f.expired_at IS NOT NULL AND ${trustedSql(RELINKED_DERIVED_ROW)} AND NOT (${trustedSql(REFERENCED_SQL)})`);
-  await run(sqlFragment`UPDATE facts f SET ${trustedSql(UNSLOT_SQL)} WHERE ${page} AND f.expired_at IS NOT NULL AND f.dimension IS NOT NULL`);
-  const [relinked] = await run(sqlFragment`WITH up AS (UPDATE facts f SET expired_at=now(), ${trustedSql(UNSLOT_SQL)}
-    WHERE ${page} AND f.expired_at IS NULL AND ${trustedSql(RELINKED_DERIVED_ROW)} RETURNING 1) SELECT COUNT(*)::text AS count FROM up`);
-  const [expired] = await run(sqlFragment`WITH up AS (UPDATE facts f SET expired_at=now(), ${trustedSql(UNSLOT_SQL)}
-    WHERE ${page} AND f.expired_at IS NULL AND (${trustedSql(REFERENCED_SQL)}) RETURNING 1) SELECT COUNT(*)::text AS count FROM up`);
-  const [deleted] = await run(sqlFragment`WITH del AS (DELETE FROM facts f
-    WHERE ${page} AND NOT (${trustedSql(REFERENCED_SQL)}) AND COALESCE(f.context,'') NOT LIKE '%${trustedSql(LABEL_RETIRED_MARKER)}%' AND NOT (${trustedSql(RELINKED_DERIVED_ROW)}) RETURNING 1)
-    SELECT COUNT(*)::text AS count FROM del`);
-  return Number(relinked?.count ?? 0) + Number(expired?.count ?? 0) + Number(deleted?.count ?? 0);
+  const page = `f.source_id=$1 AND f.source_markdown_slug=$2 AND ${CONVERSATION_SOURCE_SQL}` + (windows
+    ? ` AND NOT (f.source = ANY($3::text[])) AND (CASE WHEN f.source_window IS NULL THEN $4::boolean ELSE (${WINDOW_KEY_SQL} = ANY($5::text[])) <> $6::boolean END)` : '');
+  const params = windows ? [sourceId, slug, [...AUDIT_ROW_SOURCES], windows.unanchored, [...windows.keys], windows.keep] : [sourceId, slug, [...AUDIT_ROW_SOURCES]];
+  await raw(`UPDATE facts f SET ${UNSLOT_SQL} WHERE ${page} AND NOT (f.source = ANY($3::text[])) AND f.expired_at IS NOT NULL AND f.dimension IS NOT NULL`, params);
+  const [audit] = windows ? [] : await raw<{ count: string }>(`WITH del AS (DELETE FROM facts f WHERE ${page} AND f.source = ANY($3::text[]) RETURNING 1)
+    SELECT COUNT(*)::text AS count FROM del`, params);
+  const [expired] = await raw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now(), ${UNSLOT_SQL}
+    WHERE ${page} AND f.expired_at IS NULL AND NOT (f.source = ANY($3::text[])) RETURNING 1)
+    SELECT COUNT(*)::text AS count FROM up`, params);
+  return Number(audit?.count ?? 0) + Number(expired?.count ?? 0);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -332,14 +336,17 @@ export async function lockPageById(raw: EngineRawRead, pageId: number): Promise<
 // relinked-row carry (src/core/facts/conversation-relink-carry.ts)
 // ---------------------------------------------------------------------------------------------------------------------
 
-export interface ClearedRelinkedFactRow { fact: string; entity_slug: string; context: string }
+export interface ClearedRelinkedFactRow { fact: string; entity_slug: string; context: string; carried: boolean }
 
-/** The page's expired conversation facts that a relink had linked to a still-live entity page, newest first. */
+/**
+ * The page's expired conversation facts, newest first (#10443: expired rows are kept as history, so the caller takes each claim's
+ * newest prior row). `carried` marks a row a relink had linked to a still-live entity page, whose entity a replacement inherits.
+ */
 export async function listClearedRelinkedFacts(raw: EngineRawRead, sourceId: string, slug: string): Promise<ClearedRelinkedFactRow[]> {
-  const { text, params } = renderFragment(sqlFragment`SELECT f.fact, f.entity_slug, f.context FROM facts f
+  const { text, params } = renderFragment(sqlFragment`SELECT f.fact, f.entity_slug, f.context, (${trustedSql(RELINKED_DERIVED_ROW)}
+        AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)) AS carried
+      FROM facts f
       WHERE f.source_id = ${sourceId} AND f.source_markdown_slug = ${slug} AND f.source LIKE 'cli:extract-conversation-facts%' AND f.expired_at IS NOT NULL
-        AND ${trustedSql(RELINKED_DERIVED_ROW)}
-        AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
       ORDER BY f.id DESC`);
   return raw<ClearedRelinkedFactRow>(text, params);
 }

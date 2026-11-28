@@ -11,7 +11,7 @@ import { DIGEST_SESSION_SETTINGS, digestQuery } from '../core/persistence/gradua
 import { CAPTURE_BUDGET_BYTES, encodeArgs, encodeValue } from './codec.ts';
 import { pageSearchVectorSql } from '../core/fts-language.ts';
 import { relationRead } from './seed.ts';
-import { MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
+import { MAX_DROPPED, MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, readBackText, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
 import { sqlWrites } from './sql-writes.ts';
 import { memberKind } from './write-map.ts';
 import { COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL, LOCK_WRITE_REQUEST_SQL, PUBLICATION_EFFECTS_SQL } from '../core/engine-sql/persistence-journal.ts';
@@ -23,6 +23,9 @@ import { DELETE_STALE_PAGE_WRITE_GATE_RECEIPTS_SQL } from '../core/engine-sql/tr
 import { WRITE_OP_CHECKPOINT_RECORDS_SQL } from '../core/engine-sql/op-checkpoint.ts';
 import { SYNC_PASS_ROW_SQL } from '../core/engine-sql/sync-hold-store.ts';
 import { ADVANCE_SYNC_CHECKPOINT_SQL } from '../core/engine-sql/sources.ts';
+import { COMPLETE_EFFECT_SQL, EFFECT_GUARD_BRAIN_SQL, EFFECT_GUARD_WORKTREE_SQL } from '../core/engine-sql/persistence-effect-worker.ts';
+import { EFFECT_TRANSACTION_LIMITS_SQL } from '../core/engine-sql/remote-links.ts';
+import { EFFECT_CLAIM_ROW_LOCK_SQL } from '../core/engine-sql/embedding-install.ts';
 
 /** How long the preimage read may hold a sampled write. */
 export const PREIMAGE_TIMEOUT_MS = 2_000;
@@ -35,35 +38,49 @@ export interface WriteSamplerOptions {
   random?: () => number;
   /** The supervisor's `send`: false when the line was not accepted (the sample is then unobserved). */
   send: (line: string) => boolean;
-  /** The serving process's write count (follower.published): a move beyond the sampled write's own marks the sample `moved`. */
+  /** The serving process's count of writes that can change a compared row (follower.pageLinkWrites): a move beyond the sampled write's own marks the sample `moved`. Only an in-transaction putPage with a completed data fence and a pre-commit pin of its page is exempt from it (see `readBackAndSend`). */
   generation?: () => number | undefined;
   active: () => boolean;
   /** Records a sample that will never reach the child (`send_shed`, `readback_abandoned`) for the child to count uncomparable; false when it could not be recorded, and the count then rides on the next accepted line. */
   lost?: (reason: string) => boolean;
+  /** Makes `n` samples the sampler could not send owed in the serving process's durable record (supervisor.ts `owe`), so the worker books them and status cannot read measured past them; false when it could not (no running worker), and they then wait in the sampler as a refused send's do. */
+  owe?: (n: number) => boolean;
+  /** Makes `n` samples whose count `lost` could not write down owed in a kept record (supervisor.ts `oweRefused`: with or without a running worker), so none lives only in this sampler's memory; false when it could not, and they then stay in `unsaid`. */
+  refuse?: (n: number) => boolean;
   /** How long the preimage read may hold a write; default PREIMAGE_TIMEOUT_MS (a seam for tests). */
   preimageTimeoutMs?: number;
 }
 /** What the sampler keeps of one outermost transaction (wrapper.ts hands it to every engine proxy of it): the writes it makes, in order, and the putPage samples it took. */
 export interface TxScope {
-  /** Set while a sampled write reads its preimage on the transaction's connection: the wrapper holds other members until it is open again. */
+  /** Set while a sampled write waits for the calls ahead of it and reads its preimage on the transaction's connection: the wrapper holds other members until it is open again, and resolves when it opens. */
   gate: Promise<void> | null;
+  /** Calls held while the gate is closed, in call order (the wrapper queues them): when it opens they start one by one, and a call that closes it again leaves the rest queued. */
+  waiters: Array<() => void>;
   /** Member calls on the transaction that have started and not yet settled, queued ones included (the wrapper counts them). */
   inflight: number;
+  /** Member calls the wrapper let run (held by neither gate) that have not settled yet, in the order they ran: the ones a sampled write waits for. A call held by either gate (this scope's or the follower's lane) is not in it until it starts, so a sampled write waits only for calls that started before it. `callback`: the call took a function (a nested transaction, a bounded read), which may be waiting for a call held behind the gate. */
+  running: Set<{ name: string; callback: boolean; done: Promise<void> }>;
   /** A member that may write is about to run, inside the nested transactions `path` names (none: the outermost). */
   note(name: string, args: unknown[], path?: number[]): void;
   /** A nested transaction (savepoint) opened: its id. */
   open(): number;
   /** The nested transaction `id` rolled back: the writes it noted are not in the final state, so they are forgotten. */
   drop(id: number): void;
+  /** The transaction's callback is done and the commit is next, still inside the transaction: each sampled page write pins its page as the transaction will commit it (the revision and the compared fields, after every later write of the transaction), read on `tx`, the transaction's own connection. Never throws. */
+  beforeCommit(tx: BrainEngine): Promise<void>;
   /** The transaction committed: the samples are judged against the writes it made, read back and sent. A rolled-back transaction never calls this. */
   commit(): void;
+  /** The transaction ends while calls it started are still running (the wrapper's drain gave up waiting): every sample whose write has not finished is uncomparable with `reason`. */
+  unsettled(reason: string): void;
 }
 export interface WriteSampler {
   wrap(name: string, fn: Function, ctx: { engine: any; inTransaction: boolean; mayWrite: (name: string, args: unknown[]) => boolean; scope?: TxScope; nested?: boolean }): Function;
-  /** The scope of an outermost transaction opened on `engine`. */
-  scope(engine: BrainEngine): TxScope;
+  /** The scope of an outermost transaction opened on `engine`. `followed` false: the transaction's writes are not published to the follower (the warm single-write lane), so they do not move the write counter. */
+  scope(engine: BrainEngine, opts?: { followed?: boolean }): TxScope;
   /** At disconnect: waits up to `ms` for the read-backs still running; any left are counted `readback_abandoned` and send nothing later. */
   settle(ms: number): Promise<void>;
+  /** A sampler with the same options and read-backs of its own, for a worker engine of the same brain (it settles when that worker disconnects); losses it could not record are shared with this one, so none is left behind when the worker goes. */
+  fork(): WriteSampler;
 }
 
 type Row = Record<string, string | null>;
@@ -121,16 +138,19 @@ async function inSavepoint<T>(within: BrainEngine, read: (tx: BrainEngine) => Pr
   return out!.value;
 }
 
-/** True when the data fence finds the rows moved, or cannot be read (never a quiet pass): the copied pages and links are read again and compared, and putPage's returned revision must be the one read back. */
-async function fenced(engine: BrainEngine, op: string, args: unknown[], targets: PageRef[], pre: PreImage, result: unknown, back: { pages: unknown[] }): Promise<boolean> {
+/**
+ * The data fence's verdict: `moved` when it finds the rows moved, `failed` when it cannot be read (never a quiet pass), else `clear`. The copied pages and links are read again and compared, and putPage's
+ * revision must be the one read back: the revision the write returned, or (a sample whose transaction wrote the page again, so the tags trigger rewrote it) the one the page was about to commit with.
+ */
+async function fenced(engine: BrainEngine, op: string, args: unknown[], targets: PageRef[], pre: PreImage, result: unknown, back: { pages: unknown[] }, committedRevision?: string): Promise<'clear' | 'moved' | 'failed'> {
   try {
     if (op === 'putPage') {
-      const wrote = (result as { knowledge_revision?: unknown } | null)?.knowledge_revision;
-      if (typeof wrote !== 'string' || (back.pages[0] as { knowledge_revision?: unknown } | null)?.knowledge_revision !== wrote) return true;
+      const wrote = committedRevision ?? (result as { knowledge_revision?: unknown } | null)?.knowledge_revision;
+      if (typeof wrote !== 'string' || (back.pages[0] as { knowledge_revision?: unknown } | null)?.knowledge_revision !== wrote) return 'moved';
     }
     const again = await readPreimage(engine, op, [...targets, ...pre.pages.map((p) => ({ source: p.source_id ?? 'default', slug: p.slug ?? '' }))]);
-    return movedOutsideFootprint(op, args, pre, again);
-  } catch { return true; }
+    return movedOutsideFootprint(op, args, pre, again) ? 'moved' : 'clear';
+  } catch { return 'failed'; }
 }
 
 /** The options the Rust putPage takes (store-members/pages.ts `takeOptions`; `inline` it ignores). The whole options object is sent with the write, and any other key (`contextualRetrieval`, which the store refuses) is one the replay does not carry: the sample is uncomparable. */
@@ -139,8 +159,11 @@ const knownOptions = (name: string, args: unknown[]): boolean => name !== 'putPa
 const STAMP = 'updatePageContextualRetrievalState'; // changes a compared page column (contextual_retrieval_mode) after the page write: the replay runs the same call (WriteEvent.then)
 /** Writes after a sampled putPage in its transaction that leave the compared page row and links as the write made them (chunks are not compared). */
 const LATER_WRITES: ReadonlySet<string> = new Set(['upsertChunks', 'deleteChunks', 'deleteChunksExcept', 'moveChunkIndexes', 'setPageAliases', 'replaceDerivedAliases', 'pruneFrontmatterTags', 'addPageTagsById', 'writeTextProjectionSeal', STAMP]);
-/** Tables only the writer's own bookkeeping touches; nothing the comparison reads. A raw write is benign when every table it writes is one of these. `timeline_entries`, `takes` and `content_chunks` are not compared. */
-const BOOKKEEPING: ReadonlySet<string> = new Set(['persistence_counters', 'persistence_effects', 'persistence_requests', 'op_checkpoints', 'write_gate_receipts', 'sources', 'timeline_entries', 'takes', 'content_chunks', 'page_projection_jobs', 'config']);
+/**
+ * Tables only the writer's own bookkeeping touches; nothing the comparison reads. A raw write is benign when every table it writes is one of these. `timeline_entries`, `takes`
+ * and `content_chunks` are not compared, nor is `wanted_links` (the links effect's rows for mention targets that do not exist yet): the read-back's getPage and getLinks never read it.
+ */
+const BOOKKEEPING: ReadonlySet<string> = new Set(['persistence_counters', 'persistence_effects', 'persistence_requests', 'op_checkpoints', 'write_gate_receipts', 'sources', 'timeline_entries', 'takes', 'content_chunks', 'page_projection_jobs', 'config', 'wanted_links']);
 const squash = (sql: string): string => sql.replace(/\s+/g, ' ').trim();
 /** The raw page updates a sync or put_page makes after the page write, matched by their exact text (whitespace aside): the unbound-origin clear, the chunker and text seal, and the chunker-version stamp. Any other text, drifted or new, is an ordinary write. */
 const AFTER_PAGE_WRITE: ReadonlySet<string> = new Set([
@@ -160,15 +183,18 @@ function rawKind(args: unknown[]): 'bookkeeping' | 'seal' | undefined {
   if (PURE_LOCK.test(sql)) return 'bookkeeping'; // one table lock and nothing else changes no row; a batch that holds more goes through the table check below, whole
   try { const writes = sqlWrites(sql); return writes.length > 0 && writes.every((w) => w.kind === 'relation' && BOOKKEEPING.has(w.relation)) ? 'bookkeeping' : undefined; } catch { return undefined; }
 }
-/** True when every statement is read-only or writes only bookkeeping tables (the raw rule above) and at least one writes; a statement the parser cannot read, or one that writes any other table, makes it false. */
-export function bookkeepingStatements(sqls: readonly string[]): boolean {
+/**
+ * True when every statement is read-only or writes only bookkeeping tables (the raw rule above) and, unless `readOnly` allows none, at least one writes; a statement the parser
+ * cannot read, or one that writes any other table, makes it false. A read-only statement here takes locks or sets transaction-local settings (the typed members below).
+ */
+export function bookkeepingStatements(sqls: readonly string[], readOnly = false): boolean {
   let wrote = false;
   for (const sql of sqls) {
     let writes; try { writes = sqlWrites(sql); } catch { return false; }
     if (writes.some((w) => w.kind !== 'relation' || !BOOKKEEPING.has(w.relation))) return false;
     if (writes.length) wrote = true;
   }
-  return wrote;
+  return wrote || readOnly;
 }
 /** True when every statement parses and is read-only or writes only bookkeeping tables (none need write): a member that sends only these changes nothing the comparison reads. An empty list, or a statement the parser cannot read, makes it false. */
 export function noComparedWrites(sqls: readonly string[]): boolean {
@@ -211,75 +237,130 @@ export const JOURNAL_MEMBER_STATEMENTS: ReadonlyMap<string, readonly string[]> =
   ['writeOpCheckpointRecords', [WRITE_OP_CHECKPOINT_RECORDS_SQL]],
   ['writeSyncPassRow', SYNC_PASS_ROW_SQL],
   ['advanceSyncCheckpoint', ADVANCE_SYNC_CHECKPOINT_SQL],
+  // The links effect's own transaction around its addLinksBatch (persistence/effect-links.ts): the effect row's completion (persistence_effects only) and the members that
+  // only lock rows or set transaction-local settings (their statements write nothing; noComparedWrites accepts a read-only statement). declarePersistence is judged above.
+  ['completeEffectRow', [COMPLETE_EFFECT_SQL]],
+  ['setEffectTransactionLimits', [EFFECT_TRANSACTION_LIMITS_SQL]],
+  ['lockEffectGuard', [EFFECT_GUARD_BRAIN_SQL, EFFECT_GUARD_WORKTREE_SQL]],
+  ['lockEffectClaimRow', [EFFECT_CLAIM_ROW_LOCK_SQL]],
 ]);
 /** The closing text seal of an imported page (engine-sql/write-guards.ts sealImportedPage): the statement AFTER_PAGE_WRITE matched by text while it was raw, pinned by test/shadow-follow-producer.test.ts. */
 const SEAL_MEMBER = 'sealImportedPage';
 const BOOKKEEPING_MEMBERS: ReadonlySet<string> = new Set([...JOURNAL_MEMBER_STATEMENTS].filter(([, sqls]) => noComparedWrites(sqls)).map(([name]) => name));
 const pageKey = (name: string, args: unknown[]): string => { const r = pageRefs(name === STAMP ? 'putPage' : name, name === STAMP ? [args[0], undefined, { sourceId: args[1] }] : args)[0]; return r ? `${r.source}\0${r.slug}` : ''; };
 
-interface TxSample { at: number; key: string; op: string; bad?: string; read?: (then: unknown[][]) => void }
-interface Scope extends TxScope { root: BrainEngine; log: Array<{ name: string; key: string; args?: unknown[]; path: number[]; kind?: 'bookkeeping' | 'seal' }>; samples: TxSample[]; nested: number }
+/** The target page as the transaction commits it (beforeCommit): its revision, and its compared fields as `readBackText` writes them. */
+interface Pin { revision: string; text: string }
+interface TxSample { at: number; key: string; op: string; bad?: string; pin?: Pin; read?: (then: unknown[][]) => void }
+interface Scope extends TxScope { root: BrainEngine; followed: boolean; log: Array<{ name: string; key: string; args?: unknown[]; path: number[]; kind?: 'bookkeeping' | 'seal' }>; samples: TxSample[]; nested: number }
 
 const PREIMAGE_REASONS: ReadonlySet<string> = new Set(['preimage_too_large', 'preimage_timeout', 'soft_deleted_page', 'fact_overlay']);
+/**
+ * Closes the gate of `scope`: until the returned function runs, the wrapper holds every new member call of the transaction. Opening it starts the held calls in order, each
+ * at once, until one closes the gate again (a held sampled write); the rest stay queued for that one. Each call is woken once, however many writes are queued.
+ */
+export function holdGate(scope: TxScope): () => void {
+  let resolve!: () => void;
+  scope.gate = new Promise<void>((r) => { resolve = r; });
+  let opened = false;
+  return () => {
+    if (opened) return;
+    opened = true; scope.gate = null; resolve();
+    while (!scope.gate && scope.waiters.length) scope.waiters.shift()!();
+  };
+}
+
+/** True when every call in `calls` settles within `ms`. */
+const settledWithin = async (calls: Promise<void>[], ms: number): Promise<boolean> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { return await Promise.race([Promise.all(calls).then(() => true), new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), ms); })]); } finally { clearTimeout(timer); }
+};
 
 const timeout = <T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> => new Promise((resolve, reject) => {
   const timer = setTimeout(() => { onTimeout(); reject(new Error('preimage_timeout')); }, ms);
   promise.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
 });
 
-/** Why a putPage sample cannot be compared given the writes its transaction made, or null: an earlier write to anything the comparison reads (a version row is not read), a later one that is not a chunk write, or another putPage of the same page. */
+/**
+ * Why a sample cannot be compared given the writes its transaction made, or null. A putPage: an earlier write to anything the comparison reads (a version row is not read),
+ * a later one that is not a chunk write, or another putPage of the same page. A link write or a page delete: any other write of the transaction but a version row and the
+ * writer's own bookkeeping (locks, the effect journal), since its read-back reads the pages it names and every link among them.
+ */
 function judge(sc: Scope, s: TxSample): string | null {
+  const page = s.op === 'putPage';
   for (const [i, w] of sc.log.entries()) {
-    if (i === s.at || w.name === 'createVersion' || w.kind === 'bookkeeping' || (i > s.at && w.kind === 'seal') || (w.name === 'putPage' && w.key !== s.key) || (i > s.at && LATER_WRITES.has(w.name))) continue;
-    return w.name === 'putPage' ? 'in_transaction_same_page' : i < s.at ? 'in_transaction_prior_write' : 'in_transaction_later_write';
+    if (i === s.at || w.name === 'createVersion' || w.kind === 'bookkeeping') continue;
+    if (page && ((i > s.at && w.kind === 'seal') || (w.name === 'putPage' && w.key !== s.key) || (i > s.at && LATER_WRITES.has(w.name)))) continue;
+    return page && w.name === 'putPage' ? 'in_transaction_same_page' : i < s.at ? 'in_transaction_prior_write' : 'in_transaction_later_write';
   }
   return null;
 }
 
-export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
+/** `unsaid` is shared by a sampler and its forks: a loss one of them could not record rides on the next line any of them sends. */
+export function createWriteSampler(o: WriteSamplerOptions, unsaid: string[] = []): WriteSampler {
   const random = o.random ?? Math.random;
   const rate = Math.min(1, Math.max(0, o.rate));
   /** Samples the pipe refused since the last one it took: the next line carries the count, so a shed sample is counted `uncomparable`, never lost as if it were not sampled. */
-  const unsaid: string[] = []; // reasons of losses the journal could not take: the next accepted line carries their count, and settle() retries them
+  // `unsaid`: reasons of losses the journal could not take: the next accepted line carries their count, and settle() retries them
   const send = (event: WriteEvent): void => {
     try {
-      let line = JSON.stringify({ ...event, ...(unsaid.length ? { dropped: unsaid.length } : {}) }) + '\n';
-      if (Buffer.byteLength(line) > MAX_SAMPLE_BYTES) line = JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'sample_too_large', ...(unsaid.length ? { dropped: unsaid.length } : {}) }) + '\n';
-      if (o.send(line)) unsaid.length = 0; else if (!o.lost?.('send_shed')) unsaid.push('send_shed');
+      const carry = Math.min(unsaid.length, MAX_DROPPED); // a line carries at most what the weight rule counts; the rest waits for later lines, never cleared unsaid
+      let line = JSON.stringify({ ...event, ...(carry ? { dropped: carry } : {}) }) + '\n';
+      if (Buffer.byteLength(line) > MAX_SAMPLE_BYTES) line = JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'sample_too_large', ...(carry ? { dropped: carry } : {}) }) + '\n';
+      if (o.send(line)) {
+        unsaid.splice(0, carry);
+        // What the line could not carry goes out now, in the same flush, as loss-only lines of at most MAX_DROPPED each (each is one more uncomparable sample plus its losses, owed and settled like any line): nothing is left waiting in memory for a later sampled write. A refusal stops it; the rest waits exactly as a refused send's does.
+        while (unsaid.length > 0) {
+          const more = Math.min(unsaid.length, MAX_DROPPED);
+          if (!o.send(JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'send_shed', dropped: more }) + '\n')) break;
+          unsaid.splice(0, more);
+        }
+        if (unsaid.length > 0 && o.owe?.(unsaid.length)) unsaid.length = 0; // a refusal ended the drain: what is left is owed durably (the worker books it as lost), never left only in memory
+      } else if (!o.lost?.('send_shed') && !o.refuse?.(1)) unsaid.push('send_shed');
     } catch { /* the shadow never fails a write */ }
   };
   const uncomparable = (op: string, reason: string): void => send({ t: 'write', op, outcome: 'uncomparable', reason });
   /** Read-backs still running; `abandoned` is set when settle() has counted one, so it sends nothing later (a sample is counted once). */
   const reading = new Set<{ abandoned: boolean; done: Promise<void> }>();
   /** Off the request path, and nothing in it may escape: an encode that throws (a segmented page's body getters) is one more uncomparable sample. */
-  const readBackAndSend = (engine: BrainEngine, name: string, args: unknown[], encoded: unknown[], targets: PageRef[], pre: PreImage, result: unknown, before: number | undefined, then: unknown[][] = []): void => {
+  /** `own`: how much the sampled write itself moves the write counter (one follow batch; none in a transaction the follower does not see), so only a move beyond it is another write. */
+  const readBackAndSend = (engine: BrainEngine, name: string, args: unknown[], encoded: unknown[], targets: PageRef[], pre: PreImage, result: unknown, before: number | undefined, then: unknown[][] = [], pin?: Pin, own = 1): void => {
     const sample = { abandoned: false, done: Promise.resolve() };
     sample.done = (async () => {
       try {
         const back = await readBack(engine, targets, pageSet(targets, pre));
         const after = o.generation?.();
-        let moved = before !== undefined && after !== undefined && after - before > 1;
-        // A brain other processes can write (not PGLite, whose single-writer file lock rules them out) needs the data fence (write-compare.ts).
-        if (!moved && hasCapability(engine, 'postgres_admin')) moved = await fenced(engine, name, args, targets, pre, result, back);
+        // A brain other processes can write (not PGLite, whose single-writer file lock rules them out) needs the data fence (write-compare.ts). The counter (this process's writes to pages or links, whichever rows) keeps deciding
+        // too, because the fence exempts the write's own target rows, which a concurrent same-process write can change (a link's context, a page's contextual-retrieval mode). The one exemption: an in-transaction putPage
+        // whose fence completed and whose page was pinned just before the commit: the fence and the pin (the revision and every compared field of the page, read again here) cover its target rows, so the counter does not also decide.
+        // A fence that failed marks the sample moved. Without a completed fence the counter decides, as it always did.
+        const counterMoved = before !== undefined && after !== undefined && after - before > own;
+        const fence = hasCapability(engine, 'postgres_admin') ? await fenced(engine, name, args, targets, pre, result, back, pin?.revision) : undefined;
+        const pinMoved = pin !== undefined && readBackText(encodeValue({ pages: [back.pages[0]], links: [] })) !== pin.text;
+        const moved = fence === undefined ? counterMoved : fence !== 'clear' || pinMoved || (pin === undefined && counterMoved);
         if (!sample.abandoned) send({ t: 'write', op: name, args: encoded, pre, post: encodeValue(back), moved, ...(then.length ? { then: then.map((a) => encodeArgs(a, { left: CAPTURE_BUDGET_BYTES })) } : {}) });
       } catch { if (!sample.abandoned) uncomparable(name, 'readback_failed'); }
     })();
     reading.add(sample); void sample.done.finally(() => reading.delete(sample));
   };
-  /** A putPage inside a transaction: the preimage is read on the transaction's own connection before the write is sent, the write runs untouched, and the sample waits for the commit (TxScope.commit). A rolled-back transaction drops it. */
+  /**
+   * A pilot write inside a transaction: the preimage is read on the transaction's own connection before the write is sent, the write runs untouched, and the sample waits for
+   * the commit (TxScope.commit). A rolled-back transaction drops it. Calls that started before it and have not settled (a pipelined version row beside an edit) could send
+   * statements inside the preimage savepoint and be rolled back with it, so the write first waits for them, with every later call held behind the gate; one that does not
+   * settle in time, or that runs a callback (a nested transaction), leaves the write unsampled through the savepoint (`in_transaction_busy`).
+   */
   const inTransaction = (scope: Scope, tx: BrainEngine, name: string, args: unknown[], run: () => unknown): Promise<unknown> => {
     const s: TxSample = { at: scope.log.length, key: pageKey(name, args), op: name };
     scope.samples.push(s);
-    // Another member call that has started and not settled (a pipelined sibling, a write waiting on a page lock) may still send statements of its own, and they would run inside the
-    // preimage savepoint and be rolled back with it. Then nothing is read and nothing is held: the write goes through untouched.
-    if (scope.inflight > 1) { s.bad = 'in_transaction_busy'; return Promise.resolve(run()); }
+    const ahead = [...scope.running];
+    if (ahead.some((c) => c.callback)) { s.bad = 'in_transaction_busy'; return Promise.resolve(run()); }
     const before = o.generation?.();
-    let open!: () => void;
-    scope.gate = new Promise<void>((resolve) => { open = () => { scope.gate = null; resolve(); }; });
+    const open = holdGate(scope);
     return (async () => {
       let encoded: unknown[] = []; let pre: PreImage | undefined; let targets: PageRef[] = [];
       try {
-        s.bad = (knownOptions(name, args) ? judge(scope, s) : 'unknown_option') ?? undefined;
+        if (ahead.length && !await settledWithin(ahead.map((c) => c.done), o.preimageTimeoutMs ?? PREIMAGE_TIMEOUT_MS)) s.bad = 'in_transaction_busy';
+        s.bad ??= (knownOptions(name, args) ? judge(scope, s) : 'unknown_option') ?? undefined;
         encoded = encodeArgs(args, { left: CAPTURE_BUDGET_BYTES });
         targets = pageRefs(name, args);
         if (targets.length > MAX_PRE_PAGES) throw new Error('preimage_too_large');
@@ -289,11 +370,12 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
       try { sent = run(); } finally { open(); } // sent before other members are let go: they keep their order behind it
       let result: unknown;
       try { result = await sent; } catch (error) { s.bad ??= 'primary_write_failed'; throw error; }
-      if (pre) s.read = (then) => readBackAndSend(scope.root, name, args, encoded, targets, pre!, result, before, then);
+      if (pre) s.read = (then) => readBackAndSend(scope.root, name, args, encoded, targets, pre!, result, before, then, s.pin, scope.followed ? 1 : 0);
       return result;
     })();
   };
   return {
+    fork: () => createWriteSampler(o, unsaid),
     async settle(ms) {
       const idle = Promise.all([...reading].map((r) => r.done));
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -301,7 +383,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
       clearTimeout(timer);
       for (const r of reading) { r.abandoned = true; if (!(o.lost?.('readback_abandoned'))) unsaid.push('readback_abandoned'); } // not sent later
       reading.clear();
-      for (const reason of unsaid.splice(0)) if (!o.lost?.(reason)) unsaid.push(reason); // the final handoff, whether or not another sample comes
+      for (const reason of unsaid.splice(0)) if (!o.lost?.(reason) && !o.refuse?.(1)) unsaid.push(reason); // the final handoff, whether or not another sample comes
     },
     wrap(name, fn, ctx) {
       const kind = memberKind(name);
@@ -312,7 +394,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
         try { sampled = o.active() && random() < rate && ctx.mayWrite(name, args); } catch { /* not sampled */ }
         if (!sampled) return run();
         if (!PILOT_WRITES.has(name)) { send({ t: 'write', op: name, outcome: 'capability_missing', family: writeFamily(name) }); return run(); }
-        const scope = ctx.inTransaction && name === 'putPage' && !ctx.nested ? ctx.scope as Scope | undefined : undefined;
+        const scope = ctx.inTransaction && !ctx.nested ? ctx.scope as Scope | undefined : undefined; // every pilot write of an outermost transaction is compared after its commit
         if (ctx.inTransaction && !scope) { uncomparable(name, 'in_transaction'); return run(); }
         if (scope) return inTransaction(scope, ctx.engine, name, args, run);
         if (!knownOptions(name, args)) { uncomparable(name, 'unknown_option'); return run(); }
@@ -337,13 +419,38 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
         })();
       };
     },
-    scope(root) {
+    scope(root, opts) {
+      const followed = opts?.followed !== false;
       const sc: Scope = {
-        root, log: [], samples: [], gate: null, inflight: 0, nested: 0,
+        root, log: [], samples: [], gate: null, waiters: [], inflight: 0, running: new Set(), nested: 0, followed,
         note: (name, args, path = []) => { sc.log.push({ name, key: name === 'putPage' || name === 'createVersion' || name === STAMP ? pageKey(name, args) : '', path, ...(name === STAMP ? { args } : {}), ...(BOOKKEEPING_MEMBERS.has(name) ? { kind: 'bookkeeping' as const } : name === SEAL_MEMBER ? { kind: 'seal' as const } : {}), ...(name === 'executeRaw' ? { kind: rawKind(args) } : {}) }); },
+        beforeCommit: async (tx) => {
+          try {
+            if (!hasCapability(sc.root, 'postgres_admin')) return; // the fence (and so the pin) runs only where others can write
+            const pending = sc.samples.filter((s) => s.read && !s.bad && s.op === 'putPage');
+            if (!pending.length) return;
+            // A call still running (pipelined, not awaited) may send statements inside the savepoint below, which is rolled back: nothing is read, and the sample is not comparable.
+            if (sc.inflight > 0) { for (const s of pending) s.bad ??= 'in_transaction_busy'; return; }
+            const open = holdGate(sc);
+            try {
+              for (const s of pending) {
+                const [source, slug] = s.key.split('\0');
+                try {
+                  s.pin = await inSavepoint(tx, async (inner) => {
+                    await digestQuery(inner)(`SET LOCAL statement_timeout = ${PREIMAGE_TIMEOUT_MS}`); // bounds the read; the savepoint's rollback takes it away
+                    const page = await inner.getPage(slug!, { sourceId: source!, includeDeleted: true }) as { knowledge_revision?: unknown } | null; // the typed read the read-back makes, on the transaction's own connection
+                    if (!page || typeof page.knowledge_revision !== 'string') throw new Error('pin_missing');
+                    return { revision: page.knowledge_revision, text: readBackText(encodeValue({ pages: [page], links: [] })) };
+                  });
+                } catch { s.bad ??= 'preimage_unreadable'; } // silent-read-ok: an unreadable pin leaves the sample uncomparable (s.bad), never a pass // capability-refusal-ok: a refusal here is a read the sampler could not make, and the sample is then not compared
+              }
+            } finally { open(); }
+          } catch { /* the shadow never fails a write */ } // silent-read-ok: nothing is read or sent here, and a sample without its pin keeps the counter and the write's returned revision // capability-refusal-ok: the sampler never fails or changes a primary write
+        },
+        unsettled: (reason) => { for (const s of sc.samples) if (!s.read) s.bad ??= reason; },
         open: () => ++sc.nested,
         drop: (id) => { for (let i = sc.log.length - 1; i >= 0; i--) if (sc.log[i]!.path.includes(id)) { sc.log.splice(i, 1); for (const s of sc.samples) if (s.at > i) s.at--; } },
-        commit: () => { for (const s of sc.samples) { const bad = s.bad ?? judge(sc, s); if (bad || !s.read) uncomparable(s.op, bad ?? 'in_transaction'); else s.read(sc.log.filter((w, i) => i > s.at && w.name === STAMP && w.key === s.key).map((w) => w.args!)); } },
+        commit: () => { for (const s of sc.samples) { const bad = s.bad ?? judge(sc, s); if (bad || !s.read) uncomparable(s.op, bad ?? 'in_transaction'); else s.read(s.op === 'putPage' ? sc.log.filter((w, i) => i > s.at && w.name === STAMP && w.key === s.key).map((w) => w.args!) : []); } },
       };
       return sc;
     },
