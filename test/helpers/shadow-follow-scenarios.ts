@@ -443,6 +443,125 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
       }, 90_000);
     }
 
+    // F5. The stopped pass's record could not be appended once, so its repair is held only in the resume point. The next
+    // full pass then fails in its setup, before it took that resume point over (its state or seed plan request, or its
+    // first read of the primary). A pass that never took the resume point over must not remove it: it is the repair's
+    // only record. A later pass that does take it over puts it on record exactly once.
+    for (const point of ['state request', 'seed plan request', 'first primary read'] as const) {
+      test(`a full pass that fails in its setup (${point}) keeps a stopped repair's only record, and a later pass puts it on record once`, async () => {
+        const r = await rig();
+        const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+        try {
+          const since = new Date(Date.now() - 1_000);
+          const unknownBefore = planAsWrittenSource(r.dir).unknownPaths(since);
+          const original = followStatus.appendPass;
+          let failed = false;
+          const failing = spyOn(followStatus, 'appendPass').mockImplementation((d, p) => {
+            if (p.error === 'stopped' && !failed) { failed = true; throw Object.assign(new Error('EROFS: read-only file system'), { code: 'EROFS' }); }
+            return original(d, p);
+          });
+          let out: Awaited<ReturnType<typeof stopAfterTailRepair>>;
+          try { out = await stopAfterTailRepair(r, base); } finally { failing.mockRestore(); }
+          const { stopped, size } = out;
+          expect(failed).toBe(true);
+          const held = (): { id: string; repaired_rows: number } | null => {
+            try { return JSON.parse(readFileSync(join(r.dir, 'reconcile', 'progress.json'), 'utf8')) as { id: string; repaired_rows: number }; } catch { return null; }
+          };
+          expect(held()?.id).toBe(stopped.id);
+          // The next pass fails before it took the resume point over.
+          let thrown = false;
+          const boom = () => { thrown = true; return Object.assign(new Error('setup failed'), { code: 'test_setup_failed' }); };
+          const rpc = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+            if (!thrown && ((point === 'state request' && method === 'state') || (point === 'seed plan request' && method === 'seedPlan'))) throw boom();
+            return r.rpc<T>(method, args);
+          };
+          const reads = point === 'first primary read'
+            ? { pauseMs: 0, read: <T>(fn: Parameters<typeof base.read<T>>[0]): Promise<T> => (thrown ? base.read(fn) : Promise.reject(boom())), close: async () => undefined }
+            : base;
+          const failedPass = await new Reconciler({ dir: r.dir, reads, rpc, follower: r.follower, intervalRows: size }).run('full', undefined, { resume: true });
+          expect(thrown).toBe(true);
+          expect(failedPass.error).toContain('test_setup_failed');
+          // The repair is still held, and still counted, though the failed pass is on record with no repair.
+          const kept = held();
+          expect(kept?.id).toBe(stopped.id);
+          expect(kept?.repaired_rows).toBeGreaterThanOrEqual(1);
+          expect(status(r).reconcile.consecutive_clean_full_passes).toBe(0);
+          expect(planAsWrittenSource(r.dir).unknownPaths(since)).toBe(unknownBefore + 1);
+          // A later pass takes it over and puts it on record exactly once.
+          const next = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full');
+          expect(next.error).toBeUndefined();
+          expectRepairOnRecord(r, stopped.id, since, unknownBefore);
+        } finally { await base.close(); await r.close(); }
+      }, 90_000);
+    }
+
+    // F5. A pass whose own record cannot be appended at its end (a full disk for a moment) holds repairs: its own, or a
+    // stopped pass's it took over and continued. Its resume point is the only other place those counts are, so it is
+    // never removed before the record landed; the counts stay there and are counted until a later pass records them.
+    for (const holder of ['a fresh pass that repaired rows itself', 'a resumed pass that took over a stopped repair'] as const) {
+      test(`${holder} whose own record cannot be appended keeps the repair counts in the resume point until a later pass records them once`, async () => {
+        const r = await rig();
+        const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+        try {
+          const since = new Date(Date.now() - 1_000);
+          const unknownBefore = planAsWrittenSource(r.dir).unknownPaths(since);
+          const original = followStatus.appendPass;
+          let size: number;
+          let held: string;
+          let failing: ReturnType<typeof spyOn>;
+          if (holder === 'a fresh pass that repaired rows itself') {
+            const [{ n }] = await ctx.primary().executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages`);
+            size = Number(n) + 1;
+            await ctx.primary().executeRaw(`UPDATE pages SET title = 'Changed Before A Fresh Pass' WHERE id = (SELECT max(id) FROM pages)`);
+            let failed = false;
+            failing = spyOn(followStatus, 'appendPass').mockImplementation((d, p) => {
+              if (!failed && (p.repaired_rows ?? 0) > 0) { failed = true; throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }); }
+              return original(d, p);
+            });
+            let pass: Awaited<ReturnType<Reconciler['run']>>;
+            try { pass = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full'); } finally { failing.mockRestore(); }
+            expect(failed).toBe(true);
+            expect(pass.repaired_rows).toBeGreaterThanOrEqual(1);
+            held = pass.id;
+          } else {
+            let failedStop = false;
+            failing = spyOn(followStatus, 'appendPass').mockImplementation((d, p) => {
+              if (p.error === 'stopped' && !failedStop) { failedStop = true; throw Object.assign(new Error('EROFS: read-only file system'), { code: 'EROFS' }); }
+              return original(d, p);
+            });
+            let out: Awaited<ReturnType<typeof stopAfterTailRepair>>;
+            try { out = await stopAfterTailRepair(r, base); } finally { failing.mockRestore(); }
+            expect(failedStop).toBe(true);
+            size = out.size;
+            held = out.stopped.id;
+            let failedEnd = false;
+            failing = spyOn(followStatus, 'appendPass').mockImplementation((d, p) => {
+              if (!failedEnd && p.id === held) { failedEnd = true; throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }); }
+              return original(d, p);
+            });
+            let resumed: Awaited<ReturnType<Reconciler['run']>>;
+            try { resumed = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full', undefined, { resume: true }); } finally { failing.mockRestore(); }
+            expect(failedEnd).toBe(true);
+            expect(resumed.id).toBe(held);
+            expect(resumed.repaired_rows).toBeGreaterThanOrEqual(1);
+          }
+          expect(readPasses(r.dir).filter((p) => p.id === held)).toHaveLength(0);
+          const progress = JSON.parse(readFileSync(join(r.dir, 'reconcile', 'progress.json'), 'utf8')) as { id: string; repaired_rows: number };
+          expect(progress.id).toBe(held);
+          expect(progress.repaired_rows).toBeGreaterThanOrEqual(1);
+          expect(status(r).reconcile.consecutive_clean_full_passes).toBe(0);
+          expect(planAsWrittenSource(r.dir).unknownPaths(since)).toBe(unknownBefore + 1);
+          const next = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full');
+          expect(next.error).toBeUndefined();
+          const rows = readPasses(r.dir).filter((p) => p.id === held);
+          expect(rows).toHaveLength(1);
+          expect(rows[0]!.repaired_rows).toBeGreaterThanOrEqual(1);
+          expect(planAsWrittenSource(r.dir).unknownPaths(since)).toBe(unknownBefore + 1);
+          expect(existsSync(join(r.dir, 'reconcile', 'progress.json'))).toBe(false);
+        } finally { await base.close(); await r.close(); }
+      }, 90_000);
+    }
+
     // The next owner took the seal over and its serving process sent ok:true, which the child applied, but the answer
     // was lost, and neither the veto line nor any revoke reached the child (seal.ts returns the doubt). The child still
     // says valid, under the sealed continuity, so a resume point written under that continuity would be admitted. A
