@@ -1,16 +1,16 @@
 /**
- * BrainEngine parity: a remote search and a remote recall with retrieval feedback on record their retrieval event
+ * BrainEngine parity: a remote search, query and recall with retrieval feedback on record their retrieval event
  * (src/core/feedback/record.ts), called over MCP stdio (dispatchToolCall with remote: true).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on every arm (PGLite; Postgres with DATABASE_URL; the Rust arm, embedded, multi-user or served) a remote
- *    search and a remote recall, with `feedback.enabled` turned on and a caller whose grant names the client id
+ *    search, query and recall, with `feedback.enabled` turned on and a caller whose grant names the client id
  *    `feedback-remote-caller`, answer without an error, return an `answer_id`, drain their feedback queue with nothing
  *    unfinished, and store one retrieval event for that client id and that op whose pages are the open page only (an
  *    owner-private page and a page only a named member may read, each carrying the query's marker too, are seeded and
  *    never named).
  *  - Regression: on the served arm (a client of a multi-user brain server) the feedback weights read was refused for a
- *    remote caller, so a remote search and recall failed, and the event write was refused inside the write-behind queue,
+ *    remote caller, so a remote search, query and recall failed, and the event write was refused inside the write-behind queue,
  *    which dropped it without a word: the caller held an answer id for an event that was never stored.
  *  - Why existing coverage misses it: search-feedback-and-date-headers.test.ts calls the feedback members directly with no
  *    remote caller; served-remote-think.test.ts case 4 stopped at the refused read, so it never reached the write.
@@ -70,7 +70,7 @@ async function withEmbedProvider<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /** One remote answer of `op` with feedback on, and the event the queue stored for it. */
-async function recorded(engine: BrainEngine, op: 'search' | 'recall', params: Record<string, unknown>) {
+async function recorded(engine: BrainEngine, op: 'search' | 'query' | 'recall', params: Record<string, unknown>) {
   await seed(engine);
   const out = await withEmbedProvider(() => dispatchToolCall(engine, op, params, CTX as never));
   const body = bodyOf(out);
@@ -97,3 +97,6 @@ parityTest('with feedback on, a remote search records its event for the caller a
 
 parityTest('with feedback on, a remote recall records its event for the caller and the open page only', { methods: ['putPage', 'sealChunks', 'setConfig'], timeout: 240_000 }, async (engine: BrainEngine) =>
   recorded(engine, 'recall', { query: OPEN }));
+
+parityTest('with feedback on, a remote query records its event for the caller and the open page only', { methods: ['putPage', 'sealChunks', 'setConfig'], timeout: 240_000 }, async (engine: BrainEngine) =>
+  recorded(engine, 'query', { query: OPEN }));
