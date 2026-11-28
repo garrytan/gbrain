@@ -44,3 +44,24 @@ export async function inferConversationSubjects<T extends { fact: string; entity
   }
   return out;
 }
+
+/**
+ * #10588: the page's own authored links (conversationEntityHints) name its participants, so inside that small set a first
+ * name is unambiguous. The fact names exactly one hinted page by its full title or its first word (whole word,
+ * case-insensitive); two hinted pages named, or none, prove nothing.
+ */
+export async function inferSubjectFromHints(engine: BrainEngine, sourceId: string, visibility: FactVisibility, fact: string,
+  hints: Array<{ slug: string; title: string }>): Promise<string | null> {
+  const lower = fact.toLowerCase();
+  const word = (needle: string) => {
+    const n = needle.toLowerCase();
+    for (let at = lower.indexOf(n); n && at !== -1; at = lower.indexOf(n, at + 1)) {
+      if (!/[\p{L}\p{N}_]/u.test(lower.charAt(at - 1)) && !/[\p{L}\p{N}_]/u.test(lower.charAt(at + n.length))) return true;
+    }
+    return false;
+  };
+  const named = hints.filter(h => word(h.title) || word(h.title.split(/\s+/)[0] ?? ''));
+  if (named.length !== 1) return null;
+  const slug = named[0]!.slug;
+  return await isFactWithdrawn(engine, sourceId, visibility, fact, slug) ? null : slug;
+}
