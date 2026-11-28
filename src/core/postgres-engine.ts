@@ -3948,8 +3948,8 @@ export class PostgresEngine implements BrainEngine {
   settleNoopEmbeddingRows(ids: readonly string[]) { return noopSettleImpl.settleNoopEmbeddingRows(this, ids); }
   probeProjectionWindowCandidates(candidates: readonly projectionRebuildImpl.ProjectionWindowCandidate[]) { return projectionRebuildImpl.probeProjectionWindowCandidates(this.executeRaw.bind(this), candidates); }
   readPagesRowEstimate() { return projectionRebuildImpl.readPagesRowEstimate(this.executeRaw.bind(this)); }
-  hasPendingFactsExtraction(pageId: number | string, jobStates: readonly string[]) { return factsBackstopImpl.hasPendingFactsExtraction(unscopedExecutor(this.engineSql, 'facts backstop: pending extraction read ran unscoped through executeRaw'), pageId, jobStates); }
-  hasCompletedFactsExtraction(pageId: number | string) { return factsBackstopImpl.hasCompletedFactsExtraction(unscopedExecutor(this.engineSql, 'facts backstop: completed extraction read ran unscoped through executeRaw'), pageId); }
+  hasPendingFactsExtraction(pageId: number | string, jobStates: readonly string[]) { return this.engineRead(exec => factsBackstopImpl.hasPendingFactsExtraction(exec, pageId, jobStates)); } // a preparation's read: ends at its deadline (TYPED_PREPARATION_READS)
+  hasCompletedFactsExtraction(pageId: number | string) { return this.engineRead(exec => factsBackstopImpl.hasCompletedFactsExtraction(exec, pageId)); } // a preparation's read: ends at its deadline (TYPED_PREPARATION_READS)
   readProjectionJobReason(key: projectionRebuildImpl.ProjectionJobKey) { return projectionRebuildImpl.readProjectionJobReason(this.executeRaw.bind(this), key); }
   hasSegmentedPage(sourceId: string, slug: string) { return projectionRebuildImpl.hasSegmentedPage(this.executeRaw.bind(this), sourceId, slug); }
   rekeyProjectionJob(job: projectionRebuildImpl.ProjectionJobKey, revision: string) { return projectionRebuildImpl.rekeyProjectionJob(this.executeRaw.bind(this), job, revision); }

@@ -22,7 +22,7 @@ import {
   DerivedLinkEndpointChangedError, DerivedLinkRepairRequiredError, DerivedLinkSettingsChangedError,
   type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions,
 } from '../../derived-links.ts';
-import type { LinkBatchInput } from '../../engine.ts';
+import type { BrainEngine, LinkBatchInput } from '../../engine.ts';
 import { sanitizeForJsonb } from '../../batch-rows.ts';
 import { effectiveRangesEnabled, LINK_EXTRACTION_GENERATION_KEY } from '../../line-grammar.ts';
 import type { RelationshipKey } from '../../link-relationships.ts';
@@ -35,7 +35,9 @@ import type {
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
-import { getConfig } from './config.ts';
+import { getConfig, listConfigKeys } from './config.ts';
+import { primeRelationSemantics } from '../../link-semantics-pack.ts';
+import type { RustEngine } from '../../rust-engine.ts';
 import { linkRelationshipKeysTouching, refreshOnStore, temporalStore } from './link-refresh.ts';
 import { readPageSnapshot } from './pages.ts';
 import { lockRegisteredSourceIds, replaceWantedLinkRows } from './wanted-links.ts';
@@ -142,9 +144,8 @@ function derivedLinkRows(origin: DerivedLinkOrigin, links: LinkBatchInput[], opt
 }
 
 /**
- * One origin as the store reads it. `lineGrammar`, `wanted` and `temporalBody` are applied around the store call
- * (prepareDerived, finishDerived); `semanticsPrimed` changes nothing here, since the relation semantics live in this
- * process.
+ * One origin as the store reads it. `lineGrammar`, `wanted`, `temporalBody` and `semanticsPrimed` are applied around
+ * the store call (prepareDerived, finishDerived).
  */
 function derivedItem(member: string, origin: DerivedLinkOrigin, links: LinkBatchInput[], opts: DerivedLinkReplacementOptions | undefined) {
   const options = takeOptions(member, opts, ['includeFrontmatter', 'preserveExisting', 'includeLegacyNullProducer', 'expectedEndpoints',
@@ -206,6 +207,10 @@ type Prepared = { snapshot: PageSnapshot; keysBefore: RelationshipKey[] };
  * the origin again inside its call. Also reads the origin's relationship keys before the write.
  */
 async function prepareDerived(brain: StoreBrain, origins: DerivedLinkOrigin[], opts: Array<DerivedLinkReplacementOptions | undefined>): Promise<Prepared[]> {
+  // derived-links.ts: an origin whose caller did not prime the pack relation semantics primes them before the keys read.
+  if (opts.some(o => !o?.semanticsPrimed)) {
+    await primeRelationSemantics({ getConfig: key => getConfig(brain, key), listConfigKeys: prefix => listConfigKeys(brain, prefix) });
+  }
   if (opts.some(o => o?.lineGrammar)) {
     const generation = await getConfig(brain, LINK_EXTRACTION_GENERATION_KEY);
     if (opts.some(o => o?.lineGrammar && o.lineGrammar.generation !== (generation ?? null))) throw new DerivedLinkSettingsChangedError();
@@ -241,24 +246,31 @@ async function finishDerived(brain: StoreBrain, prepared: Prepared, item: Return
   await applyTemporalEvidence(temporalStore(brain), snapshot.page, item.rows, keysBefore, { inlineRanges, body: opts?.temporalBody });
 }
 
-export const replaceDerivedLinks: StoreMember<[origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions], Counts> =
-  async (brain, origin, links, opts) => {
-    const item = derivedItem('replaceDerivedLinks', origin, links, opts);
-    const [prepared] = await prepareDerived(brain, [origin], [opts]);
-    const [result] = await publish(brain, 'replaceDerivedLinks', [origin], [item]);
-    await finishDerived(brain, prepared!, item, opts);
-    return result!;
-  };
+/**
+ * Whether `engine` is a transaction-bound clone. A derived-link write called on the engine itself runs in its own
+ * transaction, as derived-links.ts runs PGLite's: the edges, the wanted rows and the temporal and relationship state
+ * commit together, or none do.
+ */
+function inTransaction(engine: RustEngine): boolean { return engine._txScope !== null; }
 
-export const replaceDerivedLinksBatch: StoreMember<[items: readonly DerivedLinkBatchItem[]], Counts[]> =
-  async (brain, items) => {
-    const wire = items.map(item => derivedItem('replaceDerivedLinksBatch', item.origin, item.links, item.opts));
-    if (!wire.length) return [];
-    const prepared = await prepareDerived(brain, items.map(item => item.origin), items.map(item => item.opts));
-    const results = await publish(brain, 'replaceDerivedLinksBatch', items.map(item => item.origin), wire);
-    for (const [i, item] of items.entries()) await finishDerived(brain, prepared[i]!, wire[i]!, item.opts);
-    return results;
-  };
+export const replaceDerivedLinks = async function replaceDerivedLinks(this: RustEngine, brain: StoreBrain, origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions): Promise<Counts> {
+  if (!inTransaction(this)) return (this as unknown as BrainEngine).transaction(tx => tx.replaceDerivedLinks(origin, links, opts));
+  const item = derivedItem('replaceDerivedLinks', origin, links, opts);
+  const [prepared] = await prepareDerived(brain, [origin], [opts]);
+  const [result] = await publish(brain, 'replaceDerivedLinks', [origin], [item]);
+  await finishDerived(brain, prepared!, item, opts);
+  return result!;
+};
+
+export const replaceDerivedLinksBatch = async function replaceDerivedLinksBatch(this: RustEngine, brain: StoreBrain, items: readonly DerivedLinkBatchItem[]): Promise<Counts[]> {
+  if (items.length && !inTransaction(this)) return (this as unknown as BrainEngine).transaction(tx => tx.replaceDerivedLinksBatch(items));
+  const wire = items.map(item => derivedItem('replaceDerivedLinksBatch', item.origin, item.links, item.opts));
+  if (!wire.length) return [];
+  const prepared = await prepareDerived(brain, items.map(item => item.origin), items.map(item => item.opts));
+  const results = await publish(brain, 'replaceDerivedLinksBatch', items.map(item => item.origin), wire);
+  for (const [i, item] of items.entries()) await finishDerived(brain, prepared[i]!, wire[i]!, item.opts);
+  return results;
+};
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Provenance
@@ -266,16 +278,17 @@ export const replaceDerivedLinksBatch: StoreMember<[items: readonly DerivedLinkB
 
 type KeepPair = { from_slug: string; from_source_id: string; to_slug: string; to_source_id: string };
 
-export const removeLinksByPagesAndSource: StoreMember<[pages: Array<{ slug: string; source_id: string }>, opts: { linkSource: string; keepTypedNerPairs?: KeepPair[] }], number> =
-  async (brain, pages, opts) => {
-    if (pages.length === 0) return 0;
-    const options = takeOptions('removeLinksByPagesAndSource', opts, ['linkSource', 'keepTypedNerPairs']);
-    const wire = pages.map(p => ({ slug: p.slug, source_id: p.source_id }));
-    const before = await linkRelationshipKeysTouching(brain, 'removeLinksByPagesAndSource', { fromPages: wire });
-    const removed: number = await storeCall({ member: 'removeLinksByPagesAndSource' }, () => brain.removeLinksByPagesAndSource(wire, options));
-    if (removed) await refreshOnStore(brain, before);
-    return removed;
-  };
+export const removeLinksByPagesAndSource = async function removeLinksByPagesAndSource(this: RustEngine, brain: StoreBrain, pages: Array<{ slug: string; source_id: string }>, opts: { linkSource: string; keepTypedNerPairs?: KeepPair[] }): Promise<number> {
+  if (pages.length === 0) return 0;
+  // The removal and the relationship refresh commit together (see inTransaction).
+  if (!inTransaction(this)) return (this as unknown as BrainEngine).transaction(tx => tx.removeLinksByPagesAndSource(pages, opts));
+  const options = takeOptions('removeLinksByPagesAndSource', opts, ['linkSource', 'keepTypedNerPairs']);
+  const wire = pages.map(p => ({ slug: p.slug, source_id: p.source_id }));
+  const before = await linkRelationshipKeysTouching(brain, 'removeLinksByPagesAndSource', { fromPages: wire });
+  const removed: number = await storeCall({ member: 'removeLinksByPagesAndSource' }, () => brain.removeLinksByPagesAndSource(wire, options));
+  if (removed) await refreshOnStore(brain, before);
+  return removed;
+};
 
 export const listLinkSources: StoreMember<[opts?: { sourceId?: string; sourceIds?: string[] }], Array<{ link_source: string | null; count: number }>> =
   (brain, opts) => {

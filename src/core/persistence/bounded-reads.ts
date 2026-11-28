@@ -113,7 +113,9 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'readWriteVisibilityProbe', 'readWriterSlugFence', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readSourceRow',
   'readMayActFor', 'readAudiencePrincipals', 'readScopeSourceConfigs', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig',
   // The fence overlay, stored-body and purge-ledger reads a page preparation makes (page-prepare.ts): raw statements before they became typed members.
-  'readFenceOverlayRows', 'readLiveStoredBody', 'readSourcePurgeFlags', 'listPurgedTakeRows']);
+  'readFenceOverlayRows', 'readLiveStoredBody', 'readSourcePurgeFlags', 'listPurgedTakeRows',
+  // The facts-backstop probes a metadata-only edit makes (effect-facts.ts): raw statements before they became typed members.
+  'hasPendingFactsExtraction', 'hasCompletedFactsExtraction']);
 
 /** Test seam (test/e2e/typed-preparation-reads-guard-postgres.test.ts): told of every engine method a bounded view hands out. */
 type PreparationMemberObserver = (member: string, typed: boolean, engineReads: boolean) => void;

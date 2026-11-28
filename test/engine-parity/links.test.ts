@@ -274,6 +274,51 @@ describe('engine parity: links', () => {
     },
   );
 
+  // A wanted name row with no readAt fails after the edges are written: the whole replacement rolls back.
+  const badWanted = {
+    rows: [{ producer: 'body' as const, ref_kind: 'name' as const, target_source_id: 'default', target_ref: 'Nobody Yet', link_type: 'mentions', context: 'x' }],
+    producers: ['body' as const],
+  };
+
+  parityTest(
+    'replaceDerivedLinks that fails after its edges keeps the old edges (one transaction)',
+    { methods: ['replaceDerivedLinks', 'readPageSnapshot', 'getLinks', 'putPage'] },
+    async (engine) => {
+      await seedPages(engine, ['r/origin', 'r/old', 'r/new']);
+      const origin = async () => {
+        const snap = await engine.readPageSnapshot('r/origin', { sourceId: 'default' });
+        return { slug: 'r/origin', sourceId: 'default', expectedRevision: snap!.revision, sourceIncarnation: snap!.sourceIncarnation };
+      };
+      await engine.replaceDerivedLinks(await origin(), [{ from_slug: 'r/origin', to_slug: 'r/old', link_type: 'cites', link_source: 'markdown' }]);
+      const error = await engine.replaceDerivedLinks(await origin(),
+        [{ from_slug: 'r/origin', to_slug: 'r/new', link_type: 'cites', link_source: 'markdown' }], { wanted: badWanted })
+        .then(() => 'resolved', (e: Error) => e.message);
+      const after = sortedLinks(await engine.getLinks('r/origin')).map(linkKey);
+      expect(after).toEqual(['r/origin>r/old:cites:markdown']);
+      return { error, after };
+    },
+  );
+
+  parityTest(
+    'replaceDerivedLinksBatch that fails on a later origin keeps every origin\'s old edges',
+    { methods: ['replaceDerivedLinksBatch', 'readPageSnapshot', 'getLinks', 'putPage'] },
+    async (engine) => {
+      await seedPages(engine, ['s/a', 's/b', 's/t1', 's/t2']);
+      const origin = async (slug: string) => {
+        const snap = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+        return { slug, sourceId: 'default', expectedRevision: snap!.revision, sourceIncarnation: snap!.sourceIncarnation };
+      };
+      const error = await engine.replaceDerivedLinksBatch([
+        { origin: await origin('s/a'), links: [{ from_slug: 's/a', to_slug: 's/t1', link_type: 'cites', link_source: 'markdown' }] },
+        { origin: await origin('s/b'), links: [{ from_slug: 's/b', to_slug: 's/t2', link_type: 'cites', link_source: 'markdown' }], opts: { wanted: badWanted } },
+      ]).then(() => 'resolved', (e: Error) => e.message);
+      const a = sortedLinks(await engine.getLinks('s/a')).map(linkKey);
+      const b = sortedLinks(await engine.getLinks('s/b')).map(linkKey);
+      expect({ a, b }).toEqual({ a: [], b: [] });
+      return { error, a, b };
+    },
+  );
+
   parityTest(
     'getLinks/getBacklinks hide soft-deleted endpoints and respect source scope',
     { methods: ['getLinks', 'getBacklinks', 'addLink', 'softDeletePage', 'restorePage', 'putPage'] },

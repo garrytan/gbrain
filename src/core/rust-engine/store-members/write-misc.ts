@@ -7,7 +7,7 @@
  * Export only BrainEngine members from this file: index.ts spreads the whole module into STORE_MEMBERS.
  */
 import type { AdmissionSourceRow, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding } from '../../engine-sql/write-misc.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 /**
  * The source's incarnation, archived flag, local path and config, or null. `lock: 'share'` asks the SQL engines to hold
@@ -24,11 +24,14 @@ function jsonText(value: unknown): string | null {
 
 /**
  * Page admission's source row. The store has no guest_sources table and no row-level security, so no guest_sources
- * row joins and nothing is hidden.
+ * row joins and nothing is hidden. A guest source (config guest: true) refuses, as readGuestSourceRow does: without its
+ * guest_sources row, admission would read it as an ordinary source and skip the guest writer and attribution checks.
  */
 export const readAdmissionSource: StoreMember<[sourceId: string], AdmissionSourceRow | null> = async (brain, sourceId) => {
   const row: SourceStateRow | null = await storeCall({ member: 'readAdmissionSource', sourceId }, () => brain.readSourceState(sourceId));
   if (!row) return null;
+  const guests: string[] = await storeCall({ member: 'readAdmissionSource', sourceId }, () => brain.listGuestSourceIds([sourceId]));
+  if (guests.includes(sourceId)) refuseMember('readAdmissionSource', `source ${sourceId} is a guest source (config guest: true) and the store keeps no guest_sources row for its writers`);
   return {
     incarnation: row.incarnation, archived: row.archived, local_path: row.local_path,
     kind: jsonText(row.config.kind), role: jsonText(row.config.role),

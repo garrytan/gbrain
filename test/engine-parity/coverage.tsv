@@ -303,10 +303,10 @@ transactionDirect	lifecycle	yes	1	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	52	yes	yes	yes	serves
-readPageSnapshot	pages	yes	31	no	yes	yes	serves
+readPageSnapshot	pages	yes	33	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	serves
-putPage	pages	yes	212	yes	yes	yes	serves
+putPage	pages	yes	214	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -403,11 +403,11 @@ listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
 addLink	links	yes	37	yes	yes	yes	serves
 addLinksBatch	links	yes	1	yes	yes	yes	serves
-replaceDerivedLinks	links	yes	1	no	yes	yes	serves
-replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
+replaceDerivedLinks	links	yes	2	no	yes	yes	serves
+replaceDerivedLinksBatch	links	yes	2	no	yes	yes	serves
 removeLink	links	yes	2	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	9	yes	yes	yes	serves
+getLinks	links	yes	11	yes	yes	yes	serves
 getBacklinks	links	yes	3	yes	yes	yes	serves
 listLinkSources	links	yes	1	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	5	no	yes	yes	serves
