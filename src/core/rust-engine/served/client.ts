@@ -25,6 +25,7 @@ import { schemaVersionSeen } from '../../migrate-pending.ts';
 import { readDeadline } from '../../read-deadline.ts';
 import { currentStatementDeadline } from '../../statement-deadline.ts';
 import { callerAccessRecord } from '../../search/private-visibility.ts';
+import { currentMemberClaim } from '../../member-claim.ts';
 import { decodeError, decodeValue, encodeError, encodeValue, OwnerIpcEncodeError, type Wire } from '../owner-ipc/codec.ts';
 import {
   OWNER_IPC_VERSION_V3, SERVED_SERVER_CAPS, comparePositions, frameLine, readFrames, type CommitPositionWire, type OwnerHello,
@@ -445,6 +446,8 @@ export async function connectServed(url: string, opts: ConnectServedOptions = {}
     const { deadlineAt, readDeadlineAt } = callDeadline();
     const record = callerAccessRecord();
     const scope = callerScope();
+    // A remote side write names the client it is for (member-claim.ts); the server checks the write against it.
+    const claim = remote ? currentMemberClaim() : null;
     // Read-your-writes (I-2): a token the caller holds (read-position.ts) goes with the call; only a server with positions reads it.
     const minPosition = caps.has('positions') ? currentReadPosition() : undefined;
     const frame: Record<string, unknown> = {
@@ -454,6 +457,7 @@ export async function connectServed(url: string, opts: ConnectServedOptions = {}
       ...(readDeadlineAt !== undefined ? { read_deadline_at: readDeadlineAt } : {}),
       ...(record ? { access: encodeValue(record) } : {}),
       ...(scope ? { scope } : {}),
+      ...(claim ? { claim } : {}),
       ...(minPosition ? { min_position: minPosition } : {}),
     };
     return send(frame, member, callbacks, ropts.txn, signals, deadlineAt);

@@ -11,14 +11,18 @@ import { randomBytes } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
 import type { BrainEngine } from '../engine.ts';
 import { hasScope } from '../scope.ts';
+import { isRemoteCaller, withRemoteCaller } from '../remote-caller.ts';
+import { currentMemberClaim, memberClaimOf, withMemberClaim, type MemberClaim } from '../member-claim.ts';
+import { callerAccessRecord, withCallerAccess, withoutCallerAccess, type CallerAccess } from '../search/private-visibility.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
+import { ANSWER_ID_RE } from './answer-id.ts';
 import { loadFeedbackSettings } from './settings.ts';
 import {
   applyRatings, insertRetrievalEvents,
   type EventLink, type EventPage, type FeedbackOp, type RetrievalEventInput,
 } from './store.ts';
 
-export const ANSWER_ID_RE = /^ans_[0-9A-HJKMNP-TV-Z]{26}$/;
+export { ANSWER_ID_RE };
 export const QUEUE_CAP = 1000;
 export const PENDING_GRACE_MS = 60_000;
 export const CITED_RATING = 4;
@@ -74,12 +78,23 @@ export function canTeachSource(
 
 export interface AnswerFeedbackMeta {
   answer_id?: string;
-  feedback: { rateable: boolean; reason?: 'not_authorized' | 'disabled' | 'empty'; how_to_rate?: string };
+  feedback: {
+    rateable: boolean;
+    reason?: 'not_authorized' | 'disabled' | 'empty' | 'record_failed';
+    how_to_rate?: string;
+    /** `FEEDBACK_RECORD_FAILED`, or `FEEDBACK_EVENTS_LOST:<count>` (this client's earlier answers that were never stored). */
+    warnings?: string[];
+  };
 }
 
-type Job =
+/** The context a job was enqueued under: the write runs under it, never under whoever started the drain loop. */
+interface JobContext { access: CallerAccess | null; remote: boolean; claim: MemberClaim | null }
+
+type Job = { ctx: JobContext } & (
   | { kind: 'event'; event: RetrievalEventInput }
-  | { kind: 'cited'; eventId: string; clientId: string; alpha: number; pages: EventPage[] };
+  | { kind: 'cited'; eventId: string; clientId: string; alpha: number; pages: EventPage[] });
+type EventJob = Extract<Job, { kind: 'event' }>;
+type CitedJob = Extract<Job, { kind: 'cited' }>;
 
 interface QueueState {
   engine: BrainEngine;
@@ -91,12 +106,33 @@ interface QueueState {
 const queues = new Map<BrainEngine, QueueState>();
 const pendingEventIds = new Map<string, number>();
 let dropped = 0;
+/** Per client, how many of its stored answers this process lost since that client's last answer (bounded: a loss for a client past the cap is only on stderr). */
+const lostByClient = new Map<string, number>();
+const MAX_LOST_CLIENTS = 1000;
+/** Ids of answers this process lost, newest last, bounded. */
+const lostAnswerIds = new Set<string>();
+const MAX_LOST_IDS = 5000;
 /**
  * The `how_to_rate` cadence counter, per client and PROCESS-LOCAL: it resets
  * when the process restarts, so a restarted server coaches again on its first
  * answer. The visible MCP rate line (dispatch `rateLine`) does not depend on it.
  */
 let answersSinceHint = new Map<string, number>();
+
+/** The caller context to run a job under: the enqueuing caller's own access record, remote mark and claim. */
+function captureContext(ctx: OperationContext): JobContext {
+  const remote = isRemoteCaller() || ctx.remote !== false;
+  return { access: callerAccessRecord(), remote, claim: remote ? currentMemberClaim() ?? memberClaimOf(ctx) : null };
+}
+
+const sameContext = (a: JobContext, b: JobContext): boolean =>
+  a.access === b.access && a.remote === b.remote && JSON.stringify(a.claim) === JSON.stringify(b.claim);
+
+/** Runs `fn` as the caller `c` was captured from: its remote mark, access record (or none) and claim. */
+function runAs<T>(c: JobContext, fn: () => T): T {
+  const access = c.access;
+  return withRemoteCaller(c.remote, () => withoutCallerAccess(() => withMemberClaim(c.claim, () => (access ? withCallerAccess(access, fn) : fn()))));
+}
 
 function enqueue(engine: BrainEngine, job: Job): void {
   let q = queues.get(engine);
@@ -106,27 +142,70 @@ function enqueue(engine: BrainEngine, job: Job): void {
   }
   q.jobs.push(job);
   if (job.kind === 'event') pendingEventIds.set(job.event.id, Date.now());
-  while (q.jobs.length > QUEUE_CAP) {
-    const lost = q.jobs.shift()!;
-    if (lost.kind === 'event') pendingEventIds.delete(lost.event.id);
+  const lost: Job[] = [];
+  while (q.jobs.length > QUEUE_CAP) lost.push(q.jobs.shift()!);
+  if (lost.length > 0) noteLost(lost, 'queue_overflow');
+  // The drain loop starts under the enqueuing caller's context; it must not carry it into other callers' jobs.
+  if (!q.running) q.running = runAs({ access: null, remote: false, claim: null }, () => runQueue(q));
+}
+
+/** Events a caller was never given back or never stored are counted, named on stderr and reported to that client's next answer. */
+function noteLost(jobs: readonly Job[], code: string): void {
+  const events = jobs.filter((j): j is EventJob => j.kind === 'event');
+  for (const j of events) {
+    pendingEventIds.delete(j.event.id);
     dropped++;
+    rememberLostId(j.event.id);
+    if (lostByClient.has(j.event.client_id) || lostByClient.size < MAX_LOST_CLIENTS) lostByClient.set(j.event.client_id, (lostByClient.get(j.event.client_id) ?? 0) + 1);
   }
-  if (!q.running) q.running = runQueue(q);
+  dropped += jobs.length - events.length;
+  const ops = [...new Set(events.map(j => j.event.op))].join(',');
+  logLoss(`code=${code} events=${events.length} cited=${jobs.length - events.length}${ops ? ` ops=${ops}` : ''}`);
+}
+
+let lastLossLog = 0;
+let suppressedLoss = 0;
+/** One sanitized line per loss (code, op and count only, never page text or ids), at most one a second; the rest are counted into the next. */
+function logLoss(detail: string): void {
+  const now = Date.now();
+  if (lastLossLog !== 0 && now - lastLossLog < 1000) { suppressedLoss++; return; }
+  lastLossLog = now;
+  console.error(`[gbrain feedback] answers lost: ${detail}${suppressedLoss > 0 ? ` (+${suppressedLoss} more events of this kind since the last line)` : ''}`);
+  suppressedLoss = 0;
+}
+
+function rememberLostId(id: string): void {
+  lostAnswerIds.add(id);
+  if (lostAnswerIds.size > MAX_LOST_IDS) lostAnswerIds.delete(lostAnswerIds.values().next().value as string);
+}
+
+/** True when this process dropped (or failed to store) the answer with this id: rate_answer says so instead of "unknown". */
+export function wasAnswerLost(id: string): boolean {
+  return lostAnswerIds.has(id);
+}
+
+function errorCode(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && /^[a-z0-9_]{1,64}$/.test(code) ? code : 'write_failed';
 }
 
 async function runQueue(q: QueueState): Promise<void> {
   try {
     while (q.jobs.length > 0) {
-      const batch: Job[] = [];
-      while (q.jobs.length > 0 && batch.length < 50 && q.jobs[0]!.kind === 'event') batch.push(q.jobs.shift()!);
+      const batch: EventJob[] = [];
+      // Only events of one caller context share a write: the write runs as that caller.
+      while (q.jobs.length > 0 && batch.length < 50 && q.jobs[0]!.kind === 'event' && (batch.length === 0 || sameContext(batch[0]!.ctx, q.jobs[0]!.ctx))) batch.push(q.jobs.shift() as EventJob);
+      let failed: unknown = null;
+      let cited: CitedJob | null = null;
       try {
         if (batch.length > 0) {
           q.inFlight = batch.length;
-          await insertRetrievalEvents(q.engine, batch.map(j => (j as Extract<Job, { kind: 'event' }>).event));
+          await runAs(batch[0]!.ctx, () => insertRetrievalEvents(q.engine, batch.map(j => j.event)));
         } else {
-          const job = q.jobs.shift() as Extract<Job, { kind: 'cited' }>;
+          const job = q.jobs.shift() as CitedJob;
+          cited = job;
           q.inFlight = 1;
-          await applyRatings(q.engine, {
+          await runAs(job.ctx, () => applyRatings(q.engine, {
             eventId: job.eventId,
             clientId: job.clientId,
             signal: 'cited',
@@ -134,14 +213,15 @@ async function runQueue(q: QueueState): Promise<void> {
             targets: job.pages.map(p => ({
               kind: 'page' as const, source_id: p.source_id, key: p.slug, rating: CITED_RATING, content_hash: p.content_hash,
             })),
-          });
+          }));
         }
-      } catch {
-        dropped += Math.max(1, batch.length);
+      } catch (error) {
+        failed = error;
       } finally {
         q.inFlight = 0;
-        for (const j of batch) pendingEventIds.delete((j as Extract<Job, { kind: 'event' }>).event.id);
+        for (const j of batch) pendingEventIds.delete(j.event.id);
       }
+      if (failed !== null) noteLost(batch.length > 0 ? batch : [cited!], errorCode(failed));
     }
   } finally {
     q.running = null;
@@ -190,6 +270,12 @@ export async function recordAnswer(ctx: OperationContext, input: RecordAnswerInp
   try {
     const settings = await loadFeedbackSettings(ctx.engine);
     if (!settings.enabled) return null;
+    const clientId = feedbackClientId(ctx);
+    // This client's earlier answers that were never stored: named once, on its next answer, then reset.
+    const lostCount = lostByClient.get(clientId) ?? 0;
+    lostByClient.delete(clientId);
+    const warnings = lostCount > 0 ? [`FEEDBACK_EVENTS_LOST:${lostCount}`] : [];
+    const withWarnings = <M extends AnswerFeedbackMeta>(m: M): M => { if (warnings.length > 0) m.feedback.warnings = warnings; return m; };
     const seen = new Set<string>();
     const pages: EventPage[] = [];
     for (const p of input.pages) {
@@ -199,12 +285,13 @@ export async function recordAnswer(ctx: OperationContext, input: RecordAnswerInp
       seen.add(id);
       pages.push({ source_id, slug: p.slug, content_hash: p.content_hash ?? null, rank: pages.length, cited: p.cited === true });
     }
-    if (pages.length === 0) return { feedback: { rateable: false, reason: 'empty' } };
+    if (pages.length === 0) return withWarnings({ feedback: { rateable: false, reason: 'empty' } });
     const teachable = pages.filter(p => canTeachSource(ctx, p.source_id));
-    if (teachable.length === 0) return { feedback: { rateable: false, reason: 'not_authorized' } };
-    const clientId = feedbackClientId(ctx);
+    if (teachable.length === 0) return withWarnings({ feedback: { rateable: false, reason: 'not_authorized' } });
     const id = mintAnswerId();
+    const jobCtx = captureContext(ctx);
     enqueue(ctx.engine, {
+      ctx: jobCtx,
       kind: 'event',
       event: {
         id, client_id: clientId, op: input.op, pages,
@@ -213,9 +300,9 @@ export async function recordAnswer(ctx: OperationContext, input: RecordAnswerInp
     });
     const cited = teachable.filter(p => p.cited && p.content_hash);
     if (settings.learn && settings.implicit && cited.length > 0) {
-      enqueue(ctx.engine, { kind: 'cited', eventId: id, clientId, alpha: settings.alpha, pages: cited });
+      enqueue(ctx.engine, { ctx: jobCtx, kind: 'cited', eventId: id, clientId, alpha: settings.alpha, pages: cited });
     }
-    const meta: AnswerFeedbackMeta = { answer_id: id, feedback: { rateable: true } };
+    const meta = withWarnings<AnswerFeedbackMeta>({ answer_id: id, feedback: { rateable: true } });
     if (settings.ratingPrompt) {
       const n = answersSinceHint.get(clientId) ?? 0;
       if (n % HINT_EVERY === 0) {
@@ -225,7 +312,9 @@ export async function recordAnswer(ctx: OperationContext, input: RecordAnswerInp
     }
     return meta;
   } catch {
-    return null;
+    // Recording is best-effort and never throws, but a failure is not silent: the answer says its event was not recorded.
+    console.error('[gbrain feedback] recording an answer failed: code=record_failed');
+    return { feedback: { rateable: false, reason: 'record_failed', warnings: ['FEEDBACK_RECORD_FAILED'] } };
   }
 }
 
@@ -233,13 +322,17 @@ export function _resetFeedbackRecordingForTests(): void {
   queues.clear();
   pendingEventIds.clear();
   dropped = 0;
+  lostByClient.clear();
+  lostAnswerIds.clear();
+  lastLossLog = 0;
+  suppressedLoss = 0;
   answersSinceHint = new Map();
 }
 
-/** Additive response-meta fields: present only on a rateable answer, so readers see no change. */
+/** Additive response-meta fields: present only on a rateable answer or when a warning must reach the caller, so readers see no change otherwise. */
 export function feedbackMetaFields(meta: AnswerFeedbackMeta | null): Record<string, unknown> {
-  if (!meta?.answer_id) return {};
-  return { answer_id: meta.answer_id, feedback: meta.feedback };
+  if (!meta || (!meta.answer_id && !meta.feedback.warnings?.length)) return {};
+  return { ...(meta.answer_id ? { answer_id: meta.answer_id } : {}), feedback: meta.feedback };
 }
 
 /** Typed edges on the representative relational path of each returned relational-arm row. */

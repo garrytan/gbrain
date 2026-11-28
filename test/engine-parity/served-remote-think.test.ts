@@ -18,18 +18,13 @@
  *  - Regression: the engine reads think reaches only through its save and take paths were listed as reachable by a
  *    remote caller of a served client; a remote think never reaches them, because it never saves or takes. A think that reached one would
  *    stop on its typed refusal on the served arm, and a think that saved would call a write member here.
- *  - Served-arm loss, pinned until S4 (retrieval): on multi-user Rust with feedback turned on (off by default), the served
- *    client refuses readPageFeedbackWeights, so a remote think's page stream fails and the think answers without page
- *    evidence. The remote caller sees the warning GATHER_HYBRID_FAILED in the reply, never a quiet empty answer; the case
- *    stops there (rustMultiuserStop, served only) only when that one member refused and the reply is that degraded
- *    answer, and compares on every other arm.
  *  - Why existing coverage misses it: think-gather-takes.test.ts runs the gather alone in process; no parity file ran a
  *    remote think on the served routes.
  *  - Seam: the chat model's text transport (__setGenerateTextTransportForTests), so no paid call runs; a test-local proxy
  *    that records the write members the think calls. Pages are seeded with putPage and sealChunks.
  */
 import { expect } from 'bun:test';
-import { MultiuserStopError, parityArms } from './harness.ts';
+import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
@@ -50,7 +45,6 @@ const PRIVATE = 'thinkmarkprivatepage7f31';
 const READERS = 'thinkmarkreaderspage2c86';
 const QUESTION = `What is ${OPEN}?`;
 const CHAT_MODEL = 'anthropic:claude-opus-4-7';
-const HYBRID_FAILED = 'GATHER_HYBRID_FAILED';
 /** The fake chat gateway has no embedding key, so a think with it warns that the question was not embedded; nothing else. */
 const NO_EMBED_WARNINGS = ['QUESTION_EMBED_FAILED', 'GATHER_DEGRADED:embed_unavailable'];
 
@@ -161,16 +155,7 @@ parityTest('a remote think asked to save and take saves nothing', { methods: ['p
   return result;
 });
 
-/** S4 (retrieval) serves readPageFeedbackWeights to a remote caller of a served client and removes this pin. */
-const FEEDBACK_GATHER_STOP = {
-  code: 'gather_hybrid_failed',
-  message: `${HYBRID_FAILED}: the served client refused readPageFeedbackWeights`,
-  owner: 'L3 S4 retrieval',
-  due: '2026-12-04',
-  served: true as const,
-};
-
-parityTest('with feedback on, a remote think records one retrieval event for the caller and the open page only', { methods: ['putPage', 'sealChunks', 'setConfig'], rustMultiuserStop: FEEDBACK_GATHER_STOP, timeout: 240_000 }, async (engine: BrainEngine) => {
+parityTest('with feedback on, a remote think records one retrieval event for the caller and the open page only', { methods: ['putPage', 'sealChunks', 'setConfig'], timeout: 240_000 }, async (engine: BrainEngine) => {
   await seed(engine, false);
   await engine.setConfig('feedback.enabled', 'true');
   await engine.setConfig('models.think', CHAT_MODEL);
@@ -179,15 +164,6 @@ parityTest('with feedback on, a remote think records one retrieval event for the
   const recorded = recorder(engine);
   const out = await withFakeChat(() => dispatchToolCall(recorded.engine, 'think', { question: QUESTION }, ctx as never));
   const body = bodyOf(out) as ThinkBody & { answer_id?: string };
-  // The served-arm loss (see the file header). The case stops only on that loss: the one typed refusal is
-  // readPageFeedbackWeights, and the remote caller gets an answer with the warning and no page evidence. Any other
-  // refusal or reply shape fails the case.
-  if (body.warnings?.includes(HYBRID_FAILED)) {
-    _resetFeedbackSettingsCacheForTests();
-    expect({ error: out.isError === true, refusals: recorded.refusals, pagesGathered: body.pagesGathered ?? null, warned: true })
-      .toEqual({ error: false, refusals: ['readPageFeedbackWeights'], pagesGathered: 0, warned: true });
-    throw new MultiuserStopError(FEEDBACK_GATHER_STOP.code, FEEDBACK_GATHER_STOP.message);
-  }
   await drainFeedbackQueue(30_000);
   const event = body.answer_id ? await getRetrievalEvent(engine, body.answer_id) : null;
   _resetFeedbackSettingsCacheForTests();

@@ -4,7 +4,9 @@
  * (served/session-calls.ts), against the engine or the transaction handle the call runs on, so no path skips it.
  *
  * The side write a remote caller may make (owner-ipc/routes.ts OWNER_IPC_REMOTE_SIDE_WRITES, ruled 2026-11-26):
- * `bumpPageRetrievals`, the usage stamp a remote read makes in process too.
+ * `bumpPageRetrievals`, the usage stamp a remote read makes in process too, and `insertRetrievalEvents`, the retrieval event
+ * a remote answer records for its caller (checked in retrieval-event-policy.ts: the call's claim, the pages it may read,
+ * no other client's answer id).
  *
  * The stamp feeds ranking and sampling (search stale-bias, brainstorm sampling, volunteered context), so a forged stamp
  * could move what other callers see. The brain server therefore stamps only page ids the caller may read: it resolves each
@@ -17,6 +19,7 @@
 import { opError } from '../../ops/contract.ts';
 import { isRemoteCaller } from '../../remote-caller.ts';
 import type { BrainEngine } from '../../engine.ts';
+import { retrievalEventPolicy } from './retrieval-event-policy.ts';
 
 type Member = (...args: unknown[]) => Promise<unknown>;
 /** The page ids one call names, read from its arguments; a value that is not a list of safe integers is refused. */
@@ -48,6 +51,7 @@ const PAGE_ID_GUARDS: Readonly<Record<string, PageIdGuard>> = {
 /** The owner's call target for `member` on `engine` (the engine or a transaction handle): the remote caller's check first, else the member itself. */
 export function remoteMemberPolicy(engine: object, member: string, method: Member): Member {
   const plain: Member = (...args) => method.apply(engine, args);
+  if (member === 'insertRetrievalEvents') return retrievalEventPolicy(engine, plain, isRemoteCaller);
   const guard = Object.hasOwn(PAGE_ID_GUARDS, member) ? PAGE_ID_GUARDS[member]! : undefined;
   if (!guard) return plain;
   return async (...args) => {

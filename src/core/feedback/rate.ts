@@ -12,7 +12,7 @@ import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
 import { loadFeedbackSettings } from './settings.ts';
 import {
-  ANSWER_ID_RE, PENDING_GRACE_MS, answerIdTime, canTeachSource, feedbackClientId, isAnswerPending,
+  ANSWER_ID_RE, PENDING_GRACE_MS, answerIdTime, canTeachSource, feedbackClientId, isAnswerPending, wasAnswerLost,
 } from './record.ts';
 import {
   applyRatings, countRecentRatingCalls, currentPageHashes, getRetrievalEvent,
@@ -88,6 +88,10 @@ export async function rateAnswer(ctx: OperationContext, input: RateInput): Promi
   const clientId = feedbackClientId(ctx);
   const event = await getRetrievalEvent(ctx.engine, answerId);
   if (!event) {
+    if (wasAnswerLost(answerId)) {
+      throw opError('answer_unavailable', `Answer ${answerId} was never stored: this server lost it before it was written.`,
+        'Run the query again and rate the new answer_id.', { reason: 'event_lost', retryable: false, docs: `${DOCS}#answer_unavailable` });
+    }
     const minted = answerIdTime(answerId) ?? 0;
     if (isAnswerPending(answerId) || Date.now() - minted < PENDING_GRACE_MS) {
       throw opError('answer_pending', `Answer ${answerId} is still being recorded.`,

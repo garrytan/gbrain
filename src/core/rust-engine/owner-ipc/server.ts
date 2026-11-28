@@ -49,6 +49,7 @@ import type { BrainEngine } from '../../engine.ts';
 import { withRequestSignal } from '../../request-signal.ts';
 import { withReadDeadline } from '../../read-deadline.ts';
 import { withCallerAccess, withoutCallerAccess, type CallerAccess } from '../../search/private-visibility.ts';
+import { parseMemberClaim, withMemberClaim } from '../../member-claim.ts';
 import { claimLocalIpcBinding, isWindowsIpcPipe } from '../../context/ipc-path.ts';
 import { peerCredSupport, peerUid, type PeerCredSupport } from '../../peer-cred.ts';
 import { decodeValue, encodeError, encodeValue, type Wire } from './codec.ts';
@@ -686,9 +687,9 @@ export async function serveOwnerEngine(
     let access: CallerAccess | null;
     try { access = frame.access === undefined ? null : callerAccessOf(member, decodeValue(frame.access as Wire)); } catch (error) { refuse(error); return; }
     const invoke = () => runAsOwnerClientCall(() => readDeadlineAt === undefined ? target(...args) : withReadDeadline(readDeadlineAt, () => target(...args)));
-    // The call runs under the caller's access record (re-checked by withCallerAccess) or none, exempt from the owner's host-fence
-    // refusal (fence-dispatch.ts), and a v3 call inside its session's scope (served/session.ts: remote mark, transaction binding).
-    const scoped = () => access ? withCallerAccess(access, invoke) : withoutCallerAccess(invoke);
+    // The call runs under the caller's access record (re-checked by withCallerAccess) or none, its claim (member-claim.ts, never inherited),
+    // exempt from the owner's host-fence refusal (fence-dispatch.ts), and a v3 call inside its session's scope (served/session.ts).
+    const scoped = () => withMemberClaim(parseMemberClaim(frame.claim), () => access ? withCallerAccess(access, invoke) : withoutCallerAccess(invoke));
     call.run = () => withRequestSignal(controller.signal, () => served ? served.wrapRun(scoped) : scoped());
     if (deadlineAt !== undefined) {
       call.deadlineAt = deadlineAt;

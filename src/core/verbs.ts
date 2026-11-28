@@ -444,7 +444,9 @@ const synthesize: Operation = {
     // (ENG-19). Defensive ?? 'ok' mirrors synthesisOk's back-compat posture.
     const status = result.synthesis_status ?? 'ok';
     const { recordThinkAnswer, feedbackMetaFields } = await import('./feedback/record.ts');
-    const feedbackMeta = feedbackMetaFields(await recordThinkAnswer(ctx, 'synthesize', result));
+    const answerMeta = await recordThinkAnswer(ctx, 'synthesize', result);
+    result.warnings.push(...(answerMeta?.feedback.warnings ?? []));
+    const feedbackMeta = feedbackMetaFields(answerMeta);
     if (status !== 'ok') {
       if (result.extractive) {
         return {
