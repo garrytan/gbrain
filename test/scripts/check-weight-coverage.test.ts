@@ -64,7 +64,7 @@ describe('check-weight-coverage', () => {
     const r = run(unit, { 'scripts/test-weights.json': partial }, 'pull_request');
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain('unit: 2 of 20 files (10.0%) have no weight in scripts/test-weights.json, above the 5% bound');
-    expect(r.stdout).toContain('Fix: bun run weights:mine --lane unit --run $(gh run list --workflow test.yml');
+    expect(r.stdout).toContain('Fix: bun run weights:mine --lane unit --latest 5 --coverage-only');
     expect(r.summary).toContain('Shard weight coverage');
   });
 

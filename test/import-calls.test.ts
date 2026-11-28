@@ -8,7 +8,7 @@
  *     own, keyword-only and out of the facts backstop; a rerun writes nothing again.
  *  2. Fails on: a planted credential in a stored page, a call imported twice, a changed file overwriting its page,
  *     a --prefix value read as the import folder, a page written under conversations/.
- *  3. A new mode on an existing command; test/setup-brain-layout.test.ts covers it through gbrain setup.
+ *  3. A new mode on an existing command; test/setup-brain-layout-transcripts*.test.ts cover it through gbrain setup.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
