@@ -67,6 +67,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { ItemRun } from '../item-failure.ts';
 import { rotationAfter, saveRotation } from '../repair/rotation.ts';
+import { restoreLostPublication } from '../lost-commit-file.ts';
 
 /** Tagged-union outcome of a single phantom-redirect attempt. */
 export type RedirectOutcome =
@@ -283,10 +284,14 @@ async function mergeIntoCanonicalFile(
   const hash = contentHash({ title: parsed.title, type: parsed.type, compiled_truth: parsed.compiled_truth, timeline: parsed.timeline,
     frontmatter: parsed.frontmatter, tags: await engine.getTags(canonical, { sourceId }) });
   const fileMoved = new Error('canonical file changed during the phantom redirect');
+  let published = false;
   const written = await maintenanceTransaction(engine, async tx => {
+    // A run that lost an optimistic commit (multi-user Rust) published the file: put it back before this run reads it.
+    if (published) { restoreLostPublication(canonicalPath, newBody, bytes, { path: tmpPath, body: newBody }); published = false; }
     if (!await mirrorFileBody(tx, sourceId, canonical, newBody, stored, hash)) return false;
     if (fs.readFileSync(canonicalPath, 'utf-8') !== bytes) throw fileMoved;
     fs.renameSync(tmpPath, canonicalPath);
+    published = true;
     return true;
   }).catch(err => { if (err === fileMoved) return false; throw err; });
   if (written) return { renumber };

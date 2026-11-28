@@ -296,6 +296,8 @@ async function acceptUnmanaged(engine: BrainEngine, proposal: PairProposal, stor
     try {
       // The strike edits a managed fence without authoring the page: it keeps its trust tier (#5575 ENG-1).
       await maintenanceTransaction(engine, (tx) => withTrustKeep(tx, ['pages'], async () => recordedPair(tx, fresh, 'accept', async () => {
+        // A run that lost an optimistic commit (multi-user Rust) published the file: put it back before this run reads it.
+        if (published) { restorePublishedFile(filePath!, fileBody!, plan!.body, slug!, fresh.source_id); published = false; }
         const revision = plan ? await mirrorBody(tx, slug!, fresh.source_id, plan.body, fileBody !== null, stored) : null;
         await expireOld(tx, fresh);
         await finishAccept(tx, fresh, before, plan ? fence(plan.after, revision) : null, store);
@@ -341,6 +343,8 @@ async function undoUnmanaged(engine: BrainEngine, proposal: PairProposal, store:
     let published = false;
     try {
       await maintenanceTransaction(engine, (tx) => withTrustKeep(tx, ['pages'], async () => recordedPair(tx, fresh, 'undo', async () => {
+        // A run that lost an optimistic commit (multi-user Rust) published the file: put it back before this run reads it.
+        if (published) { restorePublishedFile(filePath!, fileBody!, plan!.body, before.fence!.slug, fresh.source_id); published = false; }
         if (plan) await mirrorBody(tx, before.fence!.slug, fresh.source_id, plan.body, fileBody !== null, stored);
         await applyUndoDb(tx, fresh, before, after, store);
         if (plan && fileBody !== null) { publishFile(filePath!, plan.body, fileBody, before.fence!.slug, fresh.source_id); published = true; }

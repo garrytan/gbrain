@@ -66,6 +66,7 @@ import { readOnlyCheckout } from '../persistence/mirror-read-only.ts';
 import { bodyUnread } from '../page-body/page-shape.ts';
 import { bestEffortStoredBodyMirror, fileBodyMatchesStored, fileDatabaseDriftToken, mirrorFileBody, readStoredBody } from './file-body-guard.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
+import { restoreLostPublication } from '../lost-commit-file.ts';
 
 /** Resolved source binding for the entity page. */
 export interface FenceTarget {
@@ -578,7 +579,10 @@ export async function writeFactsToFence(
         source_session: facts[i].sessionId,
       }));
 
+      let published = false;
       const result = await maintenanceTransaction(engine, async tx => {
+        // A run that lost an optimistic commit (multi-user Rust) published the file: put it back before this run reads it.
+        if (published) { restoreLostPublication(filePath, tmpBody, fileBefore, { path: tmpPath, body: tmpBody }); published = false; }
         if (fileBefore === null ? existsSync(filePath) : !existsSync(filePath) || readFileSync(filePath, 'utf-8') !== fileBefore) return null;
         if (stored && !await bestEffortStoredBodyMirror(tx, target.sourceId, target.slug, stored,
           savepoint => withPageTierKept(savepoint, target, () => mirrorFileBody(savepoint, target.sourceId, target.slug, tmpBody, stored)),
@@ -590,6 +594,7 @@ export async function writeFactsToFence(
         }
         assertSourceFilesystemActive();
         renameSync(tmpPath, filePath);
+        published = true;
         return inserted;
       }).catch(err => {
         if (err instanceof FenceFileChanged) return null;

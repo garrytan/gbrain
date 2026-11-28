@@ -145,7 +145,10 @@ async function unheldTakes(db: BrainEngine, pageId: number, fence: TakesLeavingF
 async function reconcileTakesGeneration(db: BrainEngine, inTx: boolean, page: { id: number; slug: string; source_id: string }, read: FenceRead, takes: ParsedTake[],
   warnings: string[], rebuild: boolean, dryRun: boolean, hasBegin: boolean, result: ExtractTakesResult): Promise<boolean> {
   if (dryRun || warnings.length > 0) return true;
+  const warnAt = result.warnings.length;
   const prune = async (tx: BrainEngine): Promise<boolean> => {
+    // Each run reports from where the first began: a rerun (multi-user Rust, after a lost commit) warns once.
+    result.warnings.length = warnAt;
     const ids = hasBegin ? [...new Set([...await unheldTakes(tx, page.id, { change: 'removed', rowNums: takes.map(t => t.rowNum) }),
       ...(rebuild ? await unheldTakes(tx, page.id, { change: 'replaced', rows: takes.map(t => ({ row_num: t.rowNum, claim: t.claim })) }) : [])])] : [];
     const before = await takePreimages(tx, page.id, ids, takes);
@@ -189,7 +192,10 @@ async function upsertProjectedTakes(engine: BrainEngine, rows: TakeBatchInput[],
     const group = rows.filter(r => (pages.get(r.page_id)?.input.tier ?? 'unknown') === tier);
     const inputs = [...new Set(group.map(r => pages.get(r.page_id)).filter(p => !!p))].map(p => p!.input);
     const trust = derivedWriteTrust({ channel: 'derive:takes_fence', inputs, projection: true });
+    const tallyAt = { ...tally };
     const write = async (tx: BrainEngine) => {
+      // Each run counts from where the first began: a rerun (multi-user Rust, after a lost commit) counts each row once.
+      Object.assign(tally, tallyAt);
       const decisions = group.map(r => decideTakeWrite({ claim: r.claim, source: r.source }, { sourceId: pages.get(r.page_id)?.source_id ?? 'default',
         slug: pages.get(r.page_id)?.slug ?? null, pageId: r.page_id, payload: { ...r }, input: derivedGateInput(trust), cfg }));
       for (const [i, d] of decisions.entries()) if (d.action !== 'insert') await applyGateDecision(tx, d, { table: 'takes', sourceId: pages.get(group[i].page_id)?.source_id ?? 'default' }, async () => null, tally);
@@ -345,7 +351,9 @@ export async function extractTakesFromDb(
       continue;
     }
     if (covered.has(source_id)) {
+      const rerun = resultRerun(result);
       await withUnmanagedBeliefs(engine, source_id, [slug], 'takes_reextract', run => maintenanceTransaction(engine, tx => run(tx, async () => {
+        rerun();
         const takes = await reconcilePageTakes(tx, true, page, read, slug, rebuild, false, result);
         result.takesUpserted += await upsertProjectedTakes(engine, takes.map(t => takesPreparation.toCanonicalBatchInput(page.id, t)), result, tx);
       })));
@@ -359,6 +367,23 @@ export async function extractTakesFromDb(
   }
   await flushBatch(engine, buffer, result, dryRun);
   return result;
+}
+
+/**
+ * Marks what `result` holds now; the function it returns puts that back. A transaction callback that adds to the result
+ * calls it first, so a rerun (multi-user Rust, after a lost commit) reports each page once.
+ */
+function resultRerun(result: ExtractTakesResult): () => void {
+  const at = { pagesWithTakes: result.pagesWithTakes, takesUpserted: result.takesUpserted, warnings: result.warnings.length,
+    failedFiles: result.failedFiles.length, writeGate: result.writeGate ? { ...result.writeGate } : undefined };
+  return () => {
+    result.pagesWithTakes = at.pagesWithTakes;
+    result.takesUpserted = at.takesUpserted;
+    result.warnings.length = at.warnings;
+    result.failedFiles.length = at.failedFiles;
+    if (at.writeGate) result.writeGate = { ...at.writeGate };
+    else delete result.writeGate;
+  };
 }
 
 type TakesPage = { id: number; slug: string; source_id: string; body_storage?: BodyStorage | null; compiled_truth: string | null; timeline: string | null };

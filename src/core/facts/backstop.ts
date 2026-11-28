@@ -717,15 +717,26 @@ function countWithdrawnSkip(counts: PipelineCounts): void {
  * source text. `counts` accumulates the run's insert counters.
  */
 async function derivedFactWriter(ctx: FactsBackstopCtx, input: PipelineInput, derivation: Awaited<ReturnType<typeof factsDerivation>>,
-  counts: { inserted: number; duplicate: number; superseded: number; fact_ids: number[] }) {
+  counts: PipelineCounts) {
   const gateCfg = await derivedGateConfig(ctx.engine);
   const gateInput = derivedGateInput(derivation.trust, ctx.persistenceRequestId);
   const write_gate = emptyGateTally();
+  /** Marks the counters as they stand; a transaction callback calls what it returns first, so a rerun (multi-user Rust, after a lost commit) counts once. */
+  const rerun = () => {
+    const at = { ...counts, fact_ids: counts.fact_ids.length }, gate = { ...write_gate };
+    return () => {
+      Object.assign(counts, { inserted: at.inserted, duplicate: at.duplicate, superseded: at.superseded });
+      counts.fact_ids.length = at.fact_ids;
+      if (at.withdrawn_skipped === undefined) delete counts.withdrawn_skipped;
+      else counts.withdrawn_skipped = at.withdrawn_skipped;
+      Object.assign(write_gate, gate);
+    };
+  };
   const decideFact = (row: { fact: string; context?: string | null; source?: string | null }, slug: string | null, payload: Record<string, unknown>) =>
     decideFactWrite({ ...row, source_text: row.fact.includes('[redacted]') ? input.turnText : null },
       { sourceId: ctx.sourceId, slug, payload: { ...payload, embedding: null }, input: gateInput, cfg: gateCfg });
   /** A DB-only insert: one attributed transaction at the derived tier, gated, with input edges for a new row. */
-  const insertDerivedFact = (newFact: NewFact) => maintenanceTransaction(ctx.engine, tx =>
+  const insertDerivedFact = (newFact: NewFact) => { const reset = rerun(); return maintenanceTransaction(ctx.engine, tx => (reset(),
     applyGateDecision(tx, decideFact(newFact, newFact.entity_slug ?? null, { ...newFact }), { table: 'facts', sourceId: ctx.sourceId }, async () => {
       await tx.lockSourceShared(ctx.sourceId);
       const { isFactWithdrawn } = await import('./withdrawal.ts');
@@ -737,11 +748,13 @@ async function derivedFactWriter(ctx: FactsBackstopCtx, input: PipelineInput, de
       else counts.superseded += 1;
       await recordTaintEdges(tx, { table: 'facts', id: result.id, sourceId: ctx.sourceId }, derivation.inputs);
       return result.id;
-    }, write_gate), derivation.trust);
+    }, write_gate)), derivation.trust); };
   /** Gates one entity group before its fence write: held and rejected rows are recorded; the rest carry their decision. */
   const gateGroup = async <F extends { fact: string; context?: string | null; source?: string | null }>(facts: F[], slug: string) => {
     const decisions = facts.map(fact => decideFact(fact, slug, { ...fact }));
+    const reset = rerun();
     if (decisions.some(d => d.action !== 'insert')) await maintenanceTransaction(ctx.engine, async tx => {
+      reset();
       for (const d of decisions) if (d.action !== 'insert') await applyGateDecision(tx, d, { table: 'facts', sourceId: ctx.sourceId }, async () => null, write_gate);
     });
     return { keep: decisions.map(d => d.action === 'insert'), keptFacts: facts.flatMap((fact, i) => decisions[i].action === 'insert' ? [{ ...fact, gate: decisions[i] }] : []) };

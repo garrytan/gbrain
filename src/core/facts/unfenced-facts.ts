@@ -86,6 +86,7 @@ import { isOwnedClone } from '../url-clone.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { isSourceDbOnlySlug } from '../persistence/source-storage.ts';
 import { sourceConfigText } from '../source-rows.ts';
+import { restoreLostPublication } from '../lost-commit-file.ts';
 
 export interface UnfencedFactRow {
   id: string;
@@ -673,7 +674,10 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
     }
     // Mirror the file into pages so this run's reconcile and get_page read the
     // new fence (same body-only mirror as fence-write.ts).
+    let published = false;
     const written = await maintenanceTransaction(engine, async tx => {
+      // A run that lost an optimistic commit (multi-user Rust) published the file: put it back before this run reads it.
+      if (published) { restoreLostPublication(filePath, tmpBody, bytes, { path: tmpPath, body: tmpBody }); published = false; }
       if (readFileSync(filePath, 'utf-8') !== bytes || !await mirrorFileBody(tx, sourceId, entitySlug, tmpBody, stored)) return false;
       // The parsed claim is what the fence projects; the row keeps its id,
       // vectors and provenance (the reconcile would retire a row whose text
@@ -684,6 +688,7 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
       assertSourceFilesystemActive();
       if (readFileSync(filePath, 'utf-8') !== bytes) throw new FileChangedDuringFence();
       renameSync(tmpPath, filePath);
+      published = true;
       return true;
     }).catch(error => { if (error instanceof FileChangedDuringFence) return false; throw error; });
     if (!written) {

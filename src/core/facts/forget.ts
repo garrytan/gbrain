@@ -30,6 +30,7 @@ import { markBeliefCommits } from '../belief/append.ts';
 import { classifyItemFailure } from '../item-failure.ts';
 import { withdrawnFact } from './withdrawal-overlay.ts';
 import { bestEffortStoredBodyMirror, fileBodyMatchesStored, fileDatabaseDriftToken, mirrorFileBody, readStoredBody } from './file-body-guard.ts';
+import { restoreLostPublication } from '../lost-commit-file.ts';
 
 export interface ForgetFactResult {
   /** True iff the row was found AND a forget was applied (fence or DB). */
@@ -189,11 +190,15 @@ export async function forgetFactInFence(
   // file mirror (the file holds both); a first fence without the row strikes nothing.
   const strikeSegments = async (pageId: number, regions: readonly BodyRegion[], strikeRow = strike): Promise<void> => {
     let first = true;
-    await maintenanceTransaction(engine, tx => rewriteLiveSegmentedFences(tx, pageId, async (fence, at) => {
-      if (!first || !regions.includes(at.region) || !fence.includes(FENCE_BEGIN)) return fence;
-      first = false;
-      return strikeFenceRow(fence, row.row_num!, strikeRow) ?? fence;
-    }));
+    await maintenanceTransaction(engine, tx => {
+      // Every run strikes from the first fence: a rerun (multi-user Rust, after a lost commit) reads the rolled-back body.
+      first = true;
+      return rewriteLiveSegmentedFences(tx, pageId, async (fence, at) => {
+        if (!first || !regions.includes(at.region) || !fence.includes(FENCE_BEGIN)) return fence;
+        first = false;
+        return strikeFenceRow(fence, row.row_num!, strikeRow) ?? fence;
+      });
+    });
   };
   let mirrorWarning: string | undefined;
   const strikeDbBody = async (): Promise<void> => {
@@ -299,7 +304,10 @@ export async function forgetFactInFence(
         return legacyExpire(true);
       }
       if (!segmented) {
+        let published = false;
         const written = await maintenanceTransaction(engine, async tx => {
+          // A run that lost an optimistic commit (multi-user Rust) published the file: put it back before this run reads it.
+          if (published) { restoreLostPublication(filePath, tmpBody, body, { path: tmpPath, body: tmpBody }); published = false; }
           if (!existsSync(filePath) || readFileSync(filePath, 'utf-8') !== body) return false;
           if (stored ? !await bestEffortStoredBodyMirror(tx, row.source_id, slug, stored,
             savepoint => mirrorFileBody(savepoint, row.source_id, slug, tmpBody, stored), err => {
@@ -309,6 +317,7 @@ export async function forgetFactInFence(
           if (!existsSync(filePath) || readFileSync(filePath, 'utf-8') !== body) throw new WithdrawalFileChanged();
           assertSourceFilesystemActive();
           renameSync(tmpPath, filePath);
+          published = true;
           return true;
         }).catch(err => {
           if (err instanceof WithdrawalFileChanged) return false;

@@ -27,6 +27,7 @@ import { readSyncFile } from '../persistence/sync-discovery.ts';
 import { maintenancePreflight, publishMaintenancePage, publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import type { RepairItemOutcome } from './core.ts';
 import { raisePageLabelGuard } from '../trust/page-write.ts';
+import { restoreLostPublication } from '../lost-commit-file.ts';
 
 /**
  * GST-2128 item 1: on a brain without managed persistence, the pages with a recorded file (`source_path`) in a source that
@@ -93,11 +94,23 @@ export async function writeLabelFile(engine: BrainEngine, page: { source_id: str
   if (typeof fit !== 'string') throw labelEditRefused(page, fit.keys, write.edit);
   const text = fit;
   let unwritable: string | undefined;
+  let rendered: { path: string; content: string; committed: boolean } | null = null;
   try {
     return await importAtRevision(engine, page, write.revision, text, write.embed, write.preview, async tx => {
+      // A run that lost an optimistic commit (multi-user Rust) wrote the file: put it back before this run writes it again.
+      if (rendered) {
+        if (restoreLostPublication(rendered.path, rendered.content, before) && rendered.committed) {
+          const { commitWriteThroughFile } = await import('../brain-repo-durability.ts');
+          commitWriteThroughFile(file.target!.writeRoot, rendered.path, page.slug, 'restore write-through');
+        }
+        rendered = null;
+      }
       await write.afterImport?.(tx);
       const written = await writePageThrough(tx, page.slug, { sourceId: page.source_id, expectedFileBytes: before, fileText: text });
-      if (written.written) return;
+      if (written.written) {
+        if (written.path && written.content !== undefined) rendered = { path: written.path, content: written.content, committed: written.committed === true };
+        return;
+      }
       if (written.skipped !== 'file_changed') unwritable = written.skipped ?? written.error ?? 'the write failed';
       throw opError('source_changed', `${ref} was not written: its file changed after it was read.`, `Preview ${write.preview} again; the page is listed with its current state.`);
     });
