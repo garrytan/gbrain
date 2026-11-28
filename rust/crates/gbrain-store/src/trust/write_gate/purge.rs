@@ -9,7 +9,7 @@ use super::{
     read_id, receipts_of, tagged,
 };
 use crate::error::{Result, StoreError};
-use crate::kv::scan_prefix;
+use crate::kv::{KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::persistence::parse_timestamptz;
 use crate::{Store, get_json, keys};
@@ -37,6 +37,68 @@ fn deleted_at_micros(text: &str) -> Result<i64> {
             "deletePurgedSlugHolds deletedAt: invalid input syntax for type timestamp with time zone: {text:?}"
         ))
     })
+}
+
+/// The deletes of `deletePurgedSlugHolds` inside a caller's transaction: for each slug of the source, every hold last seen
+/// (the later of created and last seen) up to its cut-off, or every hold of the slug when the cut-off is None, with its
+/// dedupe key and the receipts of the hold. Each slug's holds are read through the dedupe index by prefix, so the store is
+/// never loaded whole. The page hard deletes (`deletePages`, `purgeDeletedPages`, page_ops.rs) call it with the slugs they
+/// removed. Returns (holds, receipts) deleted.
+pub(crate) fn delete_slug_holds(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    cutoffs: &BTreeMap<&str, Option<i64>>,
+) -> Result<(u64, u64)> {
+    let mut holds = 0u64;
+    let mut receipts = 0u64;
+    for (slug, cutoff) in cutoffs {
+        let mut prefix = tagged(HOLD_DEDUPE, &[source_id, slug]);
+        prefix.push(0);
+        let mut ids = Vec::new();
+        let mut failure = None;
+        scan_prefix(&*tx, &prefix, false, &mut |_, v| {
+            match keys::be8(v) {
+                Some(id) => ids.push(id),
+                None => {
+                    failure = Some(StoreError::new(
+                        crate::error::STORE_CORRUPT,
+                        "bad write gate index entry",
+                    ));
+                }
+            }
+            failure.is_none()
+        })?;
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        for id in ids {
+            let Some(hold) = get_json::<HoldRecord>(&*tx, &by_id(HOLD, id))? else {
+                return Err(StoreError::new(
+                    crate::error::STORE_CORRUPT,
+                    "write gate hold index without its row",
+                ));
+            };
+            let last = hold.created_at_us.max(hold.last_seen_at_us);
+            if hold.source_id != source_id
+                || hold.slug != *slug
+                || cutoff.is_some_and(|upto| last > upto)
+            {
+                continue;
+            }
+            let version = hold.detector_version.to_string();
+            tx.delete(&tagged(
+                HOLD_DEDUPE,
+                &[&hold.source_id, &hold.slug, &hold.fingerprint, &version],
+            ))?;
+            tx.delete(&by_id(HOLD, id))?;
+            holds += 1;
+            for receipt in receipts_of(&*tx, "write_gate_holds", &id.to_string())? {
+                delete_receipt(tx, &receipt)?;
+                receipts += 1;
+            }
+        }
+    }
+    Ok((holds, receipts))
 }
 
 impl Store {
@@ -74,8 +136,8 @@ impl Store {
     /// named by several pages loses the holds any of them covers. `{ write_gate_holds, write_gate_receipts }`.
     ///
     /// The store keeps a hold by source and slug alone (no bound page, no candidate pages, no recheck notes), so the SQL
-    /// engines' rules for a hold bound to another page or marked with candidates have no rows here. Each slug's holds are read
-    /// through the dedupe index by prefix, so the store is never loaded whole.
+    /// engines' rules for a hold bound to another page or marked with candidates have no rows here. The deletes are
+    /// `delete_slug_holds`, which the page hard deletes also run inside their own transaction.
     pub fn delete_purged_slug_holds(
         &self,
         source_id: &str,
@@ -105,55 +167,7 @@ impl Store {
             return Ok(json!({ "write_gate_holds": 0, "write_gate_receipts": 0 }));
         }
         self.write(|tx| {
-            let mut holds = 0u64;
-            let mut receipts = 0u64;
-            for (slug, cutoff) in &cutoffs {
-                let mut prefix = tagged(HOLD_DEDUPE, &[source_id, slug]);
-                prefix.push(0);
-                let mut ids = Vec::new();
-                let mut failure = None;
-                scan_prefix(&*tx, &prefix, false, &mut |_, v| {
-                    match keys::be8(v) {
-                        Some(id) => ids.push(id),
-                        None => {
-                            failure = Some(StoreError::new(
-                                crate::error::STORE_CORRUPT,
-                                "bad write gate index entry",
-                            ));
-                        }
-                    }
-                    failure.is_none()
-                })?;
-                if let Some(e) = failure {
-                    return Err(e);
-                }
-                for id in ids {
-                    let Some(hold) = get_json::<HoldRecord>(&*tx, &by_id(HOLD, id))? else {
-                        return Err(StoreError::new(
-                            crate::error::STORE_CORRUPT,
-                            "write gate hold index without its row",
-                        ));
-                    };
-                    let last = hold.created_at_us.max(hold.last_seen_at_us);
-                    if hold.source_id != source_id
-                        || hold.slug != *slug
-                        || cutoff.is_some_and(|upto| last > upto)
-                    {
-                        continue;
-                    }
-                    let version = hold.detector_version.to_string();
-                    tx.delete(&tagged(
-                        HOLD_DEDUPE,
-                        &[&hold.source_id, &hold.slug, &hold.fingerprint, &version],
-                    ))?;
-                    tx.delete(&by_id(HOLD, id))?;
-                    holds += 1;
-                    for receipt in receipts_of(&*tx, "write_gate_holds", &id.to_string())? {
-                        delete_receipt(tx, &receipt)?;
-                        receipts += 1;
-                    }
-                }
-            }
+            let (holds, receipts) = delete_slug_holds(tx, source_id, &cutoffs)?;
             Ok(json!({ "write_gate_holds": holds, "write_gate_receipts": receipts }))
         })
     }
