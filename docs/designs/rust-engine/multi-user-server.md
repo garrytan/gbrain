@@ -367,6 +367,19 @@ On the Rust arm a doctor run catches the raw-SQL refusal of four check files (ti
 schema-pack-checks, calibration), pinned in `test/rust-stop-pins/l3-served-doctor.tsv`. The sites are on the main trunk
 too, so the pins belong to lane 2b (main trunk) and stay until main removes the sites.
 
+**A remote think runs on the client.** `think` is not on `REMOTE_WHOLE_OPERATIONS`. 20 engine reads that no other remote
+read reaches are reached from think only through its save and take paths (`persistSynthesis`, `persistTakeFromSynthesis`),
+and a remote think forces save and take off (src/core/ops/takes.ts). Write operations reach them too, and `run_doctor`
+reaches two (`listHostConsumerRows`, `readPageFileOrigin`); a remote write crosses whole or is refused, and `run_doctor`
+crosses whole. Their rows in `test/fixtures/served-member-lists/local-only.tsv` carry the reason "think save and take paths
+and write path only" (with `run_doctor` first for the two). `test/engine-parity/served-remote-think.test.ts` proves the think
+half on every arm: a keyless think, for the owner's pipe and for a non-owner member's read-only grant, with 0 refusals on
+both served routes; and a think asked to save and take that calls no write member, warns of no save or take, keeps the page
+and take counts, and says `remote_persisted_blocked: true` (turning off either gate alone fails it). Known loss
+until S4 (retrieval) serves the feedback weights read: on multi-user Rust with feedback turned on (off by default), a
+search, query or recall from a remote host refuses, and a remote think answers without page evidence (warning
+GATHER_HYBRID_FAILED). The parity file pins the think half to S4 (served routes only, due 2026-12-04).
+
 **Reads that stay on the default ruling, by owning slice.** S4 (retrieval): `readFactsFtsIndexState`,
 `readSourcesNotReadable`. S5 (jobs, write requests, skills, membership): `countWaitingJobs`, `filterUnarchivedSourceIds`,
 `listAudienceAccessMembers`, `lockLegacyAccessTokens`, `readCredentialBindingForUpdate`, `readLiveAccessTokenRows`,
