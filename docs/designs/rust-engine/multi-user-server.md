@@ -299,9 +299,11 @@ The list is `REMOTE_WHOLE_OPERATIONS` in `src/core/rust-engine/served/remote-who
 | `takes_add`, `takes_update`, `takes_supersede`, `takes_resolve`, `takes_remove` | `takes-prepare` |
 | `cancel_write_request` | `write-request-cancel`, `admin-counts` |
 | `request_tools` (persist form only) | `request-tools-persist` |
+| `run_doctor` (an admin-scope read) | `served-remote-doctor` |
 
 `test/rust-served-remote-whole-ops.test.ts` requires each listed operation to be a write operation with a parity file that is
-a `served` row of `test/engine-parity/rust-served-set.tsv`, with one named exception, `request_tools` (below). A remote
+a `served` row of `test/engine-parity/rust-served-set.tsv`, with two named exceptions, `request_tools` and `run_doctor`
+(below). A remote
 `delete_page` is a soft delete: the operation refuses a remote purge (`permission_denied`) and a remote retention purge
 (`invalid_params`) before it deletes, on the server as in process. Its guest-note check reads the engine member
 `readGuestDeleteRow`; a Rust brain keeps no guest marks or promotions, so no page there is a guest note it refuses.
@@ -347,6 +349,18 @@ before anything runs. The persist rate limit is the server's, per client id. Aft
 the caller's tools/list_changed hook, as the in-process persist does. Until A1 lifts only the owner's floor sends it, and
 that floor may already set any client's surface (`gbrain auth rescope-client`); a non-owner principal's persist for a client
 id that is not its own needs its own check then.
+
+**The one whole read.** `run_doctor` is an admin-scope read. Its checks read hundreds of engine members, most of them off
+`OWNER_IPC_REMOTE_READS`, so a client that ran it itself reported many checks as "could not run". It crosses whole: the
+brain server runs the doctor handler as the owner (`ctx.remote` true), under the caller's grant as a narrowing claim, and
+checks the admin scope again; a grant without admin is refused `permission_denied` (reason `scope_missing`, detail
+`ran=false`) and the handler does not run. The served report equals the in-process remote report, and host checks report
+the server's host. A brain server older than the client refuses a remote `run_doctor`; upgrade the server first.
+Replay: when the server has no record of a retried request id, `run_doctor` alone runs again
+(`replayableWholeRead`), and only while its definition is still `mutating: false` and `idempotent: true` and the call
+carries only `tier` or `only`; anything else fails closed with `outcome_unknown`. A replayed doctor has no write of its
+own; like every doctor run it refreshes the fence census cache (fence_integrity's scan record), as a second call does.
+`test/rust-served-remote-doctor.serial.test.ts` proves the one frame, the equal report, the scope refusal and the replay.
 
 **Follow-up (A1).** Once per-user access lifts, a non-owner principal's remote `put_page` needs its own privacy and
 visibility parity case (its readers, a private page it may not see, an owner-only source): today only the owner's floor sends
