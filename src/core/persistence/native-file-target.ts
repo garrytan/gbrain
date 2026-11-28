@@ -17,9 +17,12 @@ function fileNameTooLong(): OperationError {
     { detail: 'file_name_too_long', why: `A slug segment becomes a file or directory name, and file systems store at most ${NATIVE_NAME_MAX_BYTES} bytes per name.` });
 }
 
-export function nativeFileTarget(root: string, target: string, code?: string): string {
+/** `reuseParentSpelling` is only for new slug-derived targets, below the source root; recorded paths never opt in. */
+export function nativeFileTarget(root: string, target: string, code?: string, reuseParentSpelling = false): string {
   const unsafe = () => new OperationError(code ?? 'source_changed', 'The canonical file target has no unambiguous native identity.',
-    'Reconcile the recorded file path with the registered worktree before retrying publication.');
+    reuseParentSpelling
+      ? 'Resolve ambiguous parent directory spellings or symlinks in the registered source, then submit a new request. No existing path was renamed.'
+      : 'Reconcile the recorded file path with the registered worktree before retrying publication.');
   const inaccessible = () => new OperationError(code ?? 'storage_error', 'The canonical file target cannot be accessed as a regular file.',
     'Repair the filesystem obstruction or permissions before submitting a new publication request.');
   try {
@@ -34,7 +37,16 @@ export function nativeFileTarget(root: string, target: string, code?: string): s
     const names: string[] = [];
     let parent = physicalRoot;
     for (let i = 0; i < segments.length; i++) {
-      const name = segments[i];
+      let name = segments[i];
+      // New slug-based pages have no recorded file identity. Reuse only an
+      // unambiguous existing parent spelling; never fold the file name or a
+      // recorded/captured path. Inspect every matching entry (even when the
+      // requested spelling exists) so an already split hierarchy refuses.
+      if (reuseParentSpelling && i < segments.length - 1) {
+        const matches = readdirSync(parent).filter(entry => entry.toLowerCase() === name.toLowerCase());
+        if (matches.length > 1) throw unsafe();
+        if (matches.length === 1) name = matches[0];
+      }
       let info: BigIntStats;
       try { info = lstatSync(join(parent, name), { bigint: true }); }
       catch (error) {

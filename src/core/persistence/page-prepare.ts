@@ -508,7 +508,11 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     if (!options.allowMissing && publishesDatabaseOnly(root, row.slug, snapshot)) return undefined;
     throw colonSlugWindowsRefusal(row.slug, row.source_id);
   }
-  const path = nativeFileTarget(binding.local_path, candidate);
+  // Only a new slug-derived target may select a parent's spelling, and only
+  // below this source's root (never a sibling source in the same worktree).
+  const newTarget = !snapshot && !capturedPath && !recordedPath
+    ? nativeFileTarget(root, candidate, undefined, true) : candidate;
+  const path = nativeFileTarget(binding.local_path, newTarget);
   if (!isWriteTargetContained(path, root)) throw opError('source_changed', 'The canonical file target is outside its registered source.',
     `The file of ${row.slug} resolves outside source ${row.source_id}'s registered root (a symlinked directory or a moved checkout), so nothing was written. Inspect the owner before resubmitting; how to repair the checkout is the user's decision.`,
     { fix: ownerStatusFix(row.source_id) });
