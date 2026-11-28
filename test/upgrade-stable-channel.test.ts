@@ -205,7 +205,7 @@ describe('gbrain upgrade on the stable channel', () => {
   }));
 
   test('a failed add restores the release that was installed and records the recovery step', () => withRun(['--channel', 'stable', '--swap-only'], { failAdd: NEWER }, r => {
-    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`, `add -g --backend=copyfile github:garrytan/gbrain#v${VERSION}`]);
+    expect(r.bunCalls).toEqual(['remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${NEWER}`, 'remove -g gbrain', `add -g --backend=copyfile github:garrytan/gbrain#v${VERSION}`]);
     expect(r.stderr).toContain(`Restored gbrain ${VERSION}.`);
     const rec = JSON.parse(readFileSync(join(r.home, '.gbrain', 'upgrade-errors.jsonl'), 'utf8').trim().split('\n').at(-1)!);
     expect(rec).toMatchObject({ phase: 'stable-reinstall', from_version: VERSION, to_version: NEWER });

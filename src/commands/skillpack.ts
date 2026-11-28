@@ -40,6 +40,10 @@ const HELP_TOP = `gbrain skillpack <subcommand> [options]
 
 Subcommands:
   list                       Print every skill bundled in openclaw.plugin.json.
+  conventions <dir>          Write the shared conventions the bundled skills
+                             link to (../conventions/) into <dir>/conventions,
+                             for a single-file binary with no skills folder.
+                             Never overwrites a file you changed.
 
   scaffold <name|source>     Copy a bundled skill OR a third-party skillpack
                              into your agent repo. Additive; refuses to
@@ -118,7 +122,7 @@ Removed in v0.33 (use migrate-fence to upgrade, then \`scaffold\`):
 `;
 
 /** Every subcommand runSkillpack dispatches; the switch below handles each one, and scripts/build-public-surface.ts reads the promised ones from here. */
-export const SKILLPACK_SUBCOMMANDS = ['list', 'scaffold', 'reference', 'pin', 'unpin', 'restore', 'status', 'sync', 'setup', 'migrate-fence', 'scrub-legacy-fence-rows', 'harvest', 'diff', 'check', 'health', 'search', 'info', 'registry', 'doctor', 'init', 'init-brain-pack', 'pack', 'endorse', 'remove', 'install', 'uninstall'] as const;
+export const SKILLPACK_SUBCOMMANDS = ['list', 'conventions', 'scaffold', 'reference', 'pin', 'unpin', 'restore', 'status', 'sync', 'setup', 'migrate-fence', 'scrub-legacy-fence-rows', 'harvest', 'diff', 'check', 'health', 'search', 'info', 'registry', 'doctor', 'init', 'init-brain-pack', 'pack', 'endorse', 'remove', 'install', 'uninstall'] as const;
 
 export async function runSkillpack(args: string[]): Promise<void> {
   const sub = args[0];
@@ -174,6 +178,11 @@ export async function runSkillpack(args: string[]): Promise<void> {
     case 'check':
       await routeCheck(rest);
       return;
+    case 'conventions': {
+      const { cmdConventions } = await import('./skillpack/conventions.ts');
+      await cmdConventions(rest);
+      return;
+    }
     case 'health': {
       const { cmdHealth } = await import('./skillpack/health.ts');
       await cmdHealth(rest);

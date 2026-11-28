@@ -134,7 +134,7 @@ import {
 import { HARNESS_ADAPTERS } from '../core/harness/registry.ts';
 import { HISTORY_VALUE_FLAGS, historyFor, parseHistoryFlags, recordHistoryReceipt, withHistoryDecision, type HistoryFlags, type HistoryOutcome } from './setup-history.ts';
 import { parseSuggestionFlag, suggestionFor, type SuggestionMarker } from './setup-suggestion.ts';
-import { applyBrainLayout, askBrainShape, brainShapeDecision, describeLayout, layoutNotices, parseLayoutFlags, withBrainShape, type BrainShape, type LayoutOutcome } from './setup-brain-layout.ts';
+import { applyBrainLayout, askBrainShape, brainShapeDecision, chosenBrainEnv, describeLayout, layoutNotices, parseLayoutFlags, pinSetupBrain, withBrainShape, type BrainShape, type LayoutOutcome } from './setup-brain-layout.ts';
 import { isInteractive } from '../core/interaction.ts';
 import { SETUP_HELP } from './setup-help.ts';
 
@@ -382,7 +382,8 @@ function ownerConflict(reason: string, message: string, fix: Pick<Action, 'actor
 }
 
 interface Target {
-  brain: { kind: 'local-pglite' | 'local-postgres' | 'new-local-pglite'; path?: string; config_dir: string };
+  /** id: GST-4069, the brain the registration pins (GBRAIN_BRAIN_ID); absent, the session's directory picks it. */
+  brain: { kind: 'local-pglite' | 'local-postgres' | 'new-local-pglite'; path?: string; config_dir: string; id?: string };
   source: { id: string | null; pinned: boolean; from: 'flag' | 'env' | 'receipt' | 'brain-default' };
   transport: 'local-stdio';
   launcher: string;
@@ -436,7 +437,7 @@ function describeTarget(t: Target, out: Out, harness: SetupHarnessId = 'claude-c
   const brain = t.brain.kind === 'new-local-pglite' ? `new keyless PGLite brain at ${t.brain.path} (gbrain init --pglite --no-embedding)`
     : t.brain.kind === 'local-pglite' ? `existing PGLite brain at ${t.brain.path}` : 'existing Postgres brain (from this install\'s config)';
   say(out, `Target (${HARNESS_LABEL[harness]}, ${t.scope} scope):`);
-  say(out, `  brain      ${brain}`);
+  say(out, `  brain      ${brain}${t.brain.id ? `; pinned to brain '${t.brain.id}' (GBRAIN_BRAIN_ID)` : ''}`);
   say(out, `  source     ${t.source.id ? `'${t.source.id}' (pinned, from ${t.source.from === 'flag' ? '--source' : t.source.from === 'receipt' ? 'the setup receipt' : 'GBRAIN_SOURCE'})` : 'the brain\'s default source (unpinned)'}`);
   say(out, `  transport  stdio MCP: ${[hookLauncherPath(t.brain.config_dir), ...stdioServeArgv(t.launcher, t.surface, t.advertise ?? null, t.stdio_member)].join(' ')}${t.advertise ? ` (lists the ${t.advertise === 'verbs' ? 'memory verbs and request_tools' : `${t.advertise} tools`}; every ${t.surface} tool stays callable)` : ''}`);
   say(out, `  owner      ${t.registration_owner === 'setup' ? `this setup (${t.receipt_path})` : t.registration_owner === 'plugin' ? `the gbrain ${HARNESS_LABEL[harness]} plugin (MCP); setup adds hooks only` : `none yet; setup will own '${t.name}'`}`);
@@ -550,15 +551,16 @@ export async function runSetup(argv: string[], deps: { openclaw?: { bin?: string
       if (again.mcp.state === 'current') { plan = listed; found = again; }
     }
     let binding = entryBinding(flags, found.mcp.stdioMember);
-    if (binding.member) { plan = { ...plan, stdioMember: binding.member }; found = inspectClaudeSetup(plan); }
+    const brainId = pinSetupBrain(prior?.brain_id, labelsPeople(flags, binding));
+    if (binding.member || brainId) { plan = { ...plan, ...(binding.member ? { stdioMember: binding.member } : {}), ...(brainId ? { brainId } : {}) }; found = inspectClaudeSetup(plan); }
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags), out);
 
     const pluginOwner = flags.name === 'gbrain' ? claudePluginProvidesName(claudeUserSettingsPath(), 'gbrain') : null;
     if (pluginOwner && flags.stdioMember !== undefined) return refuse(pluginBindingRefusal(pluginOwner, 'claude-code', flags.stdioMember), out);
     const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && (found.mcp.state === 'current' || found.mcp.state === 'owned'));
     const target: Target = {
-      brain: !cfg ? { kind: 'new-local-pglite', path: gbrainPath('brain.pglite'), config_dir: brainHome }
-        : cfg.engine === 'pglite' ? { kind: 'local-pglite', path: dataDir, config_dir: brainHome } : { kind: 'local-postgres', config_dir: brainHome },
+      brain: { ...(!cfg ? { kind: 'new-local-pglite' as const, path: gbrainPath('brain.pglite') } : cfg.engine === 'pglite' ? { kind: 'local-pglite' as const, path: dataDir } : { kind: 'local-postgres' as const }),
+        config_dir: brainHome, ...(brainId && !pluginOwner ? { id: brainId } : {}) },
       source: { id: sourceId, pinned: sourceId !== null, from: flags.source ? 'flag' : sourceId ? 'env' : 'brain-default' },
       transport: 'local-stdio', launcher, surface, ...(plan.advertise ? { advertise: plan.advertise } : {}), ...(plan.stdioMember ? { stdio_member: plan.stdioMember } : {}),
       registration_owner: pluginOwner ? 'plugin' : prior ? 'setup' : 'none',
@@ -604,7 +606,7 @@ export async function runSetup(argv: string[], deps: { openclaw?: { bin?: string
       const instructions = brainFirstFor('claude-code', flags, mcpAccess(flags.name, plan.advertise ?? surface, serves), { scope, projectDir });
       const skills = skillsFor('claude-code', flags, launcher, { scope, projectDir }, instructions);
       const resolver = await resolverFor('claude-code', flags, launcher);
-      const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate);
+      const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate, sourceId);
       const servesDone = servesAfterLayout(serves, servesFlags, launcher, servesPlan, layout.outcome);
       return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves: servesDone, launcher, layout: layout.outcome });
     }
@@ -630,7 +632,7 @@ export async function runSetup(argv: string[], deps: { openclaw?: { bin?: string
     }
     const states = ['configured', ...(verify.ok ? ['connection-verified', 'native-pending'] : [])];
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('claude-code', { projectDir }) : null;
-    const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate);
+    const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate, sourceId);
     const servesDone = servesAfterLayout(serves, servesFlags, launcher, servesPlan, layout.outcome);
     const history = await historyStep('claude-code', flags, launcher, brainCreate, !!liveOwner, scope === 'project' ? ['--scope', 'project'] : []);
     const suggestion = suggestionFor({ launcher, noSuggestion: flags.noSuggestion, dryRun: flags.dryRun, liveServe: liveOwner });
@@ -691,14 +693,15 @@ function liveServeConflict(live: NonNullable<Target['live_owner']>, harness: Set
 /**
  * GST-2731: the brain's shape for this run. An explicit --shape applies it; a brand-new brain without one asks
  * inline when a person is at the terminal, and otherwise adds the brain_shape decision to the first-run bundle
- * (nothing is written until it is answered, --yes included).
+ * (nothing is written until it is answered, --yes included). `source` is the source the registration pins (--source,
+ * GBRAIN_SOURCE, or on Codex its receipt), so the starter pages, the notes import and the household template land in
+ * the source the harness reads.
  */
-async function layoutFor(harness: SetupHarnessId, flags: SetupFlags, launcher: string, instructions: BrainFirstOutcome | null, brainCreate: boolean): Promise<{ outcome: LayoutOutcome | null; notices: (base: Notice[]) => Notice[] }> {
+async function layoutFor(harness: SetupHarnessId, flags: SetupFlags, launcher: string, instructions: BrainFirstOutcome | null, brainCreate: boolean, source: string | null): Promise<{ outcome: LayoutOutcome | null; notices: (base: Notice[]) => Notice[] }> {
   let shape: { brain?: BrainShape; notes?: string | null; docs?: string | null; transcripts?: string | null; team?: boolean } = { brain: flags.brain, notes: flags.notes, docs: flags.docs, transcripts: flags.transcripts, team: flags.team };
   const ask = brainCreate && !shape.brain;
   if (ask && !flags.json && isInteractive()) shape = await askBrainShape();
   const scope = flags.scope ?? 'user';
-  const source = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : null);
   const outcome = applyBrainLayout({ harness, scope, source, launcher, instructionsPath: instructions?.path ?? null, instructionsDeclined: instructions?.decision.value === 'declined',
     flags: { brain: shape.brain, notes: shape.notes, docs: shape.docs, transcripts: shape.transcripts, team: shape.team, dryRun: flags.dryRun,
       ...(shape.brain === 'household' ? { household: { members: flags.householdRun?.members, owner: flags.owner ?? loginOwnerId() ?? undefined } } : {}) } });
@@ -707,14 +710,15 @@ async function layoutFor(harness: SetupHarnessId, flags: SetupFlags, launcher: s
 
 /**
  * H2 (d8): `gbrain setup <harness> --shape household --status [--receipt <id>]` and `--resume <id> --yes`, as children of
- * the launcher, each naming this harness and source so a receipt written for another target refuses.
+ * the launcher on the brain setup was run against (chosenBrainEnv), each naming this harness and source so a receipt
+ * written for another target refuses.
  */
 async function runHouseholdReceipt(flags: SetupFlags, launcher: string, out: Out): Promise<number> {
   const h = flags.householdRun!;
   const target = ['--harness', flags.harness!, ...(flags.source ? ['--source', flags.source] : [])];
   const args = h.status ? ['household', 'template', '--status', ...(h.receipt ? ['--receipt', h.receipt] : []), ...target]
     : ['household', 'template', '--resume', h.resume!, ...target, ...(flags.dryRun ? [] : ['--yes'])];
-  const child = Bun.spawnSync([launcher, ...args, ...(out.json ? ['--json'] : [])], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
+  const child = Bun.spawnSync([launcher, ...args, ...(out.json ? ['--json'] : [])], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: { ...process.env, ...chosenBrainEnv() } });
   const stdout = child.stdout?.toString() ?? '';
   process.stderr.write(child.stderr?.toString() ?? '');
   if (out.json) await writeJsonDocument(stdout, (t) => process.stdout.write(t)); else process.stdout.write(stdout);
@@ -813,7 +817,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     // An entry setup did not write but adopts (identical to its own) was chosen by whoever wrote it: it stays as it is.
     if (found.mcp.state === 'current' && !prior?.entry_hash && !prior?.pending_entry_hash) plan = { ...plan, surfaceOrigin: 'explicit' };
     let binding = entryBinding(flags, found.mcp.stdioMember);
-    if (binding.member) { plan = { ...plan, stdioMember: binding.member }; found = inspectCodexSetup(plan); }
+    const brainId = pinSetupBrain(prior?.brain_id, labelsPeople(flags, binding));
+    if (binding.member || brainId) { plan = { ...plan, ...(binding.member ? { stdioMember: binding.member } : {}), ...(brainId ? { brainId } : {}) }; found = inspectCodexSetup(plan); }
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags, 'codex'), out);
 
     const pluginOwner = codexPluginProvidesName(paths.configPath, flags.name);
@@ -825,8 +830,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     }
     const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && (found.mcp.state === 'current' || found.mcp.state === 'owned'));
     const target: Target = {
-      brain: !cfg ? { kind: 'new-local-pglite', path: gbrainPath('brain.pglite'), config_dir: brainHome }
-        : cfg.engine === 'pglite' ? { kind: 'local-pglite', path: dataDir, config_dir: brainHome } : { kind: 'local-postgres', config_dir: brainHome },
+      brain: { ...(!cfg ? { kind: 'new-local-pglite' as const, path: gbrainPath('brain.pglite') } : cfg.engine === 'pglite' ? { kind: 'local-pglite' as const, path: dataDir } : { kind: 'local-postgres' as const }),
+        config_dir: brainHome, ...(brainId && !pluginOwner ? { id: brainId } : {}) },
       source: { id: sourceId, pinned: sourceId !== null, from: flags.source ? 'flag' : sourceId && sourceId === process.env.GBRAIN_SOURCE ? 'env' : sourceId ? 'receipt' : 'brain-default' },
       transport: 'local-stdio', launcher, surface: plan.surface, ...(plan.surfaceOrigin ? { surface_origin: plan.surfaceOrigin } : {}), ...(plan.advertise ? { advertise: plan.advertise } : {}), ...(plan.stdioMember ? { stdio_member: plan.stdioMember } : {}),
       registration_owner: pluginOwner ? 'plugin' : prior ? 'setup' : 'none',
@@ -874,7 +879,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
       const instructions = brainFirstFor('codex', flags, mcpAccess(flags.name, plan.advertise ?? plan.surface, serves), {});
       const skills = skillsFor('codex', flags, launcher, {}, instructions);
       const resolver = await resolverFor('codex', flags, launcher);
-      const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate);
+      const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate, sourceId);
       const servesDone = servesAfterLayout(serves, servesFlags, launcher, servesPlan, layout.outcome);
       return finish(out, { harness: 'codex', dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves: servesDone, layout: layout.outcome });
     }
@@ -902,7 +907,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const push = capabilityRows('codex')[0]!.push;
     const states = ['configured', ...(verify.ok ? ['connection-verified', push === 'native-verified' && result.receipt.trust.owned.UserPromptSubmit ? 'native-verified' : 'native-pending'] : [])];
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('codex') : null;
-    const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate);
+    const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate, sourceId);
     const servesDone = servesAfterLayout(serves, servesFlags, launcher, servesPlan, layout.outcome);
     const history = await historyStep('codex', flags, launcher, brainCreate, !!liveOwner, []);
     const suggestion = suggestionFor({ launcher, noSuggestion: flags.noSuggestion, dryRun: flags.dryRun, liveServe: liveOwner });
@@ -976,6 +981,9 @@ function pluginBindingRefusal(plugin: string, harness: SetupHarnessId, member: s
   return opError('invalid_params', `--stdio-member ${member} refused: the '${plugin}' plugin serves this ${harness} gbrain MCP server, and setup does not write the plugin's launch arguments, so its sessions would not read as ${member}; nothing was written.`,
     `Disable the '${plugin}' plugin and run gbrain setup ${harness} --stdio-member ${member}, or serve this brain over HTTP with one key per person (gbrain serve --http; for ${member}: gbrain auth create ${member}-key --member ${member}).`);
 }
+
+/** GST-4069: this run labels people (--serves several, --shape household) or binds the entry to a member, so its registration pins the brain they are on. */
+const labelsPeople = (flags: SetupFlags, entry: EntryBinding): boolean => flags.serves === 'several' || !!flags.householdRun || !!entry.member;
 
 /** GST-363: the --stdio-member the harness entry will carry: the one named, none for --no-stdio-member, else the one setup's own entry carries now. */
 function entryBinding(flags: SetupFlags, previous: string | undefined): EntryBinding {

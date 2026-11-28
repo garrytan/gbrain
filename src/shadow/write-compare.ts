@@ -598,9 +598,22 @@ export class WriteTally {
   private failingSince: number | null = null;
   private readonly id: string;
   private readonly key: string;
-  constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid, session = '', private readonly now: () => number = Date.now) {
+  private saveQueued = false;
+  /**
+   * `defer`: when given, `note` does not save at once; it asks `defer` to run one save later (the child passes `setImmediate`), and every outcome noted before that save runs goes into it. Without it every `note` saves at once.
+   * The child reads a burst of write samples far faster than one locked, flushed rename per sample allows (about 6 ms each): saving once per event-loop turn removes that bottleneck; the measured bursts through 1,000 page writes left no pipe backlog at exit. Slow or failing saves and other bottlenecks can still leave samples unsettled.
+   * An outcome not yet saved when the child dies is a deficit the next owner books as `receipt_orphaned`, as for any unsaved outcome; a replay's in-flight mark stays on disk until the save that ends it.
+   */
+  constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid, session = '', private readonly now: () => number = Date.now, private readonly defer?: (save: () => void) => void) {
     this.id = `${pid}.${randomBytes(4).toString('hex')}`;
     this.key = session ? sessionKey(session) : '';
+  }
+  /** Saves now, or once later for everything noted until then (see `defer`). */
+  private saveSoon(): void {
+    if (!this.defer) { this.update(); return; }
+    if (this.saveQueued) return;
+    this.saveQueued = true;
+    this.defer(() => { this.saveQueued = false; this.update(); });
   }
   private journalSize(): number { let n = 0; for (const v of this.journal.values()) n += v; return n; }
   private holding(): boolean { return this.pending.length > 0 || this.journal.size > 0; }
@@ -838,7 +851,7 @@ export class WriteTally {
     batch.credit += credit; batch.creditQualifying += Math.min(credit, creditQualifying);
     if (key === WINDOW_LOST_REASON) batch.windowCredit += credit; // the window's own credit is kept apart: a batch that never saved before its epoch was retired must not stand for a booked window
     batch.ending ||= ends;
-    this.update();
+    this.saveSoon();
   }
   /**
    * `n` samples the pipe never delivered (the serving process owed them, the child never read them), settling that many: `nonqualifying` of them were writes the shadow never compares (`capability_missing` `pipe_unflushed_nonqualifying`),
@@ -853,11 +866,13 @@ export class WriteTally {
       for (const [reason, k] of [['pipe_unflushed', plain], ['pipe_unflushed_nonqualifying', other], [WINDOW_LOST_REASON, win]] as const) { if (k > 0) { this.addJournal(reason, true, k * settles); this.addJournal(reason, false, k * (1 - settles)); } }
       return;
     }
-    if (plain > 0) this.note('uncomparable', 'pipe_unflushed', plain, false, plain, plain);
-    if (other > 0) this.note('capability_missing', 'pipe_unflushed_nonqualifying', other, false, other, 0);
+    // Each part is saved on its own, at once, even when `note` defers its saves: the window's one must be saved after the others, in a save of its own.
+    if (plain > 0) { this.note('uncomparable', 'pipe_unflushed', plain, false, plain, plain); if (this.defer) this.update(); }
+    if (other > 0) { this.note('capability_missing', 'pipe_unflushed_nonqualifying', other, false, other, 0); if (this.defer) this.update(); }
     if (win > 0) { // the window's one is booked LAST (as `obligations` does), and only once its blocker is on disk: a save that only partly lands leaves a deficit the next owner books as the window, exactly once
       if (!this.retired && (!this.key || holdBlocker(this.dir, this.key, this.epoch()!) === null)) return; // no blocker held (no marker any more, a lock that stayed held): the pass books the rest
       this.note('uncomparable', WINDOW_LOST_REASON, win, false, win, win);
+      if (this.defer) this.update();
     }
   }
   /**
