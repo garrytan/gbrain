@@ -17,7 +17,6 @@ import { openReadSource } from '../../src/shadow/read-pool.ts';
 import { Reconciler } from '../../src/shadow/reconcile.ts';
 import { openFollowRig, type FollowRig } from './follow-rig.ts';
 import { snapshotPersistence, snapshotTree } from './primary-snapshot.ts';
-import { linkEntityIdentity } from '../../src/core/entity-identity.ts';
 import { fillSeedFixture } from './shadow-seed-fixture.ts';
 
 export interface FollowScenarioContext {
@@ -107,7 +106,10 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         await tick();
         expect(status(r).follower.coverage_watermark.valid).toBe(true);
         // A raw write reaches the follower as a relation-level change, which a pass for that relation repairs.
-        await linkEntityIdentity(r.wrapped, { entityId: 'person/bob', slug: 'people/bob-example', sourceId: 'default', canonical: true });
+        // On the Rust engine trunk linkEntityIdentity goes through the typed member linkEntityIdentityRow, which the write
+        // map does not cover yet (UNMAPPED_WRITE_MEMBERS, loss row 46), so this raw insert is the raw entity-group write.
+        await r.wrapped.executeRaw(`INSERT INTO entity_identities (entity_id, source_id, page_id, confidence, established_by, canonical)
+          SELECT 'person/bob', 'default', id, 1, 'manual', true FROM pages WHERE slug = 'people/bob-example' AND source_id = 'default'`);
         await r.wrapped.executeRaw(`INSERT INTO fact_purges (source_id, visibility, subject, fact_hash, actor) VALUES ('default', 'world', '*', gbrain_fact_fingerprint('Bob owes Acme money'), 'owner')`);
         await r.wrapped.executeRaw(`INSERT INTO access_tokens (name, token_hash) VALUES ('bob-key', $1)`, [createHash('sha256').update('shadow-follow-token').digest('hex')]);
         await r.settle();
