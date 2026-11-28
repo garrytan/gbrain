@@ -138,11 +138,6 @@ function callReads(engine: BrainEngine): BrainEngine {
  * rest of the run goes on. Every other failed receipt still fails the run or joins the retry set.
  */
 const purgedRefusal = (row: WriteRequest) => row.state === 'failed' && row.error_code === 'purged_content';
-/**
- * Accepted-pending writes stop the sweep: the run ends partial with its pending
- * set recorded. A `write_pending` error, so direct session callers and
- * `rethrowConnectorWriteError` treat it like any accepted, unfinished write.
- */
 interface StoredCheckpoint { fingerprint: string; completed_keys: unknown[]; at: number | string }
 type GoogleCursorEntry = { generation?: number; state?: { gmail_backfill_done?: boolean; gmail_newest_ms?: number | null } | null };
 
@@ -769,11 +764,23 @@ export class ManagedConnectorSync {
     return snapshot?.page ?? null;
   }
   /** `purged` marks a skip because the content matches a page purge tombstone (#8938), so the caller derives nothing from it. */
-  async importMarkdown(sourcePath: string, content: string): Promise<{ slug: string; chunks: number; status: 'imported' | 'skipped'; created: boolean; purged?: true }> {
+  async importMarkdown(sourcePath: string, content: string, opts: { requireCommitted?: boolean } = {}): Promise<{ slug: string; chunks: number; status: 'imported' | 'skipped'; created: boolean; purged?: true }> {
     const slug = slugifyPath(sourcePath);
     const done = await this.submit('connector_v2_import', slug, sourcePath, { content });
     if (!done.row) return { slug, chunks: 0, status: 'skipped', created: false, ...(done.purged ? { purged: true as const } : {}) };
-    if (done.pending) return { slug, chunks: 0, status: 'imported', created: done.created };
+    if (done.pending && !opts.requireCommitted) return { slug, chunks: 0, status: 'imported', created: done.created };
+    if (done.pending) {
+      // #9011: deriving Gmail obligations requires publication; the budgeted stop retains the receipt and cursor.
+      if (isTerminal(done.row)) { this.stopped = true; throw new ConnectorWaitBudgetStop(done.row); }
+      await this.awaitPagePending(slug);
+      const row = await getWriteRequestById(this.engine, done.row.id);
+      if (!row) throw opError('storage_error', 'The connector publication receipt is unavailable.',
+        `Inspect the source before repeating gbrain sync --source ${this.sourceId}; no derived work was performed.`);
+      if (purgedRefusal(row)) return { slug, chunks: 0, status: 'skipped', created: false, purged: true };
+      if (row.state !== 'committed') this.lastFailedItem = { slug, requestId: row.request_id };
+      writeResponse(row);
+      done.row = row;
+    }
     return { slug, chunks: Number(done.row.outcome?.chunks ?? 0), status: done.row.outcome?.noop ? 'skipped' : 'imported', created: done.row.outcome?.status === 'created' };
   }
   async delete(slug: string, sourcePath: string | null): Promise<boolean> {
