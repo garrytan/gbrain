@@ -230,6 +230,11 @@ describe('persistence-journal bookkeeping', () => {
     }
   });
 
+  test('onCheckout, which every Postgres serve start calls to add a pool listener, publishes nothing', async () => {
+    expect(memberKind('onCheckout')).toBe('ignored');
+    expect(await call('onCheckout')).toEqual([]);
+  });
+
   test('each listed member publishes the tables its statements write as relation items, and the lock-only ones nothing', async () => {
     const relations = (items: Invalidation[]) => items.map((i) => (i.kind === 'relation' ? i.relation : `${i.kind}`)).sort();
     expect(await call('declarePersistence')).toEqual([]);
