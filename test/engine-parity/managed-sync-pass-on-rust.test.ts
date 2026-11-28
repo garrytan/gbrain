@@ -3,7 +3,8 @@
  *
  * Every case lifts the `managed_persistence` hold on its own Rust test engine (rust-managed.ts `liftManagedHold`), claims and
  * activates a Git checkout and drives the real code path: a managed sync, a database edit that moves a page under it, a hold,
- * a recorded failure, a dry run, a pinned slug-root mode, the status read. `servedCapabilities()` still withholds the capability.
+ * a recorded failure, a dry run, a pinned slug-root mode, the status read. `servedCapabilities()` now reports the capability
+ * on single-host and multi-user Rust, so the lift changes nothing there.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the page-fault proofs of a sync (`pageChangeProof`, `idempotentDeletionProof`), a file held because its page moved
