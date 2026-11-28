@@ -453,8 +453,8 @@ export const UNRESOLVED_CALLER_REFUSAL_SQL = (r: string) => `((${GUARD_REFUSAL_S
  * `put_page` that failed (the newer content); #6834: for a refused sync checkpoint, any later committed checkpoint of the
  * source (both read by kind; a compacted row, which keeps no kind, by its operation); #6824: for a refused connector
  * write, a later committed connector retry whose recorded `retryOf` lineage reaches it (connectorRetrySql); GST-3450: for
- * a refused managed-sync page import or delete, any later committed write of the same page (the sync that imported the file
- * again, or a write that published the page since; a compacted row keeps no kind and stays unresolved). `r` must expose
+ * a refused managed-sync page import or delete, a later committed sync import or delete, or put_page, of the same page (never a
+ * checkpoint on a page that shares its slug; a compacted row keeps no kind and stays unresolved). `r` must expose
  * `id`. Literal strings only; NULL-safe for a compacted `c` (no intent).
  */
 export function supersessionSql(r: string, c: string, rKind?: string): string {
@@ -466,7 +466,8 @@ export function supersessionSql(r: string, c: string, rKind?: string): string {
       AND COALESCE((SELECT k.intent->>'kind' FROM persistence_requests k WHERE k.id=${r}.id),'managed_sync_checkpoint')='managed_sync_checkpoint'
       AND COALESCE(${c}.intent->>'kind','managed_sync_checkpoint')='managed_sync_checkpoint')
     OR (${r}.operation='put_page' AND ${c}.state='failed' AND ${c}.operation='put_page' AND COALESCE(NOT (${c}.intent ? 'kind'), false))
-    OR (${r}.operation='submit_job' AND ${c}.state='committed' AND ${syncPageKindOf(r, rKind)} IN (${SYNC_PAGE_WRITE_KINDS}))
+    OR (${r}.operation='submit_job' AND ${c}.state='committed' AND (${c}.operation='put_page' OR ${c}.intent->>'kind' IN (${SYNC_PAGE_WRITE_KINDS}))
+      AND ${syncPageKindOf(r, rKind)} IN (${SYNC_PAGE_WRITE_KINDS}))
     OR ${connectorRetrySql(r, c, rKind)}))`;
 }
 
