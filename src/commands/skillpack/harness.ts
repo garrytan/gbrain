@@ -653,6 +653,7 @@ export async function cmdRemove(args: string[]): Promise<void> {
   }
   const dest = resolveDest(a);
   try {
+    const recorded = loadBridgeState().entries.some(e => e.harness === a.harness && e.dest === dest);
     const result = removeHarnessBridge({
       harness: a.harness,
       destDir: dest,
@@ -664,10 +665,13 @@ export async function cmdRemove(args: string[]): Promise<void> {
     // ledger knows other installs for the harness — name them instead of
     // printing a success-shaped zero.
     if (result.removedFiles.length === 0 && result.keptEdited.length === 0 && result.notOwned.length === 0) {
-      const others = loadBridgeState()
-        .entries.filter(e => e.harness === a.harness && e.dest !== dest)
+      const entries = loadBridgeState().entries;
+      const remaining = entries.find(e => e.harness === a.harness && e.dest === dest);
+      const others = entries.filter(e => e.harness === a.harness && e.dest !== dest)
         .map(e => e.dest);
-      if (others.length > 0) {
+      if (remaining && ownedBridgeSlugs(remaining).length === 0) {
+        console.error(`note: ${dest} has only shared files recorded; shared convention files are kept.`);
+      } else if (!recorded && others.length > 0) {
         console.error(
           `note: no bridge install recorded at ${dest}; this harness has installs at: ${others.join(', ')} (pass --dest).`,
         );
