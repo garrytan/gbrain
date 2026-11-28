@@ -621,6 +621,22 @@ export async function runLoopsExtract(
     loopIds.push(id);
   }
 
+  // A pass reads the whole thread, so the loops it records for a type replace the
+  // earlier passes' open ones of that type on the thread (a reworded quote keys a
+  // new row). Retire the rest as superseded; manual closes are never touched.
+  const fresh = loopIds.length > 0 ? loopIds : [-1];
+  for (const loopType of ['commitment_owed_by_me', 'commitment_owed_to_me', 'decision_pending'] as const) {
+    const wrote = loopType === 'decision_pending'
+      ? extraction.decisions_pending.length > 0
+      : extraction.commitments.some((c) => (c.direction === 'owed_by_me' ? 'commitment_owed_by_me' : 'commitment_owed_to_me') === loopType);
+    if (!wrote) continue;
+    await engine.executeRaw(
+      `UPDATE open_loops SET status = 'dropped', closed_at = now(), closed_by = 'superseded', updated_at = now()
+        WHERE source_id = $1 AND thread_id = $2 AND loop_type = $3 AND detector = 'llm_extract'
+          AND status = 'open' AND NOT (id = ANY(string_to_array($4, ',')::bigint[]))`,
+      [payload.sourceId, threadId, loopType, fresh.join(',')]);
+  }
+
   return {
     status: 'extracted',
     commitments: extraction.commitments.length,
