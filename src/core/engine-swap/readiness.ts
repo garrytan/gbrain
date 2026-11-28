@@ -134,6 +134,14 @@ const WRITE_NAMED_TYPES: ReadonlyArray<readonly [string, readonly string[]]> = [
 const FACT_WITHDRAWALS_FAMILY = 'pages:updateSlug';
 /** A named loss, not a fix: what the sentence above does not say. It is the last line under criterion 5 and the last limit in the guide. */
 export const WRITE_COVERAGE_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
+/**
+ * Named losses of the Rust write path itself, not of the comparison: what a Rust brain does differently after the swap.
+ * They follow the coverage loss under criterion 5 and close the guide's limits.
+ */
+export const RUST_WRITE_LOSSES: readonly string[] = [
+  'Named loss: on a Rust brain that another process holds open (a running gbrain serve or any open engine), a gbrain put, remember or import from a second process refuses engine_capability_missing (reason transactions) at write admission, because a transaction does not cross the owner socket; no page is written, though the CLI\'s local writer registration is recorded first. Writes from the process that holds the brain are unaffected.',
+  'Named loss: on a Rust brain a write whose process died after it claimed the write and before it committed holds later writes to sources with no owner for its publication lease (365 s by default), because abandoned claims are released at once on PGLite only and dead owners are detected on Postgres only; meanwhile each put ends write_pending (exit 10), and the first write after the lease ends replays the dead write, then the queued ones. Nothing is lost.',
+];
 /** And on which brains: a PGLite brain's single connection cannot bound the read a sampled write waits for, so it samples no writes and criterion 5 stays missing. */
 export const WRITE_PGLITE_LIMIT = 'PGLite brains record no write comparisons';
 /** And by whom: only the shadow child that owns the Rust store records; a client child adds no evidence and can never make criterion 5 pass. */
@@ -265,7 +273,7 @@ function searchArms(r: Reader): Check {
   });
 }
 
-/** The per-type lines for criterion 5: each named type with its sampled count, or "not sampled"; then every other sampled key; then the named loss. */
+/** The per-type lines for criterion 5: each named type with its sampled count, or "not sampled"; then every other sampled key; then the named losses. */
 function uncoveredWriteLines(byFamily: Record<string, unknown>): string[] {
   const count = (k: string): number => { const n = byFamily[k]; return num(n) && n > 0 ? n : 0; };
   const named = new Set(WRITE_NAMED_TYPES.flatMap(([, keys]) => keys));
@@ -275,7 +283,7 @@ function uncoveredWriteLines(byFamily: Record<string, unknown>): string[] {
   });
   lines.splice(6, 0, `fact withdrawals: not sampled separately (counted under ${FACT_WITHDRAWALS_FAMILY} ${count(FACT_WITHDRAWALS_FAMILY)})`);
   const other = Object.keys(byFamily).filter((k) => !named.has(k) && count(k)).map((k) => `${k} ${count(k)}`);
-  return [...lines, `other write families sampled: ${other.length ? other.join(', ') : 'none'}`, WRITE_COVERAGE_LOSS];
+  return [...lines, `other write families sampled: ${other.length ? other.join(', ') : 'none'}`, WRITE_COVERAGE_LOSS, ...RUST_WRITE_LOSSES];
 }
 
 function writeComparisons(r: Reader): Check {

@@ -19,7 +19,7 @@ import { existsSync } from 'node:fs';
 import { withEnv } from './helpers/with-env.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { SWAP_RECOVERY, SWAP_REFUSAL_REASONS } from '../src/core/engine-swap/refusals.ts';
-import { WRITE_COVERAGE_LIMIT, WRITE_COVERAGE_LOSS, WRITE_COVERAGE_NAMED, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
+import { RUST_WRITE_LOSSES, WRITE_COVERAGE_LIMIT, WRITE_COVERAGE_LOSS, WRITE_COVERAGE_NAMED, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { PILOT_WRITES, writeFamily } from '../src/shadow/write-compare.ts';
 import { WRITE_MAP } from '../src/shadow/write-map.ts';
 
@@ -205,6 +205,10 @@ describe('engine_swap_refused recovery table', () => {
 
 describe('the swap report names each write type criterion 5 does not compare', () => {
   const NAMED_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
+  const RUST_LOSSES = [
+    'Named loss: on a Rust brain that another process holds open (a running gbrain serve or any open engine), a gbrain put, remember or import from a second process refuses engine_capability_missing (reason transactions) at write admission, because a transaction does not cross the owner socket; no page is written, though the CLI\'s local writer registration is recorded first. Writes from the process that holds the brain are unaffected.',
+    'Named loss: on a Rust brain a write whose process died after it claimed the write and before it committed holds later writes to sources with no owner for its publication lease (365 s by default), because abandoned claims are released at once on PGLite only and dead owners are detected on Postgres only; meanwhile each put ends write_pending (exit 10), and the first write after the lease ends replays the dead write, then the queued ones. Nothing is lost.',
+  ];
   const sampled = (byFamily: Record<string, unknown>) => ({
     write_comparisons: { state: 'measured', sample_rate: 1, comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: byFamily },
   }) as unknown as ShadowStatus;
@@ -227,6 +231,7 @@ describe('the swap report names each write type criterion 5 does not compare', (
     'decide store: sampled 3 (decide_state 2, decide_spend 1)',
     'other write families sampled: pages:updateSlug 4, pages:softDeletePage 1, raw_sql 2, other 5',
     NAMED_LOSS,
+    ...RUST_LOSSES,
   ];
 
   test('some families sampled and some not give exactly these lines, in the JSON row and in the text report', async () => {
@@ -242,7 +247,7 @@ describe('the swap report names each write type criterion 5 does not compare', (
       'chunks: not sampled', 'tags: not sampled', 'aliases: not sampled', 'timeline entries: not sampled', 'takes: not sampled', 'facts: not sampled',
       'fact withdrawals: not sampled separately (counted under pages:updateSlug 0)',
       'open loops: not sampled', 'sources: not sampled', 'owner-only marks: not sampled', 'decide store: not sampled',
-      'other write families sampled: none', NAMED_LOSS,
+      'other write families sampled: none', NAMED_LOSS, ...RUST_LOSSES,
     ]);
   });
 
@@ -262,6 +267,8 @@ describe('the swap report names each write type criterion 5 does not compare', (
     const guide = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'engine-swap.md'), 'utf8');
     expect(guide).toContain(WRITE_COVERAGE_NAMED);
     expect(guide).toContain(NAMED_LOSS);
+    expect(RUST_WRITE_LOSSES).toEqual(RUST_LOSSES);
+    for (const loss of RUST_LOSSES) expect(guide).toContain(loss);
   });
 
   test('the named loss names every page and link write that is not a pilot write, and no other', () => {
