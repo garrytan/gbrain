@@ -43,6 +43,7 @@ import { bookkeepingStatements, createWriteSampler, JOURNAL_MEMBER_STATEMENTS, n
 import { completeEffectRow, lockEffectGuard } from '../../src/core/engine-sql/persistence-effect-worker.ts';
 import { setEffectTransactionLimits } from '../../src/core/engine-sql/remote-links.ts';
 import { lockEffectClaimRow } from '../../src/core/engine-sql/embedding-install.ts';
+import { replaceWantedLinkRows } from '../../src/core/engine-sql/wanted-links.ts';
 import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../../src/core/rust-engine.ts';
 import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
@@ -1165,6 +1166,10 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
         ];
         expect(passRows).toEqual(only('writeSyncPassRow'));
         expect(await record(dialect, (exec) => advanceSyncCheckpoint(exec, { sourceId: 'default', incarnation: 'i', commit: 'c', from: null, acceptAtCommit: false, slugMode: 'm', keepPinnedSlugMode: false } as never))).toEqual(only('advanceSyncCheckpoint'));
+        // The links effect's wanted rows after its addLinksBatch: the delete alone when no target is missing, then the insert when one is.
+        const wanted = { producer: 'body', ref_kind: 'slug', target_source_id: 'default', target_ref: 'people/missing-example', link_type: 'mentions', context: 'x' };
+        expect(await record(dialect, (exec) => replaceWantedLinkRows(exec, { pageId: 1, sourceId: 'default' }, { rows: [], producers: ['body'] } as never))).toEqual([only('replaceWantedLinkRows')[0]!]);
+        expect(await record(dialect, (exec) => replaceWantedLinkRows(exec, { pageId: 1, sourceId: 'default' }, { rows: [wanted], producers: ['body'] } as never))).toEqual(only('replaceWantedLinkRows'));
       }
       for (const [name, sqls] of JOURNAL_MEMBER_STATEMENTS) expect([name, noComparedWrites(sqls)]).toEqual([name, true]);
       // The links effect's transaction: its completion writes persistence_effects only; the others lock rows or set transaction-local settings and write nothing.
@@ -1185,7 +1190,8 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       }
       for (const name of ['setEffectTransactionLimits', 'declarePersistence', 'lockEffectGuard', 'lockEffectClaimRow']) expect(JOURNAL_MEMBER_STATEMENTS.get(name)!.flatMap((sql) => sqlWrites(sql))).toEqual([]); // they write nothing
       expect(sqlWrites(completeEffect!).map((w) => (w as { relation?: string }).relation)).toEqual(['persistence_effects']);
-      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['advanceSyncCheckpoint', 'completeEffectRow', 'completeWriteRow', 'declarePersistence', 'deleteStalePageWriteGateReceipts', 'deleteTakeRows', 'insertPublicationEffects', 'lockEffectClaimRow', 'lockEffectGuard', 'lockPersistenceCounters', 'lockWriteRequest', 'publicationJournalStore', 'removeTimelineRows', 'setEffectTransactionLimits', 'updateTimelineDetails', 'writeOpCheckpointRecords', 'writeSyncPassRow']); // upsertWriteGateReceipt is not bookkeeping: it stays an ordinary write
+      expect(JOURNAL_MEMBER_STATEMENTS.get('replaceWantedLinkRows')!.flatMap((sql) => sqlWrites(sql)).map((w) => (w as { relation?: string }).relation)).toEqual(['wanted_links', 'wanted_links']); // the effect's wanted rows only
+      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['advanceSyncCheckpoint', 'completeEffectRow', 'completeWriteRow', 'declarePersistence', 'deleteStalePageWriteGateReceipts', 'deleteTakeRows', 'insertPublicationEffects', 'lockEffectClaimRow', 'lockEffectGuard', 'lockPersistenceCounters', 'lockWriteRequest', 'publicationJournalStore', 'removeTimelineRows', 'replaceWantedLinkRows', 'setEffectTransactionLimits', 'updateTimelineDetails', 'writeOpCheckpointRecords', 'writeSyncPassRow']); // upsertWriteGateReceipt is not bookkeeping: it stays an ordinary write
     }, 30_000);
 
     test('the publication journal store is judged by every statement it can send: each method is driven, each statement is read-only or bookkeeping, and a statement that writes a compared table makes it an ordinary write', () => {

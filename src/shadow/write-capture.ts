@@ -26,6 +26,7 @@ import { ADVANCE_SYNC_CHECKPOINT_SQL } from '../core/engine-sql/sources.ts';
 import { COMPLETE_EFFECT_SQL, EFFECT_GUARD_BRAIN_SQL, EFFECT_GUARD_WORKTREE_SQL } from '../core/engine-sql/persistence-effect-worker.ts';
 import { EFFECT_TRANSACTION_LIMITS_SQL } from '../core/engine-sql/remote-links.ts';
 import { EFFECT_CLAIM_ROW_LOCK_SQL } from '../core/engine-sql/embedding-install.ts';
+import { REPLACE_WANTED_LINKS_DELETE_SQL, REPLACE_WANTED_LINKS_INSERT_SQL } from '../core/engine-sql/wanted-links.ts';
 
 /** How long the preimage read may hold a sampled write. */
 export const PREIMAGE_TIMEOUT_MS = 2_000;
@@ -243,6 +244,10 @@ export const JOURNAL_MEMBER_STATEMENTS: ReadonlyMap<string, readonly string[]> =
   ['setEffectTransactionLimits', [EFFECT_TRANSACTION_LIMITS_SQL]],
   ['lockEffectGuard', [EFFECT_GUARD_BRAIN_SQL, EFFECT_GUARD_WORKTREE_SQL]],
   ['lockEffectClaimRow', [EFFECT_CLAIM_ROW_LOCK_SQL]],
+  // The effect's wanted rows for mention targets that do not exist yet (wanted-links-store.ts replaceWantedLinks, after the addLinksBatch; also a derived-links
+  // replacement's): wanted_links only. Two raw statements the rule above judged bookkeeping by their table; as a typed member it was an ordinary later write,
+  // so every links effect whose brain records wanted pages (on by default) made its addLinksBatch `in_transaction_later_write`.
+  ['replaceWantedLinkRows', [REPLACE_WANTED_LINKS_DELETE_SQL, REPLACE_WANTED_LINKS_INSERT_SQL]],
 ]);
 /** The closing text seal of an imported page (engine-sql/write-guards.ts sealImportedPage): the statement AFTER_PAGE_WRITE matched by text while it was raw, pinned by test/shadow-follow-producer.test.ts. */
 const SEAL_MEMBER = 'sealImportedPage';
