@@ -104,7 +104,7 @@ fi
 # Delegate the LPT partition to scripts/sharding.ts. Stream the file list
 # via stdin to keep argv small (676+ files would overflow argv in some
 # shells / OSes).
-SHARD_FILES=$(printf '%s\n' "$ALL_FILES" | bun run scripts/sharding.ts "$SHARD_INDEX" "$TOTAL_SHARDS")
+SHARD_FILES=$(printf '%s\n' "$ALL_FILES" | bun run scripts/sharding.ts "$SHARD_INDEX" "$TOTAL_SHARDS" --spread-memory-heavy)
 
 if [ "$DRY_RUN_LIST" = "1" ]; then
   printf '%s' "$SHARD_FILES"
