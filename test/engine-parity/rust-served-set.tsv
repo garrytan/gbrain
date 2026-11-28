@@ -190,7 +190,10 @@ test/engine-parity/segmented-mirror-effects.test.ts	served
 test/engine-parity/segmented-purge-writes.test.ts	served	
 test/engine-parity/segmented-rewrite.test.ts	served	
 test/engine-parity/served-remote-doctor.test.ts	served	
+test/engine-parity/served-remote-entity-context.test.ts	served	
 test/engine-parity/served-remote-feedback-record.test.ts	served	
+test/engine-parity/served-remote-resolve.test.ts	served	
+test/engine-parity/served-remote-segmented.test.ts	served	
 test/engine-parity/served-remote-think.test.ts	served	
 test/engine-parity/served-remote-writes.test.ts	served	
 test/engine-parity/session-state-cap.test.ts	served	

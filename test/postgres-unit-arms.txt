@@ -558,6 +558,9 @@ test/engine-parity/segmented-mirror-effects.test.ts
 test/engine-parity/segmented-purge-writes.test.ts
 test/engine-parity/segmented-rewrite.test.ts
 test/engine-parity/served-remote-doctor.test.ts
+test/engine-parity/served-remote-entity-context.test.ts
+test/engine-parity/served-remote-resolve.test.ts
+test/engine-parity/served-remote-segmented.test.ts
 test/engine-parity/served-remote-think.test.ts
 test/engine-parity/served-remote-writes.test.ts
 test/engine-parity/session-state-cap.test.ts

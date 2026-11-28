@@ -138,6 +138,20 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // learned feedback weight (search/feedback-boost.ts) when feedback is on. The server serves it only when every id names a
   // page the caller may read (served/remote-member-policy.ts PAGE_ID_GUARDS).
   'readPageFeedbackWeights',
+  // S4 (retrieval), served-remote-resolve: a remote query, search, recall, traverse_graph and memory_recall resolve a named entity
+  // (title, bare-name prefix family, same-name siblings, a meeting's title seed, a chain anchor, the entity anchor's titles),
+  // ask which sources the caller cannot read, and read their source configs.
+  'readPageTitle', 'readPageTitlesById', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches',
+  'readSiblingGroupRows', 'readSeedTitleSlugs', 'resolveChainAnchorRows', 'readSourcesNotReadable', 'readScopeSourceConfigs',
+  // S4 (retrieval), served-remote-entity-context: a remote entity card reads its referrer groups, record pages and text
+  // mentions; context_pack reads the trust generation; volunteer_context reads its reflex pages (privacy narrowed by
+  // remote-member-policy.ts) and live keys and its usage counts.
+  'readReflexPages', 'readReflexLiveKeys', 'readVolunteerUsage', 'readTrustGeneration',
+  'readReferrerGroupRows', 'readReferrerRecordCandidates', 'readReferrerRecordPages', 'readTextMentionPages',
+  // S4 (retrieval), served-remote-segmented: a remote get_page and get_versions of a segmented page read its head and its
+  // version body sizes (page-id guarded, remote-member-policy.ts); search reads the regions of a page with more than two
+  // hits; search_exact scans a batch of pages for a phrase.
+  'readSegmentedPageHead', 'readSegmentedVersionBodyBytes', 'readSegmentRegions', 'scanExactBatch',
 ];
 
 /**
@@ -167,6 +181,7 @@ export const OWNER_IPC_REMOTE_DENY: Readonly<Record<string, string>> = {
   ...Object.fromEntries(['readAccessReadLog', 'listAccessReadPageRefs', 'readAccessReadsOfPages', 'tallyAccessReadsOfPages'].map(m => [m, READ_LOG])),
   ...Object.fromEntries(['readDecideState', 'dailyDecideSpend', 'listDecideSpendBySlot', 'listDecideReceiptStats', 'getDecideProposal',
     'listDecideProposals', 'getDecideReviewProposal', 'listDecideCalibrations', 'getDecideCalibration'].map(m => [m, DECIDE])),
+  readSharedSourceRows: 'every live source\'s config, guest flag and owner list across all callers; the remote grant and personal-source checks need a server-side scoped form',
 };
 
 /**

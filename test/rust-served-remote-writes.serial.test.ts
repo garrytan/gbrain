@@ -360,4 +360,74 @@ describeAddon('remote writes over the served wire', () => {
       _resetFeedbackSettingsCacheForTests();
     });
   });
+
+  // The reflex page read takes its privacy from the client's scope. A remote caller that sends `none` must not lift the
+  // page policy: the server reads it as `caller`. `floor` and `caller` stay as sent.
+  const reflexTitles = async (privacy: string, opts: { txn?: string } = {}) => {
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const rows = await worldOnly(() => conn.request('call', 'readReflexPages', [{ sourceIds: ['default'], privacy }, { kind: 'titles', titlesLc: ['open', 'secret'] }], opts)) as Array<{ slug: string }>;
+    return rows.map(r => r.slug).sort();
+  };
+
+  test('the reflex page read: a remote caller that sends privacy none reads only the pages it may read, as `caller` and `floor` do', async () => {
+    expect(await reflexTitles('none')).toEqual(['notes/open']);
+    expect(await reflexTitles('caller')).toEqual(['notes/open']);
+    expect(await reflexTitles('floor')).toEqual(['notes/open']);
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const live = await worldOnly(() => conn.request('call', 'readReflexLiveKeys', [{ sourceIds: ['default'], privacy: 'none' }, ['notes/open', 'notes/secret']])) as Array<{ slug: string }>;
+    expect(live.map(r => r.slug)).toEqual(['notes/open']);
+  });
+
+  test('the reflex page read inside a transaction the caller holds: privacy none is narrowed there too', async () => {
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const ref = String(await conn.txn('begin', {}));
+    let inside: string[] = [];
+    try {
+      inside = await reflexTitles('none', { txn: ref });
+    } finally {
+      await conn.txn('commit', { txn: ref }).catch(() => conn.txn('rollback', { txn: ref }).catch(() => undefined));
+    }
+    expect(inside).toEqual(['notes/open']);
+  });
+
+  // The segmented page reads keyed by a page id the client chose (PAGE_ID_GUARDS): the id must name a page the caller may read.
+  const SEGMENTED_READS: Array<[string, (id: number) => unknown[]]> = [
+    ['readSegmentedPageHead', id => [id]],
+    ['readSegmentedVersionBodyBytes', id => [id, 1]],
+  ];
+
+  test('the segmented page head and version size reads: a page id outside the caller\'s read scope is refused, an open one answers', async () => {
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const open = (await owner.getPage('notes/open'))!.id as number;
+    const secret = (await owner.getPage('notes/secret'))!.id as number;
+    const codes: Record<string, string> = {};
+    for (const [member, args] of SEGMENTED_READS) {
+      codes[`${member}:secret`] = await codeOf(worldOnly(() => conn.request('call', member, args(secret))));
+      codes[`${member}:open`] = await codeOf(worldOnly(() => conn.request('call', member, args(open))));
+    }
+    expect(codes).toEqual({
+      'readSegmentedPageHead:secret': 'permission_denied', 'readSegmentedPageHead:open': 'ok',
+      'readSegmentedVersionBodyBytes:secret': 'permission_denied', 'readSegmentedVersionBodyBytes:open': 'ok',
+    });
+  });
+
+  test('the segmented page head and version size reads inside a transaction the caller holds: a page id outside its read scope is refused there too', async () => {
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const open = (await owner.getPage('notes/open'))!.id as number;
+    const secret = (await owner.getPage('notes/secret'))!.id as number;
+    const ref = String(await conn.txn('begin', {}));
+    const codes: Record<string, string> = {};
+    try {
+      for (const [member, args] of SEGMENTED_READS) {
+        codes[`${member}:secret`] = await codeOf(worldOnly(() => conn.request('call', member, args(secret), { txn: ref })));
+        codes[`${member}:open`] = await codeOf(worldOnly(() => conn.request('call', member, args(open), { txn: ref })));
+      }
+    } finally {
+      await conn.txn('commit', { txn: ref }).catch(() => conn.txn('rollback', { txn: ref }).catch(() => undefined));
+    }
+    expect(codes).toEqual({
+      'readSegmentedPageHead:secret': 'permission_denied', 'readSegmentedPageHead:open': 'ok',
+      'readSegmentedVersionBodyBytes:secret': 'permission_denied', 'readSegmentedVersionBodyBytes:open': 'ok',
+    });
+  });
 });
