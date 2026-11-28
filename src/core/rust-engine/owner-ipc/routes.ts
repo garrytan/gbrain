@@ -155,13 +155,17 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // served-remote-g1-brief: a remote context_pack pull on a counterparty reads its entity page, its newest timeline entry or the
   // lines its newest revision added (readBriefPageVersions answers only a page id the caller may read).
   'readBriefEntityPages', 'readBriefEditPage', 'readBriefTimelineEntry', 'readBriefPageVersions',
-  // served-remote-g1-body: a remote get_page of a segmented page reads its body manifest (the page-id guarded members answer only a page
-  // the caller may read), and a segmented lead under a withdrawal is struck through the pure fence-line normalization.
+  // served-remote-g1-body: a remote search over a segmented page reads its body manifest for evidence windows (the page-id guarded members
+  // answer only a page the caller may read), and a segmented lead under a withdrawal is struck through the pure fence-line normalization.
   'readBodyManifestRows', 'readBodyManifestMeta', 'normalizeFenceLines',
   'readSegmentedPageHead', 'readSegmentedVersionBodyBytes', // TEMP-VERIFY-ONLY (group 3 serves them)
   // served-remote-g1-belief-links: a remote delta with beliefs pages the ledger's history (the remote filter runs in readBeliefHistoryPage,
   // after the raw rows return), keeps a link only when its page lifetimes are visible, and places the window in the coverage events.
   'readBeliefHistoryRows', 'listVisibleBeliefLifetimes', 'readBeliefCoverageEvents',
+  // served-remote-g1-link-notes: a remote entity card notes the relationships a page ended (a private target or origin is left out under
+  // excludePrivate), and a record continuation of get_backlinks reads its referrers' amends and supersedes links and page status.
+  // Both operations also need members no group serves yet (readReferrerGroupRows, readReferrerTypes), so the proof calls the loaders.
+  'listRelationshipNoteRows', 'listRecordMetadataRows',
 ];
 
 /**

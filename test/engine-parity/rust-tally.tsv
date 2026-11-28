@@ -401,6 +401,7 @@ test/engine-parity/served-remote-g1-body.test.ts	1	0
 test/engine-parity/served-remote-g1-brief.test.ts	1	0
 test/engine-parity/served-remote-g1-exact-scan.test.ts	1	0
 test/engine-parity/served-remote-g1-facts-recall.test.ts	4	0
+test/engine-parity/served-remote-g1-link-notes.test.ts	2	0
 test/engine-parity/served-remote-g1-search-probes.test.ts	2	0
 test/engine-parity/served-remote-think.test.ts	4	0
 test/engine-parity/served-remote-writes.test.ts	6	0
