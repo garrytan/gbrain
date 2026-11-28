@@ -197,9 +197,11 @@ test/engine-parity/hot-memory-meta.test.ts	3	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
 test/engine-parity/identity-auto-sweeps.test.ts	3	0
 test/engine-parity/identity-finder.test.ts	5	0
+test/engine-parity/ignored-privacy-label-reads.test.ts	3	0
+test/engine-parity/import-command.test.ts	3	0
 test/engine-parity/import-folder-stamp.test.ts	5	0
 test/engine-parity/import-members.test.ts	10	0
-test/engine-parity/import-path.test.ts	8	0
+test/engine-parity/import-path.test.ts	9	0
 test/engine-parity/import-writes.test.ts	11	0
 test/engine-parity/jobs-checks.test.ts	10	0
 test/engine-parity/jobs-health.test.ts	11	0
@@ -320,7 +322,7 @@ test/engine-parity/receipt-compaction-step.test.ts	1	0
 test/engine-parity/rechunk-chunk-ids.test.ts	2	0
 test/engine-parity/referrer-reads.test.ts	5	0
 test/engine-parity/refusal-blocker-sites.test.ts	6	0
-test/engine-parity/refusal-swallow-extract.test.ts	14	1
+test/engine-parity/refusal-swallow-extract.test.ts	9	7
 test/engine-parity/refusal-swallow-health.test.ts	5	1
 test/engine-parity/refusal-swallow-paths.test.ts	6	0
 test/engine-parity/refusal-swallow-sites.test.ts	9	0
@@ -406,6 +408,7 @@ test/engine-parity/source-last-commit.test.ts	1	0
 test/engine-parity/source-order-callers.test.ts	5	0
 test/engine-parity/source-resolver-reads.test.ts	27	0
 test/engine-parity/source-scope-reads.test.ts	4	0
+test/engine-parity/source-suggestion.test.ts	1	0
 test/engine-parity/source-verify-reads.test.ts	2	0
 test/engine-parity/sources-add-json.test.ts	1	0
 test/engine-parity/spend-log.test.ts	11	0

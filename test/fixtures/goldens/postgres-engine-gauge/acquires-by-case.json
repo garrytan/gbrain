@@ -246,6 +246,9 @@
     "isSourceClaimed#default": {
       "raw": 1
     },
+    "listActiveSourceConfigs#default": {
+      "raw": 1
+    },
     "listActiveTakesForPages#allowList": {},
     "listActiveTakesForPages#default": {},
     "listAllPageRefs#default": {},
