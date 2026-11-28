@@ -36,8 +36,8 @@ const BASELINE_REASON = 'ruling A default';
  * BASELINE_FROZEN_SIZE and update BASELINE_DIGEST only in the commit that moves a row out of the baseline reason; never to
  * add a member. A new local-only member takes its own real reason.
  */
-const BASELINE_FROZEN_SIZE = 496;
-const BASELINE_DIGEST = '8615abe51a177c11af6c16667cb202e6c0c00fc4ea4373d060e8ca7a64184325';
+const BASELINE_FROZEN_SIZE = 471;
+const BASELINE_DIGEST = 'eb03291aeb4bbd17a91cd29bd9af2bb7045210b14c36c05a8905b1f8e3d24f98';
 
 const localOnlyRows = readFileSync(join(ROOT, LOCAL_ONLY_FILE), 'utf8').split('\n')
   .filter(line => line !== '' && !line.startsWith('#') && line !== 'member\treason')

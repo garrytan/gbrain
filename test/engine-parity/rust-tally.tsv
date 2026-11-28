@@ -399,6 +399,7 @@ test/engine-parity/served-arg-reads-entity.test.ts	2	0
 test/engine-parity/served-arg-reads-facts.test.ts	1	0
 test/engine-parity/served-arg-reads-relaxed.test.ts	1	0
 test/engine-parity/served-arg-reads-search.test.ts	3	0
+test/engine-parity/served-remote-context-reads.test.ts	4	0
 test/engine-parity/served-remote-doctor.test.ts	1	0
 test/engine-parity/served-remote-entity-context.test.ts	2	0
 test/engine-parity/served-remote-feedback-record.test.ts	2	0
@@ -411,6 +412,7 @@ test/engine-parity/served-remote-g1-household-members.test.ts	1	0
 test/engine-parity/served-remote-g1-link-notes.test.ts	2	0
 test/engine-parity/served-remote-g1-search-probes.test.ts	2	0
 test/engine-parity/served-remote-resolve.test.ts	4	0
+test/engine-parity/served-remote-search-reads.test.ts	8	0
 test/engine-parity/served-remote-segmented.test.ts	4	0
 test/engine-parity/served-remote-think.test.ts	4	0
 test/engine-parity/served-remote-writes.test.ts	6	0

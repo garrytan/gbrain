@@ -503,4 +503,45 @@ describeAddon('remote writes over the served wire', () => {
   test('listSourceRecords stays denied for a remote caller: refused on an ordinary frame and in a held transaction', async () => {
     expect(codes(await sendMember('listSourceRecords', []))).toEqual(['engine_capability_missing', 'engine_capability_missing']);
   });
+
+  test('the page-id reads a remote search makes: a private id refuses the call with read_out_of_scope, a readable one answers, on a plain frame and inside a held transaction', async () => {
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const open = (await owner.getPage('notes/open'))!.id as number;
+    const secret = (await owner.getPage('notes/secret'))!.id as number;
+    const reasonOf = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => `${(e as { code?: string }).code}/${(e as { reason?: string }).reason}`);
+    const plain = {
+      dates: await reasonOf(worldOnly(() => client.readPageDateFieldsByIds([open, secret]))),
+      datesOpen: await reasonOf(worldOnly(() => client.readPageDateFieldsByIds([open]))),
+      guests: await reasonOf(worldOnly(() => client.readGuestMarks([open, secret]))),
+      guestsOpen: await reasonOf(worldOnly(() => client.readGuestMarks([open]))),
+    };
+    expect(plain).toEqual({ dates: 'permission_denied/read_out_of_scope', datesOpen: 'ok', guests: 'permission_denied/read_out_of_scope', guestsOpen: 'ok' });
+    const ref = String(await conn.txn('begin', {}));
+    let held: Record<string, string> = {};
+    try {
+      held = {
+        dates: await reasonOf(worldOnly(() => conn.request('call', 'readPageDateFieldsByIds', [[open, secret]], { txn: ref }))),
+        datesOpen: await reasonOf(worldOnly(() => conn.request('call', 'readPageDateFieldsByIds', [[open]], { txn: ref }))),
+        guests: await reasonOf(worldOnly(() => conn.request('call', 'readGuestMarks', [[open, secret]], { txn: ref }))),
+        guestsOpen: await reasonOf(worldOnly(() => conn.request('call', 'readGuestMarks', [[open]], { txn: ref }))),
+      };
+    } finally {
+      await conn.txn('commit', { txn: ref }).catch(() => conn.txn('rollback', { txn: ref }).catch(() => undefined));
+    }
+    expect(held).toEqual(plain);
+  });
+
+  test('the folder access read a remote caller\'s record needs crosses: the parity cases cannot show it, because the caller record swallows its refusal', async () => {
+    // access/caller.ts folderAccessForAll turns any error into an unreadable-rulebook narrowing, so a served client that could not send
+    // readFolderAccess would still answer; only the member itself shows the difference.
+    expect(await codeOf(worldOnly(() => client.readFolderAccess([])))).toBe('ok');
+  });
+
+  test('the OAuth client row and the owner-only source probe never cross: a raw frame for either is refused with engine_capability_missing', async () => {
+    const reasonOf = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => String((e as { code?: string }).code ?? (e as Error).message));
+    expect({
+      client: await reasonOf(worldOnly(() => client.readOauthClient('some-client'))),
+      ownerOnly: await reasonOf(worldOnly(() => client.readOwnerOnlySourcesPresent())),
+    }).toEqual({ client: 'engine_capability_missing', ownerOnly: 'engine_capability_missing' });
+  });
 });

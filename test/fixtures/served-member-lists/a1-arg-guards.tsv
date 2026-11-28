@@ -34,6 +34,22 @@ readBeliefHistoryRows	source-wide history by the client's source id and cursor; 
 readBriefEditPage	the source and slug come from the client and the read is filtered only by the privacy and eligibility options the client sends
 readBriefEntityPages	the source and entity slugs come from the client and the read is filtered only by the privacy options the client sends
 readBriefTimelineEntry	the page id comes from the client; with privacy none the entry is returned unfiltered
+readEntityAnchoredPages	no privacy clause at all: the entity title and anchored pages come back for any id the client names; add the caller's page policy or drop unreadable ids
+readEntityIdentityIdsForPages	any source and slug the client names returns its entity id for a live page, private or not; keep only pages the caller may read
+readEntityInboundEdges	privacy depends on the excludePrivate argument the client sends; force excludePrivate on remote frames
+readEntityNewestFacts	visibility applies only when the client sends remote:true; take the remote mark from the frame, not the arguments
+readExactSnippetChunks	chunk text of a private page leaves the server when the client sends excludePrivate false; force excludePrivate on remote frames
+readFactCacheWatermark	answers withdrawal counts, the latest withdrawal time and a digest of the source's access rules, for any source the client names
+readFolderAccess	readers is a client argument and coverage rows are not filtered to readable sources; pin readers to the caller's bound identity
+readHeldHitRows	page ids and source ids are client arguments; limit them to pages and sources the caller may read
+readLiveSlugs	existence oracle: answers for any slug the client names, private pages included; drop slugs the caller cannot read
+readLongPageSizes	size oracle for private pages by id, set by the client's excludePrivate argument; force excludePrivate on remote frames
+readNotifierStatusRows	returns host fields (trace_path, owner_pid, owner_host_id) for any source the client names; limit source ids to readable sources
+readPageAliasRows	slugs are client arguments and identity siblings can be private pages; limit slugs to pages the caller may read
+readPageHiddenFromCaller	the visibility policy is a client argument and the answer tells a hidden page from a missing one; pin the policy to the remote policy
+readPageReferenceDate	existence and date oracle: answers for any source and slug the client names, private pages included; the slug must be readable by the caller
+readPageRevisionAttribution	the page id is a client argument and the writer's principal id comes back for any page; the op checks visibility first, the raw member does not
+readPageSynopses	synopsis of private body text, set by the policy the client sends; force excludePrivate on remote frames and limit refs to readable pages
 readPageTitle	sourceId and slug come from the client; no privacy or member check, so it answers the title of a private, readers-only or soft-deleted page
 readPageTitlesById	page ids come from the client; no privacy or member check, so it answers the title of any page id, soft-deleted ones too
 readPrefixCandidates	sourceId and the prefix query come from the client; the SQL has no privacy or member predicate, so it lists private pages of the bare-name family
