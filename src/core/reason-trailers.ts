@@ -9,7 +9,7 @@
  * parent, so a merge's own trailer decides for a conflict resolution and a side-branch commit never decides), with no
  * pathspec and no grep on the command line, parsed as it streams and stopped at a commit cap.
  */
-import { realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { hardenedGitStream, hardenedGitSync, REASON_LOG_OPTIONS } from './hardened-git.ts';
 import { canonicalChangeReason, CHANGE_REASON_MAX } from './persistence/change-reason.ts';
@@ -169,7 +169,7 @@ export async function scanSyncReasons(engine: BrainEngine, input: { sourceId: st
   return { status: read.status, gitRoot: repo.gitRoot, range, byPath: new Map(), malformed: 0, secrets: [], ...(read.status === 'failed' ? { detail: read.detail } : {}) };
 }
 
-type GitTopLevel = { status: 'found'; gitRoot: string; scopePrefix: string } | { status: 'not_repository' } | { status: 'failed'; detail: string };
+type GitTopLevel = { status: 'found'; gitRoot: string; scopePrefix: string } | { status: 'not_repository' } | { status: 'failed'; detail: string; sourcePathMissing?: true };
 
 /**
  * Where `sourceRoot` sits in Git: its top level and the source's path under it (both real paths); `not_repository` only
@@ -178,7 +178,14 @@ type GitTopLevel = { status: 'found'; gitRoot: string; scopePrefix: string } | {
  */
 function locateGitTopLevel(sourceRoot: string): GitTopLevel {
   let root: string;
-  try { root = realpathSync(sourceRoot); } catch (error) { return { status: 'failed', detail: `source path unreadable: ${(error as NodeJS.ErrnoException).code ?? 'error'}` }; }
+  try {
+    root = realpathSync(sourceRoot);
+    if (!statSync(root).isDirectory()) return { status: 'failed', detail: 'source path is not a directory', sourcePathMissing: true };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return { status: 'failed', detail: `source path unreadable: ${code ?? 'error'}`,
+      ...(['ENOENT', 'ENOTDIR'].includes(code ?? '') ? { sourcePathMissing: true as const } : {}) };
+  }
   const top = hardenedGitSync(root, ['rev-parse', '--show-toplevel'], { timeoutMs: 10_000, maxBytes: 64 * 1024, stderr: true });
   if (top.ok) {
     const gitRoot = realpathSync(top.stdout.toString('utf8').trim());
@@ -278,7 +285,7 @@ export function clearReasonScanCache(): void { caches = new WeakMap(); }
 export type PurgeTrailerScan =
   | { status: 'no_repository' }
   | { status: 'complete'; gitRoot: string; head: string | null; hits: Array<{ commit: string; path: string }>; commits: number; limited: boolean }
-  | { status: 'failed'; detail: string }
+  | { status: 'failed'; detail: string; sourcePathMissing?: true }
   | { status: 'capped'; cap: number };
 
 /**
@@ -290,7 +297,7 @@ export type PurgeTrailerScan =
 export async function scanTrailersCarrying(sourceRoot: string, needles: readonly string[], opts: { from?: string | null; limit?: number } = {}): Promise<PurgeTrailerScan> {
   const repo = locateGitTopLevel(sourceRoot);
   if (repo.status === 'not_repository') return { status: 'no_repository' };
-  if (repo.status === 'failed') return { status: 'failed', detail: repo.detail };
+  if (repo.status === 'failed') return repo;
   const head = hardenedGitSync(repo.gitRoot, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], { timeoutMs: 10_000, maxBytes: 1024 });
   if (!head.ok) return head.reason === 'exit' && head.status === 1 ? { status: 'complete', gitRoot: repo.gitRoot, head: null, hits: [], commits: 0, limited: false }
     : { status: 'failed', detail: `git rev-parse ${head.reason}` };

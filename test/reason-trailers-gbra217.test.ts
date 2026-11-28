@@ -133,11 +133,11 @@ async function gitEffect(engine: BrainEngine, sourceId: string, state: string, d
   return row!.id;
 }
 async function purge(engine: BrainEngine, sourceId: string, id: number, extra: Record<string, unknown> = {}) {
-  const dry = await run(engine, sourceId, 'purge_fact', { id, source_id: sourceId, dry_run: true });
+  const dry = await run(engine, sourceId, 'purge_fact', { id, source_id: sourceId, ...extra, dry_run: true });
   return run(engine, sourceId, 'purge_fact', { id, source_id: sourceId, confirm: dry.confirm_token, expected_revision: dry.expected_revision, request_id: randomUUID(), ...extra });
 }
 async function refusal(p: Promise<unknown>): Promise<Record<string, any>> {
-  try { await p; } catch (error) { if (error instanceof OperationError) return error.toJSON() as Record<string, any>; throw error; }
+  try { await p; } catch (error) { if (error instanceof OperationError) return { ...error.toJSON(), retryable: error.retryable } as Record<string, any>; throw error; }
   throw new Error('expected a refusal');
 }
 
@@ -419,17 +419,21 @@ describe('A7: purge reaches change reasons', () => {
       const pushed = commit(s.root, 'edit', [`notes/a.md: Changed once ${claim} was rotated.`]);
       await sync(engine, s);
       const id = await seedFact(engine, s.id, 'people/gate-example', claim);
+      const ready = await run(engine, s.id, 'purge_fact', { id, source_id: s.id, dry_run: true });
 
       __setReasonGitStreamForTests(failingGit);
-      const failed = await refusal(purge(engine, s.id, id));
+      const failed = await refusal(run(engine, s.id, 'purge_fact', { id, source_id: s.id, confirm: ready.confirm_token }));
+      expect(await refusal(run(engine, s.id, 'purge_fact', { id, source_id: s.id, dry_run: true }))).toMatchObject({ code: 'reason_purge_scan_failed' });
       expect(failed).toMatchObject({ code: 'reason_purge_scan_failed' });
+      expect(failed.retryable).toBe(true);
       expect(failed.fix).toMatchObject({ next: 'wait' });
       expect(await engine.executeRaw('SELECT 1 FROM facts WHERE id = $1', [id])).toHaveLength(1);
       expect((await reasonsOf(engine, s.id, 'notes/a')).reasons).toEqual([`Changed once ${claim} was rotated.`]);
       __setReasonGitStreamForTests();
 
       __setReasonScanCapsForTests({ purge: 1 });
-      const capped = await refusal(purge(engine, s.id, id));
+      const capped = await refusal(run(engine, s.id, 'purge_fact', { id, source_id: s.id, confirm: ready.confirm_token }));
+      expect(await refusal(run(engine, s.id, 'purge_fact', { id, source_id: s.id, dry_run: true }))).toMatchObject({ code: 'reason_purge_scan_capped' });
       expect(capped).toMatchObject({ code: 'reason_purge_scan_capped' });
       expect(capped.fix).toMatchObject({ next: 'ask_user', argv: expect.arrayContaining(['--reason-scan-limit']) });
       expect(await engine.executeRaw('SELECT 1 FROM facts WHERE id = $1', [id])).toHaveLength(1);
@@ -486,6 +490,50 @@ describe('A7: purge reaches change reasons', () => {
       expect(await engine.executeRaw('SELECT 1 FROM facts WHERE id = $1', [plainFact])).toHaveLength(0);
     }
   }), 180_000);
+  test('purge preview refuses an unreadable history before confirmation and leaves every store unchanged (#8634)', async () => inHome(async () => {
+    for (const engine of engines) {
+      const s = await classicSource(engine, { 'notes/a.md': page('Original edition.') });
+      await sync(engine, s);
+      const claim = `Synthetic recovery code ${9100 + engines.indexOf(engine)}`;
+      const id = await seedFact(engine, s.id, 'people/preview-example', claim);
+      const params = { id, source_id: s.id, dry_run: true };
+      const ready = await run(engine, s.id, 'purge_fact', params);
+      expect(ready.dry_run).toBe(true);
+      const before = await engine.executeRaw('SELECT id, fact, valid_until FROM facts WHERE id=$1', [id]);
+      const requests = await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1 ORDER BY id', [s.id]);
+      renameSync(s.root, `${s.root}-moved`);
+      try {
+        expect(await refusal(run(engine, s.id, 'purge_fact', params))).toMatchObject({ code: 'reason_purge_scan_failed' });
+        expect(await engine.executeRaw('SELECT id, fact, valid_until FROM facts WHERE id=$1', [id])).toEqual(before);
+        expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1 ORDER BY id', [s.id])).toEqual(requests);
+        expect(await engine.executeRaw('SELECT 1 FROM reason_purge_tombstones WHERE source_id=$1', [s.id])).toHaveLength(0);
+      } finally { renameSync(`${s.root}-moved`, s.root); }
+      expect((await run(engine, s.id, 'purge_fact', params)).expected_revision).toBe(ready.expected_revision);
+    }
+  }), 180_000);
+
+  test('missing checkout is an operator repair, not a wait-and-retry purge (#8634)', async () => inHome(async () => {
+    for (const engine of engines) {
+      const s = await classicSource(engine, { 'notes/a.md': page('Original edition.') });
+      const id = await seedFact(engine, s.id, 'people/missing-root-example', 'Synthetic retained claim.');
+      const ready = await run(engine, s.id, 'purge_fact', { id, source_id: s.id, dry_run: true });
+      renameSync(s.root, `${s.root}-moved`);
+      try {
+        // A previously reviewed confirmation still refuses if the checkout disappeared afterwards.
+        const failed = await refusal(run(engine, s.id, 'purge_fact', { id, source_id: s.id, confirm: ready.confirm_token }));
+        expect(failed).toMatchObject({ code: 'reason_purge_scan_failed', retryable: false,
+          fix: { next: 'run', argv: ['gbrain', 'sources', 'status', s.id, '--json'] } });
+        expect(failed.suggestion).toContain('sources set-path');
+        // Exercise the recommended read-only diagnosis against the broken checkout.
+        await runSources(engine, ['status', s.id, '--json']);
+        expect(await engine.executeRaw('SELECT fact FROM facts WHERE id=$1', [id])).toEqual([{ fact: 'Synthetic retained claim.' }]);
+        writeFileSync(s.root, 'not a checkout directory');
+        expect(await scanTrailersCarrying(join(s.root, 'child'), ['claim'])).toMatchObject({ status: 'failed', sourcePathMissing: true, detail: 'source path unreadable: ENOTDIR' });
+        expect(await refusal(run(engine, s.id, 'purge_fact', { id, source_id: s.id, dry_run: true }))).toMatchObject({ code: 'reason_purge_scan_failed', retryable: false });
+      } finally { rmSync(s.root, { force: true }); renameSync(`${s.root}-moved`, s.root); }
+    }
+  }), 180_000);
+
   test('a purge while another process holds a cached scan of the range: its next request reads the tombstone, not the cached reason', async () => inHome(async () => {
     // A second module instance is the managed sync worker's process: the purge cannot clear its cache.
     const worker = await import(new URL('../src/core/reason-trailers.ts?sync-worker', import.meta.url).href) as typeof import('../src/core/reason-trailers.ts');
