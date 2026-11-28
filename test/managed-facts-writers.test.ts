@@ -155,6 +155,102 @@ test('managed extract_facts reconciles a drifted fence and expires a deleted pag
   });
 }, 120_000);
 
+test('managed reconciliation retries a failed page after an empty incremental sync without starving siblings', async () => {
+  await managed(async ({ engine, sourceId, put }) => {
+    for (const name of ['retry', 'healthy']) {
+      await put(`people/${name}`, PERSON(name, FENCE(`| 1 | ${name} claim | fact | 1.0 | world | high | 2017-01-01 |  | chat |  |`)));
+    }
+    await engine.executeRaw('DELETE FROM facts WHERE source_id=$1', [sourceId]);
+  }, async ({ engine, sourceId }) => {
+    const original = engine.getPage;
+    let failures = 0;
+    engine.getPage = async function (this: BrainEngine, slug, opts) {
+      if (slug === 'people/retry' && opts?.sourceId === sourceId) {
+        failures++;
+        throw new Error('synthetic transient page read failure');
+      }
+      return original.call(this, slug, opts);
+    };
+    let first: Awaited<ReturnType<typeof runExtractFacts>>;
+    try {
+      first = await runExtractFacts(engine, { sourceId, slugs: ['people/retry', 'people/healthy'], deferEmbedding: true });
+    } finally { engine.getPage = original; }
+    expect(failures).toBe(1);
+    expect(first.pagesFailed).toBe(1);
+    expect(await facts(engine, sourceId, 'people/healthy')).toHaveLength(1);
+    expect(await facts(engine, sourceId, 'people/retry')).toHaveLength(0);
+    const retry = () => runExtractFacts(engine, { sourceId, slugs: [], drain: { pageLimit: 1 }, deferEmbedding: true });
+    expect((await retry()).factsInserted).toBe(1);
+    expect(await facts(engine, sourceId, 'people/retry')).toHaveLength(1);
+    expect((await retry()).pagesScanned).toBe(0);
+  });
+}, 120_000);
+
+test('managed retries are bounded, source scoped, dry-run safe and do not discover unattempted pages', async () => {
+  await managed(async ({ engine, sourceId, put }) => {
+    for (const name of ['first', 'second', 'unattempted']) {
+      await put(`people/${name}`, PERSON(name, FENCE(`| 1 | ${name} claim | fact | 1.0 | world | high | 2017-01-01 |  | chat |  |`)));
+    }
+    await engine.executeRaw('DELETE FROM facts WHERE source_id=$1', [sourceId]);
+  }, async ({ engine, sourceId }) => {
+    const original = engine.getPage;
+    engine.getPage = async function (this: BrainEngine, slug, opts) {
+      if (opts?.sourceId === sourceId) throw new Error('synthetic unavailable reader');
+      return original.call(this, slug, opts);
+    };
+    try {
+      expect((await runExtractFacts(engine, { sourceId, slugs: ['people/first', 'people/second'] })).pagesFailed).toBe(2);
+    } finally { engine.getPage = original; }
+    const attempts = () => engine.executeRaw(
+      'SELECT r.* FROM page_facts_reconcile r JOIN pages p ON p.id=r.page_id WHERE p.source_id=$1 ORDER BY p.slug', [sourceId]);
+    const before = await attempts();
+    await runExtractFacts(engine, { sourceId, slugs: [], drain: {}, dryRun: true });
+    expect(await attempts()).toEqual(before);
+    expect((await runExtractFacts(engine, { sourceId: 'default', slugs: [], drain: {} })).pagesScanned).toBe(0);
+    expect(await attempts()).toEqual(before);
+    const retry = () => runExtractFacts(engine, { sourceId, slugs: [], drain: { pageLimit: 1 }, deferEmbedding: true });
+    expect((await retry()).factsInserted).toBe(1);
+    expect((await retry()).factsInserted).toBe(1);
+    expect((await retry()).pagesScanned).toBe(0);
+    expect(await facts(engine, sourceId, 'people/unattempted')).toHaveLength(0);
+  });
+}, 120_000);
+
+test('managed retries survive revision changes during publication and a failure after prior completion', async () => {
+  const content = (claim: string) => PERSON('Retry', FENCE(`| 1 | ${claim} | fact | 1.0 | world | high | 2017-01-01 |  | chat |  |`));
+  await managed(async ({ engine, sourceId, put }) => {
+    await put('people/retry', content('Original claim'));
+    await engine.executeRaw('DELETE FROM facts WHERE source_id=$1', [sourceId]);
+  }, async ({ engine, sourceId, put }) => {
+    const original = engine.getPage;
+    let edited = false;
+    engine.getPage = async function (this: BrainEngine, slug, opts) {
+      const page = await original.call(this, slug, opts);
+      if (!edited && slug === 'people/retry' && opts?.sourceId === sourceId) {
+        edited = true;
+        await put(slug, content('Newer claim'));
+      }
+      return page;
+    };
+    try { await runExtractFacts(engine, { sourceId, slugs: ['people/retry'], deferEmbedding: true }); }
+    finally { engine.getPage = original; }
+    expect(edited).toBe(true);
+    const retry = () => runExtractFacts(engine, { sourceId, slugs: [], drain: {}, deferEmbedding: true });
+    expect((await retry()).pagesScanned).toBe(1);
+    expect((await facts(engine, sourceId, 'people/retry')).map(f => f.fact)).toEqual(['Newer claim']);
+    expect((await retry()).pagesScanned).toBe(0);
+    // A new failed attempt at an already completed revision must remain due.
+    engine.getPage = async function (this: BrainEngine, slug, opts) {
+      if (slug === 'people/retry' && opts?.sourceId === sourceId) throw new Error('synthetic repeat failure');
+      return original.call(this, slug, opts);
+    };
+    try { expect((await runExtractFacts(engine, { sourceId, slugs: ['people/retry'] })).pagesFailed).toBe(1); }
+    finally { engine.getPage = original; }
+    expect((await retry()).pagesScanned).toBe(1);
+    expect((await retry()).pagesScanned).toBe(0);
+  });
+}, 120_000);
+
 test('managed phantom redirect merges the phantom fence into the canonical page and deletes the phantom through the coordinator', async () => {
   await managed(async ({ engine, sourceId, root, put }) => {
     await put('people/alice-example', PERSON('Alice Example'));

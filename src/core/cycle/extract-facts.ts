@@ -1039,10 +1039,10 @@ export async function runExtractFacts(
   if (phantomResult.touched_canonicals.length > 0 || fencedSlugs.length > 0) {
     slugs = Array.from(new Set([...slugs, ...phantomResult.touched_canonicals, ...fencedSlugs]));
   }
-  const watermark = !managed && !opts.dryRun;
+  const watermark = !opts.dryRun;
   const explicit = new Set(slugs);
   if (watermark && opts.drain && opts.slugs !== undefined) {
-    slugs = Array.from(new Set([...slugs, ...await selectFactsReconcileDrain(engine, sourceId, opts.drain)]));
+    slugs = Array.from(new Set([...slugs, ...await selectFactsReconcileDrain(engine, sourceId, { ...opts.drain, retryOnly: managed })]));
   }
   const drainDeadline = Date.now() + (opts.drain?.budgetMs ?? FACTS_DRAIN_BUDGET_MS);
   // #6278 (Decision 57): a page still holding unadopted legacy rows keeps its
@@ -1068,6 +1068,9 @@ export async function runExtractFacts(
     revision = page.knowledge_revision ?? null;
     // #6259: a quarantined page projects no fence facts; its existing index is left as it is.
     if (isQuarantined(page.frontmatter as Record<string, unknown> | null)) return 'skipped';
+    // Retain the attempt before planning/publishing. A changed revision or
+    // interrupted publication must not disappear behind the sync cursor.
+    if (managed && watermark) await settleFactsReconcile(engine, sourceId, slug, 'deferred');
     const plan = await planFenceReconcile(engine, page, slug, sourceId, result.warnings, managed);
     if (!plan) return 'invalid';
     if (plan.fenceRows > 0) result.pagesWithFacts += 1;
@@ -1191,7 +1194,9 @@ export async function runExtractFacts(
       result.warnings.push(`${slug}: FACTS_RECONCILE_FAILED: ${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`);
       outcome = 'deferred';
     }
-    if (watermark && outcome !== 'complete' && outcome !== 'skipped') {
+    // Managed writes settle only after their receipted publication returns.
+    // The revision predicate refuses to stamp content changed in the meantime.
+    if (watermark && (managed || outcome !== 'complete') && outcome !== 'skipped') {
       const settled = outcome === 'unchanged' ? 'complete' : outcome === 'stop' ? 'cancelled' : outcome;
       await settleFactsReconcile(engine, sourceId, slug, settled, revision).catch((error: unknown) => {
         result.warnings.push(`${slug}: facts reconcile watermark not recorded: ${error instanceof Error ? error.message : String(error)}`);

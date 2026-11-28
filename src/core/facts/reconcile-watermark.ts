@@ -1,5 +1,5 @@
 /**
- * Facts reconcile watermark (#5151) for unmanaged brains.
+ * Facts reconcile watermark (#5151) and retained managed retries (#8576).
  *
  * `page_facts_reconcile` records, per page, the `knowledge_revision` the
  * extract_facts phase last reconciled completely, plus the outcome of the
@@ -25,6 +25,8 @@ import { FACTS_FENCE_BEGIN } from '../facts-fence.ts';
 export type FactsReconcileOutcome = 'complete' | 'deferred' | 'invalid' | 'cancelled';
 
 export interface FactsReconcileDrainOpts {
+  /** Retry recorded attempts only; managed publication owns its ordinary discovery. */
+  retryOnly?: boolean;
   /** Most pages one run drains beyond its explicit slug list. */
   pageLimit?: number;
   /** Wall-clock budget for drained pages, in ms. */
@@ -97,7 +99,7 @@ export async function selectFactsReconcileDrain(
   opts: FactsReconcileDrainOpts,
 ): Promise<string[]> {
   const marker = `%${FACTS_FENCE_BEGIN}%`;
-  await engine.executeRaw(
+  if (!opts.retryOnly) await engine.executeRaw(
     `INSERT INTO page_facts_reconcile AS r (page_id, reconciled_revision, reconciled_at, outcome, attempted_revision, attempted_at)
      SELECT p.id, p.knowledge_revision, now(), 'complete', p.knowledge_revision, now()
        FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
@@ -113,7 +115,8 @@ export async function selectFactsReconcileDrain(
   );
   const rows = await engine.executeRaw<{ slug: string }>(
     `SELECT p.slug FROM pages p LEFT JOIN page_facts_reconcile r ON r.page_id = p.id
-      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND ${DUE} AND ${RETRYABLE}
+      WHERE p.source_id = $1 AND p.deleted_at IS NULL
+        AND ${opts.retryOnly ? "r.outcome <> 'complete'" : DUE} AND ${RETRYABLE}
       ORDER BY r.attempted_at ASC NULLS FIRST, p.id ASC
       LIMIT $2`,
     [sourceId, opts.pageLimit ?? FACTS_DRAIN_PAGE_LIMIT],
