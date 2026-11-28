@@ -8,8 +8,9 @@
  *    without a page there; readMemberPageReadable answers null for no row and else whether the member's read policy
  *    (readers, folder rules it satisfies, privacy) admits the row, soft-deleted rows included; readHiddenPageSlugs answers
  *    each slug that names a page and no page the member reads outside the hidden sources. (2) memberPageView and
- *    namesHiddenPage, which call them, answer the same on every arm. (3) A labelled-only member's page read is not served
- *    on Rust yet: it stops on the typed refusal before any read (the stop pin of row ec05-1).
+ *    namesHiddenPage, which call them, answer the same on every arm. (3) A labelled-only member's page read
+ *    answers the same on every arm: true for a page that names the member (or one of its identities, or a folder rule it
+ *    satisfies), false for one that does not, null for no row, soft-deleted rows included.
  *  - Regression: each read was an `executeRaw` in enforced-member.ts, which the Rust engine refuses, so every enforced
  *    put stopped with engine_capability_missing before it wrote anything.
  *  - Why existing coverage misses it: test/enforced-member*.serial.test.ts run the CLI on PGLite and Postgres only, and
@@ -137,15 +138,77 @@ describe('engine parity: the enforced member CLI reads', () => {
     return out;
   });
 
-  // A labelled-only member reads an existing page only when it names the member (labelledOnlyForSql); the store does not
-  // model that conjunct yet, so the Rust member refuses before any read (row ec05-1, test/rust-stop-pins/ec05-enforced-member.tsv).
-  parityTest('a labelled-only member read of a page names the member on the SQL engines and stops on Rust', {
+  // A labelled-only member reads an existing page only when it names the member or a folder rule it satisfies
+  // (labelledOnlyForSql, GBRA-108 design 1): every arm answers the same, the Rust store included (row ec05-1 is closed).
+  parityTest('a labelled-only member read of a page names the member, as on the SQL engines', {
+    methods: ['putPage', 'softDeletePage', 'readMemberPageReadable'],
+  }, async (engine, backend) => {
+    await seed(engine, backend);
+    const labelled = (slug: string, identity = MEMBER_RECORD.identity, satisfied: string[] = []) =>
+      withCallerAccess({ ...MEMBER_RECORD, identity, satisfiedRuleIds: satisfied, labelledOnly: true }, () => engine.readMemberPageReadable('default', slug, identity, satisfied, true));
+    const out = {
+      // Names the member; names nobody; has no row; a soft-deleted row that names the member; a page that names someone else.
+      listed: await labelled('notes/listed'), open: await labelled('notes/open'), none: await labelled('notes/none'),
+      gone: await labelled('notes/gone'), twin: await labelled('notes/twin'), otherSource: await engine.readMemberPageReadable('vault', 'notes/listed', MEMBER_RECORD.identity, [], true),
+    };
+    expect(out).toEqual({ listed: true, open: false, none: null, gone: true, twin: false, otherSource: null });
+    return out;
+  });
+
+  parityTest('a labelled-only member read names a page through a folder rule or any one of its identities, and the privacy part still applies', {
     methods: ['putPage', 'readMemberPageReadable'],
   }, async (engine, backend) => {
     await seed(engine, backend);
-    const labelled = (slug: string) => withCallerAccess({ ...MEMBER_RECORD, labelledOnly: true }, () => engine.readMemberPageReadable('default', slug, MEMBER_RECORD.identity, [], true));
-    const out = { listed: await labelled('notes/listed'), open: await labelled('notes/open'), none: await labelled('notes/none') };
-    expect(out).toEqual({ listed: true, open: false, none: null });
+    await engine.putPage('notes/group', { type: 'note', title: 'group', compiled_truth: 'group', timeline: '', frontmatter: { readable_by: ['group:team-a'] } }, { sourceId: 'default' });
+    await engine.putPage('notes/secret', { type: 'note', title: 'secret', compiled_truth: 'secret', timeline: '', frontmatter: { readable_by: ['tess-example'], visibility: 'private' } }, { sourceId: 'default' });
+    const mixed = ['member:tess-example', 'group:team-a'];
+    const labelled = (slug: string, identity: string[], satisfied: string[] = []) =>
+      withCallerAccess({ ...MEMBER_RECORD, identity, satisfiedRuleIds: satisfied, labelledOnly: true }, () => engine.readMemberPageReadable('default', slug, identity, satisfied, true));
+    const run = (identity: string[], satisfied: string[] = []) => Promise.all(['notes/listed', 'notes/group', 'team-a/plan', 'notes/open', 'notes/secret'].map(async slug => [slug, await labelled(slug, identity, satisfied)] as const)).then(Object.fromEntries);
+    const out = {
+      member: await run(MEMBER_RECORD.identity), mixedSet: await run(mixed), memberWithRule: await run(MEMBER_RECORD.identity, ['default:team-a']),
+      mixedWithRule: await run(mixed, ['default:team-a']), groupOnly: await run(['group:team-a']), nobody: await run([]),
+    };
+    // The member's own readers, a group of the member, a rule it satisfies: each names it; an open page names nobody; privacy still hides.
+    expect(out.member).toEqual({ 'notes/listed': true, 'notes/group': false, 'team-a/plan': false, 'notes/open': false, 'notes/secret': false });
+    expect(out.mixedSet).toMatchObject({ 'notes/listed': true, 'notes/group': true, 'notes/open': false, 'notes/secret': false });
+    expect(out.memberWithRule['team-a/plan']).toBe(true);
+    expect(out.mixedWithRule['team-a/plan']).toBe(true);
+    return out;
+  });
+
+  parityTest('a labelled-only member read through an identity or rule set holding one invalid entry reads nothing through that set, on every arm', {
+    methods: ['putPage', 'readMemberPageReadable'],
+  }, async (engine, backend) => {
+    await seed(engine, backend);
+    const probe = async (identity: string[], satisfied: string[]) => {
+      const record = { ...MEMBER_RECORD, identity, satisfiedRuleIds: satisfied, labelledOnly: true };
+      return withCallerAccess(record, async () => Object.fromEntries(await Promise.all(['notes/listed', 'team-a/plan', 'notes/open'].map(async slug =>
+        [slug, await engine.readMemberPageReadable('default', slug, identity, satisfied, true)] as const)))).then(value => ({ value }), (e: { code?: string }) => ({ refused: e.code ?? String(e) }));
+    };
+    const out = { validBoth: await probe(['member:tess-example'], ['default:team-a']), badSatisfied: await probe(['member:tess-example'], ['default:team-a', 'invalid']), badIdentity: await probe(['member:tess-example', 'not a principal'], []) };
+    expect(out.validBoth).toEqual({ value: { 'notes/listed': true, 'team-a/plan': true, 'notes/open': false } });
+    expect(out.badSatisfied).toEqual({ value: { 'notes/listed': true, 'team-a/plan': false, 'notes/open': false } });
+    expect(out.badIdentity).toEqual({ value: { 'notes/listed': false, 'team-a/plan': false, 'notes/open': false } });
+    return out;
+  });
+
+  parityTest('memberPageView judges a labelled-only member by the page it names, a soft-deleted page and a new slug under a rule that lists it', {
+    methods: ['putPage', 'softDeletePage', 'readMemberPageReadable', 'readSlugFolderRules'],
+  }, async (engine, backend) => {
+    await seed(engine, backend);
+    await createMember(engine, backend, { id: 'tess-example', groups: ['team-a'] });
+    const out = await withEnv({ GBRAIN_ENFORCED_MEMBER: 'tess-example' }, async () => {
+      const tess = await enforcedAccess(engine, 'put');
+      const labelled = { ...tess, access: { ...tess.access, labelledOnly: true } };
+      const viewsOf = async (ea: typeof tess) => Object.fromEntries(await Promise.all([...SLUGS, 'Notes/Listed', 'notes/new'].map(async slug => [slug, await memberPageView(engine, ea, 'default', slug)] as const)));
+      return { plain: await viewsOf(tess), labelled: await viewsOf(labelled), vaultView: await memberPageView(engine, labelled, 'vault', 'notes/open') };
+    });
+    // The labelled-only member narrows the plain view: an open page and a private one turn hidden; a page it is named on stays
+    // readable, a soft-deleted one too; a rule page it satisfies is readable; a slug with no row is hidden unless a rule it
+    // satisfies covers it (a create names a member only through a rule), so the mixed-case twin of a listed page is hidden.
+    expect(out.labelled).toMatchObject({ 'notes/listed': 'readable', 'notes/gone': 'readable', 'team-a/plan': 'readable', 'notes/open': 'hidden', 'notes/private': 'hidden', 'notes/none': 'hidden', 'Notes/Listed': 'hidden', 'team-a/new': 'missing' });
+    expect(out.vaultView).toBe('hidden');
     return out;
   });
 });

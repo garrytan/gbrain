@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  1. Protects: (a) readHiddenPageSlugs and readMemberPageReadable refuse a record whose policy the store does not model
  *     (lineage, an audience, an owner record, a labelled-only grant) with engine_capability_missing even when asked of no
- *     slugs, which is what lets a write ask the output guard first and refuse before it writes; an ordinary member record
+ *     slugs (readMemberPageReadable serves a labelled-only grant: the store judges it), which is what lets a write ask the output guard first and refuse before it writes; an ordinary member record
  *     answers an empty ask with no read. (b) withImplicitPlacement lets an engine's capability refusal out and keeps the
  *     put's result for any other error.
  *  2. Fails when: an unsupported record answers an empty ask (the write would then run before the guard refuses), or an
@@ -43,8 +43,9 @@ describe('the enforced member reads of a Rust brain refuse a record the store do
     expect(await asked(['member:tess-example'], ['default:team-a', 'invalid'])).toContain('the store was called');
   });
 
-  test('a labelled-only read of a page refuses before any read', async () => {
-    expect(await code(() => withCallerAccess({ ...MEMBER, labelledOnly: true }, () => readMemberPageReadable(brain, 'default', 'notes/a', MEMBER.identity, [], true)))).toBe('engine_capability_missing');
+  // The labelled-only conjunct goes to the store as data (the sets labelledOnlySql embeds), so the read reaches the store.
+  test('a labelled-only read of a page reaches the store, which judges the conjunct', async () => {
+    expect(await code(() => withCallerAccess({ ...MEMBER, labelledOnly: true }, () => readMemberPageReadable(brain, 'default', 'notes/a', MEMBER.identity, [], true)))).toContain('the store was called');
   });
 });
 
