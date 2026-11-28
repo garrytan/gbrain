@@ -29,9 +29,9 @@ countConversationFactsOutsideWindows	ruling A default
 countConversationPagesToExtract	ruling A default
 countConversationPipelinePages	ruling A default
 countConversationWindowFacts	ruling A default
-countCredentialProjectionPending	ruling A default
+countCredentialProjectionPending	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countDatedMeetingPages	ruling A default
-countDeadDreamSubmissionRows	ruling A default
+countDeadDreamSubmissionRows	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countDefaultSourceFiles	ruling A default
 countDefaultSourceSplit	ruling A default
 countDerivedFactTaint	ruling A default
@@ -61,7 +61,7 @@ countJobsByStatus	ruling A default
 countKeptAtomRetirements	ruling A default
 countKeptFailedReceipts	ruling A default
 countLabelFacts	ruling A default
-countLeasePressure	ruling A default
+countLeasePressure	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countLedgerCoveredAtomRetirements	ruling A default
 countLegacyDerivedPages	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 countLegacyFactsPending	ruling A default
@@ -91,7 +91,7 @@ countOpenJobsByOwner	ruling A default
 countOpenLoopsByCounterpartyEmail	ruling A default
 countOpenPages	ruling A default
 countOrphanChunks	ruling A default
-countOrphanEventProjections	ruling A default
+countOrphanEventProjections	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countOutstandingBySource	ruling A default
 countOversizedCorePages	ruling A default
 countOversizedEmbedSkips	ruling A default
@@ -105,16 +105,16 @@ countPageRows	ruling A default
 countPageTrustTiers	ruling A default
 countPageVersionRows	ruling A default
 countPagesBySlugPrefix	ruling A default
-countPagesByTypeAndOwner	ruling A default
+countPagesByTypeAndOwner	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countPagesByTypeForSource	ruling A default
 countPagesDueForMentions	ruling A default
-countPagesHiddenByPrefix	ruling A default
+countPagesHiddenByPrefix	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countPagesWithMentionLinks	ruling A default
-countParkedEffects	ruling A default
+countParkedEffects	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countPendingTextChunks	ruling A default
 countPendingWakeForgets	ruling A default
 countPeopleFolderPages	ruling A default
-countPersistenceRequestRows	ruling A default
+countPersistenceRequestRows	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countPurgeFingerprintResidue	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 countPurgeProbe	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 countPurgeReviewRows	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
@@ -128,7 +128,7 @@ countRedactedFacts	ruling A default
 countRelinkCandidates	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 countRepoBoundSources	ruling A default
 countRowTrustTiers	ruling A default
-countSafeIndexPending	ruling A default
+countSafeIndexPending	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countSearchVectorRows	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 countSegmentedCensusPages	ruling A default
 countSegmentedEmbedRows	ruling A default
@@ -177,7 +177,7 @@ filterPagesAtRevision	local owner code and shadow write map only: a gbrain comma
 filterUnarchivedSourceIds	ruling A default
 findActiveAccessTokens	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 findActiveSingleFact	ruling A default
-findBulkFactDays	ruling A default
+findBulkFactDays	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 findCardRows	ruling A default
 findCodeDefinitions	ruling A default
 findCodeRefChunks	ruling A default
@@ -252,7 +252,7 @@ heldGenerationRowsForInput	ruling A default
 heldMoveDue	ruling A default
 heldTargetPageLive	ruling A default
 holdsNotifierLease	ruling A default
-inboundLinkCoverage	ruling A default
+inboundLinkCoverage	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 isAccessStateUnreadable	ruling A default
 isCalibrationProfileUnchanged	ruling A default
 isConceptStillHeld	ruling A default
@@ -324,7 +324,7 @@ listBuildSkewStacktraceLines	ruling A default
 listCallOffCueFacts	ruling A default
 listCallerRefusalRows	ruling A default
 listCanonicalFenceRowNums	ruling A default
-listCapacityCounters	ruling A default
+listCapacityCounters	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listCaptureDuplicateCandidates	ruling A default
 listCapturedFactsForClassification	ruling A default
 listCardRows	ruling A default
@@ -432,7 +432,7 @@ listFactsPageBodies	ruling A default
 listFactsReconcileBacklog	ruling A default
 listFactsToRetireFromPage	ruling A default
 listFailedWriteRequests	ruling A default
-listFenceCandidateRecords	ruling A default
+listFenceCandidateRecords	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listFenceCensusPagesById	ruling A default
 listFenceCensusPagesUpdated	ruling A default
 listFenceCensusSources	ruling A default
@@ -605,7 +605,7 @@ listOverwriteCandidates	ruling A default
 listOverwriteLivePages	ruling A default
 listOwedPurgeRecords	ruling A default
 listOwnLinkIds	ruling A default
-listOwnedContentRows	ruling A default
+listOwnedContentRows	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listOwnedGenerationItems	ruling A default
 listOwnedPrivateQueues	ruling A default
 listOwnerBindings	ruling A default
@@ -661,7 +661,7 @@ listPhantomFactRows	ruling A default
 listPinnedQuestions	ruling A default
 listPoolEntityPairs	ruling A default
 listPoolUnbackedKeys	ruling A default
-listPrivateQueueHealth	ruling A default
+listPrivateQueueHealth	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listPrivilegedDcrClients	ruling A default
 listProducerVersionRows	ruling A default
 listProjectedFenceRows	ruling A default
@@ -701,7 +701,7 @@ listReceiptCompactionCandidates	ruling A default
 listRecentDriftReceiptSlugs	ruling A default
 listRecentFailedJobErrors	ruling A default
 listRecentLeasePressure	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
-listRecentPageBodies	ruling A default
+listRecentPageBodies	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listRecentPurgeRequests	ruling A default
 listRecentReaderNarrowings	ruling A default
 listRecentSourceCycleFailures	ruling A default
@@ -851,7 +851,7 @@ listUnarchivedSourceRows	ruling A default
 listUnattributedFacts	ruling A default
 listUnbackedConversationRows	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listUnboundClientIds	ruling A default
-listUnboundSourcePages	ruling A default
+listUnboundSourcePages	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listUnboundTokenNames	ruling A default
 listUnembeddedChunkIndexes	ruling A default
 listUnembeddedChunkPages	ruling A default
@@ -882,7 +882,7 @@ listVersionsByChangeReason	ruling A default
 listVisibilityCandidatePages	ruling A default
 listVisibleBeliefLifetimes	ruling A default
 listVisiblePageSlugs	ruling A default
-listVolunteerChannels	ruling A default
+listVolunteerChannels	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listWaitingByQueue	ruling A default
 listWaitingChildJobIds	ruling A default
 listWakeCrons	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
@@ -895,7 +895,7 @@ listWithdrawalSlugs	ruling A default
 listWorktreeBlockerRequests	ruling A default
 listWorktreeIds	ruling A default
 listWorktreeMembers	ruling A default
-listWorldFactsFromPrivateSources	ruling A default
+listWorldFactsFromPrivateSources	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listWriteGateHoldRows	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 listWriteGateReceiptsFor	ruling A default
 listWriteRequestsByRequestId	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
@@ -1020,7 +1020,7 @@ readConfigForUpdate	ruling A default
 readConsolidationTakesMaxRowNum	ruling A default
 readContentReceiptBinding	ruling A default
 readConversationSlotValueHash	ruling A default
-readCounterDrift	ruling A default
+readCounterDrift	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readCounterRows	ruling A default
 readCredentialBindingForUpdate	ruling A default
 readCredentialMemberId	ruling A default
@@ -1151,7 +1151,7 @@ readHiddenPageSlugs	local owner code only: a gbrain command reads it with the ow
 readIdentityDowngradeOldPage	ruling A default
 readIdentityDowngradeRows	ruling A default
 readIdentityRemedySide	ruling A default
-readIgnoredPrivacyLabelCounts	ruling A default
+readIgnoredPrivacyLabelCounts	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readIgnoredPrivacyLabelPages	ruling A default
 readImagePageCoverage	ruling A default
 readImageSealPages	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
@@ -1190,7 +1190,7 @@ readLinkedMember	ruling A default
 readLiveAccessToken	ruling A default
 readLiveAccessTokenRows	ruling A default
 readLiveAccessTokenScope	ruling A default
-readLiveConsumerSummary	ruling A default
+readLiveConsumerSummary	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readLiveFactEntityPage	ruling A default
 readLiveFactRowTier	ruling A default
 readLiveFenceFactAt	ruling A default
@@ -1222,7 +1222,7 @@ readManifestSeqAt	ruling A default
 readMaterializingRevision	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 readMaxFactRowNum	ruling A default
 readMaxRequestSequence	ruling A default
-readMaxTimelineEntryId	ruling A default
+readMaxTimelineEntryId	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readMayActFor	ruling A default
 readMcpLifetimeUsage	HTTP admin routes only: the serve process reads it as the owner, outside any remote caller's operation
 readMcpLogPruneCutoff	ruling A default
@@ -1336,7 +1336,7 @@ readPrefixTitleMatches	ruling A default
 readPrincipalCounters	ruling A default
 readPrivacyOrigin	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readPrivateQueueState	ruling A default
-readProjectionBacklog	ruling A default
+readProjectionBacklog	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readProjectionHead	ruling A default
 readProjectionJobReason	ruling A default
 readPublicationRefusals	ruling A default
@@ -1346,7 +1346,7 @@ readPurgeReplaySchema	ruling A default
 readPurgeSourceLocalPath	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readQueueDivergence	ruling A default
 readQueueFamilyStats	ruling A default
-readQueueHealthSignals	ruling A default
+readQueueHealthSignals	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readQueuedPageChars	ruling A default
 readQueuedSpendRows	ruling A default
 readRawDataValue	ruling A default
@@ -1441,7 +1441,7 @@ readSourceSyncShape	ruling A default
 readSourceWriteRow	ruling A default
 readSourcesNotReadable	ruling A default
 readSpellingKeyPages	ruling A default
-readStaleEmbeddingCounts	ruling A default
+readStaleEmbeddingCounts	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readStaleMentionScan	ruling A default
 readStoredConfigValue	ruling A default
 readStoredConversationEntry	ruling A default
@@ -1490,7 +1490,7 @@ readUploadSessionByRequest	write path only: a write or purge operation reads it;
 readVersionAttributions	ruling A default
 readVersionContent	ruling A default
 readVersionSourcePath	ruling A default
-readVoiceGateHealth	ruling A default
+readVoiceGateHealth	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readVolunteerUsage	ruling A default
 readWaitingQueueDepths	ruling A default
 readWaitingScopeState	ruling A default
@@ -1511,7 +1511,7 @@ readWriteWatermarkRow	ruling A default
 readWriterAdminState	ruling A default
 readWriterDiagnosticRows	ruling A default
 readWriterStatusRows	ruling A default
-readWriterVersionCutoff	ruling A default
+readWriterVersionCutoff	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 recentWriterVersions	ruling A default
 relationExists	ruling A default
 resolveChainAnchorRows	ruling A default

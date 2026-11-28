@@ -13,13 +13,15 @@
  *    - the four wave checks whose read failure has its own shape (connector_checkpoints, unbound_source,
  *      segmented_storage, fact_bulk_dates) are offered to the remote caller and report unknown;
  *    - no local-only data reaches the remote caller: a private page body, a config value and the brain's directory
- *      never appear in the report.
- * 2. Fails on: a remote doctor that reports a host action for a check whose read was refused, or that returns
- *    local-only data.
+ *      never appear in the report;
+ *    - each row of test/fixtures/served-member-lists/local-only.tsv with the run_doctor reason is a member this remote
+ *      run_doctor calls and the served client refuses before sending, while the report still completes.
+ * 2. Fails on: a remote doctor that reports a host action for a check whose read was refused, that returns local-only
+ *    data, or a run_doctor-reason row that this run never refuses.
  * 3. Seam: none below the engine: a real owner, a real v3 listener, a real served client, the MCP dispatch.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
@@ -36,6 +38,7 @@ const TOKEN = 'remote-doctor-owner-token';
 const STDIO = { remote: true, admissionOrigin: 'interactive', transport: 'stdio', takesHoldersAllowList: ['world'], sourceId: 'default' } as const;
 const SECRET_BODY = 'doctor-marker-private-body-7f3a';
 const SECRET_CONFIG = 'doctor-marker-config-value-91c2';
+const DOCTOR_REASON = 'reached remotely only through run_doctor (admin scope); skipped for a remote caller';
 const OWN_SHAPES = ['connector_checkpoints', 'unbound_source', 'segmented_storage', 'fact_bulk_dates'];
 type ReportCheck = { name: string; status: string; message: string; details?: { host_action?: { check_id: string; state: string } } };
 type Report = { checks: ReportCheck[] };
@@ -43,8 +46,30 @@ let dir = '';
 let owner: RustEngine;
 let listener: ServedListener;
 let client: RustEngine;
+const refused = new Set<string>();
 let text = '';
 let report: Report;
+
+/** The engine doctor runs on, recording each member the served client refused before sending (its refusal names the member). */
+function recordRefusals(engine: RustEngine): RustEngine {
+  const note = (error: unknown) => {
+    const e = error as { code?: string; message?: string };
+    const member = e?.code === 'engine_capability_missing' ? /^(\w+) cannot run from a second process on this brain:/.exec(e.message ?? '')?.[1] : undefined;
+    if (member) refused.add(member);
+  };
+  return new Proxy(engine, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        try {
+          const out = value.apply(target, args);
+          return out instanceof Promise ? out.catch((error: unknown) => { note(error); throw error; }) : out;
+        } catch (error) { note(error); throw error; }
+      };
+    },
+  });
+}
 
 describeAddon('a remote run_doctor over the served wire', () => {
   beforeAll(async () => {
@@ -62,7 +87,7 @@ describeAddon('a remote run_doctor over the served wire', () => {
     listener = await listenServed(owner.ownerServer()!, { host: '127.0.0.1', port: 0 });
     client = openRustEngine({ addon: await loadRustArmAddon(), databasePath: dir, served: { url: `gbrain+tcp://127.0.0.1:${listener.port}`, token: TOKEN } });
     await client.connect({ engine: 'rust', database_path: dir } as never);
-    const out = await dispatchToolCall(client, 'run_doctor', {}, STDIO as never);
+    const out = await dispatchToolCall(recordRefusals(client), 'run_doctor', {}, STDIO as never);
     expect(out.isError === true).toBe(false);
     text = (out.content as Array<{ text: string }>).map(c => c.text).join('\n');
     report = JSON.parse(text) as Report;
@@ -91,6 +116,14 @@ describeAddon('a remote run_doctor over the served wire', () => {
       return [id, c ? { state: c.details!.host_action!.state, unknown: c.message.startsWith('Unknown: this check could not run for the remote caller') } : null];
     }));
     expect(own).toEqual(Object.fromEntries(OWN_SHAPES.map(id => [id, { state: 'unknown', unknown: true }])));
+  });
+
+  // Value: protects=each local-only row given the run_doctor reason is one a remote run_doctor reaches and the served client refuses; fails_when=a row gets that reason but doctor no longer calls it, or the client sends it; why_new=the reason was a claim no run checked
+  test('every member listed as reached only through run_doctor is refused for the remote caller, and the report still completes', () => {
+    const listed = readFileSync(join(import.meta.dir, 'fixtures/served-member-lists/local-only.tsv'), 'utf8').split('\n')
+      .map(line => line.split('\t')).filter(row => row[1] === DOCTOR_REASON).map(row => row[0]!);
+    expect(listed.length).toBeGreaterThan(0);
+    expect(listed.filter(member => !refused.has(member))).toEqual([]);
   });
 
   test('no local-only data reaches the remote caller', () => {
