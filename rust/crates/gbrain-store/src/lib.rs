@@ -27,6 +27,7 @@ pub mod commit_log;
 pub mod concept_rebuild;
 pub mod config;
 pub mod consumers;
+pub mod diverged_tail;
 pub mod env;
 pub mod error;
 pub mod fence;
@@ -56,6 +57,7 @@ pub mod pages;
 pub mod primary;
 pub mod read_shared;
 pub mod redb_kv;
+pub mod replica;
 pub mod retrieval_feedback;
 pub mod scope;
 pub mod search;
@@ -326,6 +328,8 @@ pub struct Store {
     multiuser: bool,
     /// The primary's write fence (`primary.rs`), shared with bound and sibling stores.
     pub(crate) primary: Arc<primary::PrimarySlot>,
+    /// Replica acks (`replica.rs`), shared with bound and sibling stores.
+    pub(crate) replicas: Arc<replica::ReplicaSet>,
 }
 
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
@@ -583,6 +587,12 @@ impl Store {
         } else {
             &off
         };
+        // Replica ack settings: read only with the log on, so a bad value never refuses an open with the switch off.
+        let replica_settings = if multiuser.commit_log && !read_only {
+            replica::ReplicaAckSettings::from_env()?
+        } else {
+            replica::ReplicaAckSettings::default()
+        };
         if !read_only && multiuser.any() && multiuser.host_id.as_deref().is_none_or(str::is_empty) {
             // Before any write: an origin without its machine is refused, never stamped empty.
             return Err(StoreError::invalid(HOST_ID_REQUIRED));
@@ -783,6 +793,7 @@ impl Store {
             origin,
             multiuser: multiuser_on,
             primary: Arc::new(primary::PrimarySlot::new(primary_state)),
+            replicas: Arc::new(replica::ReplicaSet::new(replica_settings)),
         })
         .inspect(|store| {
             if needs_build && store.runs_builder {
@@ -811,6 +822,7 @@ impl Store {
             last_position: self.last_position.clone(),
             multiuser: self.multiuser,
             primary: self.primary.clone(),
+            replicas: self.replicas.clone(),
         }
     }
 
@@ -894,6 +906,7 @@ impl Store {
             last_position: self.last_position.clone(),
             multiuser: self.multiuser,
             primary: self.primary.clone(),
+            replicas: self.replicas.clone(),
         }
     }
 

@@ -367,9 +367,9 @@ pub(crate) fn relation_digests(
 /// open (`O_DIRECTORY | O_NOFOLLOW`) from the moment it creates it and removes the files relative to
 /// that handle, so a path that is renamed or replaced by a link afterwards cannot send a removal
 /// anywhere else. Where that is not available it removes nothing and reports the target left behind.
-struct Reservation {
-    root: PathBuf,
-    kept: bool,
+pub(crate) struct Reservation {
+    pub(crate) root: PathBuf,
+    pub(crate) kept: bool,
     /// The open directory this call created.
     #[cfg(unix)]
     dir: fs::File,
@@ -381,7 +381,7 @@ struct Reservation {
 impl Reservation {
     /// Checks `target` and creates it, mode 0700. It must not exist, its parent must not be a
     /// symbolic link, and it must not lie inside the brain directory or hold it.
-    fn make(source: &Path, target: &Path) -> Result<Reservation> {
+    pub(crate) fn make(source: &Path, target: &Path) -> Result<Reservation> {
         let invalid = |what: &str| Err(StoreError::invalid(format!("snapshot target: {what}")));
         let io = |what: &str, e: std::io::Error| {
             StoreError::io(format!("snapshot target: {what}: {}", e.kind()))
@@ -472,7 +472,7 @@ impl Reservation {
 
     /// Whether the path still names the directory this call created. A path that was renamed or
     /// replaced makes the call fail; nothing more is written through it.
-    fn verify(&self) -> Result<()> {
+    pub(crate) fn verify(&self) -> Result<()> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
@@ -494,7 +494,7 @@ impl Reservation {
     /// Publishes `name` in the directory this call made: written to a new `<name>.tmp`, synced,
     /// renamed into place and the directory synced, all relative to the held handle on Unix, so a
     /// path swapped during the copy can never receive the file.
-    fn publish(&self, name: &str, body: &[u8]) -> Result<()> {
+    pub(crate) fn publish(&self, name: &str, body: &[u8]) -> Result<()> {
         let io = |what: &str, e: std::io::Error| {
             StoreError::io(format!("snapshot: {what} {name}: {}", e.kind()))
         };
@@ -557,7 +557,7 @@ impl Reservation {
     /// A path that names something else is left alone, and so is anything that did not finish: the
     /// error names the target that remains. Platforms without directory-relative removal remove
     /// nothing and say so.
-    fn cleanup(&mut self) -> Result<()> {
+    pub(crate) fn cleanup(&mut self) -> Result<()> {
         if self.kept {
             return Ok(());
         }
@@ -582,6 +582,11 @@ impl Reservation {
                 "FORMAT.tmp",
                 MANIFEST_FILE,
                 "SNAPSHOT.json.tmp",
+                // A diverged-tail export (`diverged_tail.rs`) publishes these in the same directory.
+                crate::diverged_tail::TAIL_FILE,
+                "tail.jsonl.tmp",
+                crate::diverged_tail::EXPORT_MANIFEST_FILE,
+                "MANIFEST.json.tmp",
             ] {
                 match unlink_in(&self.dir, name) {
                     Ok(()) => {}
@@ -736,7 +741,20 @@ impl Store {
             ));
         };
         let mut reservation = Reservation::make(dir, target)?;
-        match self.copy(dir, &reservation, op, reopen, make_sink) {
+        let copied = format::read(dir)?
+            .ok_or_else(|| StoreError::new(INVALID_STATE, "the brain has no FORMAT file"))
+            .and_then(|record| {
+                copy_kv(
+                    &*self.kv,
+                    record,
+                    &reservation,
+                    op,
+                    reopen,
+                    make_sink,
+                    self.env.now_micros(),
+                )
+            });
+        match copied {
             Ok(manifest) => {
                 reservation.kept = true;
                 Ok(manifest)
@@ -752,21 +770,24 @@ impl Store {
             },
         }
     }
+}
 
-    fn copy(
-        &self,
-        dir: &Path,
-        claim: &Reservation,
-        op: &SnapshotOp,
-        reopen: bool,
-        make_sink: impl FnOnce(&Path) -> Result<RedbSink>,
-    ) -> Result<SnapshotManifest> {
+/// The copy of `snapshot_with`, from any record file (a follower's diverged-tail export uses it
+/// too): `record` is the brain's `FORMAT`, `created_at_us` the manifest's time.
+pub(crate) fn copy_kv(
+    kv: &dyn crate::kv::Kv,
+    record: format::FormatRecord,
+    claim: &Reservation,
+    op: &SnapshotOp,
+    reopen: bool,
+    make_sink: impl FnOnce(&Path) -> Result<RedbSink>,
+    created_at_us: i64,
+) -> Result<SnapshotManifest> {
+    {
         let root = claim.root.as_path();
-        let record = format::read(dir)?
-            .ok_or_else(|| StoreError::new(INVALID_STATE, "the brain has no FORMAT file"))?;
         claim.verify()?;
         let sink = make_sink(&root.join(RECORDS_FILE))?;
-        let (read, generation) = self.kv.versioned_snapshot()?;
+        let (read, generation) = kv.versioned_snapshot()?;
         let pin = Pinned::new(read, &op.pinned);
         let stored: StoredFormat = get_json(pin.read(), &keys::meta("format"))?
             .ok_or_else(|| StoreError::new(STORE_CORRUPT, "the format record is missing"))?;
@@ -857,7 +878,7 @@ impl Store {
             bytes,
             tags,
             relations,
-            created_at_us: self.env.now_micros(),
+            created_at_us,
         };
         let mut manifest_body = serde_json::to_vec_pretty(&manifest)?;
         manifest_body.push(b'\n');

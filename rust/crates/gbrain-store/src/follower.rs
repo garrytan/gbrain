@@ -43,12 +43,14 @@ use crate::commit_log::{
     self, CommitPosition, CommitRecord, LogMeta, LogOpRef, LogPage, LogSettings, LogState,
     Timeline, decode_record, is_log_key, read_meta,
 };
+use crate::diverged_tail::{Allowance, ReplicaMark, diverged_tail, tail_refusal};
 use crate::env::{Env, SystemEnv};
 use crate::error::{INVALID_STATE, Result, STORE_CORRUPT, StoreError};
 use crate::format;
 use crate::kv::{Kv, KvRead};
 use crate::leases::read_lease_record;
 use crate::redb_kv::{RedbKv, RedbReadOnlyKv, read_commit_time};
+use crate::replica::{self, ReplicaDetach};
 use crate::snapshot::SnapshotManifest;
 use crate::takeover::{PRIMARY_LEASE, TakeoverSettings};
 use crate::write_origin::WriteOrigin;
@@ -75,11 +77,15 @@ pub struct Applied {
 
 /// A follower of one brain (module docs).
 pub struct Follower {
-    dir: Option<PathBuf>,
-    kv: RedbKv,
+    pub(crate) dir: Option<PathBuf>,
+    pub(crate) kv: RedbKv,
     /// The follower's own log bookkeeping (retention), `None` while it holds no brain yet.
-    state: Mutex<Option<LogState>>,
+    pub(crate) state: Mutex<Option<LogState>>,
     retention_bytes: u64,
+    /// One install over a diverged tail `allow_install_over` permitted (`diverged_tail.rs`).
+    pub(crate) allowance: Mutex<Option<Allowance>>,
+    /// The replica mark (`REPLICA-MARK`, `diverged_tail.rs`).
+    pub(crate) mark: Mutex<Option<ReplicaMark>>,
 }
 
 /// The refusal of a promotion while the old primary's lease is live (or inside the margin after it).
@@ -131,6 +137,10 @@ pub struct PromotionNote {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_epoch: Option<u64>,
     pub promoted_at_us: i64,
+    /// The primary's replica acked position this follower last heard on the timeline it left
+    /// (`REPLICA-MARK`): the primary's receipt watermark, not proof a client got an answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acked_seen: Option<CommitPosition>,
 }
 
 /// The key of the promotion note of `timeline`.
@@ -280,8 +290,11 @@ impl Follower {
             kv,
             state: Mutex::new(None),
             retention_bytes: commit_log::DEFAULT_RETENTION_BYTES,
+            allowance: Mutex::new(None),
+            mark: Mutex::new(None),
         };
         follower.reload()?;
+        follower.load_mark()?;
         Ok(follower)
     }
 
@@ -418,6 +431,20 @@ impl Follower {
         }
         let cursor = state.meta().newest;
         if !commit_log::lineage_continues(&state.meta().lineage, cursor, lineage) {
+            // Commits only this follower holds: refused until they are exported, and then the way
+            // on is a snapshot install over them (`diverged_tail.rs`).
+            let mine = &state.meta().lineage;
+            if let Some(fork) = diverged_tail(mine, cursor, lineage)
+                && !self.allowed_over(cursor, mine, fork)
+            {
+                return Err(tail_refusal(
+                    fork,
+                    cursor,
+                    mine,
+                    lineage,
+                    state.meta().trimmed_through,
+                ));
+            }
             return Err(snapshot_required(format!(
                 "the primary's history left this follower's at or before {}",
                 cursor.token()
@@ -616,6 +643,19 @@ impl Follower {
                 let same_history =
                     commit_log::lineage_continues(&state.meta().lineage, cursor, &meta.lineage);
                 other_history = !same_history;
+                let mine = &state.meta().lineage;
+                if other_history
+                    && let Some(fork) = diverged_tail(mine, cursor, &meta.lineage)
+                    && !self.allowed_over(cursor, mine, fork)
+                {
+                    return Err(tail_refusal(
+                        fork,
+                        cursor,
+                        mine,
+                        &meta.lineage,
+                        state.meta().trimmed_through,
+                    ));
+                }
                 if same_history && meta.newest < cursor {
                     return Err(bad(format!(
                         "it ends at {}, behind this follower at {}",
@@ -655,6 +695,8 @@ impl Follower {
         let reloaded = self.load_state();
         outcome?;
         *guard = reloaded?;
+        // The permission covered one install over that tail; the tail is gone now.
+        self.clear_allowance();
         drop(guard);
         // FORMAT follows the records (a promotion's open also repairs it). The records are
         // installed even if this fails: say so.
@@ -764,7 +806,18 @@ impl Follower {
             .map(|f| f.brain_id)
             .unwrap_or_default();
         let floor = commit_log::floor_time(&*read)?;
+        // Every replica attached on the old timeline is detached in the promotion's own commit, so
+        // no waiter of the old primary counts an ack from a history that left it.
+        let attached = replica::attached(&*read)?;
         drop(read);
+        let left = lineage.last().map(|t| t.id.clone());
+        let acked_seen = self
+            .mark
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .filter(|m| m.brain_id == brain_id && m.timeline == left)
+            .map(|m| m.acked);
         let id = commit_log::uuid_v7(env);
         let time = now.max(floor.saturating_add(1));
         let note = PromotionNote {
@@ -775,20 +828,39 @@ impl Follower {
             attested,
             lease_epoch,
             promoted_at_us: time,
+            acked_seen,
         };
         let value = serde_json::to_vec(&note)?;
         let key = promotion_key(&id);
+        let detaches: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> = attached
+            .iter()
+            .map(|r| {
+                let note = ReplicaDetach {
+                    id: r.id.clone(),
+                    generation: r.generation,
+                    reason: format!("promoted {id}"),
+                    detached_at_us: time,
+                };
+                Ok((
+                    replica::replica_key(&r.id),
+                    replica::replica_detach_key(&r.id),
+                    serde_json::to_vec(&note)?,
+                ))
+            })
+            .collect::<Result<_>>()?;
+        let mut ops: Vec<(&[u8], LogOpRef<'_>)> = vec![(key.as_slice(), LogOpRef::Put(&value))];
+        for (gone, noted, body) in &detaches {
+            ops.push((gone.as_slice(), LogOpRef::Delete));
+            ops.push((noted.as_slice(), LogOpRef::Put(body)));
+        }
+        // A record's ops are in key order.
+        ops.sort_by(|a, b| a.0.cmp(b.0));
         let origin = WriteOrigin {
             host_id: host_id.to_owned(),
             incarnation: id.clone(),
             writer_id: "promotion".into(),
         };
-        let record = commit_log::encode_record(
-            &origin,
-            time,
-            &[],
-            [(key.as_slice(), LogOpRef::Put(&value))],
-        );
+        let record = commit_log::encode_record(&origin, time, &[], ops);
         lineage.push(Timeline {
             id: id.clone(),
             from: cursor,

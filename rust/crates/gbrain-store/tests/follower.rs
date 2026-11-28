@@ -9,6 +9,7 @@ mod common;
 use common::TempDir;
 use gbrain_sim::{CrashMode, FaultPlan, SimDisk, SimFile};
 use gbrain_store::commit_log::CommitPosition;
+use gbrain_store::diverged_tail::{DIVERGED_TAIL, ExportCrash, read_diverged_tail};
 use gbrain_store::follower::{Follower, OldPrimaryStopped, PROMOTION_PARTIAL, SNAPSHOT_REQUIRED};
 use gbrain_store::journal::PageMutation;
 use gbrain_store::kv::Kv;
@@ -347,16 +348,19 @@ fn a_follower_ahead_of_a_promoted_follower_is_told_to_install_a_snapshot_and_rec
         // B holds commits of the old primary the new one never had: refused, nothing changes.
         let before = image_of(b.records());
         let page = promoted.read_commit_log(b.cursor(), usize::MAX).unwrap();
+        // The records past the fork exist only in B: an apply refuses `diverged_tail` (a page the
+        // log cannot serve is `snapshot_required`, and the install below refuses the same way).
         let err = if page.snapshot_required {
-            SNAPSHOT_REQUIRED.to_string()
+            DIVERGED_TAIL.to_string()
         } else {
             b.apply_page(&page).unwrap_err().code.to_string()
         };
-        assert_eq!(err, SNAPSHOT_REQUIRED, "concurrent {concurrent}");
+        assert_eq!(err, DIVERGED_TAIL, "concurrent {concurrent}");
         assert_eq!(image_of(b.records()), before);
         // C was at the fork point or before it: it continues.
         catch_up(&c, &promoted);
-        // B recovers from a snapshot of the new primary, even though it moves its position back.
+        // B recovers from a snapshot of the new primary, even though it moves its position back,
+        // but only after its tail is exported (`diverged_tail.rs`).
         let (image, manifest) = primary_image(&promoted, &root.join("snap-new"));
         assert!(
             manifest.generation < b.sequence().unwrap(),
@@ -364,6 +368,19 @@ fn a_follower_ahead_of_a_promoted_follower_is_told_to_install_a_snapshot_and_rec
             manifest.generation,
             b.sequence().unwrap()
         );
+        let refused = b
+            .install_snapshot(&root.join("snap-new"), Some(&manifest))
+            .unwrap_err();
+        assert_eq!(refused.code, DIVERGED_TAIL, "{refused}");
+        assert_eq!(
+            image_of(b.records()),
+            before,
+            "a refused install changes nothing"
+        );
+        let theirs = page.lineage.clone();
+        b.export_diverged_tail(&root.join("b-tail"), &theirs)
+            .unwrap();
+        b.allow_install_over(&root.join("b-tail")).unwrap();
         b.install_snapshot(&root.join("snap-new"), Some(&manifest))
             .unwrap();
         assert_eq!(image_of(b.records()), image);
@@ -1044,4 +1061,338 @@ fn a_crash_at_every_io_of_a_promotion_leaves_the_follower_as_it_was_or_promoted(
             "{outcomes:?}"
         );
     }
+}
+
+// --- Diverged-tail recovery (lane L2, mu-replica-ack; `diverged_tail.rs`) ---------------------------------------------
+
+/// A follower B that applied commits of the old primary past the point where a promoted follower's
+/// timeline starts, and that new primary with two commits of its own.
+struct Diverged {
+    _dir: TempDir,
+    root: PathBuf,
+    promoted: Store,
+    b: Follower,
+    theirs: Vec<gbrain_store::commit_log::Timeline>,
+    fork: CommitPosition,
+}
+
+fn diverged(name: &str, concurrent: bool, b_retention: Option<u64>) -> Diverged {
+    let (p, a) = pair(name, concurrent);
+    let mut b = Follower::open(&p.root.join("b")).unwrap();
+    if let Some(bytes) = b_retention {
+        b = b.with_retention(bytes).unwrap();
+    }
+    b.install_snapshot(&p.root.join("snap"), None).unwrap();
+    for n in 0..4 {
+        step(&p.primary, n);
+    }
+    catch_up(&a, &p.primary);
+    let fork = a.cursor().unwrap();
+    // Only B sees these: the old primary's commits after A stopped.
+    p.primary
+        .set_config("test.tail-only", "kept by the export")
+        .unwrap();
+    for n in 4..20 {
+        step(&p.primary, n);
+    }
+    catch_up(&b, &p.primary);
+    let Pair {
+        _dir,
+        root,
+        primary,
+    } = p;
+    drop(primary);
+    let promoted = promote_dropped(a, mu(concurrent)).unwrap();
+    step(&promoted, 40);
+    let theirs = promoted.read_commit_log(None, 1).unwrap().lineage;
+    Diverged {
+        _dir,
+        root,
+        promoted,
+        b,
+        theirs,
+        fork,
+    }
+}
+
+fn files_of(dir: &Path) -> BTreeMap<String, Vec<u8>> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| {
+            let e = e.unwrap();
+            (
+                e.file_name().to_string_lossy().into_owned(),
+                std::fs::read(e.path()).unwrap(),
+            )
+        })
+        .collect()
+}
+
+/// Fail-first: on e28c821e6c the install replaced B's tail silently (and `export_diverged_tail` did not exist).
+#[test]
+fn an_apply_or_install_over_a_diverged_tail_is_refused_until_it_is_exported() {
+    for concurrent in MODES {
+        let d = diverged("tail-refuse", concurrent, None);
+        let before = image_of(d.b.records());
+        let cursor = d.b.cursor().unwrap();
+        assert!(cursor > d.fork);
+        // An apply of the new primary's records, from B's cursor or from the fork.
+        let page = d
+            .promoted
+            .read_commit_log(Some(d.fork), usize::MAX)
+            .unwrap();
+        let raw: Vec<(CommitPosition, Vec<u8>)> = page
+            .records
+            .iter()
+            .map(|r| {
+                (
+                    r.position,
+                    gbrain_store::commit_log::encode_commit_record(r),
+                )
+            })
+            .collect();
+        let err =
+            d.b.apply_raw(&page.brain_id, &page.lineage, &raw)
+                .unwrap_err();
+        assert_eq!(err.code, DIVERGED_TAIL, "{err}");
+        assert!(
+            err.message.contains(&d.fork.token()) && err.message.contains(&cursor.token()),
+            "the refusal names the fork and the cursor: {err}"
+        );
+        let (_, manifest) = primary_image(&d.promoted, &d.root.join("snap-new"));
+        let err =
+            d.b.install_snapshot(&d.root.join("snap-new"), Some(&manifest))
+                .unwrap_err();
+        assert_eq!(err.code, DIVERGED_TAIL, "{err}");
+        assert_eq!(image_of(d.b.records()), before, "concurrent {concurrent}");
+        assert_eq!(d.b.cursor(), Some(cursor));
+    }
+}
+
+/// Fail-first: on e28c821e6c there was no export, and the install lost `test.tail-only`.
+#[test]
+fn after_an_export_the_install_goes_ahead_and_the_export_keeps_the_tail_byte_for_byte() {
+    for concurrent in MODES {
+        let d = diverged("tail-export", concurrent, None);
+        let before = image_of(d.b.records());
+        let cursor = d.b.cursor().unwrap();
+        let out = d.root.join("b-tail");
+        let header = d.b.export_diverged_tail(&out, &d.theirs).unwrap();
+        assert_eq!((header.fork, header.cursor), (d.fork, cursor));
+        assert_eq!(header.theirs_lineage, d.theirs);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&out), 0o700);
+            for name in [
+                "records.redb",
+                "FORMAT",
+                "SNAPSHOT.json",
+                "tail.jsonl",
+                "MANIFEST.json",
+            ] {
+                assert_eq!(mode(&out.join(name)), 0o600, "{name}");
+            }
+        }
+        assert!(!out.join("REPLICA-MARK").exists());
+        let written = files_of(&out);
+        // The tail holds every record past the fork, as B stored them.
+        let tail = read_diverged_tail(&out).unwrap();
+        let page = d.b.records();
+        let (read, _) = page.versioned_snapshot().unwrap();
+        let mut mine = Vec::new();
+        let mut from = gbrain_store::commit_log::record_key(d.fork);
+        from.push(0);
+        read.scan(
+            &from,
+            &[gbrain_store::commit_log::COMMIT_LOG + 1],
+            false,
+            &mut |k, v| {
+                let r = gbrain_store::commit_log::decode_record(k, v).unwrap();
+                mine.push((r.position, v.to_vec()));
+                true
+            },
+        )
+        .unwrap();
+        drop(read);
+        assert_eq!(tail.records, mine);
+        assert_eq!(tail.records.last().map(|r| r.0), Some(cursor));
+        // The install goes ahead once the export is allowed.
+        d.b.allow_install_over(&out).unwrap();
+        let (image, manifest) = primary_image(&d.promoted, &d.root.join("snap-new"));
+        d.b.install_snapshot(&d.root.join("snap-new"), Some(&manifest))
+            .unwrap();
+        assert_eq!(image_of(d.b.records()), image);
+        // The export did not change, and its image is B before the install, every key.
+        assert_eq!(files_of(&out), written, "concurrent {concurrent}");
+        let exported = RedbReadOnlyKv::open_path(&out.join("records.redb")).unwrap();
+        assert_eq!(image_of(&exported), before);
+        // The permission covered that one install.
+        d.b.allow_install_over(&out).unwrap_err();
+        // B follows the new primary again.
+        step(&d.promoted, 41);
+        catch_up(&d.b, &d.promoted);
+        let (image, _) = primary_image(&d.promoted, &d.root.join("snap-n"));
+        assert_eq!(image_of(d.b.records()), image);
+    }
+}
+
+#[test]
+fn a_value_whose_records_retention_trimmed_is_kept_by_the_export_image() {
+    for concurrent in MODES {
+        let d = diverged("tail-trim", concurrent, Some(1));
+        let out = d.root.join("b-tail");
+        let header = d.b.export_diverged_tail(&out, &d.theirs).unwrap();
+        let trimmed = header.trimmed_through.expect("retention trimmed B's log");
+        assert!(
+            trimmed > d.fork,
+            "the case needs a trimmed tail: {header:?}"
+        );
+        let tail = read_diverged_tail(&out).unwrap();
+        assert!(tail.records.iter().all(|(p, _)| *p > trimmed));
+        let exported = Store::open_dir(
+            &{
+                // A read-only open of a copy: the export itself stays untouched.
+                let copy = d.root.join("export-copy");
+                std::fs::create_dir_all(&copy).unwrap();
+                for name in ["records.redb", "FORMAT"] {
+                    std::fs::copy(out.join(name), copy.join(name)).unwrap();
+                }
+                copy
+            },
+            mu(concurrent),
+        )
+        .unwrap();
+        assert_eq!(
+            exported.get_config("test.tail-only").unwrap().as_deref(),
+            Some("kept by the export"),
+            "concurrent {concurrent}"
+        );
+    }
+}
+
+#[test]
+fn an_export_refuses_unsafe_destinations_and_a_follower_without_a_tail() {
+    let d = diverged("tail-unsafe", false, None);
+    let before = image_of(d.b.records());
+    let taken = d.root.join("taken");
+    std::fs::create_dir(&taken).unwrap();
+    for (dest, why) in [
+        (taken.clone(), "an existing directory"),
+        (d.root.join("b").join("inside"), "inside the follower"),
+    ] {
+        let err = d.b.export_diverged_tail(&dest, &d.theirs).unwrap_err();
+        assert_eq!(
+            err.code,
+            gbrain_store::error::INVALID_ARGUMENT,
+            "{why}: {err}"
+        );
+    }
+    #[cfg(unix)]
+    {
+        let link = d.root.join("link");
+        std::os::unix::fs::symlink(&taken, &link).unwrap();
+        let err =
+            d.b.export_diverged_tail(&link.join("out"), &d.theirs)
+                .unwrap_err();
+        assert_eq!(err.code, gbrain_store::error::INVALID_ARGUMENT, "{err}");
+    }
+    // No tail against B's own history.
+    let err =
+        d.b.export_diverged_tail(&d.root.join("none"), &d.b.lineage())
+            .unwrap_err();
+    assert_eq!(err.code, gbrain_store::error::INVALID_STATE, "{err}");
+    assert!(!d.root.join("none").exists());
+    assert_eq!(image_of(d.b.records()), before);
+    // A complete export of B permits nothing on another follower.
+    let out = d.root.join("b-tail");
+    d.b.export_diverged_tail(&out, &d.theirs).unwrap();
+    let empty = Follower::open(&d.root.join("empty")).unwrap();
+    assert!(empty.allow_install_over(&out).is_err());
+    std::fs::remove_dir_all(&out).unwrap();
+    let (_, manifest) = primary_image(&d.promoted, &d.root.join("snap-new"));
+    assert_eq!(
+        d.b.install_snapshot(&d.root.join("snap-new"), Some(&manifest))
+            .unwrap_err()
+            .code,
+        DIVERGED_TAIL,
+        "a refused export permits nothing"
+    );
+}
+
+/// Ember's adds: an export interrupted before its manifest, or one whose files changed, never permits the install.
+#[test]
+fn an_interrupted_or_tampered_export_never_permits_the_install() {
+    let d = diverged("tail-crash", true, None);
+    let before = image_of(d.b.records());
+    let (_, manifest) = primary_image(&d.promoted, &d.root.join("snap-new"));
+    let install = || {
+        d.b.install_snapshot(&d.root.join("snap-new"), Some(&manifest))
+    };
+    for (n, crash) in [
+        ExportCrash::Reserved,
+        ExportCrash::Image,
+        ExportCrash::Tail,
+        ExportCrash::ManifestTemp,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let out = d.root.join(format!("crash-{n}"));
+        d.b.export_diverged_tail_with(&out, &d.theirs, Some(crash))
+            .unwrap_err();
+        assert!(out.exists(), "{crash:?} leaves what it wrote");
+        let err = d.b.allow_install_over(&out).unwrap_err();
+        assert_eq!(err.code, DIVERGED_TAIL, "{crash:?}: {err}");
+        assert_eq!(install().unwrap_err().code, DIVERGED_TAIL, "{crash:?}");
+        assert_eq!(image_of(d.b.records()), before, "{crash:?}");
+    }
+    // A complete export, then each file changed by one byte.
+    let good = d.root.join("good");
+    d.b.export_diverged_tail(&good, &d.theirs).unwrap();
+    for name in [
+        "tail.jsonl",
+        "records.redb",
+        "FORMAT",
+        "SNAPSHOT.json",
+        "MANIFEST.json",
+    ] {
+        let path = good.join(name);
+        let original = std::fs::read(&path).unwrap();
+        let mut bad = original.clone();
+        let at = bad.len() / 2;
+        bad[at] ^= 0x01;
+        std::fs::write(&path, &bad).unwrap();
+        let err = d.b.allow_install_over(&good).unwrap_err();
+        assert_eq!(err.code, DIVERGED_TAIL, "{name}: {err}");
+        assert!(
+            !err.message.contains("bytes_b64"),
+            "a refusal carries no record bytes"
+        );
+        assert_eq!(install().unwrap_err().code, DIVERGED_TAIL, "{name}");
+        std::fs::write(&path, &original).unwrap();
+    }
+    // A restart forgets the permission; the export grants it again.
+    d.b.allow_install_over(&good).unwrap();
+    let Diverged {
+        _dir,
+        root,
+        promoted,
+        b,
+        ..
+    } = d;
+    drop(b);
+    let b = Follower::open(&root.join("b")).unwrap();
+    assert_eq!(
+        b.install_snapshot(&root.join("snap-new"), Some(&manifest))
+            .unwrap_err()
+            .code,
+        DIVERGED_TAIL
+    );
+    b.allow_install_over(&good).unwrap();
+    b.install_snapshot(&root.join("snap-new"), Some(&manifest))
+        .unwrap();
+    let (image, _) = primary_image(&promoted, &root.join("snap-after"));
+    assert_eq!(image_of(b.records()), image);
 }
