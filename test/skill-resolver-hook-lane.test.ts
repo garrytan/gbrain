@@ -35,7 +35,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { runCli } from './helpers/cli-spawn.ts';
-import { CLAUDE_PLUGINS_CATALOG, LANE_DEADLINE_MS, LANE_WORKER_START_MS, projectCatalogPrefix, WORKER_SRC_PATH } from '../src/core/skills/resolver/hook-lane.ts';
+import { CLAUDE_PLUGINS_CATALOG, HERMES_HOOK_FIELDS, LANE_DEADLINE_MS, LANE_WORKER_START_MS, projectCatalogPrefix, WORKER_SRC_PATH } from '../src/core/skills/resolver/hook-lane.ts';
+import { cpuMsAsync } from './helpers/cpu-time.ts';
 import { HOOK_FIELD_CAP, readHookFields, readJsonFields } from '../src/core/skills/resolver/hook-input.ts';
 import { historyShrank, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { MESSAGE_CAP_BYTES } from '../src/core/skills/resolver/resolve.ts';
@@ -93,8 +94,7 @@ function wired(b: Box, harness: 'claude-code' | 'codex', event: 'UserPromptSubmi
   return cmds[0];
 }
 
-/** cpuMs: the hook process's CPU time over every thread (wait4's rusage, children it waited for included), which descheduling on a busy machine does not add to. */
-interface Run { stdout: string; stderr: string; exitCode: number; wallMs: number; cpuMs: number }
+interface Run { stdout: string; stderr: string; exitCode: number; wallMs: number }
 /** Run a hook command the way the harness does: sh -c, the event JSON on stdin. Wall time is measured outside the process. */
 function hookEnv(b: Box, env: Record<string, string | undefined>): Record<string, string> {
   const merged: Record<string, string> = {};
@@ -106,7 +106,7 @@ async function hook(b: Box, command: string, payload: Record<string, unknown> | 
   const stdin = new TextEncoder().encode(typeof payload === 'string' ? payload : JSON.stringify({ cwd, ...payload }));
   const proc = Bun.spawn(['sh', '-c', command], { env: hookEnv(b, env), cwd, stdin, stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-  return { stdout, stderr, exitCode, wallMs: performance.now() - t0, cpuMs: Number(proc.resourceUsage()!.cpuTime.total) / 1000 };
+  return { stdout, stderr, exitCode, wallMs: performance.now() - t0 };
 }
 /** hook() over a real pipe whose last byte is held back for holdMs (or until the process exits): a harness still writing a long history to stdin. */
 async function hookHeld(b: Box, command: string, payload: Record<string, unknown>, holdMs: number, env: Record<string, string | undefined> = {}, cwd = b.project): Promise<Run> {
@@ -121,7 +121,7 @@ async function hookHeld(b: Box, command: string, payload: Record<string, unknown
     await proc.stdin.end();
   }
   const [stdout, stderr, exitCode] = await out;
-  return { stdout, stderr, exitCode, wallMs: performance.now() - t0, cpuMs: Number(proc.resourceUsage()!.cpuTime.total) / 1000 };
+  return { stdout, stderr, exitCode, wallMs: performance.now() - t0 };
 }
 const WIDE = { GBRAIN_TEST_SKILL_LANE_DEADLINE_MS: '10000' };
 const laneLog = (b: Box): any[] => [Date.now() - 86_400_000, Date.now()].flatMap((ms) => {
@@ -738,24 +738,27 @@ describe('skill-resolver lane: hermes', () => {
   test('a 5 MB conversation_history before and after user_message is read, never refused, and still delivers within a turn budget', async () => {
     const b = await hermesBox();
     const before = history(2.5e6), after = history(2.5e6);
-    const smallCpuMs: number[] = [], bigCpuMs: number[] = [];
-    for (let n = 0; n < 3; n++) {
-      const small = await hook(b, hermesCmd(b), { session_id: `h2a-${n}`, extra: { user_message: 'please deploy the widget to staging' } }, WIDE);
-      expect(JSON.parse(small.stdout).context).toContain('id: "deploy-widget"');
-      smallCpuMs.push(small.cpuMs);
-      const turn = { session_id: `h2-${n}`, extra: { conversation_history: before, user_message: 'please deploy the widget to staging', later_history: after } };
-      expect(JSON.stringify(turn).length).toBeGreaterThan(5e6);
-      const r = await hook(b, hermesCmd(b), turn, WIDE);
-      expect(r.exitCode).toBe(0);
-      expect(JSON.parse(r.stdout).context).toContain('id: "deploy-widget"');
-      expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'delivered' });
-      bigCpuMs.push(r.cpuMs);
-    }
+    const small = { session_id: 'h2a', extra: { user_message: 'please deploy the widget to staging' } };
+    const turn = { session_id: 'h2', extra: { conversation_history: before, user_message: 'please deploy the widget to staging', later_history: after } };
+    expect(JSON.stringify(turn).length).toBeGreaterThan(5e6);
+    const r = await hook(b, hermesCmd(b), turn, WIDE);
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout).context).toContain('id: "deploy-widget"');
+    expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'delivered' });
     // Reading 5 MB adds less than one lane deadline of work to a small turn; a buffering or quadratic reader would not.
-    // Work is the process's CPU time: a busy runner stretches a turn's wall time by however long it sat descheduled, so two
-    // wall clocks there differ by load, not by the reader. Each side's least of three, so one process whose JIT or GC
-    // threads ran longer cannot decide it.
-    expect(Math.min(...bigCpuMs) - Math.min(...smallCpuMs)).toBeLessThan(LANE_DEADLINE_MS);
+    // The work is the lane's own read of the same bytes in pipe-sized chunks, timed in thread CPU (test/helpers/cpu-time.ts):
+    // a turn's wall time on a loaded runner also counts the time the process sat descheduled (51.8 ms against this bound
+    // on a GitHub shard, 91.6 ms beside 32 busy loops on 4 cores), and a process's CPU time counts the engine's JIT and GC
+    // threads, which moved a 5 MB turn by more than the bound from one run to the next. Each side's least of three.
+    const readCpuMs = async (payload: Record<string, unknown>) => {
+      const bytes = Buffer.from(JSON.stringify({ cwd: b.project, ...payload }));
+      const pipe = () => Readable.from(Array.from({ length: Math.ceil(bytes.length / 65_536) }, (_, i) => bytes.subarray(i * 65_536, (i + 1) * 65_536)));
+      const ms: number[] = [];
+      for (let n = 0; n < 3; n++) ms.push(await cpuMsAsync(async () => expect((await readHookFields(pipe(), HERMES_HOOK_FIELDS, HOOK_FIELD_CAP))?.strings['extra.user_message']).toBe('please deploy the widget to staging')));
+      return Math.min(...ms);
+    };
+    const [bigCpu, smallCpu] = [await readCpuMs(turn), await readCpuMs(small)];
+    expect(bigCpu - smallCpu).toBeLessThan(LANE_DEADLINE_MS);
   });
 
   test('a history still arriving down the pipe after the worker loaded does not spend the turn deadline (#10334)', async () => {
