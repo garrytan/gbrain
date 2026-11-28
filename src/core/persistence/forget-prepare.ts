@@ -187,9 +187,13 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
       ...(companionFile ? { file: companionFile } : {}), apply: async () => undefined });
   }
   let pages: string[] = [];
+  const expiryReport = { ids: [] as number[] };
   return { observedRevision: held ? held.observedRevision : own?.revision ?? null, ...(file ? { file } : {}), ...(companions.length ? { companions } : {}),
-    // #8636: forget_fact on an already-expired fact still publishes its withdrawal, then answers fact_already_expired.
-    ...(row.operation === 'forget_fact' && fact.expired_at !== null ? { failure: { code: 'fact_already_expired', message: `Fact id ${id} already expired.` } } : {}),
+    // Read after apply: #8636 keeps expired-only refusals, but #8638 must not report failure after expiring a live copy.
+    get failure() {
+      return row.operation === 'forget_fact' && expiryReport.ids.length === 0
+        ? { code: 'fact_already_expired', message: `Fact id ${id} already expired.` } : undefined;
+    },
     validate: async tx => {
       // Under the publication's locks: the fact is still visible, no more trusted than a remote caller, and reaches no other copy.
       const current = await readForgetTarget(tx, id, sourceId, worldOnly, excludePrivate, true, ownPage);
@@ -201,16 +205,16 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
     },
     apply: async (tx, preimage) => {
       if (held) await held.apply(tx, preimage ?? null);
-      // Even an expired legacy fact acquires a ledger row (forget_fact then finishes failed), so a stale import cannot reactivate it.
+      // Even an expired-only legacy fact acquires a ledger row, so a stale import cannot reactivate it.
       const publication = { withdrawnAt, expectedSlugs: plan.slugs };
       pages = (await recordFactWithdrawal(tx, id, sourceId, worldOnly, ownPage
-        ? { requestId: row.id, semanticReview: false, memberPage: ownPage, publication }
-        : { requestId: row.id, semanticReview: p.semantic_review !== false, excludePrivate, publication })).pages.map(page => page.slug);
+        ? { requestId: row.id, semanticReview: false, memberPage: ownPage, publication, expiryReport }
+        : { requestId: row.id, semanticReview: p.semantic_review !== false, excludePrivate, publication, expiryReport })).pages.map(page => page.slug);
       // #9739: the reason annotates the withdrawal and authors no claim, so the fact keeps its stored trust tier.
-      if (reason) await withTrustKeep(tx, ['facts'], () => tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
+      if (reason && expiryReport.ids.includes(id)) await withTrustKeep(tx, ['facts'], () => tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
         WHERE id=$1 AND source_id=$2`, [id, sourceId, `forgotten: ${reason}`]));
       return row.operation === 'forget'
-        ? { id: rawId, expired: fact.expired_at === null, reason, protocol_version: 1 }
+        ? { id: rawId, expired: expiryReport.ids.includes(id), reason, protocol_version: 1 }
         : { id, expired: true, path: 'legacy_db', reason: reason ?? 'forgotten' };
     },
     // The publication removed the withdrawn pages' chunks; rebuild them now, as a CLI process exits without a

@@ -92,6 +92,8 @@ export async function planFactWithdrawal(engine: BrainEngine, id: number, source
 export async function recordFactWithdrawal(
   engine: BrainEngine, id: number, sourceId: string, worldOnly = false,
   opts: { requestId?: string; publicationId?: string; semanticReview?: boolean; excludePrivate?: boolean; beliefReport?: { appended: number }; memberPage?: string;
+    /** Rows actually expired by this transaction, including live copies of an already-expired target. */
+    expiryReport?: { ids: number[] };
     /**
      * GBRA-190 G4: the withdrawal is the database half of a coordinated publication (forget-prepare.ts) whose page
      * files the coordinator already published and committed, under page keys and a belief batch the publication holds.
@@ -141,7 +143,9 @@ export async function recordFactWithdrawal(
       const expired = await tx.executeRaw<{ id: number }>(`UPDATE facts SET expired_at=now(),valid_until=LEAST(COALESCE(valid_until,now()),now())
         WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)
           AND ($4='*' OR entity_slug=$4 OR (${unbackedEntitySql('facts')} AND NOT ${ownedMemorySubjectSql('$4::text')}) OR ${pageScoped}) AND expired_at IS NULL RETURNING id`, [sourceId,row.visibility,row.fact,row.subject]);
-      noteBelief({ kind: 'withdrawn', factIds: expired.map(r => Number(r.id)) });
+      const expiredIds = expired.map(r => Number(r.id));
+      if (opts.expiryReport) opts.expiryReport.ids = expiredIds;
+      noteBelief({ kind: 'withdrawn', factIds: expiredIds });
       if (!inserted.length) return { withdrawn: false, pages: [] };
       // Overnight semantic review (decide review lane): queued with the ledger row so a late commit is never skipped.
       // Not queued when the caller opted out (`semantic_review: false`, also used by review-accepted withdrawals).
