@@ -5,7 +5,8 @@
  *  - Contract: on a Rust engine, `compactWriteReceiptsDetailed` rejects with `engine_capability_missing` naming the
  *    listing member (`listCompactableReceipts`) and `outcome=none`, before any candidate is read or any receipt is
  *    written, so an aged committed put receipt stays exactly as it was. The compaction pass (`runCompactionPass`, what a
- *    one-shot consumer runs after a put) records the refusal as a skip and returns instead of failing the chain.
+ *    one-shot consumer runs after a put) does not ask for the listing on an engine without raw SQL: it records the skip
+ *    and returns instead of failing the chain, and reaches no refusing member (a caught refusal still counts in parity).
  *  - Regression: the listing was served, so the pass read the aged receipt and then failed halfway, in `compactReceipt`,
  *    with the raw-SQL refusal (`member=executeRaw`), which also aborted the queue upkeep that follows the pass.
  *  - Why existing coverage misses it: no parity case calls the listing, and the CLI put test never ages a receipt.
@@ -69,9 +70,20 @@ describe.skipIf(!rustArmRequested())('Rust engine: receipt compaction', () => {
     expect(await receipt()).toEqual(before!);
   });
 
-  test('the compaction pass records the refusal and returns', async () => {
-    const record = await runCompactionPass(engine as unknown as BrainEngine, { hostId: 'rust-compaction-test' });
+  test('the compaction pass skips the listing without asking for it, records the skip and returns', async () => {
+    // Every member the pass reaches is recorded; asking for the unserved listing would raise a refusal even if caught.
+    const reached = new Set<string>();
+    const recorded = new Proxy(engine as unknown as BrainEngine, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target);
+        if (typeof value !== 'function') return value;
+        reached.add(String(prop));
+        return value.bind(target);
+      },
+    });
+    const record = await runCompactionPass(recorded, { hostId: 'rust-compaction-test' });
     expect(record).toMatchObject({ compacted: 0, freed_bytes: 0, skipped_by_reason: { receipt_compaction_unsupported: 1 } });
+    expect(reached.has('listCompactableReceipts')).toBe(false);
     expect((await receipt())!.compacted).toBe(false);
   });
 });

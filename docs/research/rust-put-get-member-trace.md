@@ -38,7 +38,8 @@ brain, and what master plus import parts A and B still refuse. It is a measureme
 - Refusals that remain on the path, none of which changes the output:
   - Receipt compaction: `listCompactableReceipts` is not served, because `compactReceipt` runs `SET LOCAL` and raw SQL
     per receipt. `compactWriteReceiptsDetailed` refuses up front with `engine_capability_missing` (nothing read or
-    written), and `runCompactionPass` records it as `receipt_compaction_unsupported` and carries on.
+    written). `runCompactionPass` does not ask on an engine without `raw_sql`: it records `receipt_compaction_unsupported`
+    and carries on, so a put reaches no refusing member there.
   - `slug-params.ts` `storedSpellings` runs raw SQL on a `get` miss; the refusal is caught and the miss is reported
     as on the other engines.
   - `MinionQueue.add` with `coalesceOnIdempotencyKey` on a short put; the refusal is caught and no job is queued.
