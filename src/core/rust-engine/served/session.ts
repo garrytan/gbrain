@@ -65,7 +65,7 @@ export interface ServedServerOptions {
   verify?: VerifyDeps;
   /** The published commit position (default: the Rust store's). */
   positions?: PositionReader;
-  /** Whether interactive transactions over the wire are answered (L1's `multi_writer`, or the test sub-switch). */
+  /** Whether interactive transactions over the wire are answered (the server engine reports `multi_writer`). */
   transactions?: () => boolean;
   helloTimeoutMs?: number;
   preauthMaxConnections?: number;

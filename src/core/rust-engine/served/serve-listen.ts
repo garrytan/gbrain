@@ -5,7 +5,7 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { opError } from '../../ops/contract.ts';
-import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from '../multiuser-switch.ts';
+import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
 import { storeMultiuser } from '../access-self-check.ts';
 import type { OwnerEngineServer } from '../owner-ipc/server.ts';
 import { RUST_SERVER_LISTEN_ENV, listenServed, parseListenAddress, tlsFromEnv, type ServedListener } from './listener.ts';
@@ -18,12 +18,6 @@ export function rustListenRequested(args: readonly string[], env: Record<string,
   return args.includes('--rust-listen') || (!!env[RUST_SERVER_LISTEN_ENV] && rustMultiuserFromEnv(env));
 }
 
-/**
- * Test-only: run interactive transactions over the wire on today's serialized transaction before optimistic explicit
- * transactions (lane L1) exist. Protocol evidence only; the final gate runs with it off.
- */
-export const RUST_SERVED_SERIAL_TXN_ENV = 'GBRAIN_RUST_SERVED_SERIAL_TXN';
-
 /** The brain's resolved multi-user mode: the store's answer, else the environment half (access-self-check.ts). */
 export function storeMode(store: object | null | undefined): { readonly multiuser: boolean } {
   return { multiuser: store ? storeMultiuser(store) : rustMultiuserFromEnv() };
@@ -34,14 +28,13 @@ export function storeMode(store: object | null | undefined): { readonly multiuse
  * is not in multi-user mode.
  */
 export function servedServerOptionsFor(engine: { capabilities?: ReadonlySet<string> }, store: object | null | undefined): ServedServerOptions | undefined {
-  const mode = storeMode(store);
-  if (!mode.multiuser) return undefined;
+  if (!storeMode(store).multiuser) return undefined;
   return {
-    // Interactive transactions over the wire: only with optimistic explicit transactions (lane L1, `multi_writer`),
-    // or the test-only sub-switch that runs them on today's serialized transaction.
+    // Interactive transactions over the wire: only with optimistic explicit transactions (`multi_writer`), which a
+    // multi-user Rust engine reports once its store is open.
     // Following: offered by the session only to an owner server token on a brain with a commit log.
     follower: {},
-    transactions: () => engine.capabilities?.has('multi_writer' as never) === true || rustMultiuserSubSwitch(RUST_SERVED_SERIAL_TXN_ENV, mode),
+    transactions: () => engine.capabilities?.has('multi_writer' as never) === true,
   };
 }
 

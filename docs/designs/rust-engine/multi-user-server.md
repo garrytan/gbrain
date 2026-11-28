@@ -210,7 +210,7 @@ share permits, queues, bounds and the confirming-read holds.
   client; an open transaction handle passed to it crosses as a reference, and calls on it run in that transaction on
   the server. A callback that does not answer within 10 s fails the call and rolls its transaction back.
 - `txn` frames (`begin`, `commit`, `rollback`): interactive transactions over the wire, answered only when the server
-  engine reports `multi_writer` (lane L1) or under the test-only sub-switch `GBRAIN_RUST_SERVED_SERIAL_TXN=1`.
+  engine reports `multi_writer` (optimistic explicit transactions; every multi-user Rust owner does). No switch is needed.
   A transaction rolls back on disconnect and after 30 s. When the server engine loses the commit to another writer (optimistic
   transactions), it does not run the waiting callback again: it ends the transaction `revision_conflict` reason
   `transaction_conflict`, nothing of it kept, and the client runs its own callback again from a fresh transaction, at
@@ -421,7 +421,7 @@ included), and nothing more until the hello is answered; at most 32 connections 
 ### Still pending
 
 - M2: the server derives each caller's scope in the store (lane L4); until its self-check passes, owner tokens only.
-- Positions on the optimistic store and C22 (lane L2); interactive transactions without the sub-switch (lane L1).
+- Positions on the optimistic store and C22 (lane L2).
 - The brain config key `engine.rust.multiuser` is read by `rustMultiuserOnFor` but the owner's election uses the
   environment switch only, so a server needs `GBRAIN_RUST_MULTIUSER=1` in its environment.
 

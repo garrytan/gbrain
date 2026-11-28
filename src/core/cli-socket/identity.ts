@@ -44,9 +44,8 @@ export const READ_BEHAVIOR_ENV: readonly string[] = [
   // self-check can refuse a read whose privacy policies differ, and the commit log adds the `commit_log` capability.
   'GBRAIN_RUST_MULTIUSER', 'GBRAIN_RUST_ACCESS_SELF_CHECK', 'GBRAIN_RUST_COMMIT_LOG',
   // Rust brain server (multi-user mode): the URL and token decide which brain a served client reads, and as whom (only
-  // the SHA-256 of each value enters the identity); the serial-transaction switch decides whether a served client's
-  // transaction runs or is refused, so a read inside one can answer differently.
-  'GBRAIN_RUST_SERVER_URL', 'GBRAIN_RUST_SERVER_TOKEN', 'GBRAIN_RUST_SERVED_SERIAL_TXN',
+  // the SHA-256 of each value enters the identity).
+  'GBRAIN_RUST_SERVER_URL', 'GBRAIN_RUST_SERVER_TOKEN',
   // In multi-user mode, the deadline of an explicit transaction with none of its own: past it the call ends `timeout`
   // instead of answering, so a serve and a CLI with different values answer the same call differently.
   'GBRAIN_RUST_TXN_DEADLINE_MS',

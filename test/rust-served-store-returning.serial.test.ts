@@ -10,7 +10,7 @@
  *    transaction and inside one the client opened, and answer what the owner's own store answers; every engine member
  *    whose name ends in `Store` and returns a store is served this way.
  * 2. Fails on: a member whose store object the server tries to send back (functions do not cross: OwnerIpcEncodeError).
- * 3. Existing coverage: the parity arms reach these stores only inside a server-held transaction (serial switch).
+ * 3. Existing coverage: the parity arms reach these stores only inside a server-held transaction.
  * 4. Seam: none below the engine: a real owner, a real listener, a real served client and store.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';

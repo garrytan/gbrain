@@ -17,6 +17,7 @@ test/rust-served-mcp.serial.test.ts	R1	R1: sets GBRAIN_RUST_MULTIUSER in process
 test/rust-served-read-position.serial.test.ts	R1	R1: sets GBRAIN_RUST_MULTIUSER and GBRAIN_RUST_COMMIT_LOG in process.env so the in-process owner of one on-disk Rust brain serves protocol v3 to two served client engines
 test/rust-served-remote-writes.serial.test.ts	R1	R1: sets GBRAIN_RUST_MULTIUSER in process.env so the in-process owner of one on-disk Rust brain serves protocol v3 to a served client the hostile-client cases drive
 test/rust-served-store-returning.serial.test.ts	R1	R1: sets GBRAIN_RUST_MULTIUSER in process.env so the in-process owner of one on-disk Rust brain serves protocol v3 to a served client engine
+test/rust-served-txn-no-switch.serial.test.ts	R1	R1: sets GBRAIN_RUST_MULTIUSER and clears or sets GBRAIN_RUST_SERVED_SERIAL_TXN in process.env so the in-process owner of one on-disk Rust brain serves protocol v3 transactions to served client engines
 test/unmanaged-push-every-site-gst2456.serial.test.ts	R1	R1: mutates HOME, GBRAIN_HOME, PATH and GBRAIN_GIT_ALLOW_FILE_TRANSPORT for real commit-push, hook, helper and sources pushes to local bare remotes
 test/unmanaged-push-history-scan-8902.serial.test.ts	R1	R1: mutates HOME, GBRAIN_HOME and GBRAIN_GIT_ALLOW_FILE_TRANSPORT for real policy, scaffolding, sources push and bootstrap pushes to local bare remotes
 test/http-db-config.serial.test.ts	global-state	global-state: binds HTTP listeners; drains process-wide pending eval capture registry; withEnv scopes GBRAIN_HOME and GBRAIN_CONTRIBUTOR_MODE

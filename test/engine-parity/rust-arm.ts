@@ -16,6 +16,7 @@
  */
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { listenServed } from '../../src/core/rust-engine/served/listener.ts';
+import { servedConnectionOf } from '../../src/core/rust-engine/served/store-returning.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -206,10 +207,7 @@ export async function openRustBrain(route?: RustMuRoute): Promise<RustBrainDir> 
   await loadRustArmAddon();
   // The operator-env preload drops GBRAIN_ switches; the served arm sets the ones it needs from its GBRAIN_TEST_ flags,
   // before the owner opens (its election reads them).
-  if (rustServedRequested()) {
-    process.env.GBRAIN_RUST_MULTIUSER = '1';
-    if (process.env.GBRAIN_TEST_RUST_SERVED_SERIAL_TXN === '1') process.env.GBRAIN_RUST_SERVED_SERIAL_TXN = '1';
-  }
+  if (rustServedRequested()) process.env.GBRAIN_RUST_MULTIUSER = '1';
   const brain = rustServedRequested() ? newServedOwnerBrain() : newRustBrain();
   if (route !== undefined) installMuConnect(brain.engine as unknown as MuConnectable, route, () => removeBrainDir(brain.dir));
   await brain.engine.connect({ engine: 'pglite', database_path: brain.dir } as never);
@@ -218,8 +216,8 @@ export async function openRustBrain(route?: RustMuRoute): Promise<RustBrainDir> 
 }
 
 /**
- * The served variant of the Rust arm (`GBRAIN_TEST_RUST_SERVED=1`, which turns multi-user Rust on for the run; add
- * `GBRAIN_TEST_RUST_SERVED_SERIAL_TXN=1` for transactions over the wire before lane L1): the brain's owner
+ * The served variant of the Rust arm (`GBRAIN_TEST_RUST_SERVED=1`, which turns multi-user Rust on for the run, so the
+ * owner reports `multi_writer` and answers transactions over the wire; serveRustBrain asserts both): the brain's owner
  * runs in this process with a loopback TLS listener (rust-engine/served/listener.ts) and an owner server token, and
  * the engine each case receives is a served client of it (rust-engine/served/engine.ts) that reaches it over protocol
  * v3. The same tally pins and divergence rows apply, so a case that answers differently served fails. Fixtures that
@@ -285,6 +283,13 @@ async function serveRustBrain(owned: RustBrainDir): Promise<RustBrainDir> {
   const listener = await listenServed(server, { host: '127.0.0.1', port: 0, tls });
   const client = openRustEngine({ addon: addon!, databasePath: owned.dir, served: { url: `gbrain+tls://localhost:${listener.port}`, token, ca: tls.cert } });
   await client.connect({ engine: 'rust', database_path: owned.dir } as never);
+  // Transactions over the wire need no switch: the multi-user owner reports multi_writer and so offers txn. A served arm
+  // whose client could not open one would refuse every client transaction, so the arm fails here instead.
+  const servedTxn = (servedConnectionOf(client) as { caps?: ReadonlySet<string> } | undefined)?.caps?.has('txn') === true;
+  if (!owner.capabilities.has('multi_writer') || !client.capabilities.has('multi_writer') || !servedTxn) {
+    await client.disconnect().catch(() => undefined); await listener.close(); await owner.disconnect();
+    throw new Error(`served arm: transactions over the wire are off (owner multi_writer ${owner.capabilities.has('multi_writer')}, client multi_writer ${client.capabilities.has('multi_writer')}, txn ${servedTxn})`);
+  }
   Object.defineProperty(client, 'openStore', { value: (member: string) => owner.openStore(member), configurable: true, writable: true });
   // The arm closes the server with the client (closeRustBrain); the client's own disconnect and reconnect stay its own.
   const peers: RustEngine[] = [];
