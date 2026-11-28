@@ -80,7 +80,7 @@ never a pass. With no shadow running, every criterion is `missing`.
    all match what the write named; a link that names no origin matches only a row with no origin), and a `putPage` must
    read back the revision it returned (or, when its transaction wrote the page again, the revision the page was about to
    commit with); otherwise the sample is `uncomparable` (`moved`). The serving process's own count of writes to pages
-   or links (a write nothing can describe counts too; bookkeeping writes, such as journal, effect and lease rows, do not) also marks a sample moved, except for an in-transaction page write whose
+   or links (a write nothing can describe counts too; bookkeeping writes, such as journal, effect and lease rows, do not, and neither does a journal statement the follower cannot map whose writes touch only those rows: the protocol declaration, the counter lock, the request completion, the publication's effects insert, the effect completion, the effect's transaction settings and its guard and claim-row locks; a page or link row in the same batch, or any other unmapped write, still counts) also marks a sample moved, except for an in-transaction page write whose
    page was pinned just before the commit (its revision and compared fields, read again afterwards) and whose fence
    completed: for that write the fence and the pin decide. A pin that cannot be taken because another call is still
    running leaves the sample `uncomparable` (`in_transaction_busy`), never a match. A PGLite brain samples no

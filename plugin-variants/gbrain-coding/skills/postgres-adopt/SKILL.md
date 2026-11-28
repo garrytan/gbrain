@@ -121,8 +121,12 @@ Full reference: [Move a PGLite brain to Postgres](https://github.com/garrytan/gb
   stop when one does not.
 - The old data dir is kept as `<path>.graduated-<run_id>` (doctor's
   `pglite_leftovers` reports it). Deleting it is the user's call.
-- `gbrain doctor`'s `pglite_scale` check warns at 1000+ pages and points at
-  the plan command — that warning is this skill's cue.
+- `gbrain doctor`'s `pglite_scale` check warns at 1000+ pages, and at any page
+  count once the chunk vector index nears what PGLite can build (counted in
+  embedded chunks, about 200k at 1,024 dimensions; past it the index cannot be
+  built and vector search falls back to slower exact scans; see the
+  [ceiling](https://github.com/garrytan/gbrain/blob/master/docs/ENGINES.md#pglite-vector-index-ceiling)).
+  Either warning points at the plan command and is this skill's cue.
 
 ## Step 4 — A move already underway
 
@@ -143,7 +147,8 @@ Postgres wins on concurrency, multi-machine access, and scale. PGLite keeps
 the per-turn bootstrap hook lane (hook injection is PGLite-only today —
 `docs/guides/bootstrap.md`); on Postgres, ambient context rides
 MCP-every-session and the pull protocol instead. Recommend Postgres when the
-operator has concurrent agents, multiple machines, or a 1000+ page brain;
+operator has concurrent agents, multiple machines, a 1000+ page brain, or a
+chunk vector index near PGLite's ceiling;
 otherwise PGLite is genuinely fine.
 
 ## When it fails
