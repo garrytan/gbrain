@@ -401,7 +401,7 @@ describe('engine parity: recall and the pages behind each fact with access.membe
         for (const id of memory) expect({ id, readable: WANT(1, member).includes(id) }).toEqual({ id, readable: true });
         expect(memory).toContain(member === CAROL ? 'own-carol' : 'own-dana');
       }
-      const since = idsOf(await remote(engine, member, 'recall', { since: '2000-01-01T00:00:00Z' }));
+      const since = idsOf(await remote(engine, member, 'recall', { since: '2000-01-01T00:00:00Z', include_undated: true }));
       const byEntity: Record<string, unknown> = {};
       for (const entity of ENTITIES) byEntity[entity] = idsOf(await remote(engine, member, 'recall', { entity }));
       const pages: Record<string, unknown> = {};
