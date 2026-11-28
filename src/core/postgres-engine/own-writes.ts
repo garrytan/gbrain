@@ -1,5 +1,6 @@
 /**
- * The exact count of this process's own committed row changes, per relation, on Postgres.
+ * The exact count of this process's own write-counter increments, per relation, on Postgres: the tuple inserts, updates
+ * and deletes of its committed outer transactions, savepoints that rolled back included (the server counts those too).
  *
  * The shadow seal (src/shadow/seal.ts) proves that nobody else wrote a copied relation since the follower's verified
  * point: the database's write counters (`pg_stat_user_tables.n_tup_ins/upd/del`) must have moved by exactly this
@@ -17,7 +18,7 @@
  *   before it answers COMMIT, so a count enters the ledger only once the global counters already hold it.
  *
  * A count enters the ledger only when START, every statement, END and COMMIT succeeded on one backend in one transaction
- * (same pid and `now()` at START and END) and no difference is negative. Everything else is left out: a rolled-back
+ * (same pid and `now()` at START and END) of the database the counter was activated on, and no difference is negative. Everything else is left out: a rolled-back
  * transaction, a prepared one, a write this module does not recognize, the cases `reserved` names. The
  * ledger can therefore only fall short of the real own count, never exceed it, and the seal compares for equality:
  * any write the ledger lacks, ours or another client's, leaves the counters ahead and the seal refuses.
@@ -144,8 +145,16 @@ function control(text: string): 'begin' | 'commit' | 'rollback' | 'other' | 'mix
   return 'other';
 }
 
+/**
+ * Which database a reading came from: the server's start time and the database's oid. Relation oids are per database,
+ * and a database cloned from a template keeps its template's, so a count read on another database (a direct URL that
+ * names a clone) could match the seal's relations by oid alone.
+ */
 // engine-sql-ok: Postgres statistics reads for the own-write count; PGLite keeps no write counters and never counts
-const COUNTS_SELECT = `SELECT pg_catalog.pg_backend_pid()::text AS pid, pg_catalog.now()::text AS at,
+const DATABASE_IDENTITY = `pg_catalog.pg_postmaster_start_time()::text || '/' || (SELECT d.oid::text FROM pg_catalog.pg_database d
+    WHERE d.datname = pg_catalog.current_database())`;
+// engine-sql-ok: Postgres statistics reads for the own-write count; PGLite keeps no write counters and never counts
+const COUNTS_SELECT = `SELECT pg_catalog.pg_backend_pid()::text AS pid, pg_catalog.now()::text AS at, ${DATABASE_IDENTITY} AS db,
   pg_catalog.string_agg(pg_catalog.pg_stat_get_xact_tuples_inserted(u.r)::text || ',' || pg_catalog.pg_stat_get_xact_tuples_updated(u.r)::text
     || ',' || pg_catalog.pg_stat_get_xact_tuples_deleted(u.r)::text, ';' ORDER BY u.o) AS c`;
 const COUNTS_FROM = ' FROM pg_catalog.unnest(';
@@ -164,7 +173,7 @@ function statementText(strings: readonly string[]): string {
 }
 const OWN_TEXTS = new Set([statementText(START_STRINGS), statementText(END_STRINGS), statementText(IMMEDIATE_STRINGS)]);
 
-interface Reading { pid: string; at: string; c: string | null }
+interface Reading { pid: string; at: string; db: string; c: string | null }
 type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown };
 
 function sameTransaction(start: unknown, end: unknown): boolean {
@@ -219,8 +228,11 @@ export class OwnWriteCounter {
   private readonly pools = new WeakMap<object, Sql>();
   private readonly oidList: string;
 
-  /** `relations`: the relations to count, as `[name, oid]`. */
-  constructor(private readonly relations: ReadonlyArray<readonly [name: string, oid: string]>) {
+  /**
+   * `relations`: the relations to count, as `[name, oid]`. `database`: the identity of the database they were read on
+   * (DATABASE_IDENTITY); a transaction that ran on any other database is left out.
+   */
+  constructor(private readonly relations: ReadonlyArray<readonly [name: string, oid: string]>, private readonly database: string) {
     this.oidList = `{${relations.map(([, oid]) => oid).join(',')}}`;
   }
 
@@ -245,7 +257,7 @@ export class OwnWriteCounter {
   }
 
   private parse(r: Reading | undefined): Map<string, Counts> | null {
-    if (!r || typeof r.pid !== 'string' || typeof r.at !== 'string') return null;
+    if (!r || typeof r.pid !== 'string' || typeof r.at !== 'string' || r.db !== this.database) return null;
     const parts = (r.c ?? '').split(';');
     if (parts.length !== this.relations.length) return null;
     const out = new Map<string, Counts>();
@@ -299,7 +311,9 @@ export class OwnWriteCounter {
   }
 
   /**
-   * Runs `q` as BEGIN, START, q, END, COMMIT, pipelined where the pool allows (`early` accepts every statement). Plain
+   * Runs `q` as BEGIN, START, q, IMMEDIATE, END, COMMIT. Where the pool pipelines, START goes out right behind BEGIN
+   * (`early` accepts only the count's own reads); `q` and everything after it wait for BEGIN's answer, so a BEGIN that
+   * fails never leaves `q` running in autocommit: `q` is rejected unsent with BEGIN's error. Plain
    * BEGIN, as an autocommit statement had: a read-only session default still refuses the write (25006), which
    * retryReadOnlyAutocommit answers with a counted read-write transaction. `q` settles as it would have alone, after
    * the transaction settles; it is booked only when the whole transaction committed.
@@ -324,7 +338,7 @@ export class OwnWriteCounter {
       return undefined;
     };
     void (async () => {
-      const opened = await settle((pool.begin as unknown as Begin)({ early: () => true }, run));
+      const opened = await settle((pool.begin as unknown as Begin)({ early: (text: string) => OWN_TEXTS.has(text) }, run));
       if (!entered) {
         // The transaction never opened, so `q` was never sent: it runs alone, as it would have without the count.
         q.resolve = resolve; q.reject = reject; q.handler = send;
@@ -412,8 +426,9 @@ export class OwnWriteCounter {
    * Raw statements on one reserved connection (`ReservedConnection.executeRaw`), counted. The caller drives the
    * transaction there with plain BEGIN/COMMIT text (backfill batches, bounded read sessions), so this follows that
    * text in call order: inside the caller's transaction START goes ahead of the first write and IMMEDIATE and END
-   * ahead of its COMMIT; an autocommit write runs as BEGIN, START, write, IMMEDIATE, END, COMMIT. Every statement is
-   * enqueued at once, so nothing the caller sends later lands among them. Left out (uncounted, so a seal refuses):
+   * ahead of its COMMIT; an autocommit write runs as BEGIN, START, write, IMMEDIATE, END, COMMIT, the write held until
+   * BEGIN answers (`alone`). Statements go on the connection in call order: one the caller sends while an autocommit
+   * write waits for its BEGIN waits behind it, so nothing lands among them. Left out (uncounted, so a seal refuses):
    * a connection that does not pipeline (a transaction-mode pooler can refuse BEGIN and run the rest in autocommit),
    * and everything after a text that mixes transaction control with other statements.
    */
@@ -425,7 +440,16 @@ export class OwnWriteCounter {
     let st: TxCount | null = null;
     let bucket = 0;
     const now = (q: unknown): PendingQuery => { const p = q as PendingQuery; p.executed = true; p.handler(p); p.catch(() => { /* the caller reads it */ }); return p; };
-    return (query, params, prepare) => {
+    // Settles once every statement sent so far is on the connection's queue; null when nothing waits.
+    let tail: Promise<void> | null = null;
+    const after = (queued: Promise<void>): void => {
+      const t: Promise<void> = tail = queued.then(() => { if (tail === t) tail = null; });
+    };
+    const step = (query: string, params?: unknown[], prepare?: boolean): { result: Promise<unknown>; queued?: Promise<void> } => {
+      const result = sent(query, params, prepare);
+      return result instanceof Promise ? { result } : result;
+    };
+    const sent = (query: string, params?: unknown[], prepare?: boolean): Promise<unknown> | { result: Promise<unknown>; queued: Promise<void> } => {
       const make = () => now(params === undefined ? reserved.unsafe(query) : reserved.unsafe(query, params as never, { prepare: prepare === true }));
       if (state === 'unknown') return make();
       const kind = control(query);
@@ -458,9 +482,26 @@ export class OwnWriteCounter {
       if (!pipelines) return make();
       const q = (params === undefined ? reserved.unsafe(query) : reserved.unsafe(query, params as never, { prepare: prepare === true })) as unknown as PendingQuery;
       q.executed = true;
-      counter.alone(reserved, q, q.handler);
+      const queued = counter.alone(reserved, q, q.handler);
       q.catch(() => { /* the caller reads it */ });
-      return q;
+      return { result: q, queued };
+    };
+    return (query, params, prepare) => {
+      if (!tail) {
+        const s = step(query, params, prepare);
+        if (s.queued) after(s.queued);
+        return s.result;
+      }
+      let out!: (s: Settled<unknown>) => void;
+      const result = new Promise<Settled<unknown>>(r => out = r);
+      after(tail.then(() => {
+        try {
+          const s = step(query, params, prepare);
+          void settle(s.result).then(out);
+          return s.queued;
+        } catch (error) { out({ ok: false, error }); return undefined; }
+      }));
+      return result.then(s => { if (s.ok) return s.value; throw s.error; });
     };
   }
 
@@ -481,10 +522,13 @@ export class OwnWriteCounter {
   }
 
   /**
-   * Sends `q` as BEGIN, START, q, IMMEDIATE, END, COMMIT on `conn`'s statement queue now, in that order. `q` settles
-   * as it would have alone, after COMMIT; it is booked only when the whole transaction committed.
+   * Runs `q` as BEGIN, START, q, IMMEDIATE, END, COMMIT on `conn`. BEGIN and START (a read) go out now; `q` and the
+   * rest wait for BEGIN's answer, so a BEGIN that fails never leaves `q` running in autocommit: `q` is rejected unsent
+   * with BEGIN's error. `q` settles as it would have alone, after COMMIT; it is booked only when the whole transaction
+   * committed. Returns when `q` and the rest are on `conn`'s queue (or will never be): a caller that shares `conn`
+   * sends nothing before that, so nothing lands among them.
    */
-  private alone(conn: Sql, q: PendingQuery, send: (q: PendingQuery) => unknown): void {
+  private alone(conn: Sql, q: PendingQuery, send: (q: PendingQuery) => unknown): Promise<void> {
     const resolve = q.resolve, reject = q.reject;
     let answered!: (s: Settled<unknown>) => void;
     const own = new Promise<Settled<unknown>>(r => answered = r);
@@ -493,16 +537,23 @@ export class OwnWriteCounter {
     const now = (made: unknown): Promise<unknown> => { const p = made as PendingQuery; p.executed = true; p.handler(p); p.catch(() => { /* read below */ }); return p; };
     const at = this.ledger.open();
     const one: TxCount = { top: conn, prepared: false };
-    const begun = now(conn.unsafe('BEGIN'));
+    const begun = settle(now(conn.unsafe('BEGIN')));
     this.startOn(one);
-    send(q);
-    this.endOn(one);
-    const done = now(conn.unsafe('COMMIT'));
+    let done: Promise<unknown> | undefined;
+    const queued = begun.then((b) => {
+      if (!b.ok) return;
+      send(q);
+      this.endOn(one);
+      done = now(conn.unsafe('COMMIT'));
+    });
     void (async () => {
-      const [b, mine, c] = [await settle(begun), await own, await settle(done)];
+      const b = await begun;
+      await queued;
+      // BEGIN failed, or the connection closed: `q` was never sent.
+      if (!b.ok) { await settle(one.start!); return reject(b.error); }
+      const [mine, c] = [await own, await settle(done!)];
       const start = await settle(one.start!), end = await settle(endOf(one));
-      // BEGIN or COMMIT failed, or the connection closed: nothing proves the write committed.
-      if (!b.ok) return reject(mine.ok ? b.error : mine.error);
+      // COMMIT failed, or the connection closed: nothing proves the write committed.
       if (!c.ok) return reject(mine.ok ? c.error : mine.error);
       // COMMIT after a failed statement is a silent ROLLBACK: report the first failure.
       if (!start.ok) return reject(start.error);
@@ -512,6 +563,7 @@ export class OwnWriteCounter {
       this.book(at, start.value, end.value);
       resolve(mine.value);
     })().catch(reject);
+    return queued;
   }
 
   /**
@@ -545,7 +597,8 @@ export class OwnWriteCounter {
 
 // engine-sql-ok: Postgres statistics reads for the own-write count; PGLite keeps no write counters and never counts
 const ACTIVATION_SQL = `SELECT current_setting('server_version_num')::int AS version,
-  pg_catalog.has_function_privilege(pg_catalog.to_regprocedure('pg_catalog.pg_stat_force_next_flush()')::oid, 'EXECUTE') AS flush`;
+  pg_catalog.has_function_privilege(pg_catalog.to_regprocedure('pg_catalog.pg_stat_force_next_flush()')::oid, 'EXECUTE') AS flush,
+  ${DATABASE_IDENTITY} AS db`;
 // engine-sql-ok: Postgres statistics reads for the own-write count; PGLite keeps no write counters and never counts
 const RELATIONS_SQL = `SELECT c.relname::text AS name, c.oid::text AS oid
   FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -558,8 +611,8 @@ const RELATIONS_SQL = `SELECT c.relname::text AS name, c.oid::text AS oid
  */
 // engine-sql-ok: transaction write counters and forced stats flushes are Postgres-only
 export async function ownWriteCounter(pool: Sql, names: readonly string[]): Promise<OwnWriteCounter | null> {
-  const [facts] = await pool.unsafe(ACTIVATION_SQL) as unknown as Array<{ version?: unknown; flush?: unknown }>;
-  if (!facts || typeof facts.version !== 'number' || facts.version < 150_000 || facts.flush !== true) return null;
+  const [facts] = await pool.unsafe(ACTIVATION_SQL) as unknown as Array<{ version?: unknown; flush?: unknown; db?: unknown }>;
+  if (!facts || typeof facts.version !== 'number' || facts.version < 150_000 || facts.flush !== true || typeof facts.db !== 'string') return null;
   const rels = await pool.unsafe(RELATIONS_SQL, [[...names]] as never) as unknown as Array<{ name: string; oid: string }>;
-  return new OwnWriteCounter(rels.map(r => [r.name, r.oid] as const));
+  return new OwnWriteCounter(rels.map(r => [r.name, r.oid] as const), facts.db);
 }

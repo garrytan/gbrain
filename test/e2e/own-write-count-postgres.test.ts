@@ -8,13 +8,15 @@
  * Protects: the shadow seal's rule that the counters may move by exactly this process's own writes. A ledger above
  * the counters would let another client's write hide behind ours; the tests assert equality where the count is exact
  * and "ledger never above the counters" where a write is left out (a failed statement, a reserved connection's text
- * that mixes transaction control with other statements). Regression it catches: an own write the seal refuses, or a foreign write the ledger absorbs.
+ * that mixes transaction control with other statements). Also: a write on another database whose relations share the
+ * counted oids (a clone of the same template) is left out, and a write is never sent when its BEGIN fails (it would
+ * run in autocommit). Regression it catches: an own write the seal refuses, or a foreign write the ledger absorbs.
  * Needs DATABASE_URL (Postgres 15+); skips without it.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import postgres from '#postgres';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
-import type { OwnWriteLedger } from '../../src/core/postgres-engine/own-writes.ts';
+import { ownWriteCounter, physicalPool, type OwnWriteLedger } from '../../src/core/postgres-engine/own-writes.ts';
 import type { ReservedTransactions } from '../../src/core/postgres-engine/reserved-transactions.ts';
 import { hasDatabase } from './helpers.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
@@ -285,4 +287,61 @@ d('the own-write count on Postgres', () => {
     expect(diff(before, await counters())).toEqual(own(k));
     expect(own(k).own_parent).toEqual(['40', '20', '0']);
   });
+
+  test('a write on another database whose relations have the same oids (a clone of the same template) is left out', async () => {
+    const other = await template.clone();
+    try {
+      const here = physicalPool(engine.sql), there = physicalPool(other.engine.sql);
+      const oid = async (sql: ReturnType<typeof postgres>) => String((await sql.unsafe(`SELECT 'config'::regclass::oid::text AS o`))[0]!.o);
+      expect(await oid(there)).toBe(await oid(here)); // the same oid on both, so only the database tells them apart
+      const counter = (await ownWriteCounter(here, ['config']))!;
+      await counter.pool(there).unsafe(`INSERT INTO config (key, value) VALUES ('own-write-clone', 'there')`);
+      expect([counter.counted, counter.dropped]).toEqual([0, 1]);
+      expect(counter.ledger.since(0).size).toBe(0);
+      await counter.pool(here).unsafe(`INSERT INTO config (key, value) VALUES ('own-write-clone', 'here')`);
+      expect([counter.counted, counter.dropped]).toEqual([1, 1]);
+      expect(counter.ledger.since(0).get('config')).toEqual([1n, 0n, 0n]);
+    } finally { await other.close(); }
+  }, 60_000);
+
+  test('a pool write whose BEGIN fails is never sent: it gets BEGIN\'s error and the table is untouched', async () => {
+    const pool = physicalPool(engine.sql);
+    // `isolation level bogus` survives begin()'s mode filter and makes the server refuse BEGIN (42601) on a live connection.
+    const refusing = new Proxy(pool, {
+      get(target, key) {
+        if (key === 'begin') return (options: object, fn: unknown) => (target.begin as unknown as (o: unknown, f: unknown) => Promise<unknown>)({ ...options, mode: 'isolation level bogus' }, fn);
+        return Reflect.get(target, key, target);
+      },
+    });
+    const counter = (await ownWriteCounter(pool, NAMES))!;
+    const outcome = await counter.pool(refusing).unsafe(`INSERT INTO own_parent (id, v) VALUES (90, 'begin-refused')`).then(() => 'ran', (e: { code?: string }) => e.code);
+    expect(outcome).toBe('42601');
+    expect(Number((await observer`SELECT count(*)::int AS n FROM own_parent WHERE id = 90`)[0]!.n)).toBe(0);
+    expect(counter.ledger.since(0).size).toBe(0);
+  }, 60_000);
+
+  test('a reserved connection: an autocommit write whose BEGIN fails is never sent, and statements sent behind a write wait for it', async () => {
+    const pool = physicalPool(engine.sql);
+    const counter = (await ownWriteCounter(pool, NAMES))!;
+    const reserved = await pool.reserve();
+    try {
+      const refusing = new Proxy(reserved, {
+        get(target, key) {
+          if (key === 'unsafe') return (text: string, ...rest: unknown[]) => (target.unsafe as (...a: unknown[]) => unknown)(text === 'BEGIN' ? 'BEGIN ISOLATION LEVEL BOGUS' : text, ...rest);
+          return Reflect.get(target, key, target);
+        },
+      });
+      const failing = counter.reserved(refusing as unknown as ReturnType<typeof postgres>, pool);
+      const outcome = await failing(`INSERT INTO own_parent (id, v) VALUES (91, 'begin-refused')`).then(() => 'ran', (e: { code?: string }) => e.code);
+      expect(outcome).toBe('42601');
+      expect(Number((await observer`SELECT count(*)::int AS n FROM own_parent WHERE id = 91`)[0]!.n)).toBe(0);
+      // Sent without waiting: the read goes on the connection after the write's COMMIT, not between its BEGIN and the write.
+      const run = counter.reserved(reserved as unknown as ReturnType<typeof postgres>, pool);
+      const wrote = run(`INSERT INTO own_parent (id, v) VALUES (92, 'counted')`);
+      const read = run(`SELECT count(*)::int AS n, pg_catalog.now() = pg_catalog.statement_timestamp() AS outside FROM own_parent WHERE id = 92`);
+      await wrote;
+      expect(await read).toEqual([{ n: 1, outside: true }]);
+      expect(counter.ledger.since(0).get('own_parent')).toEqual([1n, 0n, 0n]);
+    } finally { reserved.release(); }
+  }, 60_000);
 });

@@ -142,12 +142,19 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     // factory attaches before it connects: the count starts inside connect, before any caller can write; an engine
     // attached once connected starts it at once.
     if (d.postgres) {
-      const count = async (from: string | null): Promise<void> => { if (!d.own) { const own = await countSealWrites(d, from); if (own) d.own ??= own; } };
+      // One count wins: the first to finish, except that the at-once count still running when connect is called gives way
+      // to connect's, which keeps the carried token (the engine shares one ledger between them).
+      let connecting = false;
+      const count = async (from: string | null, atConnect: boolean): Promise<void> => {
+        if (d.own) return;
+        const own = await countSealWrites(d, from);
+        if (own && (atConnect || !connecting)) d.own ??= own;
+      };
       const connect = engine.connect.bind(engine);
-      engine.connect = async (...args: Parameters<BrainEngine['connect']>): Promise<void> => { await connect(...args); await count(carried); };
+      engine.connect = async (...args: Parameters<BrainEngine['connect']>): Promise<void> => { connecting = true; await connect(...args); await count(carried, true); };
       // Already connected, this process may have written before the seal on disk was read: its token is counted only
       // from the confirmation on.
-      void count(null);
+      void count(null, false);
     }
   }
   const askConfirm = (): Promise<SealConfirmOutcome | void> => {

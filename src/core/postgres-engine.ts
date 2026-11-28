@@ -339,6 +339,7 @@ export class PostgresEngine implements BrainEngine {
   private _sql: ReturnType<typeof postgres> | null = null;
   /** The own-write count (postgres-engine/own-writes.ts), on only after `countOwnWrites`; null leaves every pool as it is. */
   private _ownWrites: OwnWriteCounter | null = null;
+  private _ownWritesActivation: Promise<OwnWriteCounter | null> | null = null;
   /** Saved config for reconnection. */
   private _savedConfig: (EngineConfig & { poolSize?: number; parentConnectionManager?: ConnectionManager }) | null = null;
   /** Whether a reconnect is in progress (prevents concurrent reconnects). */
@@ -407,10 +408,10 @@ export class PostgresEngine implements BrainEngine {
   /**
    * Turns on the exact count of this engine's own committed row changes to the named relations (the shadow seal's
    * relations) and returns its ledger, or null where the count cannot be exact (before Postgres 15, or a role that may
-   * not force a stats flush). Writes this engine sent before the call are not in it.
+   * not force a stats flush). Writes this engine sent before the call are not in it. Concurrent calls share one activation.
    */
   async countOwnWrites(names: readonly string[]): Promise<OwnWriteLedger | null> {
-    if (!this._ownWrites) this._ownWrites = await ownWriteCounter(this.physicalSql, names);
+    this._ownWrites ??= await (this._ownWritesActivation ??= ownWriteCounter(this.physicalSql, names).finally(() => { this._ownWritesActivation = null; }));
     return this._ownWrites?.ledger ?? null;
   }
 
