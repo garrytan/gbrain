@@ -30,8 +30,12 @@
  *  - a server older than PostgreSQL 15 (statistics in shared memory), or `track_counts` off for this database or for a
  *    role in it, refuses: with the counters not kept nothing proves the database was untouched. A superuser who sets
  *    `track_counts = off` in its own session is not detectable.
- * After the child took the confirmation the check is read once more; a write that began in between makes the serving
- * process send `revokeSeal`, which invalidates the watermark again with a full obligation (follow-child.ts).
+ * Confirming takes two messages. After the first read the child takes the confirmation but stays invalid
+ * (`seal_confirm_pending`, no continuity, its own full obligation kept). The check is then read once more: quiet, the
+ * serving process sends `commitSeal` and only that makes the child valid; a write that began in between makes it send
+ * `revokeSeal` instead, which invalidates the watermark again with a full obligation (follow-child.ts). A commit that
+ * was sent but not acknowledged is revoked (`seal_commit_unacknowledged`); a commit the child cannot match to the
+ * confirmation it holds drops the seal (`seal_commit_mismatch`).
  * Row security is switched off inside these reads, so a policy that would hide a row makes the read fail (no seal)
  * instead of returning fewer rows. Any error, a timeout, or hooks that are not installed: no seal, or no confirmation.
  * PGLite never seals and never confirms (`pglite_no_db_continuity`): nothing on a PGLite primary proves no other process
@@ -70,6 +74,8 @@ export interface SealDeps {
 
 /** A confirmation the child may have applied (it was sent) but did not acknowledge: it is revoked, named by this reason. */
 export const SEAL_CONFIRM_UNACKNOWLEDGED = 'seal_confirm_unacknowledged';
+/** A commit the child may have applied (it was sent) but did not acknowledge: revoked, named by this reason. */
+export const SEAL_COMMIT_UNACKNOWLEDGED = 'seal_commit_unacknowledged';
 /** Waits before the retries of an unacknowledged revoke. */
 export const REVOKE_RETRY_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 30_000];
 /**
@@ -303,8 +309,15 @@ export async function confirmSeal(d: SealDeps): Promise<SealConfirmOutcome> {
     return verdict.ok ? revoke(d, SEAL_CONFIRM_UNACKNOWLEDGED) : SETTLED;
   }
   if (!verdict.ok) return SETTLED;
+  // The child holds the confirmation invalid until the commit, sent only once a second read is quiet too.
   const again = await quietSince(d, pending.db_at ?? null);
-  return again.ok ? SETTLED : revoke(d, again.reason);
+  if (!again.ok) return revoke(d, again.reason);
+  try {
+    await d.rpc('commitSeal', { db_at: pending.db_at ?? null }, 10_000);
+  } catch {
+    return revoke(d, SEAL_COMMIT_UNACKNOWLEDGED); // a lost answer does not prove the child did not apply it
+  }
+  return SETTLED;
 }
 
 /**
