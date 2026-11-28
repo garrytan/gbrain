@@ -28,6 +28,7 @@ import { worldOnlyFacts } from '../search/private-visibility.ts';
 import { LARGE_PAGES_CAPABILITY } from './get-page-body.ts';
 import { GUEST_MARKER_CAPABILITY } from '../guests/marker.ts';
 import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
+import type { GetVersionsOpts } from '../page-state/version-types.ts';
 import { openSegmentedBody } from '../page-body/read-range.ts';
 import { segmentedReadDocument } from '../page-window/segmented.ts';
 import { getVersionsKnownAsOf, KNOWN_AS_OF_PARAM, VERSIONS_DIFF_PARAM } from './known-as-of.ts';
@@ -221,6 +222,22 @@ const run_doctor: Operation = {
   localOnly: false,
 };
 
+/**
+ * #10586: a slug that no page holds but a rename or merge alias names reads the surviving page's history, as get_page
+ * resolves it. A page holding the slug keeps its own history (exact outranks alias); the alias read keeps the caller's scope.
+ */
+async function versionsViaAlias<B extends boolean = true>(ctx: OperationContext, slug: string, opts: GetVersionsOpts<B>) {
+  const rows = await ctx.engine.getVersions<B>(slug, opts);
+  if (rows.length > 0) return rows;
+  const sources = opts?.sourceIds?.length ? opts.sourceIds : [opts?.sourceId ?? 'default'];
+  for (const sourceId of sources) {
+    if (await ctx.engine.getPage(slug, { sourceId, includeDeleted: true }).catch(() => null)) return rows; // silent-read-ok: an unreadable exact page falls through to the alias lookup, which keeps the caller's scope
+  }
+  const hit = await ctx.engine.resolveSlugWithAliasDetailed(slug, sources, { excludePrivate: opts?.excludePrivate });
+  if (!hit || hit.canonical_slug === slug) return rows;
+  return ctx.engine.getVersions<B>(hit.canonical_slug, { ...opts, sourceId: hit.source_id, sourceIds: undefined });
+}
+
 const get_versions: Operation = {
   name: 'get_versions',
   mutating: false,
@@ -251,14 +268,14 @@ const get_versions: Operation = {
     };
     if (p.include_body !== true) {
       // An adapter that ignores includeBody never leaks an unsanitized body through the metadata default.
-      const metadata = page(await ctx.engine.getVersions(p.slug as string, { ...opts, includeBody: false }))
+      const metadata = page(await versionsViaAlias(ctx, p.slug as string, { ...opts, includeBody: false }))
         .map(v => { const { compiled_truth: _b, timeline: _t, ...rest } = v as typeof v & { compiled_truth?: unknown; timeline?: unknown }; return rest; });
       const sized = [];
       const reason = await remoteReasons(ctx, String(p.slug), metadata);
       for (const v of metadata) sized.push({ ...await remoteVersionSize(ctx, v), ...reason(v) });
       return canReadWriteAttribution(ctx) ? attributeVersions(ctx.engine, sized) : sized;
     }
-    const plain = page(await ctx.engine.getVersions(p.slug as string, opts));
+    const plain = page(await versionsViaAlias(ctx, p.slug as string, opts));
     const versions = canReadWriteAttribution(ctx) ? await attributeVersions(ctx.engine, plain) : plain;
     // Wave B: a segmented version's body is never returned whole; body_ref names its size (no read serves an older segmented body yet, #7800).
     const out = [];
