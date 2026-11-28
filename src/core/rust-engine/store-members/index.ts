@@ -45,6 +45,14 @@ import * as decideProposals from './decide-proposals.ts';
 import * as decideStore from './decide-store.ts';
 import * as jobsHealth from './jobs-health.ts';
 import * as openLoops from './open-loops.ts';
+import * as cliSources from './cli-sources.ts';
+import * as cliReadsImport from './cli-reads-import.ts';
+import * as cliEntities from './cli-entities.ts';
+import * as importMembers from './import-members.ts';
+import * as jobs from './jobs.ts';
+import * as persistenceIdentity from './persistence-identity.ts';
+import * as persistence from './persistence.ts';
+import * as writerAdmin from './writer-admin.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -66,6 +74,8 @@ export const STORE_MEMBERS = {
   ...cliReadsSearchPages,
   // Queue health reads (rust/crates/gbrain-store/src/jobs/health.rs).
   ...jobsHealth,
+  // Import-path members: source and resolver reads, persistence identity and mode, cycle locks, the seal read.
+  ...cliSources, ...cliReadsImport, ...cliEntities, ...importMembers, ...jobs, ...persistenceIdentity, ...persistence, ...writerAdmin,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

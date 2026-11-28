@@ -1731,8 +1731,9 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
 
 - **Capabilities.** The engine reports a capability only when it serves every `BrainEngine` member of that
   capability (`src/core/rust-engine/store-capabilities.ts`). Today that is `schema`, `sources`, `config`, `page_versions`, `tags`, `embeddings`, `keyword_search`, `vector_search`,
-  `links`, `timeline`, `graph`, `facts`, `takes`, `files`, `code_edges`, `salience`, `raw_data`, `eval_capture`,
-  `ingest_log`, `dream_verdicts`, `contradictions` and `ontology`.
+  `graph`, `facts`, `files`, `salience`, `raw_data`, `eval_capture`, `ingest_log`, `dream_verdicts`, `contradictions` and
+  `ontology`. `links`, `timeline`, `takes` and `code_edges` are not reported: each still has a member that refuses
+  (listed under "What a Rust brain serves now").
   Each member it does not serve refuses `engine_capability_missing` with the capability as `reason` (`raw_sql`,
   `pages`, `search`, ...), the member in `detail`, and `written=nothing`, before any work.
   `src/core/rust-engine/members.ts` maps every member to its capability; the type fails when a new `BrainEngine`
@@ -1741,9 +1742,12 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
   holder opens the store and serves it on `<database_path>/.gbrain-owner.sock` (`ownerRole` `'owner'`). Any other
   process is a `'client'` that forwards each call; transactions refuse there. Limits and errors:
   `docs/designs/RUST_ENGINE.md` ("Process model").
-- **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
+- **SQL-only paths.** Code that only works through SQL (migrations, engine migration and graduation,
   embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
-  `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.
+  `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres. Cycle locks
+  are not wholly SQL-only: a Rust brain serves `acquireCycleLock`, `refreshCycleLock` and `releaseCycleLock`
+  (`src/core/rust-engine/store-members/jobs.ts:12-20`), and `readCycleLocks`, `deleteCycleLock` and `deleteCycleLockIfStale`
+  still refuse with `engine_capability_missing` (capability `minion_queue`, `src/core/rust-engine/members.ts:328-330`).
 - **On the CLI.** Commands that need raw SQL (`import`, `sources add` and others) refuse `engine_capability_missing`.
   When the source lookup is refused on a Rust brain and a source was selected (`GBRAIN_SOURCE`, a `.gbrain-source`
   file, `sources.default`) or the brain holds a source besides `default`, the command stops with that refusal instead
@@ -1781,7 +1785,8 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `getContradictionCacheEntry`, `putContradictionCacheEntry`, `sweepContradictionCache`, `getDreamVerdict`,
   `putDreamVerdict`, `sweepDreamVerdicts`, `putRawData`, `getRawData`, `upsertFile`, `getFile`, `listFilesForPage`,
   `addCodeEdges`, `deleteCodeEdgesForChunks`, `getCallersOf`, `getCalleesOf` and `getEdgesByChunk`. They make the
-  `contradictions`, `dream_verdicts`, `raw_data`, `files` and `code_edges` capabilities complete. `getRawData` and the
+  `contradictions`, `dream_verdicts`, `raw_data` and `files` capabilities complete. `code_edges` is not: the three
+  code traversal cache members `getCodeTraversalCache`, `putCodeTraversalCache` and `clearCodeTraversalCache` refuse. `getRawData` and the
   code-edge reads refuse `excludePrivate: true` with `engine_capability_missing` instead of ignoring it. Each store
   write is one transaction, so a refusal leaves nothing written. Per-member contracts are in
   `rust/docs/store/` (`contradictions.md`, `dream.md`, `raw_files.md`, `code_edges.md`).
@@ -1790,20 +1795,23 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `getSourceStrictness`, `addTag`, `removeTag`, `getTags`, `pruneFrontmatterTags`, `addPageTagsById`. These are the
   members that make the `config`, `sources`, `tags` and `schema` capabilities complete. The store keeps each tag's
   claim (`added` or `frontmatter`) as PGLite's `tags.tag_source` does, so an import prune removes only the tags the
-  import claimed. `getSource` reads `last_commit`, `contextual_retrieval_mode` and `trust_frontmatter_overrides` as
-  null, null and false: only the sync anchor and source admin SQL write those columns, and neither runs on a Rust brain.
+  import claimed. `getSource` returns the stored `last_commit` (null until `advanceSourceCommit` has recorded one), and reads
+  `contextual_retrieval_mode` and `trust_frontmatter_overrides` as null and false: the store keeps no value for those two
+  columns (`rust/crates/gbrain-store/src/sources.rs`, `SourceDetailRow`).
 - Pages: `getPage`, `readPageSnapshot`, `putPage`, `deletePage`, `softDeletePage`, `restorePage`, `listPages`,
   `resolveSlugs`. A stale `expectedRevision` refuses with `PageRevisionConflictError`, as on PGLite.
 - Versions, chunks and timeline: `createVersion`, `getVersions`, `revertToVersion`, `upsertChunks`, `sealChunks`,
   `getChunks`, `getChunkPage`, `getChunkWindows`, `countChunklessPagesWithContent`, `listChunklessPagesWithContent`,
   `deleteChunks`, `addTimelineEntry`, `addTimelineEntriesBatch`, `getTimeline`, `getTimelineForDate`, `getSince`,
-  `getOnThisDay`, `getLastSeen` and `upsertEventProjection`. `page_versions` and `timeline` are reported. `chunks`
-  stays unreported, because `deleteChunksExcept`, `setChunkerVersion`, `writeTextProjectionSeal`, `moveChunkIndexes` and
+  `getOnThisDay`, `getLastSeen` and `upsertEventProjection`. `page_versions` is reported. `timeline` is not, because
+  `removeTimelineRows`, `updateTimelineDetails`, `readRowTrustRows`, `listStoredTimelineRowsOrdered` and
+  `deleteTimelineRows` still refuse. `chunks` stays unreported, because `deleteChunksExcept`, `setChunkerVersion`, `writeTextProjectionSeal`, `moveChunkIndexes` and
   `getChunkReuseRows` still refuse. Reads: `rust/docs/store/chunk_queries.md` and `timeline_queries.md`.
 - Links and graph: `addLink`, `addLinksBatch`, `removeLink`, `getLinks`, `getBacklinks`, `traverseGraph`,
   `traversePaths`, `traversePathsDetailed`, and the link reads in `rust/docs/store/link_queries.md` (`getBacklinkCounts`,
   `getAdjacencyBoosts`, `relationalFanout`, `findOrphanPages`, `supersedingPageSlugs`, `pagesLinkingTo`, ...). Every
-  member of `links` and `graph` is served, so both capabilities are reported.
+  member of `graph` is served, so `graph` is reported. `links` is not: `lockRegisteredSourceIds`, `replaceWantedLinkRows`,
+  `readLinkContextMatches`, `readLinkContextOriginPages` and `listAmendmentsNotApplied` still refuse.
 - Vectors and embeddings: `searchVector` and `searchTakesVector` (an exact scan over the stored vectors, scored as
   pgvector scores them), the embedding state members (`getEmbeddingsByChunkIds`, `cosinesByChunkIds`, `listStaleChunks`,
   `setPageEmbeddingSignature`, `updateTakeEmbeddings`, ...) and `upsertChunks` and `sealChunks` with the vector a chunk
@@ -1819,12 +1827,13 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   (`facts`; `rust/docs/store/facts.md`). A caller policy these members cannot honour
   refuses `engine_capability_missing`. Contracts: `rust/docs/store/facts.md`, `ontology.md`, `eval_capture.md`.
 - Takes, salience, stats and the ingest log, alias and slug members, and the extraction and page-listing reads:
-  `rust/docs/store/takes.md`, `salience.md`, `stats.md`, `aliases.md`, `extraction.md` and `page_ops.md`. The `takes`,
-  `salience` and `ingest_log` capabilities are reported.
+  `rust/docs/store/takes.md`, `salience.md`, `stats.md`, `aliases.md`, `extraction.md` and `page_ops.md`. The `salience` and `ingest_log`
+  capabilities are reported; `takes` is not, because `matchTakeRows`, `deleteTakeRows`, `listLiveTakesByIds` and
+  `findTakeId` still refuse.
 - Facts and ontology claims, page operations, raw data and files, eval capture, dream verdicts, contradiction runs and
   the code call graph: `rust/docs/store/facts.md`, `ontology.md`, `page_ops.md`, `raw_files.md`, `eval_capture.md`,
   `dream.md`, `contradictions.md` and `code_edges.md`. The `facts`, `raw_data`, `files`, `eval_capture`,
-  `dream_verdicts`, `contradictions` and `code_edges` capabilities are reported; `pages` is not (`page_ops.md` says why).
+  `dream_verdicts` and `contradictions` capabilities are reported; `code_edges` and `pages` are not (`page_ops.md` says why for `pages`).
 - Keyword and title search: `searchKeyword`, `searchKeywordChunks`, `countKeywordPages`, `searchKeywordPages`,
   `searchTitles` and `findByTitleFuzzy`. They rank with a port of PostgreSQL's `ts_rank`, `ts_rank_cd` and
   `websearch_to_tsquery` (english), so their answers match PGLite's (`rust/docs/store/keyword.md`). Every member of
@@ -1833,7 +1842,8 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `readSegmentTexts`, `stageManifestRows`, `readManifest`, `stageSegmentChunks`, `createSegmentedPageShell`,
   `flipBodyGeneration`, `openBodyStaging`, `setBodyStagingState`, `readSegmentDerivations`, `upsertSegmentDerivations`,
   `retireSegmentDerivations`, `sealSegmentedPage` and `refreshPageBody`. `sweepSegments` still refuses, and so does
-  a segmented page written inside `transaction` (the store has none), so the `page_body` capability stays unreported.
+  a segmented page written inside `transaction` (the member refuses on a Rust brain; the store has a native
+  `beginTransaction` that no TypeScript member exposes), so the `page_body` capability stays unreported.
   A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`), and so does a
   plain (unsealed) `upsertChunks`, `invalid_state` before it writes.
 
@@ -1846,8 +1856,9 @@ way PGLite does, refuses `engine_capability_missing` and writes nothing. These a
 - a `putPage` with a `source_path` into a source in source-root slug mode whose directory is below its repository root
   (only the files on disk can say whether another page already holds that file, and the store cannot read them);
 - `listPages` with `listColumnsOnly`;
-- `resolveSlugs` when no live page has exactly that slug, because PGLite goes on to a fuzzy title match the store does
-  not have, so an empty answer would be wrong to give;
+- `resolveSlugs` when the store's answer is empty (`src/core/rust-engine/store-members/pages.ts:81`). The store answers
+  the live page with exactly that slug, else up to five fuzzy matches (trigram title similarity or a slug containing the
+  text); the member passes a non-empty answer through;
 - a `getChunks` or `getChunkPage` over more than one distinct `sourceIds` entry;
 - a vector search with `where`, a date bound, `minTrust` or `suppressFlagged` (`rust/docs/store/vectors.md`);
 - an input of a raw-data, page-operation, salience, facts, ontology, chronicle or code-edge read the store cannot
@@ -1887,11 +1898,15 @@ runs on PGLite alone without the flag.
 
 **Transactions and the belief ledger.** Both stay refused on the Rust engine, on purpose.
 
-- `transaction`, `transactionDirect` and `lockPageKeys` refuse `transactions`. The store makes each write atomic on
-  its own, but it has no handle that spans several calls, and `lockPageKeys` throws outside a transaction on PGLite, so
-  there is nothing for it to hold. Code that passes settings into a transaction (the write attribution, trust and
-  maintenance settings in `src/core/persistence/context.ts`) does it with `set_config` and `current_setting` through
-  `tx.executeRaw`, which needs SQL. A Rust transaction would carry those values on a typed context instead.
+- `transaction`, `transactionDirect` and `lockPageKeys` refuse `transactions`, and so do `readTransactionSettings`,
+  `applyTransactionSettings`, `beginSnapshotRead`, `declarePersistence` and `requireSynchronousCommit`
+  (`src/core/rust-engine/members.ts`; `store-members/transactions.ts` exports nothing). The store has a native
+  transaction handle that spans several calls (`brain.beginTransaction`, `rust/crates/gbrain-napi/src/families/transactions.rs:24`);
+  no TypeScript member exposes it. `lockPageKeys` throws outside a transaction on PGLite. Code that passes settings into a
+  transaction (the write attribution, trust and maintenance settings in `src/core/persistence/context.ts`) reads and
+  applies them with the typed members `readTransactionSettings` and `applyTransactionSettings` (`context.ts:35,46`); the
+  SQL engines run them as `current_setting` and `set_config` (`src/core/engine-sql/transaction-settings.ts`), and a Rust
+  brain refuses both.
 - `belief_ledger` is a subsystem, not a `BrainEngine` member: `src/core/belief/` appends and reads belief events through
   `executeRaw`. The Rust engine never reports `raw_sql` (design D18), so the ledger refuses until its reads and appends
   have typed members. Nothing in the Rust engine writes belief events today.

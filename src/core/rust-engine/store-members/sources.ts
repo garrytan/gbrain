@@ -23,3 +23,7 @@ export const listSourceLocalPaths: StoreMember<[], string[]> = (brain) =>
 
 export const getSourceStrictness: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
   storeCall({ member: 'getSourceStrictness', sourceId }, () => brain.getSourceStrictness(sourceId));
+
+/** Sets the source's last sync time to the store clock; false for an unknown source, which changes nothing. */
+export const markSourceSynced: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
+  storeCall({ member: 'markSourceSynced', sourceId }, () => brain.markSourceSynced(sourceId, {}));

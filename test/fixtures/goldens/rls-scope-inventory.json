@@ -192,6 +192,17 @@
           "src-a"
         ]
       },
+      "countDefaultSourceSplit#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countPagesBy#grouped+since+remote": {
         "flagOffLanes": [
           "pool"
@@ -1855,6 +1866,17 @@
         ],
         "flagOnScopes": []
       },
+      "listActiveSourceConfigs#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listActiveTakesForPages#allowList": {
         "flagOffLanes": [
           "pool"
@@ -2227,6 +2249,17 @@
           "src-a,src-b"
         ]
       },
+      "listLocalPathSources#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listPages#default": {
         "flagOffLanes": [
           "pool"
@@ -2423,6 +2456,17 @@
         ]
       },
       "listSourceLocalPaths#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listSourceRoutingRows#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -2667,6 +2711,17 @@
         "flagOnScopes": []
       },
       "markPagesExtractedBatch#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "markSourceSynced#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -4001,6 +4056,7 @@
         "consolidateFact": "none",
         "cosinesByChunkIds": "none",
         "countChunklessPagesWithContent": "direct",
+        "countDefaultSourceSplit": "none",
         "countFactFingerprintLeftovers": "none",
         "countKeywordPages": "direct",
         "countLegacyDerivedPages": "none",
@@ -4186,6 +4242,7 @@
         "listAccessPolicySourceIds": "none",
         "listAccessTokens": "none",
         "listActiveAccessMembers": "none",
+        "listActiveSourceConfigs": "none",
         "listActiveTakesForPages": "none",
         "listAllPageRefs": "none",
         "listAllSources": "none",
@@ -4234,6 +4291,7 @@
         "listLinkSources": "direct",
         "listLiveChunksByIds": "none",
         "listLiveTakesByIds": "none",
+        "listLocalPathSources": "none",
         "listManagedRootBindings": "none",
         "listMemoryProposalRows": "none",
         "listNearestFactsForPurge": "none",
@@ -4266,6 +4324,8 @@
         "listSlotRows": "none",
         "listSlugAliases": "none",
         "listSourceLocalPaths": "none",
+        "listSourceRecords": "none",
+        "listSourceRoutingRows": "none",
         "listStaleChunkVectors": "none",
         "listStaleChunks": "direct",
         "listStaleFrontmatterKeyPages": "direct",
@@ -4306,6 +4366,7 @@
         "markNeedsRederive": "none",
         "markPagesAttendanceBlocked": "none",
         "markPagesExtractedBatch": "none",
+        "markSourceSynced": "none",
         "matchTakeRows": "none",
         "mergeOntologyFact": "none",
         "migrateFactsToCanonical": "none",
@@ -4316,6 +4377,7 @@
         "openPageEmbeddingHold": "none",
         "ownRawRead": "none",
         "ownerOnlyMarkTriggers": "none",
+        "ownsSchemaTables": "none",
         "pageAwaitsRederive": "none",
         "pageCollapseFacts": "none",
         "pagesLinkingTo": "none",
@@ -4363,7 +4425,9 @@
         "readFenceOverlayRows": "none",
         "readFieldUsageSamples": "none",
         "readFolderAccess": "none",
+        "readGuestSourceRow": "none",
         "readHealthMemoClock": "none",
+        "readIgnoredPrivacyLabelPages": "none",
         "readJournalLimitRows": "none",
         "readLedgerSource": "none",
         "readLinkContextMatches": "none",
@@ -4371,6 +4435,7 @@
         "readLinkTargetPages": "none",
         "readLinkedMember": "none",
         "readLiveMember": "none",
+        "readLivePageFrontmatter": "none",
         "readLivePageIdBySlug": "none",
         "readLiveStoredBody": "none",
         "readLocalWriterRow": "none",

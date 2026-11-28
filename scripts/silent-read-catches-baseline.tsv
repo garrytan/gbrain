@@ -412,7 +412,6 @@ src/commands/import-calls.ts#callScopeStdio	catch_empty	1
 src/commands/import-calls.ts#listCallFiles>walk	catch_empty	1
 src/commands/import.ts#collectSyncableFiles>walk	catch_empty	1
 src/commands/import.ts#resealEmbeddingUsd	catch_empty	1
-src/commands/import.ts#runImport	capability_refusal_swallowed	2
 src/commands/import.ts#runImport	catch_empty	4
 src/commands/import.ts#runImport	promise_catch_empty	1
 src/commands/init-embedding-plane.ts#keptEmbeddingIdentity	promise_catch_empty	3
@@ -1182,7 +1181,6 @@ src/core/google/loops-spend.ts#readLoopsExtractDailyCap	catch_empty	1
 src/core/google/people-calendar-sweep.ts#calendarPageRelPathByEventId	capability_refusal_swallowed	1
 src/core/google/people-calendar-sweep.ts#contactPageRelPathByContactId	capability_refusal_swallowed	1
 src/core/grants/service.ts#readClientCatalogProvenance	catch_empty	1
-src/core/guests/admission.ts#lookupGuestSource	capability_refusal_swallowed	1
 src/core/guests/admission.ts#refuseRemoteGuestDelete	capability_refusal_swallowed	1
 src/core/guests/derived.ts#withoutGuestSources	catch_empty	1
 src/core/guests/marker.ts#brainHasGuestSource	capability_refusal_swallowed	1
@@ -1812,10 +1810,7 @@ src/core/search/hybrid/cache-stages.ts#prepareSemanticCache	promise_catch_empty	
 src/core/search/hybrid/keyword-only.ts#anyWordFill	catch_empty	1
 src/core/search/hybrid/rank.ts#expandStructuralNeighbors	catch_empty	1
 src/core/search/hybrid/request.ts#resolveHybridRequest	promise_catch_empty	2
-src/core/search/ignored-privacy-labels.ts#ignoredPrivacyLabelRunNotice	capability_refusal_swallowed	1
 src/core/search/ignored-privacy-labels.ts#ignoredPrivacyLabelRunNotice	catch_empty	1
-src/core/search/ignored-privacy-labels.ts#sourceHasRepo	capability_refusal_swallowed	1
-src/core/search/ignored-privacy-labels.ts#withIgnoredPrivacyLabelNotice	capability_refusal_swallowed	1
 src/core/search/ignored-privacy-labels.ts#withIgnoredPrivacyLabelNotice	catch_empty	1
 src/core/search/image-vector-presence.ts#brainHasImageVectors	capability_refusal_swallowed	1
 src/core/search/intent-weights.ts#applyAliasMentionBoost	catch_empty	1
@@ -1997,16 +1992,8 @@ src/core/source-health.ts#computeAllSourceMetrics<anon@3>	promise_catch_empty	1
 src/core/source-health.ts#jobCountsBySource	capability_refusal_swallowed	1
 src/core/source-health.ts#jobCountsBySource	catch_empty	1
 src/core/source-health.ts#loadSyncFreshnessSources	capability_refusal_swallowed	2
-src/core/source-resolver.ts#assessDefaultWriteGuard	capability_refusal_swallowed	1
-src/core/source-resolver.ts#listRegisteredLocalPathSources	capability_refusal_swallowed	1
-src/core/source-resolver.ts#liveSourceRows	capability_refusal_swallowed	1
-src/core/source-resolver.ts#nearestSourceId	capability_refusal_swallowed	1
 src/core/source-resolver.ts#nearestSourceId	catch_empty	1
-src/core/source-resolver.ts#otherSourceExists	capability_refusal_swallowed	1
-src/core/source-resolver.ts#pickSoleNonDefaultSource	capability_refusal_swallowed	1
-src/core/source-resolver.ts#pickSoleNonDefaultSource	promise_catch_empty	1
 src/core/source-resolver.ts#readDotfileWalk	catch_empty	1
-src/core/source-resolver.ts#requestSourceRows<anon@1>	capability_refusal_swallowed	1
 src/core/source-resolver.ts#requestSourceRows<anon@1>	promise_catch_empty	1
 src/core/source-resolver.ts#resolveSourceIdChain	promise_catch_empty	1
 src/core/source-resolver.ts#resolveSourceWithTierChain	promise_catch_empty	1
@@ -2165,3 +2152,4 @@ src/shadow/follow-status.ts#readFollowerFile	catch_empty	1	added on the shadow f
 src/shadow/reconcile.ts#Reconciler.tick	catch_empty	1	added on the shadow follow branch (rust-engine/shadow-follow) before it merged this guard; known debt, fix by a typed degraded marker
 src/shadow/seed.ts#readSeedRecord	catch_empty	1	added on the shadow seed branch (rust-engine/shadow-s3) before it merged this guard; known debt, fix by a typed degraded marker
 src/shadow/state.ts#readShadowState	catch_empty	1	shadow mode code written before master added this guard; known debt, fix by a typed degraded marker
+src/core/source-resolver.ts#pickSoleNonDefaultSource	catch_empty	1	the sole-source read is a typed engine member now; the handler is unchanged from the raw read it replaced (it rethrows a capability refusal first)

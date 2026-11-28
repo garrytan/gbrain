@@ -32,6 +32,9 @@
     "consolidateFact#default": {},
     "countChunklessPagesWithContent#default": {},
     "countChunklessPagesWithContent#sourceId": {},
+    "countDefaultSourceSplit#default": {
+      "raw": 1
+    },
     "countPagesBy#grouped+since+remote": {},
     "countPagesBy#totals": {},
     "countStaleChunks#default": {
@@ -209,6 +212,9 @@
       "raw": 3,
       "tx": 1
     },
+    "listActiveSourceConfigs#default": {
+      "raw": 1
+    },
     "listActiveTakesForPages#allowList": {},
     "listActiveTakesForPages#default": {},
     "listAllPageRefs#default": {},
@@ -247,6 +253,9 @@
     "listLinkSources#default": {},
     "listLinkSources#sourceId": {},
     "listLinkSources#sourceIds": {},
+    "listLocalPathSources#default": {
+      "raw": 1
+    },
     "listPages#default": {},
     "listPages#effective_after": {},
     "listPages#effective_before": {},
@@ -263,6 +272,9 @@
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
     "listSourceLocalPaths#default": {},
+    "listSourceRoutingRows#default": {
+      "raw": 1
+    },
     "listStaleChunks#default": {
       "raw": 1
     },
@@ -300,6 +312,9 @@
     },
     "markPagesAttendanceBlocked#default": {},
     "markPagesExtractedBatch#default": {},
+    "markSourceSynced#default": {
+      "raw": 1
+    },
     "mergeOntologyFact#corroborate": {},
     "mergeOntologyFact#insert": {},
     "mergeOntologyFact#supersede": {},

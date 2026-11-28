@@ -2,14 +2,16 @@
  * A source the user selected must never fall back to the cross-source view on a Rust brain.
  *
  * The CLI resolves the operation's source before the operation runs (GBRAIN_SOURCE, a .gbrain-source dotfile, the
- * sources.default config). The Rust engine serves no raw SQL, so that lookup ends in its typed capability refusal.
- * The CLI used to swallow every ambient-tier failure and leave the source unset, which reads every source: a user who
- * asked for one source got answers from all of them. The refusal now stops the command instead.
+ * sources.default config). Before the source reads were typed members (import part A), the Rust engine served no raw
+ * SQL, so that lookup ended in its typed capability refusal, and the CLI swallowed it and left the source unset, which
+ * reads every source: a user who asked for one source got answers from all of them. The refusal stopped the command.
+ * Now the lookup succeeds on a Rust brain as it does on PGLite, so a selected source that is not registered is refused
+ * with `unknown_source`, and a registered one scopes the read to itself. Either way the read never covers every source.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  * 1. Protects: source isolation of CLI reads on a Rust brain when the user selected a source.
- * 2. Fails when: makeContext swallows the capability refusal again and the read runs unscoped (exit 0), including when
- *    the source comes from a registered local_path rather than an explicit selection.
+ * 2. Fails when: the command falls back to the cross-source view for a selected source: an unregistered selection
+ *    reads (exit 0) instead of `unknown_source`, or a registered local_path source reads the pages of another source.
  * 3. Existing coverage: test/source-resolver*.test.ts covers the tiers on PGLite, where the lookup succeeds; the Rust
  *    CLI parity suite clears GBRAIN_SOURCE, so it never selects a source.
  * 4. Seams: none. It runs the real CLI and needs the addon `bun run rust:build` writes; it skips without it
@@ -84,27 +86,33 @@ describe('a selected source on a Rust brain', () => {
     expect(JSON.parse(r.stdout).page_count).toBe(0);
   }, 60_000);
 
-  withAddon('GBRAIN_SOURCE: the command refuses with the typed capability refusal instead of reading every source', () => {
+  withAddon('GBRAIN_SOURCE naming a source that is not registered: the command refuses (unknown_source) instead of reading every source', () => {
     const r = run(['stats', '--json'], { GBRAIN_SOURCE: 'other' });
     expect(r.status).not.toBe(0);
-    expect(refusal(r)).toMatchObject({ code: 'engine_capability_missing' });
+    expect(refusal(r)).toMatchObject({ code: 'unknown_source' });
   }, 60_000);
 
-  withAddon('a registered local_path source holding the cwd: the command refuses instead of reading every source', async () => {
-    // Seed the source in process (the CLI cannot add one on Rust yet), then close the store for the CLI.
+  withAddon('a registered local_path source holding the cwd: the read is scoped to that source, not every source', async () => {
+    // Seed in process (the CLI cannot add a source on Rust yet): a source at the cwd, and one tagged page in `default` that a
+    // cross-source read would show. Then close the store for the CLI.
     const engine = openRustEngine({ addon: await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ADDON } }), databasePath: join(root, 'db') });
     await engine.connect({ engine: 'pglite', database_path: join(root, 'db') } as never);
     await engine.openStore('test').brain.upsertSource({ id: 'work', name: 'work', local_path: cwd, config: {} });
+    await engine.putPage('notes/in-default', { type: 'note', title: 'In default', compiled_truth: 'A page in the default source.', timeline: '', frontmatter: {} }, { sourceId: 'default' });
+    await engine.addTag('notes/in-default', 'probe', { sourceId: 'default' });
     await engine.disconnect();
-    const r = run(['stats', '--json']);
-    expect(r.status).not.toBe(0);
-    expect(refusal(r)).toMatchObject({ code: 'engine_capability_missing' });
+    const inDefault = run(['tags', 'notes/in-default', '--json'], { GBRAIN_SOURCE: 'default' });
+    const atCwd = run(['tags', 'notes/in-default', '--json']);
+    // `tags` is source-scoped (stats is the whole-brain view for the trusted local CLI): the page's tag is visible when
+    // `default` is selected and not when the cwd's registered source `work` is.
+    expect({ status: inDefault.status, tags: JSON.parse(inDefault.stdout) }).toEqual({ status: 0, tags: ['probe'] });
+    expect({ status: atCwd.status, tags: JSON.parse(atCwd.stdout) }).toEqual({ status: 0, tags: [] });
   }, 60_000);
 
-  withAddon('a .gbrain-source dotfile: the command refuses instead of reading every source', () => {
+  withAddon('a .gbrain-source dotfile naming a source that is not registered: the command refuses (unknown_source)', () => {
     writeFileSync(join(cwd, '.gbrain-source'), 'other\n');
     const r = run(['stats', '--json']);
     expect(r.status).not.toBe(0);
-    expect(refusal(r)).toMatchObject({ code: 'engine_capability_missing' });
+    expect(refusal(r)).toMatchObject({ code: 'unknown_source' });
   }, 60_000);
 });

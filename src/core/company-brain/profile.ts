@@ -30,9 +30,8 @@ export async function getCompanyBrainProfile(engine: BrainEngine, sourceId: stri
   // The receipt a source without a policy is checked for (of the source's current incarnation) is read beside it.
   // GBRA-133: inside a CLI sync's routing scope the source's routing row answers both (sync-dispatch-read.ts).
   const routing = await syncDispatchRow(engine, sourceId);
-  const [[source], [receipt]] = routing ? [routing.id === null ? [] : [routing], routing.company_receipt ? [true] : []] : await Promise.all([engine.executeRaw<{ config: unknown; incarnation: string }>('SELECT config,incarnation FROM sources WHERE id=$1', [sourceId]),
-    engine.executeRaw(`SELECT r.id FROM source_ingestion_receipts r JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation
-      WHERE r.source_id=$1 AND r.profile='company-brain' LIMIT 1`, [sourceId])]);
+  const [[source], [receipt]] = routing ? [routing.id === null ? [] : [routing], routing.company_receipt ? [true] : []] : await Promise.all([engine.readSourceIncarnation(sourceId).then(row => row ? [row] : []),
+    engine.hasCompanyBrainReceipt(sourceId).then(found => found ? [true] : [])]);
   if (!source) return null;
   const profile = companyBrainProfile(source.config);
   if (!profile) {

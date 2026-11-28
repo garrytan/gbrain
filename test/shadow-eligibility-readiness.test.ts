@@ -323,6 +323,7 @@ describe('criterion 11 counts writers of an older build (write_protocol)', () =>
     rmSync(d, { recursive: true, force: true });
   });
 
+  // pregate-literal: SHADOW_ADAPTER_VERSION=11 unrelated literal, not the adapter version
   test('F2: the status document reads the manifest once and hands it to eligibility: a read that fails only for that one read fails criterion 11 closed, whatever the later epoch-bound reads find', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-elig-doc2-'));
     try {

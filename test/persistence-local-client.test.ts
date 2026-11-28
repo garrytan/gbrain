@@ -9,6 +9,7 @@ import { resolveSourceId } from '../src/core/source-resolver.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { captureHookSessionCwd } from '../src/core/session-cwd.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 const BRAIN = '10000000-0000-4000-8000-000000000001';
 const dirs: string[] = [];
@@ -132,11 +133,12 @@ describe('engine-free local persistence routing', () => {
     const dir = temp();
     writeFileSync(join(dir, '.gbrain-source'), 'owner-source');
     const engine = {
-      executeRaw: async (sql: string, params?: unknown[]) => {
-        if (sql.includes('WHERE id = $1')) return [{ id: params?.[0] }];
-        if (sql.includes('local_path')) return [{ id: 'client-path-source', local_path: dir, archived: false }];
-        return [];
-      },
+      // The ids the test selects exist; one source's local_path holds the client's cwd.
+      ...stubSourceMembers([
+        { id: 'owner-source' },
+        { id: 'client-selected' },
+        { id: 'client-path-source', local_path: dir },
+      ]),
       getConfig: async () => null,
     } as unknown as BrainEngine;
     await withEnv({ GBRAIN_SOURCE: 'owner-source' }, async () => {

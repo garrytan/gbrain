@@ -22,6 +22,7 @@ import * as realDrain from '../src/core/facts/drain-scheduler.ts';
 import * as realMovement from '../src/core/persistence/sync-movement.ts';
 import * as realHeadWatcher from '../src/core/serve-head-watcher.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 const sweepCalls: Array<{ sourceId?: string }> = [];
 mock.module('../src/core/sweep.ts', () => ({
@@ -57,17 +58,7 @@ function makeEngine(registeredSources: string[]): BrainEngine {
   return {
     kind: 'pglite',
     disconnect: async () => {},
-    executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
-      if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
-        const id = params?.[0];
-        return (typeof id === 'string' && registeredSources.includes(id) ? [{ id } as T] : []);
-      }
-      if (sql.includes('SELECT id, local_path FROM sources')) return [];
-      if (sql.includes('SELECT id, config, archived FROM sources')) {
-        return registeredSources.map(id => ({ id, config: null, archived: false }) as T);
-      }
-      return [];
-    },
+    ...stubSourceMembers(registeredSources.map(id => ({ id }))),
     getConfig: async () => null,
   } as unknown as BrainEngine;
 }

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 327/569
+# covered: 332/579
 # mention_pass: 0/1
 # belief_purge: 0/2
 # connect_gate: 0/2
@@ -29,9 +29,9 @@
 # page_visibility: 0/2
 # write_guards: 0/3
 # access_members: 0/1
-# cli_reads_import: 0/5
+# cli_reads_import: 1/7
 # lifecycle: 9/9
-# pages: 32/37
+# pages: 34/42
 # search: 7/7
 # search_reads: 9/9
 # chunks: 22/32
@@ -52,7 +52,7 @@
 # config: 6/7
 # withdrawal_pages: 0/2
 # withdrawal_fence: 0/1
-# import_guards: 9/11
+# import_guards: 9/12
 # cycle_locks: 6/9
 # raw_sql: 4/4
 # code_edges: 8/8
@@ -70,6 +70,7 @@
 # search_vector: 0/1
 # open_loops: 5/7
 # write_misc: 0/32
+# entity_reads: 2/2
 # owner_only: 1/1
 # wanted_links: 2/2
 # salience_enrich: 5/5
@@ -222,6 +223,8 @@ readPageOrigin	write_guards	no	0	no	-	-	-
 sealImportedPage	write_guards	no	0	no	-	-	-
 readPageIndexingState	write_guards	no	0	no	-	-	-
 readLinkedMember	access_members	no	0	no	-	-	-
+listSourceRecords	cli_reads_import	yes	1	no	yes	yes	serves
+readGuestSourceRow	cli_reads_import	no	0	no	-	-	-
 readSourceIncarnation	cli_reads_import	no	0	no	-	-	-
 hasCompanyBrainReceipt	cli_reads_import	no	0	no	-	-	-
 listGuestSourceIds	cli_reads_import	no	0	no	-	-	-
@@ -236,21 +239,21 @@ transaction	lifecycle	yes	19	no	yes	yes	refuses:transactions
 transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	51	yes	yes	yes	serves
+getPage	pages	yes	52	yes	yes	yes	serves
 readPageSnapshot	pages	yes	31	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	212	yes	yes	yes	serves
+putPage	pages	yes	215	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
 deletePages	pages	yes	3	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	50	yes	yes	yes	serves
+softDeletePage	pages	yes	53	yes	yes	yes	serves
 softDeletePages	pages	yes	1	yes	yes	yes	serves
 restorePage	pages	yes	8	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	5	no	yes	yes	serves
-listPages	pages	yes	5	yes	yes	yes	serves
+listPages	pages	yes	7	yes	yes	yes	serves
 findPages	pages	yes	1	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 resolveSlugs	pages	yes	2	no	yes	yes	serves
@@ -262,15 +265,20 @@ applyIdentityDecisions	pages	yes	1	no	yes	yes	refuses:pages
 listAllPageRefs	pages	yes	1	yes	yes	yes	serves
 listAllSources	pages	yes	5	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
-getSource	pages	yes	1	no	yes	yes	serves
+getSource	pages	yes	3	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
+listLocalPathSources	pages	no	0	no	-	-	-
+listSourceRoutingRows	pages	no	0	no	-	-	-
+countDefaultSourceSplit	pages	no	0	no	-	-	-
+readSourceRow	pages	yes	1	no	yes	yes	serves
+markSourceSynced	pages	yes	1	no	yes	yes	serves
+listActiveSourceConfigs	pages	no	0	no	-	-	-
 readOwnerOnlySourcesPresent	pages	no	0	no	-	-	-
 readOwnerOnlySourceConfig	pages	no	0	no	-	-	-
-readSourceRow	pages	no	0	no	-	-	-
 lockSourceRow	pages	no	0	no	-	-	-
 listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
-getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
+getPageSealState	pages	yes	1	no	yes	yes	serves
 refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
 readLivePageIdBySlug	pages	no	0	no	-	-	-
 searchKeyword	search	yes	29	yes	yes	yes	serves
@@ -291,7 +299,7 @@ livePageIdsAt	search_reads	yes	2	no	yes	yes	serves
 pagesLinkingTo	search_reads	yes	2	no	yes	yes	serves
 upsertChunks	chunks	yes	21	yes	yes	yes	serves
 sealChunks	chunks	yes	17	no	yes	yes	serves
-getChunks	chunks	yes	25	yes	yes	yes	serves
+getChunks	chunks	yes	26	yes	yes	yes	serves
 getChunkPage	chunks	yes	9	no	yes	yes	serves
 getChunkWindows	chunks	yes	9	no	yes	yes	serves
 countStaleChunks	chunks	yes	7	no	yes	yes	serves
@@ -355,7 +363,7 @@ addTag	tags	yes	10	yes	yes	yes	serves
 removeTag	tags	yes	1	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	1	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
-getTags	tags	yes	2	yes	yes	yes	serves
+getTags	tags	yes	3	yes	yes	yes	serves
 sampleEffectiveDates	timeline	yes	1	no	yes	yes	refuses:raw_sql
 sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	refuses:raw_sql
 readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	refuses:raw_sql
@@ -472,9 +480,10 @@ readStoredConfigValue	config	no	0	no	-	-	-
 listSegmentedPages	withdrawal_pages	no	0	no	-	-	-
 invalidateWithdrawnPages	withdrawal_pages	no	0	no	-	-	-
 hasWithdrawnFenceClaim	withdrawal_fence	no	0	no	-	-	-
-readManagedModeRows	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+ownsSchemaTables	import_guards	no	0	no	-	-	-
+readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	1	no	yes	yes	serves
-readPersistenceBrainId	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+readPersistenceBrainId	import_guards	yes	1	no	yes	yes	serves
 readLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 readTransactionSettings	import_guards	yes	1	no	yes	yes	refuses:transactions
@@ -483,9 +492,9 @@ readLedgerSource	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
 beginSnapshotRead	import_guards	no	0	no	-	-	-
 setWriteContext	import_guards	no	0	no	-	-	-
-acquireCycleLock	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
-refreshCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
-releaseCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
+acquireCycleLock	cycle_locks	yes	8	no	yes	yes	serves
+refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
+releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 readCycleLocks	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
@@ -635,6 +644,8 @@ readFolderAccess	write_misc	no	0	no	-	-	-
 readMayActFor	write_misc	no	0	no	-	-	-
 readAudiencePrincipals	write_misc	no	0	no	-	-	-
 readAccessMembers	write_misc	no	0	no	-	-	-
+readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
+readLivePageFrontmatter	entity_reads	yes	1	no	yes	yes	serves
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	refuses:links
 replaceWantedLinkRows	wanted_links	yes	4	no	yes	yes	refuses:links

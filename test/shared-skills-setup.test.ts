@@ -10,6 +10,7 @@ import { packagedSharedSkills } from '../src/core/shared-skills/setup-bundle.ts'
 import { existingAncestor, inventorySkillpack, setupHash } from '../src/core/shared-skills/setup-files.ts';
 import { legacyPublication, migrationCheckpointKey, runSharedSkillsMigration } from '../src/core/shared-skills/migration.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -21,6 +22,10 @@ function fixture(root: string | null = null) {
   let hasPages = false;
   const calls: string[] = [];
   const engine = {
+    // The typed source reads answer the fixture's one source, as the raw `FROM sources` branch below does.
+    ...stubSourceMembers(() => [source], { defaultHasPages: () => hasPages }),
+    // The source policy reads the source through the typed readSourceState member (engine-sql/write-misc.ts).
+    readSourceState: async (id: string) => (id === source.id ? { incarnation: source.incarnation, archived: false, local_path: source.local_path, config: {} } : null),
     getConfig: async (key: string) => config.get(key) ?? null,
     setConfig: async (key: string, value: string) => { config.set(key, value); },
     executeRaw: async (sql: string) => {

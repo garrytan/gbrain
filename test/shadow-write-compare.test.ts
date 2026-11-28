@@ -507,6 +507,7 @@ describe('the data fence and the scratch location (lane owner ruling)', () => {
   test('rows outside the write\'s footprint must be unchanged, and no link may appear that the write did not add', () => {
     const link = ['a/x', 'a/y', 'c', 'knows'];
     expect(movedOutsideFootprint('addLink', link, pre, { sources: [], pages: [A, B], links: [L] })).toBe(false);
+    // pregate-literal: SHADOW_ADAPTER_VERSION=11 unrelated literal, not the adapter version
     const added = R({ id: '11', from_page_id: '2', to_page_id: '1', link_type: 'knows' });
     const forward = ['a/y', 'a/x', 'c', 'knows'];
     expect(movedOutsideFootprint('addLink', forward, pre, { sources: [], pages: [A, B], links: [L, added] })).toBe(false); // the write's own link
@@ -1337,6 +1338,7 @@ describe('S2c: a durable per-session obligation for write samples', () => {
     owe(dir, 'serving-gone', 1, { ...live, serving_pid: deadPid() });
     owe(dir, 'live', 1, live);
     owe(dir, 'closed-fresh', 1, { ...live, closed: true });
+    // pregate-literal: SHADOW_ADAPTER_VERSION=11 unrelated literal, not the adapter version
     const old = new Date(Date.now() - 11 * 60_000);
     for (const n of ['closed-old', 'serving-gone']) utimesSync(owedPath(dir, n), old, old);
     worker(dir, epoch, 'o').recover();

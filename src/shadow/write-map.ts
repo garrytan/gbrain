@@ -174,6 +174,8 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   setPageAliases: { tables: ['page_aliases'], plan: (a) => [{ relation: 'page_aliases', sel: { source_id: a[1], slug: a[0] }, del: true }] },
   replaceDerivedAliases: { tables: ['page_aliases'], plan: (a) => [{ relation: 'page_aliases', sel: { source_id: a[1], slug: a[0] }, del: true }] },
   updateSourceConfig: { tables: ['sources', 'owner_only_marks'], plan: (a) => [{ relation: 'sources', sel: { id: a[0] } }, ...OWNER_MARKS] },
+  // The folder import's last-sync stamp on the source row: the row changes, and the sources trigger may rewrite the owner-only marks.
+  markSourceSynced: { tables: ['sources', 'owner_only_marks'], plan: (a) => [{ relation: 'sources', sel: { id: a[0] } }, ...OWNER_MARKS] },
   createVersion: { tables: ['page_versions'], plan: (a) => [child('page_versions', a[0], a[1]?.sourceId, true)] },
   // Relation-level: no stable selector on the member's arguments
   applyIdentityDecisions: { tables: ['entity_identities', 'entity_identity_reviews'] },
@@ -249,6 +251,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage',
   'normalizeFenceLines', 'hasNotifierCoverage', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'sharedSkillPackTablePresent',
   'storedTimelineRowsByPageIds',
+  // Whether this role owns the schema tables (a catalog read; the import's guest lookup asks it).
+  'ownsSchemaTables',
   // Sets transaction-local settings (the persistence identity and write context) and writes no row: the raw set_config statement it replaced was never a write to follow or compare.
   'setWriteContext',
 ]);
