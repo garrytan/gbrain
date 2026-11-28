@@ -2146,20 +2146,27 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   (and `page_projection_jobs`), its oid, relfilenode and insert, update and delete counts. The confirmation refuses any
   difference, a new coverage gap, a hook that is not working, a login role that can write a brain table with no way to
   record evidence, `track_counts` off, a server older than PostgreSQL 15, a prepared transaction, another connection
-  with a write open, and any other connection of a role that can write a copied relation that is not idle, went idle
+  with a write open, and any other connection of a role that can write a copied relation (itself, or through any role
+  it can switch to with SET ROLE: a NOINHERIT login that writes after `SET ROLE` counts) that is not idle, went idle
   under a minute ago, or cannot be seen by the reading role (without superuser or `pg_read_all_stats` another role's
   `pg_stat_activity` row has NULL state, transaction id and backend type), because counters show only what the server
   has flushed. A connection of a read-only role, such as a monitoring agent, is never waited on. No seal is written under the same conditions, and not while a
   connection the writer hooks recorded is still connected, whatever the age of its row: a writer still connected during
   the seal check is refused until it commits or disconnects. After the child took a confirmation the check reads once
-  more, and a failure withdraws it (`revokeSeal`: invalid again, full obligation). PGLite never seals or confirms
+  more, and a failure withdraws it (`revokeSeal`: invalid again, full obligation). A confirmation that was sent but not
+  acknowledged is withdrawn too (`seal_confirm_unacknowledged`): a timeout does not cancel what is already in the pipe.
+  Every withdrawal first appends a `seal_revoked:<reason>` line to `follower-invalidations.jsonl`, which the child reads
+  on its own, then sends `revokeSeal` again until the child acknowledges it. When neither gets through the doubt is
+  returned: the first check runs a full pass and the close does not seal. PGLite never seals or confirms
   (`pglite_no_db_continuity`). Any doubt, a failed read or a timeout leaves the watermark invalid until a full pass. A
   write published after the follower closed, or one the child would not take, leaves an invalidation line, which
   voids the seal; write capture stays on through the close, so a write a later before-disconnect callback makes is
   recorded too. A line that cannot be written is retried, told to a live child, and blocks the seal while unrecorded
   (`lost_write_unrecorded`). Any event after a seal removes it from `follower.json` before the next event, and taking
   a seal over removes it in the same first write that shows the watermark invalid; when either write fails, a line in
-  `follower-invalidations.jsonl` makes the seal stale. Each decision is named in `follower.json` `seal_outcome` and in
+  `follower-invalidations.jsonl` makes the seal stale. A start that refuses a seal, or fails to take it, appends its
+  blocker line to the existing file and empties the file only after its seal-free `follower.json` is written, so the
+  file never returns to the sealed size. Each decision is named in `follower.json` `seal_outcome` and in
   `engine shadow status` (`seal: <outcome> (<reason>)`). The named persistence-journal members (`JOURNAL_BOOKKEEPING_MEMBERS` in `src/shadow/follow.ts`)
   publish the tables their statements write instead of invalidating the watermark; every other member the write map
   does not cover still invalidates it. A relation marked dirty
@@ -2178,8 +2185,10 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   hours while the follower runs; and again when the watermark is invalid and the last pass is over an hour old. A full
   pass saves its progress (`reconcile/progress.json`) after each interval. A process that closes during a pass records
   no pass (closing is not a failed pass, so the count of trailing clean full passes is kept) and the next session with
-  the same continuity, seed and evidence epoch finishes that pass instead of starting over; only a finished full pass
-  is recorded and counts. A seal or a resumed half never counts as a pass of its own. Swap readiness (criterion 1)
+  the same continuity, seed and evidence epoch finishes that pass instead of starting over. The exception is a stopped
+  part that repaired rows or found follower misses: it is recorded at once as a full pass with error `stopped`, so the
+  repair is on record even if the next pass starts fresh, and the next full pass is then due. Otherwise only a finished
+  full pass is recorded, and only a clean one counts. A seal or a resumed half never counts as a pass of its own. Swap readiness (criterion 1)
   also needs the newest clean full pass to have finished under 24 hours ago (`reconcile.last_clean_full_pass_at`), so a
   brain that ran its three clean passes and then stopped reconciling is not ready. A pass that
   displaced rows does not restore the watermark; the relation gets another pass and the full restore waits for the
