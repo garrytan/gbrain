@@ -310,7 +310,7 @@ pub struct PutPageOptions {
 /// Which pages a read may see. Mirrors `PageSnapshotOptions`: `source_ids` wins when it is not
 /// empty. `exclude_private` is the page policy of `excludePrivate` (`facts/privacy.rs`
 /// `page_hidden`); `read_page_snapshot` and `resolve_slugs` read it, and a hidden page reads as
-/// missing. The other four fields are read by `read_page_snapshot` only:
+/// missing. The other five fields are read by `read_page_snapshot` only:
 /// - `resolve_alias`: a slug with no readable page follows the slug aliases of each source in
 ///   scope to their canonical page; an exact page always outranks an alias.
 /// - `require_unambiguous`: more than one readable candidate (exact or alias) is
@@ -318,6 +318,8 @@ pub struct PutPageOptions {
 /// - `require_live_source`: the page's source must exist and not be archived.
 /// - `preserve_exact_identity`: an alias of a source that has a page at the slug itself, in any
 ///   deleted state, is not followed.
+/// - `exact_slug`: the slug is read as sent, not lowercased, so a page a seed stored under a
+///   spelling with capitals is found by that spelling only, as PGLite's `WHERE slug=$1` finds it.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ReadScope {
@@ -329,6 +331,7 @@ pub struct ReadScope {
     pub require_unambiguous: bool,
     pub require_live_source: bool,
     pub preserve_exact_identity: bool,
+    pub exact_slug: bool,
 }
 
 /// Options of `getTags`: the scope, `liveOnly` (a soft-deleted page has no tags) and the page
@@ -1489,7 +1492,11 @@ impl Store {
     /// `page_withdrawals.rs`) or `None` when the page is not visible in the scope.
     pub fn read_page_snapshot(&self, slug: &str, scope: &ReadScope) -> Result<Option<Value>> {
         let read = self.read()?;
-        let slug = slug.to_lowercase();
+        let slug = if scope.exact_slug {
+            slug.to_owned()
+        } else {
+            slug.to_lowercase()
+        };
         let Some(page) = snapshot_page(&*read, &slug, scope)? else {
             return Ok(None);
         };

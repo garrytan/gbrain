@@ -69,10 +69,11 @@ export const readPageSnapshotsBatch: StoreMember<
       continue;
     }
     // PGLite reads an absent ref again through readPageSnapshot (same exact key), unless absentIsNull; an empty
-    // source id names no source there, while the store would widen it to every source.
+    // source id names no source there, while the store would widen it to every source. `exactSlug` keeps the key exact:
+    // the store would otherwise lowercase it and answer a different page for a slug with capitals.
     if (absentIsNull || ref.sourceId === '') continue;
     const again: PageSnapshot | null = await storeCall({ member: 'readPageSnapshotsBatch', slug: ref.slug }, () =>
-      brain.readPageSnapshot(ref.slug, { sourceId: ref.sourceId, ...(options.includeDeleted ? { includeDeleted: true } : {}) }));
+      brain.readPageSnapshot(ref.slug, { sourceId: ref.sourceId, exactSlug: true, ...(options.includeDeleted ? { includeDeleted: true } : {}) }));
     if (again) snapshots.set(key, await overlaidSnapshot(brain, 'readPageSnapshotsBatch', again));
   }
   return { snapshots, covered: batch.covered };

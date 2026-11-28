@@ -354,6 +354,45 @@ describe('engine parity: slug normal form', () => {
       rows: [stored], tags: ['added'], timeline: ['added entry'], changed: true, appended: true });
     return result;
   });
+  parityTest('a capital spelling never answers its lowercase look-alike: get_page and the snapshot batch read the exact key (case-only collision)', { methods: ['readPageSnapshot', 'readPageSnapshotsBatch'] }, async (engine, backend) => {
+    const stored = 'Notes/Case-Report';
+    const lower = 'notes/case-report';
+    if (backend === 'rust') {
+      // A Rust put stores the slug lowercased; a seed keeps a primary's stored spelling (seed/core.rs), and a seed needs
+      // an empty store, so the capital row goes in first.
+      const store = await (engine as unknown as { storeFor(member: string): Promise<{ brain: { importRelation(...args: unknown[]): Promise<unknown> } }> }).storeFor('getPage');
+      const now = new Date().toISOString();
+      await store.brain.importRelation('seed-case-collision', 'pages', [{ id: '90021', source_id: 'default', slug: stored, type: 'note', title: 'Capital', compiled_truth: 'Capital.',
+        timeline: '', frontmatter: '{}', knowledge_revision: randomUUID(), created_at: now, updated_at: now }], null);
+    } else {
+      await engine.putPage('notes/case-report-seed', { type: 'note', title: 'Capital', compiled_truth: 'Capital.', timeline: '' });
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, 'notes/case-report-seed']);
+    }
+    await engine.putPage(lower, { type: 'note', title: 'Lower', compiled_truth: 'Lower.', timeline: '' });
+    await engine.putPage('notes/only-lower', { type: 'note', title: 'Only', compiled_truth: 'Only.', timeline: '' });
+    // The batch reads each ref by its exact key: a capital spelling no page holds answers nothing, not the lowercase page.
+    const batch = await engine.readPageSnapshotsBatch([{ slug: 'Notes/Only-Lower', sourceId: 'default' }, { slug: stored, sourceId: 'default' }]);
+    const batchRead = [...batch.snapshots.values()].map(s => ({ slug: s.page.slug, body: s.page.compiled_truth }));
+    const lowerRead = await operationsByName.get_page!.handler(ctx(engine), { slug: lower }) as { slug: string; compiled_truth: string };
+    let capital: { slug: unknown; body: unknown };
+    try {
+      const page = await operationsByName.get_page!.handler(ctx(engine), { slug: stored }) as { slug: string; compiled_truth: string };
+      capital = { slug: page.slug, body: page.compiled_truth };
+    } catch (e) {
+      if (backend === 'rust') {
+        // The store reads the capital key exactly and refuses the page it holds there; the read never falls back to the
+        // lowercase page.
+        expect({ code: (e as { code?: unknown }).code, message: (e as Error).message, batchRead, lower: lowerRead.compiled_truth }).toEqual({ code: 'engine_capability_missing',
+          message: "This brain's engine does not support getPage (a page stored under a spelling with capitals) yet (it needs the pages capability), so nothing ran.",
+          batchRead: [{ slug: stored, body: 'Capital.' }], lower: 'Lower.' });
+      }
+      throw e;
+    }
+    const result = { batchRead, lower: { slug: lowerRead.slug, body: lowerRead.compiled_truth }, capital };
+    expect(result).toEqual({ batchRead: [{ slug: stored, body: 'Capital.' }], lower: { slug: lower, body: 'Lower.' }, capital: { slug: stored, body: 'Capital.' } });
+    return result;
+  });
+
   parityTest('every write by the exact spelling of a capital-stored page changes that row in place, with no lowercase twin (the merge base answered page_not_found)', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
     const stored = 'Notes/Write-Cap';
     const lower = 'notes/write-cap';

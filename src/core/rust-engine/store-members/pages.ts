@@ -27,20 +27,19 @@ function pageScope(member: string, opts: object | undefined, allowed: readonly s
  * PGLite reads a page by its exact stored spelling. The store lowercases the slug it is asked for, so a slug with capitals
  * would find the lowercase page that PGLite's exact read misses (and `get` would add `resolved_slug`). A write stores the
  * slug lowercased, so such a read answers nothing, as on PGLite, once its options pass. A seeded store can still hold a
- * page under that exact spelling (seed/core.rs keeps the stored slug), which the lowercased read cannot open: the read
- * refuses, so a put or an existing-page write by that spelling stops before it writes a lowercase twin beside the page
- * (legacy-slug-put.ts) instead of reading "no page".
+ * page under that exact spelling (seed/core.rs keeps the stored slug). The read looks that one key up (`exactSlug`, in
+ * each source of the scope, as the ordinary read does) and refuses when it is there, in any deleted state, so a put or an
+ * existing-page write by that spelling stops before it writes a lowercase twin beside the page (legacy-slug-put.ts), and
+ * a read never answers the lowercase page for it (the refusal is final: chooseSpelling in ops/slug-params.ts does not
+ * try another spelling after it).
  */
 const hasCapitals = (slug: string) => slug !== slug.toLowerCase();
 
 async function capitalRead(brain: StoreBrain, member: string, slug: string, scope: Record<string, unknown>): Promise<null> {
-  const sources = Array.isArray(scope.sourceIds) && scope.sourceIds.length ? { sourceIds: scope.sourceIds } : scope.sourceId ? { sourceId: scope.sourceId } : {};
-  // The caller's page policy applies: a page it may not read stays unseen, so the refusal never tells it one exists.
-  const policy = scope.excludePrivate ? { excludePrivate: scope.excludePrivate } : {};
-  // Sorted by slug, the exact spelling comes before every longer slug it prefixes.
-  const held: Array<{ slug: string }> = await storeCall({ member, slug }, () =>
-    brain.listPages({ slugPrefix: slug, includeDeleted: true, sort: 'slug', limit: 1, ...sources, ...policy }));
-  if (held.some((page) => page.slug === slug)) refuseMember(member, 'a page stored under a spelling with capitals');
+  // The caller's scope and page policy apply: a page it may not read stays unseen, so the refusal never tells it one exists.
+  const held: PageSnapshot | null = await storeCall({ member, slug }, () =>
+    brain.readPageSnapshot(slug, { ...scope, includeDeleted: true, exactSlug: true }));
+  if (held !== null) refuseMember(member, 'a page stored under a spelling with capitals');
   return null;
 }
 

@@ -265,7 +265,9 @@ async function chooseSpelling(ctx: Ctx, op: string, params: Params, raw: string,
     const deleted = order.find(visible);
     if (deleted !== undefined) return { slug: deleted, slugs: offered(deleted) };
   } catch (err) {
-    if ((err as { detail?: unknown } | null)?.detail === 'ambiguous_slug') throw err;
+    // An ambiguous spelling, or an engine that cannot read a spelling it may hold (a typed capability refusal), is the
+    // answer: trying the normal form next could answer a different page than the one the caller named.
+    if ((err as { detail?: unknown } | null)?.detail === 'ambiguous_slug' || isEngineCapabilityRefusal(err)) throw err;
   }
   return { slug: normalized, slugs: distinct([normalized, ...order]) };
 }
