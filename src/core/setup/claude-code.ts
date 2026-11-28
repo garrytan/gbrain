@@ -67,6 +67,8 @@ export interface ClaudeSetupReceipt {
   scope: WiringScope;
   project_dir?: string;
   source_id: string | null;
+  /** GST-4069: the brain the entry pins with GBRAIN_BRAIN_ID (absent: the session's directory picks it). */
+  brain_id?: string;
   surface: McpSurface;
   /** The registration's `--advertise` (absent: tools/list shows the whole surface). */
   advertise?: McpSurface;
@@ -95,6 +97,8 @@ export interface ClaudeSetupPlan {
   /** GBRAIN_HOME as set in this environment, rendered into the entry and the hooks. */
   gbrainHomeEnv?: string;
   sourceId: string | null;
+  /** GST-4069: GBRAIN_BRAIN_ID in the entry, so its sessions open this brain wherever they start; unset leaves it to the session's directory. */
+  brainId?: string;
   surface: McpSurface;
   /** `serve --advertise`; null lists the whole surface. */
   advertise: McpSurface | null;
@@ -184,6 +188,7 @@ export function desiredMcpEntry(plan: ClaudeSetupPlan): Record<string, unknown> 
   const env: Record<string, string> = {};
   if (plan.gbrainHomeEnv) env.GBRAIN_HOME = plan.gbrainHomeEnv;
   if (plan.sourceId) env.GBRAIN_SOURCE = plan.sourceId;
+  if (plan.brainId) env.GBRAIN_BRAIN_ID = plan.brainId;
   // The harness starts stdio servers in the session's directory, so serve starts through the launcher too (#8426).
   return { type: 'stdio', command: hookLauncherPath(plan.brainHome), args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise, plan.stdioMember), env };
 }
@@ -294,9 +299,10 @@ export async function applyClaudeSetup(
     const writeEvents = plan.events.filter((e) => !found.edited[e]);
     const prior = found.prior;
     const consentSame = prior?.consent !== undefined && consentValues(prior.consent) === consentValues(consent);
+    const brainSame = (prior?.brain_id ?? null) === (opts.pluginOwner ? null : plan.brainId ?? null);
     const mcpDone = opts.pluginOwner !== null || found.mcp.state === 'current';
     const steps: SetupStep[] = [];
-    if (prior?.status === 'installed' && consentSame && mcpDone && found.hooksCurrent && !opts.brainCreated) {
+    if (prior?.status === 'installed' && consentSame && brainSame && mcpDone && found.hooksCurrent && !opts.brainCreated) {
       steps.push({ step: 'receipt', action: 'keep', detail: `${paths.receiptPath} already records this install` });
       steps.push({ step: 'mcp', action: opts.pluginOwner ? 'skip' : 'keep', detail: opts.pluginOwner ? `the '${opts.pluginOwner}' plugin serves '${plan.name}'` : `'${plan.name}' in ${paths.configPath} is current` });
       steps.push({ step: 'hooks', action: 'keep', detail: plan.events.length ? `${plan.events.join(', ')} in ${paths.settingsPath} are current` : 'no hooks wanted' });
@@ -306,7 +312,7 @@ export async function applyClaudeSetup(
       harness: 'claude-code', connection: 'local-stdio', setup_receipt_version: 1, status: 'prepared',
       name: plan.name, gbrain_home: plan.brainHome, launcher: plan.launcher, scope: plan.scope,
       ...(plan.projectDir ? { project_dir: plan.projectDir } : {}),
-      source_id: plan.sourceId, surface: plan.surface, ...(plan.advertise ? { advertise: plan.advertise } : {}), config_path: paths.configPath,
+      source_id: plan.sourceId, ...(plan.brainId && !opts.pluginOwner ? { brain_id: plan.brainId } : {}), surface: plan.surface, ...(plan.advertise ? { advertise: plan.advertise } : {}), config_path: paths.configPath,
       entry_hash: prior?.entry_hash ?? null, pending_entry_hash: opts.pluginOwner ? null : desiredHash,
       ...(prior?.mcp_adopted ? { mcp_adopted: true } : {}),
       ...(opts.pluginOwner ? { mcp_plugin: opts.pluginOwner } : {}),

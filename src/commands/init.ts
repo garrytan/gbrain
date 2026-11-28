@@ -209,7 +209,7 @@ async function runInitBranches(args: string[]) {
       const fileCount = countMarkdownFiles(process.cwd());
       if (fileCount >= 1000) {
         console.log(`Found ~${fileCount} .md files. For a brain this size, Supabase gives faster`);
-        console.log('search and remote access ($25/mo). PGLite works too but search will be slower at scale.');
+        console.log('search and remote access ($25/mo). PGLite works too, but search slows at scale and past about 300K embedded chunks it cannot build a vector index (docs/ENGINES.md).');
         console.log('');
         console.log('  gbrain init --supabase   Set up with Supabase (recommended for large brains)');
         console.log('  gbrain init --pglite     Use local PGLite anyway');

@@ -52,6 +52,7 @@ import { readDirSources } from '../skills/resolver/sources.ts';
 import { openclawConfigPath, openclawPath, openclawStateDir, parseJson5ish, resolveOpenclawWorkspace } from './brain-first.ts';
 import { OPENCLAW_SKILL_PLUGIN_CODE_VERSION, openclawSkillLoaderJs, openclawSkillWorkerJs } from './openclaw-skill-plugin-code.ts';
 import { openclawPluginRegistered, runOpenclawCli } from './openclaw-turn-plugin.ts';
+import { acquireNativeLockSync } from '../persistence/native-lock.ts';
 import { catalogSkillPaths, pinnedBlockFor, type PinClass } from './skill-pins.ts';
 import { readResolverConfig } from './skill-resolver-config.ts';
 import { laneTurnSettings } from '../skills/resolver/config.ts';
@@ -478,27 +479,14 @@ export function readOpenclawLogTail(path: string): string {
 
 /**
  * GST-4004: the final read, merge and write of the state file run one at a time across setup runs (the gateway's own
- * refresh included), so a save that lands between another run's read and its rename is never lost. A lock older than
- * 30 seconds was left by a run that died; a lock held past 10 seconds refuses the run.
+ * refresh included), so a save that lands between another run's read and its rename is never lost. GST-4068: the lock
+ * is an OS lock on `<state>.lock` owned by the holding process, so the OS frees it when that process exits and a live
+ * holder is never broken, however long it holds it; a lock held past 10 seconds refuses the run. Exported for tests.
  */
-function withOpenclawStateLock<T>(path: string, fn: () => T): T | null {
-  const lock = `${path}.lock`;
-  const claim = (): boolean => {
-    try { closeSync(openSync(lock, 'wx', 0o600)); return true; } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
-      throw e;
-    }
-  };
-  const deadline = Date.now() + 10_000;
-  for (;;) {
-    if (claim()) break;
-    let age = 0;
-    try { age = Date.now() - statSync(lock).mtimeMs; } catch { continue; } // silent-read-ok: the holder released the lock between the two calls, so try again
-    if (age > 30_000) { rmSync(lock, { force: true }); continue; }
-    if (Date.now() > deadline) return null;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
-  }
-  try { return fn(); } finally { rmSync(lock, { force: true }); }
+export function withOpenclawStateLock<T>(path: string, fn: () => T): T | null {
+  const lock = acquireNativeLockSync(`${path}.lock`, { timeoutMs: 10_000 });
+  if (!lock) return null;
+  try { return fn(); } finally { lock.release(); }
 }
 
 /** The plugin code version the gateway ran on the newest turn it logged in the last 24 hours (0: code from before turns recorded it), null with none logged. */
@@ -529,27 +517,32 @@ export const openclawGuardRuns = (loader: number | null, running: number | null)
 /** The settings a person gives an agent; everything else in its state is rebuilt from the host on each run. */
 const OPENCLAW_SETTINGS = ['mode', 'live_fraction', 'pins_route', 'suggest_classes', 'owner_sender_ids', 'operator_rule', 'conversation_operator_rule', 'require_owner_sender', 'owner_skill_ids'] as const;
 
+type OpenclawPinFields = 'pinned_block' | 'pinned_ids' | 'conversation_pinned_block' | 'conversation_pinned_ids' | 'brief_block' | 'brief_ids' | 'pins_built_at' | 'owner_skill_ids';
+
+/** What a run built for one agent: its entry without the pins, and the render of its pins from config.json for a list of owner-only skills, which also adds the agent's line and pin notes to the run's result. */
+interface OpenclawBuiltAgent {
+  entry: Omit<OpenclawSkillAgentState, OpenclawPinFields>;
+  render: (ownerSkills: string[]) => Pick<OpenclawSkillAgentState, OpenclawPinFields>;
+}
+
 /**
  * GST-4004: the state to write, merged with the newest one on disk. A run reads the state, probes the host and builds
  * catalogs, then writes, and a setup that finished meanwhile (the gateway's own refresh runs this same path) must not be
  * undone. Agents this run did not build keep the newest entry; a built agent keeps each setting someone changed since
- * this run read it, unless this run sets it itself, and its conversation pins are rendered again when its owner-only
- * skills changed.
+ * this run read it, unless this run sets it itself. GST-4068: this runs under the state lock, so a built agent's
+ * owner-only skills are this run's --owner-skill and --no-owner-skill applied to the newest list, and its pins are
+ * rendered here from the current config.json, so a pin added or removed while this run probed the host is kept.
  */
-function mergeLatestSettings(agents: Record<string, OpenclawSkillAgentState>, prior: OpenclawSkillState | null, latest: OpenclawSkillState | null, built: Set<string>, explicit: Set<string>,
-  talkFor: Map<string, (ownerSkills: string[]) => { block: string; ids: string[] }>): Record<string, OpenclawSkillAgentState> {
-  const merged: Record<string, OpenclawSkillAgentState> = { ...(latest?.agents ?? agents) };
+function mergeLatestSettings(built: Map<string, OpenclawBuiltAgent>, prior: OpenclawSkillState | null, latest: OpenclawSkillState | null, explicit: Set<string>, tune: OpenclawSkillTuning): Record<string, OpenclawSkillAgentState> {
+  const merged: Record<string, OpenclawSkillAgentState> = { ...(latest?.agents ?? {}) };
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-  for (const id of built) {
-    const mine: Record<string, unknown> = { ...agents[id]! };
-    const then = prior?.agents[id] as Record<string, unknown> | undefined;
-    const now = latest?.agents[id] as Record<string, unknown> | undefined;
-    if (now) for (const k of OPENCLAW_SETTINGS) if (!explicit.has(k) && !same(now[k], then?.[k])) { if (now[k] === undefined) delete mine[k]; else mine[k] = now[k]; }
-    if (now && !explicit.has('owner_skill_ids') && !same(now.owner_skill_ids, then?.owner_skill_ids)) {
-      const talk = talkFor.get(id)!((now.owner_skill_ids as string[] | undefined) ?? []);
-      Object.assign(mine, { conversation_pinned_block: talk.block, conversation_pinned_ids: talk.ids });
-    }
-    merged[id] = mine as unknown as OpenclawSkillAgentState;
+  for (const [id, { entry, render }] of built) {
+    const mine: Record<string, unknown> = { ...entry };
+    const then = prior?.agents[id];
+    const now = latest?.agents[id];
+    if (now) for (const k of OPENCLAW_SETTINGS) if (k !== 'owner_skill_ids' && !explicit.has(k) && !same(now[k], then?.[k])) { if (now[k] === undefined) delete mine[k]; else mine[k] = now[k]; }
+    const ownerSkills = [...new Set([...((now ?? then)?.owner_skill_ids ?? []), ...(tune.owner_skills_add ?? [])])].filter((n) => !(tune.owner_skills_remove ?? []).includes(n)).sort();
+    merged[id] = { ...mine, ...render(ownerSkills) } as unknown as OpenclawSkillAgentState;
   }
   return merged;
 }
@@ -605,7 +598,6 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     : opts.agents ?? (on.length || !opts.mode ? on : prior && Object.keys(prior.agents).length ? Object.keys(prior.agents) : ['main']);
   if (ids.length === 0) return { ...out, notes: ['No agent has the skill resolver on; nothing to refresh.'] };
 
-  const agents: Record<string, OpenclawSkillAgentState> = { ...(prior?.agents ?? {}) };
   let lane: ReturnType<typeof openclawLaneConfig>;
   try { lane = openclawLaneConfig(home); } catch (e) {
     if (e instanceof ResolverError && e.code === 'skill_resolver_config_invalid') return fail({ code: 'skill_resolver_config_invalid', message: `${e.message} Nothing was written.` });
@@ -614,9 +606,8 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
   const tune = opts.tuning ?? {};
   const explicit = new Set<string>([...Object.keys(tune).map((k) => (k.startsWith('owner_skills_') ? 'owner_skill_ids' : k)), ...(opts.mode ? ['mode'] : [])]);
   const guardRuns = openclawGuardRuns(opts.refreshOnly ? openclawLoaderVersion() : OPENCLAW_SKILL_PLUGIN_CODE_VERSION, openclawRunningVersion(home));
-  const built = new Set<string>();
+  const built = new Map<string, OpenclawBuiltAgent>();
   const skipped: Array<{ id: string; why: string }> = [];
-  const talkFor = new Map<string, (ownerSkills: string[]) => { block: string; ids: string[] }>();
   for (const id of ids) {
     const before = prior?.agents[id];
     const host = bin ? hostSkills(probe, bin, id) : null;
@@ -660,13 +651,6 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     const policy = openclawAgentPolicy(id, roster, host?.workspaceDir);
     const none = { block: '', ids: [] as string[], unknown: [] as string[], withheld: [] as string[] };
     const root = readRootFor(policy.path_reads, policy.workspace);
-    const builtAt = catalogBuiltAt(home, catalog);
-    const pins = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'owner', hidden });
-    const ownerSkills = [...new Set([...(before?.owner_skill_ids ?? []), ...(tune.owner_skills_add ?? [])])].filter((n) => !(tune.owner_skills_remove ?? []).includes(n)).sort();
-    const talkWith = (owners: string[]) => dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'conversation', hidden: [...hidden, ...ownerHiddenIds(owners, files.keys())] });
-    talkFor.set(id, talkWith);
-    const talk = talkWith(ownerSkills);
-    const brief = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'owner', hidden, brief: true });
     const rule = (key: 'operator_rule' | 'conversation_operator_rule') => {
       const v = tune[key] ?? before?.[key];
       return typeof v === 'string' && v && !operatorRuleProblem(v) ? { [key]: v } : {};
@@ -674,49 +658,56 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     const requireOwner = tune.require_owner_sender ?? before?.require_owner_sender ?? false;
     const sources: Record<string, number> = {};
     for (const [sid, p] of files) if (!hidden.includes(sid)) { const s = sourceOfPath(p, roots) ?? 'unknown'; sources[s] = (sources[s] ?? 0) + 1; }
-    built.add(id);
-    agents[id] = {
+    const entry: OpenclawBuiltAgent['entry'] = {
       mode: opts.mode ?? before?.mode ?? 'live', catalog, skill_dirs: dirs, skill_roots: roots, skill_files: Object.fromEntries([...files].filter(([, p]) => p)),
       path_reads: policy.path_reads, ...(policy.workspace ? { workspace_dir: policy.workspace } : {}),
       top_k: lane.top_k, min_match: lane.min_match, ...(lane.top_gate !== undefined ? { top_gate: lane.top_gate } : {}), exclude_ids: [...new Set([...lane.exclude_ids, ...hidden])],
       live_fraction: tune.live_fraction ?? before?.live_fraction ?? 1, pins_route: tune.pins_route ?? before?.pins_route ?? 'system',
-      pinned_block: pins.block, pinned_ids: pins.ids, conversation_pinned_block: talk.block, conversation_pinned_ids: talk.ids, host_hidden: [...new Set(hidden)], pins_built_at: builtAt,
+      host_hidden: [...new Set(hidden)],
       ...((tune.suggest_classes ?? before?.suggest_classes) ? { suggest_classes: tune.suggest_classes ?? before!.suggest_classes } : {}),
       owner_sender_ids: tune.owner_sender_ids ?? before?.owner_sender_ids ?? [],
-      brief_block: brief.block, brief_ids: brief.ids, ...rule('operator_rule'), ...rule('conversation_operator_rule'), ...(requireOwner ? { require_owner_sender: true } : {}),
-      ...(ownerSkills.length ? { owner_skill_ids: ownerSkills } : {}),
+      ...rule('operator_rule'), ...rule('conversation_operator_rule'), ...(requireOwner ? { require_owner_sender: true } : {}),
     };
-    const absent = ownerSkills.filter((n) => !ownerHiddenIds([n], files.keys()).some((x) => files.has(x)));
-    if (absent.length) out.notes.push(`agent ${id}: owner-only skill name(s) not in ${catalog}, kept so they stay owner-only once installed: ${someNames(absent)}`);
-    const unknown = [...new Set([...pins.unknown, ...talk.unknown, ...brief.unknown])];
-    const withheld = [...new Set([...pins.withheld, ...talk.withheld, ...brief.withheld])];
-    out.agents.push({ id, mode: agents[id]!.mode, catalog, skills: skills - new Set(hidden).size, pins: pins.ids.length, conversation_pins: talk.ids.length, brief: brief.ids.length, unknown_pins: unknown, sources, ...(ownerSkills.length ? { owner_skills: ownerSkills } : {}) });
-    if (unknown.length) out.notes.push(`agent ${id}: pinned skill(s) not in ${catalog}, left out of the block: ${unknown.join(', ')} (skill_resolver_pin_unknown)`);
-    if (withheld.length) out.notes.push(`agent ${id}: pinned skill(s) OpenClaw hides from this agent, loads from another folder, or marks audience: owner (kept out of conversations), left out of the block: ${withheld.join(', ')} (skill_resolver_pin_withheld)`);
+    const render = (ownerSkills: string[]) => {
+      const pins = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'owner', hidden });
+      const talk = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'conversation', hidden: [...hidden, ...ownerHiddenIds(ownerSkills, files.keys())] });
+      const brief = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'owner', hidden, brief: true });
+      const absent = ownerSkills.filter((n) => !ownerHiddenIds([n], files.keys()).some((x) => files.has(x)));
+      if (absent.length) out.notes.push(`agent ${id}: owner-only skill name(s) not in ${catalog}, kept so they stay owner-only once installed: ${someNames(absent)}`);
+      const unknown = [...new Set([...pins.unknown, ...talk.unknown, ...brief.unknown])];
+      const withheld = [...new Set([...pins.withheld, ...talk.withheld, ...brief.withheld])];
+      out.agents.push({ id, mode: entry.mode, catalog, skills: skills - new Set(hidden).size, pins: pins.ids.length, conversation_pins: talk.ids.length, brief: brief.ids.length, unknown_pins: unknown, sources, ...(ownerSkills.length ? { owner_skills: ownerSkills } : {}) });
+      if (unknown.length) out.notes.push(`agent ${id}: pinned skill(s) not in ${catalog}, left out of the block: ${unknown.join(', ')} (skill_resolver_pin_unknown)`);
+      if (withheld.length) out.notes.push(`agent ${id}: pinned skill(s) OpenClaw hides from this agent, loads from another folder, or marks audience: owner (kept out of conversations), left out of the block: ${withheld.join(', ')} (skill_resolver_pin_withheld)`);
+      return { pinned_block: pins.block, pinned_ids: pins.ids, conversation_pinned_block: talk.block, conversation_pinned_ids: talk.ids, pins_built_at: catalogBuiltAt(home, catalog),
+        brief_block: brief.block, brief_ids: brief.ids, ...(ownerSkills.length ? { owner_skill_ids: ownerSkills } : {}) };
+    };
+    built.set(id, { entry, render });
   }
-  if (out.agents.length === 0) return fail({ code: 'skill_resolver_setup_incomplete', message: `The skill resolver was not turned on for any agent: ${out.notes.join('; ')}. Nothing was written.` });
+  if (built.size === 0) return fail({ code: 'skill_resolver_setup_incomplete', message: `The skill resolver was not turned on for any agent: ${out.notes.join('; ')}. Nothing was written.` });
 
   const ownerNotes = (from: Record<string, OpenclawSkillAgentState>) => {
-    for (const id of built) if (from[id] && openclawOwnerUnverified(id, guardRuns ? from[id]! : { ...from[id]!, require_owner_sender: false })) out.notes.push(ownerUnverifiedNote(id, !!from[id]!.require_owner_sender && !guardRuns));
+    for (const id of built.keys()) if (from[id] && openclawOwnerUnverified(id, guardRuns ? from[id]! : { ...from[id]!, require_owner_sender: false })) out.notes.push(ownerUnverifiedNote(id, !!from[id]!.require_owner_sender && !guardRuns));
   };
   const unapplied = explicit.size ? skipped.filter((s) => (prior?.agents[s.id]?.mode ?? 'off') !== 'off') : [];
   const unappliedIds = unapplied.map((s) => s.id).join(', ');
   const partial: OpenclawSkillError | null = unapplied.length ? { code: 'skill_resolver_setup_incomplete',
     message: `${unapplied.map((s) => `agent ${s.id}: ${s.why}`).join('; ')}, so the settings this run gives were not applied to ${unappliedIds}, which stay${unapplied.length === 1 ? 's' : ''} on with ${unapplied.length === 1 ? 'its' : 'their'} earlier settings.`,
-    recovery: `partial: the state was written for ${[...built].join(', ')}; fix what is named above for ${unappliedIds}, then run setup again with the same flags` } : null;
+    recovery: `partial: the state was written for ${[...built.keys()].join(', ')}; fix what is named above for ${unappliedIds}, then run setup again with the same flags` } : null;
   const done = (r: OpenclawSkillResult): OpenclawSkillResult => (partial ? { ...r, error: partial } : r);
   const dir = openclawSkillPluginDir();
   const files = pluginFiles(home, opts.gbrainBin, opts.gbrainHomeEnv);
-  const changed = Object.entries(files).some(([name, text]) => { try { return readFileSync(join(dir, name), 'utf8') !== text; } catch { return true; } });
-  const registered = openclawSkillPluginRegistered(dir);
+  const filesDiffer = () => Object.entries(files).some(([name, text]) => { try { return readFileSync(join(dir, name), 'utf8') !== text; } catch { return true; } });
   if (dryRun) {
+    const changed = filesDiffer();
+    const registered = openclawSkillPluginRegistered(dir);
     out.steps.push({ step: 'library', action: 'write', detail: `the Node library at ${openclawSkillLibDir(home)}/<sha256>.mjs` });
     out.steps.push({ step: 'state', action: 'write', detail: openclawSkillStatePath(home) });
     if (!opts.refreshOnly) {
       out.steps.push({ step: 'plugin', action: changed ? 'write' : 'keep', detail: `${OPENCLAW_SKILL_PLUGIN_ID} at ${dir}` });
       out.steps.push({ step: 'install', action: changed || !registered ? 'run' : 'skip', detail: changed || !registered ? installArgv(bin ?? 'openclaw', dir).map(shown).join('; ') : 'already installed, enabled and allowed in OpenClaw' });
     }
-    ownerNotes(agents);
+    ownerNotes(mergeLatestSettings(built, prior, prior, explicit, tune));
     return done(out);
   }
 
@@ -730,7 +721,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
   const saved = withOpenclawStateLock(openclawSkillStatePath(home), () => {
     const latest = readOpenclawSkillState(home);
     if (prior && !latest && !opts.mode) return 'removed' as const;
-    const merged = mergeLatestSettings(agents, prior, latest, built, explicit, talkFor);
+    const merged = mergeLatestSettings(built, prior, latest, explicit, tune);
     const stateText = `${JSON.stringify({ v: 1, gbrain_version: VERSION, library_sha256: lib.sha256, gbrain_home: home, agents: merged } satisfies OpenclawSkillState, null, 2)}\n`;
     const changedNow = (() => { try { return readFileSync(openclawSkillStatePath(home), 'utf8') !== stateText; } catch { return true; } })();
     if (changedNow) { atomicWriteTextFile(openclawSkillStatePath(home), stateText, { freshMode: 0o600 }); chmodSync(openclawSkillStatePath(home), 0o600); }
@@ -747,6 +738,8 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     return done(out);
   }
 
+  const changed = filesDiffer();
+  const registered = openclawSkillPluginRegistered(dir);
   try {
     if (changed) {
       mkdirSync(dir, { recursive: true });
@@ -774,7 +767,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
   if (!node) out.notes.push('no node on PATH, so the plugin self-test did not run; the gateway runs it under its own Node');
   else {
     const first = out.agents[0]!;
-    const t = selfTest(node, dir, first.id, sampleMessage(agents[first.id]!.skill_dirs), run);
+    const t = selfTest(node, dir, first.id, sampleMessage(written[first.id]!.skill_dirs), run);
     if (!t.ok) return fail({ code: 'skill_resolver_selftest_failed', message: `${t.detail}. The plugin is installed but would not resolve a turn.` });
     out.steps.push({ step: 'self-test', action: 'run', detail: t.detail });
   }
@@ -822,29 +815,30 @@ function renderOpenclawPins(home: string): string[] {
  * for every agent: then uninstall it, delete its directory and the state
  * file. The directory stays until the uninstall succeeds (OpenClaw refuses a
  * config whose load path is missing). Null when nothing of it exists.
+ * GST-4068: it decides whether any agent is left on from the state it reads
+ * under the state lock and holds the lock through the uninstall and the
+ * unlink, so a setup that turns another agent on meanwhile either lands
+ * first and keeps the plugin, or waits and installs it again.
  */
 export function removeOpenclawSkillPlugin(opts: { home: string; agents: string[] | null; dryRun: boolean; deps?: OpenclawSkillDeps }): OpenclawSkillResult | null {
   const dir = openclawSkillPluginDir();
   const prior = readOpenclawSkillState(opts.home);
   if (!prior && !existsSync(dir)) return null;
+  const statePath = openclawSkillStatePath(opts.home);
+  if (opts.dryRun) return turnOpenclawSkillOff(opts, prior, dir);
+  return withOpenclawStateLock(statePath, () => turnOpenclawSkillOff(opts, readOpenclawSkillState(opts.home), dir))
+    ?? { mode: 'off', steps: [], agents: [], notes: [], error: { code: 'skill_resolver_setup_incomplete', message: `Another gbrain setup openclaw run held ${statePath}.lock for more than 10 seconds, so the state was not changed.`, recovery: 'partial: nothing was written; run the same command again once the other run finishes' } };
+}
+
+function turnOpenclawSkillOff(opts: { home: string; agents: string[] | null; dryRun: boolean; deps?: OpenclawSkillDeps }, state: OpenclawSkillState | null, dir: string): OpenclawSkillResult {
   const out: OpenclawSkillResult = { mode: 'off', steps: [], agents: [], notes: [] };
-  const agents = { ...(prior?.agents ?? {}) };
+  const agents = { ...(state?.agents ?? {}) };
   for (const id of opts.agents ?? Object.keys(agents)) {
     if (agents[id]) { agents[id] = { ...agents[id]!, mode: 'off' }; out.agents.push({ id, mode: 'off', catalog: agents[id]!.catalog, skills: 0, pins: 0, unknown_pins: [] }); }
   }
-  const left = Object.values(agents).some((a) => a.mode !== 'off');
-  const statePath = openclawSkillStatePath(opts.home);
-  const lockHeld = { ...out, error: { code: 'skill_resolver_setup_incomplete' as const, message: `Another gbrain setup openclaw run held ${statePath}.lock for more than 10 seconds, so the state was not changed.`, recovery: 'partial: nothing was written; run the same command again once the other run finishes' } };
-  const writeOff = (ids: string[] | null) => withOpenclawStateLock(statePath, () => {
-    const latest = readOpenclawSkillState(opts.home);
-    if (!latest) return true;
-    const next = { ...latest.agents };
-    for (const id of ids ?? Object.keys(next)) if (next[id]) next[id] = { ...next[id]!, mode: 'off' };
-    atomicWriteTextFile(statePath, `${JSON.stringify({ ...latest, agents: next }, null, 2)}\n`, { freshMode: 0o600 });
-    return true;
-  });
-  if (left && prior) {
-    if (!opts.dryRun && !writeOff(opts.agents)) return lockHeld;
+  const writeOff = () => atomicWriteTextFile(openclawSkillStatePath(opts.home), `${JSON.stringify({ ...state!, agents }, null, 2)}\n`, { freshMode: 0o600 });
+  if (state && Object.values(agents).some((a) => a.mode !== 'off')) {
+    if (!opts.dryRun) writeOff();
     out.steps.push({ step: 'state', action: 'write', detail: `${openclawSkillStatePath(opts.home)} (${(opts.agents ?? []).join(', ')} off; the plugin stays for the others)` });
     return out;
   }
@@ -856,7 +850,7 @@ export function removeOpenclawSkillPlugin(opts: { home: string; agents: string[]
     else {
       const r = bin ? (deps.run ?? runOpenclawCli)(uninstall) : { ok: false, output: 'no openclaw on PATH' };
       if (!r.ok) {
-        if (prior && !writeOff(null)) return lockHeld;
+        if (state) writeOff();
         return { ...out, error: { code: 'skill_resolver_plugin_not_installed', message: `Every agent is off (the plugin injects nothing now), but \`${shown(uninstall)}\` did not run (${lastLine(r.output)}), so ${dir} stays in place.`, commands: [shown(uninstall)], argv: uninstall, recovery: `partial: state set to off; run the command on the OpenClaw host, then delete ${dir}` } };
       }
       try {
@@ -866,7 +860,7 @@ export function removeOpenclawSkillPlugin(opts: { home: string; agents: string[]
       out.steps.push({ step: 'install', action: 'remove', detail: `${OPENCLAW_SKILL_PLUGIN_ID} uninstalled and ${dir} removed` });
     }
   }
-  if (prior) {
+  if (state) {
     if (!opts.dryRun) { try { unlinkSync(openclawSkillStatePath(opts.home)); } catch { /* gone */ } }
     out.steps.push({ step: 'state', action: 'remove', detail: `${openclawSkillStatePath(opts.home)} (pins stay in config.json)` });
   }

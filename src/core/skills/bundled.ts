@@ -55,6 +55,12 @@ export function bundledSkillAsset(skill: BundledSkill, asset: string): string | 
   return skill.assets.includes(asset) ? BUNDLED_SKILL_FILES[asset] : undefined;
 }
 
+/** The shared convention files the audience's skills link to as ../conventions/<file>, keyed by their path under skills/. */
+export function bundledConventionFiles(audience: SkillAudience): Array<{ path: string; content: string }> {
+  const paths = [...new Set(bundledSkills(audience).flatMap(s => s.assets).filter(a => a.startsWith('conventions/')))].sort();
+  return paths.map(path => ({ path, content: BUNDLED_SKILL_FILES[path] ?? '' }));
+}
+
 /**
  * Identity of what the skills index shows and what `bundled-skill` accepts:
  * each skill's name, audience, triggers and file list. A body-only edit keeps
