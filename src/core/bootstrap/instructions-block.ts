@@ -105,10 +105,13 @@ export function renderAmbientInstructionBlock(opts: AmbientInstructionBlockOpts)
 }
 
 /** Read-splice-write helper (absent file → created with just the block).
- * Atomic via atomicWriteTextFile — symlinked dotfile-managed targets survive. */
+ * Atomic via atomicWriteTextFile — symlinked dotfile-managed targets survive.
+ * Byte-identical content skips the write (#10096): a current file behind a
+ * symlink into a read-only directory converges; a stale one still fails. */
 export function installAmbientWritebackBlockAt(path: string, body: string): void {
   const existing = existsSync(path) ? readFileSync(path, 'utf8') : '';
-  atomicWriteTextFile(path, spliceAmbientWritebackBlock(existing, body));
+  const next = spliceAmbientWritebackBlock(existing, body);
+  if (next !== existing) atomicWriteTextFile(path, next);
 }
 
 /** Read-strip-write helper. Absent file / no markers → `removed: false`;

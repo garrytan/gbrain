@@ -3357,8 +3357,9 @@ gbrain repair fact-claim-dates --source <id> --apply --expect <hash> --yes
 A candidate is an active fact whose `valid_from` falls on a loaded day and
 whose claim holds exactly one `YYYY-MM-DD` date, a real calendar date from
 1900 up to the day before. Facts with no date (`no_date`), several dates
-(`several_dates`), or one out of range (`date_not_earlier`) keep the load
-day and are counted, and so is a fact whose `valid_until` falls before its
+(`several_dates`), one that only names a cited document (`referenced_date`:
+inside a wiki link, a Markdown link target, or right before a quoted title),
+or one out of range (`date_not_earlier`) keep the load day and are counted, and so is a fact whose `valid_until` falls before its
 claim's date (`ends_before_claim_date`).
 
 A fact held by a page's facts fence is moved in the page: only that row's

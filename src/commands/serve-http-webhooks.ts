@@ -797,12 +797,13 @@ function mountGitHubWebhook(app: Express, ctx: ServeHttpContext): void {
         return;
       }
 
-      // Source lookup via the v87 partial expression index on
-      // config->>'github_repo'. fast even on large brains.
+      // Source lookup via the v92 partial expression index on
+      // config->>'github_repo'. #10064: the planner only picks a partial index
+      // when the query states its predicate (config ? 'github_repo').
       let source: { id: string; config: Record<string, unknown> | string } | null = null;
       try {
         const rows = await engine.executeRaw<{ id: string; config: Record<string, unknown> | string }>(
-          `SELECT id, config FROM sources WHERE config->>'github_repo' = $1 LIMIT 1`,
+          `SELECT id, config FROM sources WHERE config ? 'github_repo' AND config->>'github_repo' = $1 LIMIT 1`,
           [fullName],
         );
         source = rows[0] ?? null;

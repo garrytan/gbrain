@@ -5,27 +5,27 @@
  *   - `works_at` needs an employer: never a person, a temporal or media page
  *     (meeting, calendar event, media, image, transcript), nor a document
  *     (conversation, email, source, note, inbox);
- *   - `founded` / `invested_in` never point at a temporal or media page
- *     (people found and invest together, so a person target keeps them).
+ *   - `founded` / `invested_in` / `advises` never point at a temporal or
+ *     media page nor a document (#9727; people found, invest and advise
+ *     together, so a person target keeps them).
  * With no target type, the slug's directory decides (`people/`, `meetings/`,
- * `calendar/`, `cal/`). Every other target is allowed, so pack-defined
- * organization types keep working.
+ * `calendar/`, `cal/`, `emails/`, ...). Every other target is allowed, so
+ * pack-defined organization types keep working.
  */
 const TEMPORAL_OR_MEDIA_TYPES = new Set(['meeting', 'calendar', 'calendar-event', 'media', 'image', 'transcript']);
 const TEMPORAL_PREFIXES = ['meetings/', 'calendar/', 'cal/'];
+const DOCUMENT_TYPES = ['conversation', 'email', 'source', 'note', 'inbox'];
+const DOCUMENT_PREFIXES = ['conversations/', 'emails/', 'sources/', 'notes/', 'inbox/'];
+const ROLE_VERBS = new Set(['works_at', 'founded', 'invested_in', 'advises']);
 
 /** #6953: never employers. Shared with edge_contradictions' stored-edge admission; custom employer types stay allowed. */
-export const NON_EMPLOYER_TYPES: readonly string[] = [
-  ...TEMPORAL_OR_MEDIA_TYPES, 'person', 'conversation', 'email', 'source', 'note', 'inbox',
-];
-export const NON_EMPLOYER_PREFIXES: readonly string[] = [
-  ...TEMPORAL_PREFIXES, 'people/', 'conversations/', 'emails/', 'sources/', 'notes/', 'inbox/',
-];
+export const NON_EMPLOYER_TYPES: readonly string[] = [...TEMPORAL_OR_MEDIA_TYPES, 'person', ...DOCUMENT_TYPES];
+export const NON_EMPLOYER_PREFIXES: readonly string[] = [...TEMPORAL_PREFIXES, 'people/', ...DOCUMENT_PREFIXES];
 
 export function targetTakesVerb(verb: string, targetSlug?: string, targetType?: string | null): boolean {
-  if (verb !== 'works_at' && verb !== 'founded' && verb !== 'invested_in') return true;
-  const temporal = targetType ? TEMPORAL_OR_MEDIA_TYPES.has(targetType) : TEMPORAL_PREFIXES.some(p => targetSlug?.startsWith(p));
-  if (temporal) return false;
-  if (verb !== 'works_at') return true;
-  return targetType ? !NON_EMPLOYER_TYPES.includes(targetType) : !NON_EMPLOYER_PREFIXES.some(p => targetSlug?.startsWith(p));
+  if (!ROLE_VERBS.has(verb)) return true;
+  const [types, prefixes] = verb === 'works_at'
+    ? [NON_EMPLOYER_TYPES, NON_EMPLOYER_PREFIXES]
+    : [[...TEMPORAL_OR_MEDIA_TYPES, ...DOCUMENT_TYPES], [...TEMPORAL_PREFIXES, ...DOCUMENT_PREFIXES]];
+  return targetType ? !types.includes(targetType) : !prefixes.some(p => targetSlug?.startsWith(p));
 }

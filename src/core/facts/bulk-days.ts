@@ -13,8 +13,10 @@
  *
  * A claim date: the claim's only YYYY-MM-DD token (not adjacent to another
  * digit), when it is a real calendar date from 1900-01-01 up to the day before
- * the bulk day. claimDate (TypeScript) and claimDateSql (the aggregate the
- * doctor counts with) read the same token and apply the same bounds.
+ * the bulk day, and not inside a wiki link, a Markdown link destination or
+ * right before a quoted title, where it dates a referenced document (#9886).
+ * claimDate (TypeScript) and claimDateSql (the aggregate the doctor counts
+ * with) read the same token and apply the same bounds.
  */
 import type { BrainEngine } from '../engine.ts';
 
@@ -24,6 +26,8 @@ export const BULK_DAY_RULE = { min_facts: 200, min_share: 0.25, min_entities: 20
 const TOP_SOURCES = 5;
 
 const DATE_TOKEN = '(^|[^0-9])([0-9]{4}-[0-9]{2}-[0-9]{2})(?![0-9])';
+const ISO_DATE = '[0-9]{4}-[0-9]{2}-[0-9]{2}';
+const DATE_IN_REFERENCE = String.raw`\[\[[^\]\r\n]*${ISO_DATE}|\]\((?:[^()\r\n]|\([^()\r\n]*\))*${ISO_DATE}|${ISO_DATE}[ \t]*[「『《“"]`;
 const EARLIEST = '1900-01-01';
 
 export interface BulkFactDay {
@@ -39,13 +43,14 @@ export interface BulkFactDay {
   dated_claims: number;
 }
 
-export type ClaimDate = { date: string } | { skip: 'no_date' | 'several_dates' | 'date_not_earlier' };
+export type ClaimDate = { date: string } | { skip: 'no_date' | 'several_dates' | 'referenced_date' | 'date_not_earlier' };
 
 /** The date a claim states for itself, judged against the bulk day it was loaded on. */
 export function claimDate(claim: string, day: string): ClaimDate {
   const tokens = [...claim.matchAll(new RegExp(DATE_TOKEN, 'g'))].map(match => match[2]!);
   if (!tokens.length) return { skip: 'no_date' };
   if (tokens.length > 1) return { skip: 'several_dates' };
+  if (new RegExp(DATE_IN_REFERENCE).test(claim)) return { skip: 'referenced_date' };
   const token = tokens[0]!;
   const [year, month, date] = token.split('-').map(Number) as [number, number, number];
   const real = new Date(Date.UTC(year, month - 1, date)).toISOString().slice(0, 10) === token;
@@ -55,7 +60,7 @@ export function claimDate(claim: string, day: string): ClaimDate {
 /** SQL truth of claimDate(claim, day) returning a date, for a text expression claim and a date expression day. */
 function claimDateSql(claim: string, day: string): string {
   const d = 'x.dates[1]';
-  return `(SELECT CASE WHEN cardinality(x.dates) = 1 AND ${d} >= '${EARLIEST}' AND ${d} < to_char(${day}, 'YYYY-MM-DD')
+  return `(SELECT CASE WHEN cardinality(x.dates) = 1 AND ${claim} !~ '${DATE_IN_REFERENCE}' AND ${d} >= '${EARLIEST}' AND ${d} < to_char(${day}, 'YYYY-MM-DD')
                           AND substr(${d}, 6, 2) BETWEEN '01' AND '12' AND substr(${d}, 9, 2) BETWEEN '01' AND '31'
                      THEN to_char(make_date(substr(${d}, 1, 4)::int, substr(${d}, 6, 2)::int, 1) + (substr(${d}, 9, 2)::int - 1), 'YYYY-MM-DD') = ${d}
                      ELSE false END

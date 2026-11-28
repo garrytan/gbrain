@@ -7,11 +7,15 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   AMBIENT_WRITEBACK_BLOCK_BEGIN,
   AMBIENT_WRITEBACK_BLOCK_END,
   ambientBlockPresent,
+  installAmbientWritebackBlockAt,
   removeAmbientWritebackBlock,
   renderAmbientInstructionBlock,
   spliceAmbientWritebackBlock,
@@ -19,6 +23,73 @@ import {
 
 const BODY = 'managed header line\nrule one\nrule two';
 const URL = 'http://127.0.0.1:3131/mcp';
+
+describe('installAmbientWritebackBlockAt (#10096)', () => {
+  function linkedTarget(): { root: string; ro: string; target: string; link: string; current: string } {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-instr-block-'));
+    const ro = join(root, 'dotfiles');
+    mkdirSync(ro);
+    const target = join(ro, 'CLAUDE.md');
+    const current = spliceAmbientWritebackBlock('# owner rules\n', BODY) + '# tail\n';
+    writeFileSync(target, current);
+    const link = join(root, 'CLAUDE.md');
+    symlinkSync(target, link);
+    return { root, ro, target, link, current };
+  }
+
+  test('already-current content is left untouched: same inode, same bytes, link kept', () => {
+    const { root, target, link, current } = linkedTarget();
+    try {
+      const ino = statSync(target).ino;
+      installAmbientWritebackBlockAt(link, BODY);
+      expect(statSync(target).ino).toBe(ino);
+      expect(readFileSync(target, 'utf8')).toBe(current);
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('stale content is still rewritten through the link', () => {
+    const { root, target, link, current } = linkedTarget();
+    try {
+      installAmbientWritebackBlockAt(link, 'new policy');
+      expect(readFileSync(target, 'utf8')).toBe(spliceAmbientWritebackBlock(current, 'new policy'));
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('damaged markers still throw even when no write would be needed', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-instr-block-'));
+    try {
+      const path = join(root, 'CLAUDE.md');
+      const damaged = `${AMBIENT_WRITEBACK_BLOCK_BEGIN}\norphan\n`;
+      writeFileSync(path, damaged);
+      expect(() => installAmbientWritebackBlockAt(path, BODY)).toThrow();
+      expect(readFileSync(path, 'utf8')).toBe(damaged);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Root ignores directory modes, so the read-only half only runs as non-root.
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('symlink into a read-only directory: current content succeeds, stale content still fails', () => {
+    const { root, ro, target, link, current } = linkedTarget();
+    chmodSync(ro, 0o555);
+    try {
+      installAmbientWritebackBlockAt(link, BODY);
+      expect(readFileSync(target, 'utf8')).toBe(current);
+      expect(() => installAmbientWritebackBlockAt(link, 'new policy')).toThrow(/EACCES|EPERM/);
+      expect(readFileSync(target, 'utf8')).toBe(current);
+      expect(readdirSync(ro)).toEqual(['CLAUDE.md']);
+    } finally {
+      chmodSync(ro, 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('spliceAmbientWritebackBlock', () => {
   test('no markers, empty content → fresh block only, newline-terminated, markers at column 0', () => {

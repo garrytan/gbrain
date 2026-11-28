@@ -91,6 +91,26 @@ describe('unverified GitHub push webhooks', () => {
   });
 });
 
+describe('#10064: the push lookup can use the v92 partial index', () => {
+  test('the statement the handler runs plans onto sources_github_repo_idx', async () => {
+    const spy = spyOn(engine, 'executeRaw');
+    let lookup: [string, unknown[] | undefined] | undefined;
+    try {
+      expect((await push('acme-example/signed', 'refs/heads/feature', signed('acme-example/signed', 'refs/heads/feature'))).status).toBe(202);
+      lookup = spy.mock.calls.find(([sql]) => /FROM sources\b/.test(sql) && sql.includes("config->>'github_repo'")) as typeof lookup;
+    } finally {
+      spy.mockRestore();
+    }
+    expect(lookup).toBeDefined();
+    const [sql, params] = lookup!;
+    await engine.transaction(async tx => {
+      await tx.executeRaw('SET LOCAL enable_seqscan = off');
+      const plan = await tx.executeRaw<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`, params);
+      expect(plan.map(row => row['QUERY PLAN']).join('\n')).toContain('sources_github_repo_idx');
+    });
+  });
+});
+
 describe('unverified webhooks compute the HMAC whatever the repository (#8768)', () => {
   let spy: ReturnType<typeof spyOn> | undefined;
   afterEach(() => { spy?.mockRestore(); spy = undefined; });

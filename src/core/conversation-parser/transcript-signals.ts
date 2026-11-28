@@ -31,6 +31,42 @@ const TRANSCRIPT_HEADING_RX = /^#{1,6}\s*(?:raw\s+)?transcript\b/im;
  */
 const TIME_TOKEN_RX = /[[(]?\b\d{1,2}:\d{2}(?::\d{2})?\b\s*(?:[APap]\.?[Mm]\.?)?[\])]?/;
 
+/**
+ * A calendar field such as `- Start: 08:15 AM PST`, `**Time:** 08:15 – 08:45`
+ * or `- 开始时间：2031年3月4日 上午8:15` (#9885). Its clock time describes the
+ * meeting, not a spoken turn, so it does not count toward the density
+ * signal. Only a known calendar label whose whole value is date/time/zone
+ * tokens qualifies; anything else on the line keeps it a timed line.
+ */
+const CALENDAR_FIELD_RX = new RegExp(
+  String.raw`^\s*(?:[-*+]\s+|\d+[.)]\s+)?(?:\*\*|__)?` +
+    String.raw`(?:(?:meeting\s+)?(?:date|time|date\s*(?:\/|&|and)\s*time)|(?:start|end)(?:s|ed)?(?:\s+(?:time|at|on))?` +
+    String.raw`|created(?:\s+(?:at|on))?|creation\s+time|updated(?:\s+(?:at|on))?|scheduled(?:\s+(?:for|at))?|when` +
+    String.raw`|(?:会议)?(?:时间|日期)|开始时间|结束时间|创建时间|更新时间)` +
+    String.raw`(?:\*\*|__)?\s*[:：]\s*(.+)$`,
+  'i',
+);
+const CALENDAR_ZONE_ABBR_RX = /\b[A-Z]{2,5}\b/g;
+const CALENDAR_VALUE_TOKEN_RX = new RegExp(
+  [
+    String.raw`\d+(?:st|nd|rd|th|[tz](?=\d|\W|$))?`,
+    String.raw`\b[ap]\.?m\.?(?![a-z])`,
+    String.raw`\b(?:mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?|sun)(?:day)?\b`,
+    String.raw`\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b`,
+    String.raw`\b(?:to|until)\b`,
+    String.raw`\b[a-z_]+(?:\/[a-z_+-]+)+`,
+    String.raw`上午|下午|中午|晚上|凌晨|(?:周|星期)[一二三四五六日天]|[年月日号点分至到]`,
+  ].join('|'),
+  'gi',
+);
+
+function isCalendarField(line: string): boolean {
+  const value = CALENDAR_FIELD_RX.exec(line)?.[1];
+  if (value === undefined) return false;
+  const rest = value.replace(CALENDAR_ZONE_ABBR_RX, ' ').replace(CALENDAR_VALUE_TOKEN_RX, ' ');
+  return /^[\s\p{P}\p{S}]*$/u.test(rest);
+}
+
 /** Min timestamped lines + min share of non-blank lines for the density
  *  signal. Mirrors the parser's own density-floor philosophy
  *  (SCORING_MIN_ACCEPTANCE): a couple of times in an agenda list is not a
@@ -47,7 +83,7 @@ const TIME_DENSITY_MIN_SHARE = 0.1;
  *     is genuine coverage debt;
  *  2. the body has a transcript section heading;
  *  3. enough lines open with a time-of-day token (>=3 lines and >=10% of
- *     non-blank lines).
+ *     non-blank lines), not counting calendar fields.
  */
 export function isTranscriptClaiming(page: Page | undefined, body: string): boolean {
   const raw = page?.frontmatter?.raw_transcript;
@@ -59,7 +95,7 @@ export function isTranscriptClaiming(page: Page | undefined, body: string): bool
   if (nonBlank.length === 0) return false;
   let timed = 0;
   for (const line of nonBlank) {
-    if (TIME_TOKEN_RX.test(line.slice(0, 24))) timed++;
+    if (TIME_TOKEN_RX.test(line.slice(0, 24)) && !isCalendarField(line)) timed++;
   }
   return timed >= TIME_DENSITY_MIN_LINES && timed / nonBlank.length >= TIME_DENSITY_MIN_SHARE;
 }

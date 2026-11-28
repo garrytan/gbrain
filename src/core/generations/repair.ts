@@ -196,6 +196,7 @@ async function selectEntries(db: BrainEngine, adapter: GenerationAdapter<unknown
   }
   const where = id === undefined ? selectorSql(selection, params, 'g') : (params.push(id), ` AND g.id = $${params.length}`);
   const config = await readGenerationsConfig(db);
+  const managed = await managedPersistenceEnabled(db);
   const rows = await db.executeRaw<{ id: number; source_id: string; owner_key: string; held_reason: HeldReason; hold_id: string; input_pin: string | null;
     attempts: number; proposal_bytes: number | null; items: number | null }>(
     `SELECT g.id, g.source_id, g.owner_key, g.held_reason, g.hold_id, g.input_pin, g.attempts, g.proposal_bytes, jsonb_array_length(g.proposal) AS items
@@ -203,6 +204,7 @@ async function selectEntries(db: BrainEngine, adapter: GenerationAdapter<unknown
   return rows.map(row => {
     const refused = !RELEASABLE_HELD_REASONS.has(row.held_reason) ? [`${row.owner_key}: ${row.held_reason} is not releasable`]
       : row.items === null ? [`${row.owner_key}: no retained proposal`]
+      : managed && !managedReleasable(adapter.kind, row.owner_key) ? [`${row.owner_key}: ${MANAGED_RELEASE_ATOM_ONLY}`]
       : row.held_reason === 'oversize' && Number(row.items) > config.maxItems ? [`${row.owner_key}: oversize until generations.max_items is raised`] : [];
     return { mode: 'release-held' as const, id: Number(row.id), source_id: row.source_id, owner_key: row.owner_key, reason: row.held_reason, hold_id: row.hold_id,
       input_pin: row.input_pin, attempts: Number(row.attempts), proposal_bytes: row.proposal_bytes === null ? null : Number(row.proposal_bytes), items: Number(row.items ?? 0), refused };
@@ -424,6 +426,10 @@ export async function prepareGenerationRestore(engine: BrainEngine, row: WriteRe
     apply: async tx => ({ restore: await restoreGeneration(tx, adapter, key, approved) }) };
 }
 
+/** #9842: the managed release rule, shared by the release-held preview and its apply so the preview never lists a key the apply refuses. */
+const MANAGED_RELEASE_ATOM_ONLY = 'a managed release publishes atom page keys only';
+const managedReleasable = (kind: string, ownerKey: string): boolean => kind === 'atom' && ownerKey.startsWith('source_slug:');
+
 /**
  * GBRA-161 PR 1b: a managed source publishes a released held result through its writer (generations/managed.ts): the
  * retained proposal is admitted as one activation batch against the origin's current input. Atom page keys only; a
@@ -431,7 +437,7 @@ export async function prepareGenerationRestore(engine: BrainEngine, row: WriteRe
  */
 async function releaseManaged(engine: BrainEngine, adapter: GenerationAdapter<unknown>, key: GenerationKey, approved: ReleaseEntry, proposal: ProposedItem[]): Promise<RepairItemOutcome> {
   const refused = (reason: string): RepairItemOutcome => ({ applied: false, outcome: 'refused', reason: `${approved.owner_key}: ${reason}` });
-  if (adapter.kind !== 'atom' || !key.ownerKey.startsWith('source_slug:')) return refused('a managed release publishes atom page keys only');
+  if (!managedReleasable(adapter.kind, key.ownerKey)) return refused(MANAGED_RELEASE_ATOM_ONLY);
   const atoms = await import('../persistence/atom-maintenance.ts');
   const session = await atoms.managedAtomSession(engine, key.sourceId);
   if (!session) return refused('the source is no longer managed; preview again');

@@ -14,7 +14,8 @@
  * fact, nothing held or rejected by the write gate) retires the prior batch.
  * Otherwise the prior facts stay, the page's outcome still advances (the same
  * empty content is not paid for again), a `--since` window adds its facts
- * beside the prior ones, and a partial run publishes no facts over them. The
+ * beside the prior ones (#9956: also when `--segment-limit` stops it early),
+ * and a partial run from the page's first segment publishes no facts over them. The
  * control: a complete non-empty replacement still retires the prior batch.
  * Managed and unmanaged brains agree.
  * Seams: the gateway's chat and embedding transports (no paid calls). PGLite
@@ -46,11 +47,14 @@ const SINGLE = '**Alice Example** (2024-03-15 9:00 AM): Only one message is left
 /** What the stubbed model answers for one segment, by the mark it carries. */
 let answer: (mark: string) => Array<Record<string, unknown>> | Error = () => [];
 let calls = 0;
+/** Runs once inside the next model call, before it answers (a page edit made while the model works). */
+let during: (() => Promise<void>) | null = null;
 
 beforeAll(() => {
   configureGateway(GATEWAY);
   __setChatTransportForTests((async (request: unknown) => {
     calls++;
+    if (during) { const run = during; during = null; await run(); }
     const text = JSON.stringify(request);
     const facts = answer(MARKS.find(m => text.includes(m)) ?? 'none');
     if (facts instanceof Error) throw facts;
@@ -154,6 +158,29 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
           answer = yields('new');
           expect(await extract(brain.engine, { sinceIso: '2024-03-17T00:00:00Z' })).toMatchObject({ pages_processed: 1, segments_processed: 1, facts_inserted: 1 });
           expect(await active(brain.engine)).toEqual([...OLD, 'Owner Example sends the new plan (MARK-THREE)', 'EXTRACTION_COMPLETE']);
+        });
+      }, 180_000);
+
+      test('#9956: a --since window that --segment-limit stops early still adds its facts; the next window adds the rest', async () => {
+        await withBrain(mode, databaseUrl, async brain => {
+          await seed(brain);
+          await brain.put(conversation(3));
+          answer = yields('new');
+          expect(await extract(brain.engine, { sinceIso: '2024-03-16T00:00:00Z', segmentLimit: 1 })).toMatchObject({ segments_processed: 1, facts_inserted: 1, pages_failed: 0 });
+          expect(await active(brain.engine)).toEqual([...OLD, 'EXTRACTION_COMPLETE', 'Owner Example sends the new plan (MARK-TWO)']);
+          expect(await extract(brain.engine, { sinceIso: '2024-03-17T00:00:00Z' })).toMatchObject({ pages_processed: 1, segments_processed: 1, facts_inserted: 1 });
+          expect(await active(brain.engine)).toEqual([...OLD, 'Owner Example sends the new plan (MARK-TWO)', 'Owner Example sends the new plan (MARK-THREE)', 'EXTRACTION_COMPLETE']);
+        });
+      }, 180_000);
+
+      if (mode === 'unmanaged') test('#9956: a cut --since window of a page edited during the run adds no facts and is left unfinished for replay (managed batches check at publish)', async () => {
+        await withBrain(mode, databaseUrl, async brain => {
+          await seed(brain);
+          await brain.put(conversation(3));
+          answer = yields('new');
+          during = () => brain.put(conversation(3, ' Edited.'));
+          expect(await extract(brain.engine, { sinceIso: '2024-03-16T00:00:00Z', segmentLimit: 1 })).toMatchObject({ segments_processed: 1, facts_inserted: 0, pages_failed: 1 });
+          expect(await active(brain.engine)).toEqual([...OLD, 'EXTRACTION_COMPLETE']);
         });
       }, 180_000);
 

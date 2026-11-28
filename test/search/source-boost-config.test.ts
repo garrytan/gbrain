@@ -29,6 +29,20 @@ describe('resolveBoostMap with a per-brain config value', () => {
   test('the env override still wins over the brain config', () => {
     expect(resolveBoostMap('wiki/:2', 'wiki/:1.3')['wiki/']).toBe(2);
   });
+  test('#9876: a none entry in GBRAIN_SOURCE_BOOST drops the defaults too', () => {
+    expect(resolveBoostMap('none', undefined)).toEqual({});
+    expect(resolveBoostMap('none,wiki/:1.3', undefined)).toEqual({ 'wiki/': 1.3 });
+    expect(resolveBoostMap(' none , wiki/:1.3', null)).toEqual({ 'wiki/': 1.3 });
+  });
+  test('#9876: env none drops only the defaults, the brain config entries stay', () => {
+    expect(resolveBoostMap('none,wiki/:2', 'people/:1.1,wiki/:1.3')).toEqual({ 'people/': 1.1, 'wiki/': 2 });
+  });
+  test('#9876: only an exact bare none is the switch', () => {
+    for (const env of ['NONE', 'none:1', 'none/:1.2']) {
+      expect(resolveBoostMap(env, undefined)['originals/']).toBe(DEFAULT_SOURCE_BOOSTS['originals/']);
+    }
+    expect(resolveBoostMap('none/:1.2', undefined)['none/']).toBe(1.2);
+  });
 });
 
 describe('search.source_boosts reaches the engine arms', () => {
