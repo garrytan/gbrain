@@ -74,6 +74,25 @@ async function liveIn(engine: BrainEngine, slug: string, sources: string[]): Pro
   return out;
 }
 
+/**
+ * The links a page owns as the store keeps them, link_kind and resolution_type included (getLinks does not return
+ * them). PGLite answers readBeliefStateRows; the Rust engine serves it from its store but refuses it as a member, so
+ * the scenario asks the store directly.
+ */
+async function storedLinks({ engine, backend }: Arm, slug: string): Promise<unknown> {
+  const state = backend === 'rust'
+    ? await (engine as unknown as { openStore(member: string): { brain: { readBeliefStateRows(args: unknown): Promise<{ links: Array<Record<string, unknown>>; endpoints: Array<Record<string, unknown>> }> } } })
+      .openStore('differential').brain.readBeliefStateRows({ sourceId: 'default', slugs: [slug], pageIds: [], knownFp: {}, visibility: { honorAliases: false, entityPrivacy: false } })
+    : await engine.readBeliefStateRows({
+      sourceId: 'default', slugs: [slug], pageIds: [], knownFp: {}, knownCounts: null, knownPages: [], knownEntitySlugs: [], suppressed: false, planModePrev: null,
+    }) as { links: Array<Record<string, unknown>>; endpoints: Array<Record<string, unknown>> };
+  const slugOf = new Map((state.endpoints ?? []).map((e) => [Number(e.id), String(e.slug)]));
+  return (state.links ?? []).map((l) => ({
+    from: slugOf.get(Number(l.f)), to: slugOf.get(Number(l.t)), link_type: l.link_type, link_source: l.link_source,
+    context: l.context, link_kind: l.link_kind ?? null, resolution_type: l.resolution_type ?? null,
+  })).sort((a, b) => String(a.to).localeCompare(String(b.to)));
+}
+
 /** Steps run in order and stop at the first throw, which is the scenario's outcome. */
 const scenarios: Scenario[] = [
   // 1. scope of delete, soft delete and restore
@@ -452,6 +471,29 @@ const scenarios: Scenario[] = [
       out.push(await engine.restorePage('empty/p', { sourceId: '' }));
       out.push(await liveIn(engine, 'empty/p', ['default', 'work']));
       return out;
+    },
+  },
+
+  // 8. link_kind and resolution_type on a batch write are stored, not refused
+  {
+    name: 'addLinksBatch stores link_kind and resolution_type, and a value outside their allowed set is rejected',
+    expect: 'equal',
+    run: async (arm) => {
+      const { engine } = arm;
+      for (const slug of ['kind/from', 'kind/plain', 'kind/ner', 'kind/bare']) await engine.putPage(slug, NOTE);
+      const batch = [
+        { from_slug: 'kind/from', to_slug: 'kind/plain', link_type: 'mentions', context: 'c1', link_source: 'mentions', link_kind: 'plain', resolution_type: 'unqualified' as const },
+        { from_slug: 'kind/from', to_slug: 'kind/ner', link_type: 'works_at', context: 'c2', link_source: 'mentions', link_kind: 'typed_ner', resolution_type: 'qualified' as const },
+        { from_slug: 'kind/from', to_slug: 'kind/bare', link_type: 'cites', context: 'c3', link_source: 'manual' },
+      ];
+      const first = await outcomeOf(() => engine.addLinksBatch(batch));
+      const replay = await outcomeOf(() => engine.addLinksBatch(batch));
+      // PGLite names a check violation by its SQL state and the Rust engine by its typed code, so compare only that the
+      // write was rejected for the value (not refused as an unsupported option).
+      const rejectedForValue = (o: Outcome) => 'threw' in o && o.threw !== 'engine_capability_missing';
+      const badKind = rejectedForValue(await outcomeOf(() => engine.addLinksBatch([{ from_slug: 'kind/from', to_slug: 'kind/bare', link_type: 'bad', link_kind: 'nonsense' }])));
+      const badResolution = rejectedForValue(await outcomeOf(() => engine.addLinksBatch([{ from_slug: 'kind/from', to_slug: 'kind/bare', link_type: 'bad', resolution_type: 'nonsense' as never }])));
+      return { first, replay, badKind, badResolution, stored: await storedLinks(arm, 'kind/from'), read: await engine.getLinks('kind/from') };
     },
   },
 ];

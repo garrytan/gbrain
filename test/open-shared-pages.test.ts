@@ -198,9 +198,9 @@ for (const kind of testBackends()) {
       expect(CLI_FLAG_REGISTRY.access).toContain('--no-open-pages');
     }, 60_000);
 
-    test('the printed --labelled-only command leaves out the owner, so running it is not BLOCKED', async () => {
+    test('the printed --labelled-only command leaves out the owner and names its source (GST-4069 S3), so running it is not BLOCKED', async () => {
       const text = receiptLines(await label(ROSTER, false)).join('\n');
-      const command = text.match(/gbrain access serves several --members (\S+) --labelled-only --yes/);
+      const command = text.match(/gbrain access serves several --members (\S+) --source default --labelled-only --yes/);
       expect(command?.[1]).toBe('bob-example');
       const rerun = await label(command![1]!.split(','), false, { labelledOnly: true });
       expect(rerun.members.every(m => m.action !== 'blocked')).toBe(true);

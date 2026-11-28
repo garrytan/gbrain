@@ -1902,7 +1902,7 @@ src/core/setup/launcher-lanes.ts#readJson	catch_empty	1
 src/core/setup/local-receipts.ts#parse	catch_empty	1
 src/core/setup/openclaw-skill-plugin.ts#openclawRoster	catch_empty	1
 src/core/setup/openclaw-skill-plugin.ts#readOpenclawSkillState	catch_empty	1
-src/core/setup/openclaw-skill-plugin.ts#removeOpenclawSkillPlugin	catch_empty	1
+src/core/setup/openclaw-skill-plugin.ts#turnOpenclawSkillOff	catch_empty	1
 src/core/setup/openclaw-turn-plugin.ts#installedAccess	catch_empty	1
 src/core/setup/openclaw-turn-plugin.ts#openclawPluginRegistered	catch_empty	1
 src/core/setup/openclaw-turn-plugin.ts#removeOpenclawTurnPlugin	catch_empty	1
