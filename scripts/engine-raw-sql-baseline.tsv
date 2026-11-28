@@ -504,6 +504,7 @@ src/core/planner-stats.ts	execute_raw	14
 src/core/post-upgrade-reembed.ts	execute_raw	1
 src/core/quarantine-override.ts	execute_raw	1
 src/core/questions/auto-think-migration.ts	execute_raw	1
+src/core/questions/freshness.ts	execute_raw	1	lane 15 at the merge of sync 21 b97c100e43: the owner read of evaluateAnswer (opts.ownerRead) keeps master's statement, because its private-visibility filters are built from the caller context and cannot be a constant engine-sql statement (3 on the sync-21 base)
 src/core/questions/refresh.ts	execute_raw	5
 src/core/questions/store.ts	execute_raw	5
 src/core/repair/attribution-backfill.ts	execute_raw	5
