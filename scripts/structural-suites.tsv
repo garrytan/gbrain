@@ -509,6 +509,7 @@ test/transcription-injection.test.ts	transcription — command injection (#245)	
 test/trust-write-gate-drift.test.ts	(file-level)	1	readFileSync
 test/unmanaged-push-every-site-gst2456.serial.test.ts	gbrain git commit-push	8	readFileSync
 test/upgrade-post-swap-imports.test.ts	#6604 upgrade post-swap tail	3	readFileSync
+test/upgrade-stable-channel.test.ts	gbrain upgrade on the stable channel	23	readFileSync
 test/upgrade-transcript-archive-notice.test.ts	the conversation archive upgrade notice	3	readFileSync
 test/upgrade.serial.test.ts	detectInstallMethod — package-install classification (in-process)	5	readFileSync
 test/upgrade.serial.test.ts	runUpgrade target verification (#4366)	8	readFileSync

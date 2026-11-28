@@ -25,6 +25,7 @@ import {
   readBunLinkTarget,
   readHostBun,
   readPackageTarget,
+  rawPackageUrlForSpec,
   type TargetFloor,
 } from '../core/bun-floor.ts';
 import { askBunForBinDir, bunShimDir, moveAsideOrphanedShim, shimLinked } from './upgrade-windows-shim.ts';
@@ -118,7 +119,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
       console.log('Upgrading via bun...');
       const bunGlobalRoot = resolveBunGlobalRoot();
       const pinned = await replacePinnedInstall(bunGlobalRoot, opts.targetVersion ?? null, { oldVersion, upgradeEnv, checkBunFloor, recovery, phase: 'pinned-reinstall' });
-      if (pinned) { if (pinned === 'refused') return; upgraded = pinned === 'installed'; break; }
+      if (pinned) { if (pinned === 'refused' || pinned === 'current') return; upgraded = pinned === 'installed'; break; }
       if (checkBunFloor && refuseForBunFloor(await readPackageTarget(globalGbrainSpec(bunGlobalRoot)), opts.targetVersion)) return;
       try {
         execFileSync('bun', ['update', BUN_BACKEND, 'gbrain'], { cwd: bunGlobalRoot, env: upgradeEnv, stdio: 'inherit', timeout: 120_000 });
@@ -347,10 +348,30 @@ function restartOntoNewBuild([gbrain, ...entry]: string[], stopMcp: boolean, new
 
 /**
  * GBRA-175: `bun update` keeps a pinned tag or commit, so a pinned global install is replaced with the newest published
- * release (remove, then add the tag). null when the install is not pinned, or a requested version is not published (#6662
- * then reports it after the no-op update).
+ * release (remove, then add the tag). On alpha, upstream's moving channel refs must use that same path: updating the
+ * persisted stable ref would silently select stable again. Those installs never fall back to bun update when release
+ * discovery fails or finds no newer release. Other branch/fork refs retain their own update lane.
+ * null when the install is not pinned, or an exact pin's requested version is not published (#6662 reports it later).
  */
-async function replacePinnedInstall(globalRoot: string, requested: string | null, ctx: StableInstallContext): Promise<'installed' | 'failed' | 'refused' | null> {
+async function replacePinnedInstall(globalRoot: string, requested: string | null, ctx: StableInstallContext): Promise<'installed' | 'failed' | 'refused' | 'current' | null> {
+  const spec = globalGbrainSpec(globalRoot)?.trim();
+  const packageUrl = spec ? rawPackageUrlForSpec(spec) : null;
+  const channelPin = ['stable', 'latest-stable'].some(ref => packageUrl === `https://raw.githubusercontent.com/${GBRAIN_GITHUB_REPO}/${ref}/package.json`) ? spec : null;
+  if (channelPin) {
+    const published = requested ? probeReleaseTag(requested) === 'published' : true;
+    const version = published ? requested ?? latestPublishedVersion() : null;
+    if (!version) {
+      console.error('Could not confirm a published release for the alpha upgrade. The channel-pinned install is unchanged; retry gbrain upgrade --channel alpha later.');
+      setCliExitVerdict(1);
+      return 'refused';
+    }
+    if (!isNewerVersion(ctx.oldVersion, version)) {
+      console.log(`No newer published release than gbrain ${ctx.oldVersion}; the channel-pinned install is unchanged.`);
+      return 'current';
+    }
+    console.log(`The global install is pinned to ${channelPin}; replacing it with v${version} on alpha.`);
+    return installStableRelease('bun', { version, commit: '' }, ctx);
+  }
   const pin = bunGlobalExactTagPin(globalRoot, true);
   const plan = pin ? planPinnedReinstall(requested, ctx.oldVersion) : null;
   if (!plan?.version || plan.unpublished) return null;
