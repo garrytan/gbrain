@@ -48,7 +48,8 @@ async function runCaptured(view: BrainEngine) {
   let error: unknown = null;
   let result: unknown = null;
   try {
-    result = await withEnv({ GBRAIN_HOME: mkdtempSync(join(tmpdir(), 'gbrain-home-')) }, async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-home-'));
+    result = await withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
       const out = await runImport(view, [folder(), '--no-embed', '--json']).then((r) => ({ r }), (e: unknown) => ({ e }));
       return { out, ledger: loadSyncFailures().length };
     });

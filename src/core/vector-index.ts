@@ -85,6 +85,27 @@ export function hnswBuildMemoryMb(rows: number, vectorBytes: number): number {
 }
 
 /**
+ * GST-4084: the share of the graph budget at which doctor's pglite_scale warns that the vector index is near its
+ * PGLite ceiling, about 200k 1024-dimension chunks. Sized builds finish in minutes below it (248,802 chunks: 11
+ * minutes); an unsized build of 375k chunks had not finished after 10.8 hours.
+ */
+export const PGLITE_HNSW_WARN_FRACTION = 0.65;
+
+export interface HnswBuildNeed { rows: number; dims: number; mb: number }
+
+/** The embedded rows of `table.column` and the maintenance_work_mem (MB) an in-memory HNSW build of them needs; null when the column does not exist. */
+export async function hnswBuildNeed(engine: Pick<BrainEngine, 'executeRaw'>, table: string, column: string): Promise<HnswBuildNeed | null> {
+  const [shape] = await engine.executeRaw<{ rows: number; type: string; dims: number }>(
+    `SELECT (SELECT count(*) FROM ${quoted(table)} WHERE ${quoted(column)} IS NOT NULL)::int AS rows,
+            t.typname AS type, a.atttypmod AS dims
+       FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid
+      WHERE a.attrelid = to_regclass($1) AND a.attname = $2`, [table, column]);
+  if (!shape) return null;
+  const rows = Number(shape.rows), dims = Number(shape.dims);
+  return { rows, dims, mb: hnswBuildMemoryMb(rows, 8 + Math.max(0, dims) * (shape.type === 'halfvec' ? 2 : 4)) };
+}
+
+/**
  * Run a PGLite HNSW build of `table.column` with maintenance_work_mem sized to
  * hold its whole graph, or refuse before building when that graph cannot fit
  * the WASM heap. Postgres runs `build` unchanged.
@@ -93,14 +114,9 @@ export async function withHnswBuildMemory<T>(
   engine: Pick<BrainEngine, 'kind' | 'executeRaw'>, table: string, column: string, build: () => Promise<T>,
 ): Promise<T> {
   if (engine.kind !== 'pglite') return build();
-  const [shape] = await engine.executeRaw<{ rows: number; type: string; dims: number }>(
-    `SELECT (SELECT count(*) FROM ${quoted(table)} WHERE ${quoted(column)} IS NOT NULL)::int AS rows,
-            t.typname AS type, a.atttypmod AS dims
-       FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid
-      WHERE a.attrelid = to_regclass($1) AND a.attname = $2`, [table, column]);
+  const shape = await hnswBuildNeed(engine, table, column);
   if (!shape) return build();
-  const vectorBytes = 8 + Math.max(0, Number(shape.dims)) * (shape.type === 'halfvec' ? 2 : 4);
-  const mb = hnswBuildMemoryMb(Number(shape.rows), vectorBytes);
+  const { mb } = shape;
   if (mb * 1024 * 1024 > PGLITE_HNSW_GRAPH_BUDGET_BYTES) {
     const budgetMb = PGLITE_HNSW_GRAPH_BUDGET_BYTES / (1024 * 1024);
     throw opError('pglite_vector_index_too_large',

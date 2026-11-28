@@ -65,7 +65,7 @@ import {
   SINK_DRAIN_TIMEOUT_MS,
 } from './background-work.ts';
 import { POOL_END_TIMEOUT_SECONDS } from './pool-end-timeout.ts';
-import { jsonDocumentDelegated } from './json-document-delegation.ts';
+import { jsonDocumentDelegated, jsonReaderClosedPipe } from './json-document-delegation.ts';
 import { parseGlobalFlags } from './cli-options.ts';
 import { setInterruptedDocumentWriter, slowReadElapsedMs, withReadMeta } from './read-heartbeat.ts';
 
@@ -849,7 +849,8 @@ function writeJsonFallbackIfMissing(exitCode: number): void {
   if (exitCode === 0) {
     // Exit 0 with no document is a bug in the command (D5 fails it); log it, never invent a result.
     // An NDJSON stream may legitimately be empty (e.g. `eval export` with no rows).
-    if (jsonGuardMode === 'document') recordJsonDocumentMissing();
+    // #10548: a reader that closed the pipe cut the run off; that is not a command that printed nothing.
+    if (jsonGuardMode === 'document' && !jsonReaderClosedPipe()) recordJsonDocumentMissing();
     return;
   }
   jsonDocumentWritten = true;

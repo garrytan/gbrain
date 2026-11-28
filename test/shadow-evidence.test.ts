@@ -257,14 +257,14 @@ describe('reads', () => {
   test('a class that was used but never compared is listed with 0 successes next to classes that were', () => {
     const { dir, epoch } = epochDir();
     put(dir, rowsOf(epoch, 'getPage', { match: 3 }));
-    used(dir, epoch, { getPage: { offered: 40, sampled_out: 37 }, getBacklinks: { offered: 12, sampled_out: 12 }, getTags: { offered: 1, skipped_in_transaction: 1 } });
+    used(dir, epoch, { getPage: { offered: 40, sampled_out: 37 }, getBacklinks: { offered: 12, sampled_out: 12 }, getTags: { offered: 1, skipped_in_transaction: 1 } }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 a sample or row count, not the adapter version
     const s = status(dir);
     expect(s.reads!.ops).toEqual([
       { op: 'getBacklinks', successful: 0, minimum: MIN_SUCCESSFUL_PER_OP }, { op: 'getPage', successful: 3, minimum: 100 }, { op: 'getTags', successful: 0, minimum: 100 },
     ]);
     expect(s.evidence!.ops_lacking_samples).toEqual(['getBacklinks 0/100', 'getPage 3/100', 'getTags 0/100']);
-    expect(s.evidence!.usage.getBacklinks).toMatchObject({ offered: 12, sampled_out: 12 });
-    expect(renderEvidenceStatus(s).join('\n')).toContain('lacking samples: getBacklinks 0/100 (offered 12, sampled out 12');
+    expect(s.evidence!.usage.getBacklinks).toMatchObject({ offered: 12, sampled_out: 12 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 a sample or row count, not the adapter version
+    expect(renderEvidenceStatus(s).join('\n')).toContain('lacking samples: getBacklinks 0/100 (offered 12, sampled out 12'); // pregate-literal: SHADOW_ADAPTER_VERSION=12 a sample or row count, not the adapter version
   });
 
   test('a class at 99 is named while the total is over 10,000; successful means a match or a collation_order', () => { // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
@@ -596,7 +596,7 @@ describe('adapter identity', () => {
     // test-reads-source-ok[raw-bytes]: the adapter's source bytes are the fingerprint under test; a change must bump the epoch input
     for (const f of files) digest.update(`${f}\0${readFileSync(join(root, f), 'utf8')}\0`);
     // When this fails, the adapter's mapping changed: bump SHADOW_ADAPTER_VERSION (a new evidence epoch) and set both values here.
-    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([12, '7ed7ff02377522076abcccf14c083bcce6929dc0ad9bd3bbcd69bc0e7d4bfaed']);
+    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([20, '6c42af4101587e7b801739a0be8040ddbb1eaa414489ce57a4fee04d4cf2c6be']);
   });
 });
 
@@ -634,7 +634,7 @@ describe('follower readiness inputs are reported only for the current epoch', ()
     writeSeedRecord(dir, SEED);
     const lag: number[] = []; lag[3] = 100;
     writeFileSync(join(dir, 'follower.json'), JSON.stringify({
-      version: 1, epoch_id: 'seed-1', seed_id: 'seed-1', ...(tag === undefined ? {} : { evidence_epoch: tag }), epoch_started_at: 't', updated_at: AT.toISOString(), applied_rows: 12, queue_depth: 0, lag_ms: 0, last_seq: 1,
+      version: 1, epoch_id: 'seed-1', seed_id: 'seed-1', ...(tag === undefined ? {} : { evidence_epoch: tag }), epoch_started_at: 't', updated_at: AT.toISOString(), applied_rows: 12, queue_depth: 0, lag_ms: 0, last_seq: 1, // pregate-literal: SHADOW_ADAPTER_VERSION=12 a sample or row count, not the adapter version
       watermark: { valid: true, through: AT.toISOString(), invalidated_reason: null }, lag: { epoch: lag, hours: { [String(Math.floor(AT.getTime() / 3_600_000))]: lag } },
       fingerprints: { checked_rows: 50, mismatches: 1 }, probe: { state: 'pass', checked_at: 't', server_version: '16', collation: 'C', mismatches: 0 }, allocators: { verified: true, checked_at: 't' },
     }));
@@ -657,6 +657,7 @@ describe('follower readiness inputs are reported only for the current epoch', ()
       expect([tag, other.fingerprints, other.allocators, other.follower.lag_ms_p99_epoch, other.follower.lag_ms_p99_24h]).toEqual([
         tag, { checked_rows: 0, mismatches: 0, probe: NOT_RUN_PROBE }, { verified: false, checked_at: null }, null, null,
       ]);
+      // pregate-literal: SHADOW_ADAPTER_VERSION=12 a sample or row count, not the adapter version
       expect(other.follower).toMatchObject({ applied_rows: 12, state: 'following' }); // the Rust store's state is the seed's, not the epoch's
     }
     // After a rotation the manifest names a new epoch: the same file no longer counts.

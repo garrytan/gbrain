@@ -178,4 +178,34 @@ describe('setup re-run and the member keys it minted', () => {
     expect(r.keys[0]!.detail).toContain('gbrain auth rescope --token member-alice-example --sources source-a');
     await e.disconnect();
   }, 120_000);
+
+  test('GST-4069 M1: a hand-scoped list key on another source is skipped with the command for that move alone, not every source setup would grant', async () => {
+    const { e, home } = await brain();
+    await addSource(e, 'source-a');
+    await addSource(e, 'team-b', true);
+    const label = (source: string) => withEnv({ GBRAIN_HOME: home, GBRAIN_SETUP_ABORT_AFTER: undefined }, () => labelSeveral(e, ['alice-example'], source, true, true));
+    await label('default');
+    expect(await reads(e, 'member-alice-example')).toEqual(['default', 'team-b']);
+    await rescopeLegacyToken(e, { target: { name: 'member-alice-example' }, sources: ['default'], reset: [], refreshOperations: false, allNew: false, dryRun: false, json: true });
+    const r = await label('source-a');
+    expect(r.keys[0]).toMatchObject({ action: 'skipped' });
+    expect(r.keys[0]!.detail).toMatch(/run gbrain auth rescope --token member-alice-example --sources source-a,default$/);
+    expect(await reads(e, 'member-alice-example')).toEqual(['default']);
+    await e.disconnect();
+  }, 120_000);
+
+  test('GST-4069 M1: a key setup did not mint with a list is skipped with the command that moves it and keeps what it reads', async () => {
+    const e = await memoryBrain();
+    const home = tempDir('gbrain-regrant-');
+    await addSource(e, 'source-a');
+    await addSource(e, 'team-b', true);
+    await addMember(e, 'alice-example');
+    const minted = await mintToken(e, 'member-alice-example', { scopes: ['read', 'write'], binding: { member: 'alice-example' } });
+    mkdirSync(join(home, '.gbrain', 'member-keys'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(home, '.gbrain', 'member-keys', 'alice-example.key'), `${minted.token}\n`, { mode: 0o600 });
+    const r = await withEnv({ GBRAIN_HOME: home, GBRAIN_SETUP_ABORT_AFTER: undefined }, () => labelSeveral(e, ['alice-example'], 'source-a', true, true));
+    expect(r.keys[0]).toMatchObject({ action: 'skipped' });
+    expect(r.keys[0]!.detail).toMatch(/run gbrain auth rescope --token member-alice-example --sources source-a,default$/);
+    await e.disconnect();
+  }, 120_000);
 });
