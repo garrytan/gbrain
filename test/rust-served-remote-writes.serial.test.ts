@@ -263,4 +263,30 @@ describeAddon('remote writes over the served wire', () => {
     }).toEqual({ purge: 'permission_denied', retention: 'invalid_params', readOnly: 'permission_denied' });
     expect((await owner.getPage('notes/stays'))?.compiled_truth).toBe('Not purged.');
   });
+
+  // The reflex page read takes its privacy from the client's scope. A remote caller that sends `none` must not lift the
+  // page policy: the server reads it as `caller`. `floor` and `caller` stay as sent.
+  const reflexTitles = async (privacy: string, opts: { txn?: string } = {}) => {
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const rows = await worldOnly(() => conn.request('call', 'readReflexPages', [{ sourceIds: ['default'], privacy }, { kind: 'titles', titlesLc: ['open', 'secret'] }], opts)) as Array<{ slug: string }>;
+    return rows.map(r => r.slug).sort();
+  };
+
+  test('the reflex page read: a remote caller that sends privacy none reads only the pages it may read, as `caller` and `floor` do', async () => {
+    expect(await reflexTitles('none')).toEqual(['notes/open']);
+    expect(await reflexTitles('caller')).toEqual(['notes/open']);
+    expect(await reflexTitles('floor')).toEqual(['notes/open']);
+  });
+
+  test('the reflex page read inside a transaction the caller holds: privacy none is narrowed there too', async () => {
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const ref = String(await conn.txn('begin', {}));
+    let inside: string[] = [];
+    try {
+      inside = await reflexTitles('none', { txn: ref });
+    } finally {
+      await conn.txn('commit', { txn: ref }).catch(() => conn.txn('rollback', { txn: ref }).catch(() => undefined));
+    }
+    expect(inside).toEqual(['notes/open']);
+  });
 });
