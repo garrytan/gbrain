@@ -303,8 +303,8 @@ transactionDirect	lifecycle	yes	1	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	55	yes	yes	yes	serves
-readPageSnapshot	pages	yes	37	no	yes	yes	serves
-readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
+readPageSnapshot	pages	yes	38	no	yes	yes	serves
+readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	serves
 putPage	pages	yes	218	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
