@@ -1168,7 +1168,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     const deletedCodes = await this.sql`
       DELETE FROM oauth_codes WHERE expires_at < ${now} RETURNING 1
     `;
-    return result.length + deletedCodes.length;
+    return result.length + deletedCodes.length + await this.grants.sweepExpiredRotations();
   }
 
   // -------------------------------------------------------------------------

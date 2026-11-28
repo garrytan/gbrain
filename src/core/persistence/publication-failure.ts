@@ -100,7 +100,20 @@ export interface CapabilityRefusalDetail {
   attempts?: number; limit?: number;
   stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null };
 }
-export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | CheckoutRefusalDetail | PendingImportDetail | SourceChangedDetail | StagingRefusalDetail | CapabilityRefusalDetail }
+/**
+ * A shared-skill publication refused because a shared file would reach callers a skill that keeps it does not show it
+ * to (`shared-skills/publication.ts` refuseHiddenExposure). The closed reason outlives the receipt, so a waiter or a
+ * replay of a queued request reads the same typed reason the direct refusal carries.
+ */
+export const SHARED_FILE_AUDIENCE_REASONS = ['shared_file_hidden_holder', 'shared_file_holder_narrowed'] as const;
+export type SharedFileAudienceReason = typeof SHARED_FILE_AUDIENCE_REASONS[number];
+export interface SharedFileAudienceDetail { origin: SharedFileAudienceReason; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
+/** The closed shared-file audience reason a stored failure detail holds, if any. */
+export function sharedFileAudienceReason(detail: unknown): SharedFileAudienceReason | undefined {
+  const origin = (detail as { origin?: unknown } | null | undefined)?.origin;
+  return (SHARED_FILE_AUDIENCE_REASONS as readonly unknown[]).includes(origin) ? origin as SharedFileAudienceReason : undefined;
+}
+export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | CheckoutRefusalDetail | PendingImportDetail | SourceChangedDetail | StagingRefusalDetail | CapabilityRefusalDetail | SharedFileAudienceDetail }
 
 /** The site of a capability refusal, read from its `member=... capability=...` detail (rust-engine/errors.ts), or undefined. */
 export function capabilityRefusalDetail(error: Pick<OperationError, 'code' | 'detail' | 'reason'>): CapabilityRefusalDetail | undefined {

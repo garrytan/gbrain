@@ -62,7 +62,7 @@ import { verifySchema } from './schema-verify.ts';
 import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, supportsHnswIterativeScan } from './vector-index.ts';
 import { searchIndexWalk, searchVectorPool, readVectorPool, remainingVectorBudget, type VectorPoolAttempt, POOL_MAX_SCAN_TUPLES } from './search/vector-pool.ts';
 import {
-  buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_CHUNKS_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, vectorStatementForms,
+  buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_CHUNKS_SQL, SCOPE_CHUNKS_TOTAL_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, vectorStatementForms,
   type PageSourceStats, type ScopeChunkCount, type VectorSearchStatement,
 } from './search/vector-statement.ts';
 import { VECTOR_SETTING_DEFAULTS, vectorScanSettings } from './search/vector-settings.ts';
@@ -525,7 +525,7 @@ export class PostgresEngine implements BrainEngine {
   private vectorIterativeScan?: Promise<boolean>;
   private keywordStatementTimeout?: Promise<string>;
   private keywordTimeouts = new KeywordTimeoutNegativeCache(Date.now, undefined, () => keywordRerunPoolIdle(enginePoolStats(this), this._disconnectPromise)); // #7082
-  private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL), ids => this.executeRaw<ScopeChunkCount>(SCOPE_CHUNKS_SQL, [ids]));
+  private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL), (ids, total) => this.executeRaw<ScopeChunkCount>(total ? SCOPE_CHUNKS_TOTAL_SQL : SCOPE_CHUNKS_SQL, [ids]));
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
   readonly kind = 'postgres' as const;
@@ -1398,7 +1398,8 @@ export class PostgresEngine implements BrainEngine {
 
   // Sources SQL lives once in ./engine-sql/sources.ts (refactor wave 1, W1-extended).
   async listAllSources(opts?: { includeArchived?: boolean; localPathOnly?: boolean }): Promise<SourceRow[]> {
-    return sourcesImpl.listAllSources(unscopedExecutor(this.engineSql, 'sources: unscoped on master (EO4 inventory)'), opts);
+    // A cancelled request is refused before the statement, and a read deadline ends it, as the raw statements the source resolver's callers moved here from were.
+    return this.engineSqlRead(exec => sourcesImpl.listAllSources(unscopedExecutor(exec, 'sources: unscoped on master (EO4 inventory)'), opts));
   }
 
   async updateSourceConfig(sourceId: string, patch: Record<string, unknown>): Promise<boolean> {
@@ -1406,7 +1407,9 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Import-path guard, attribution and config reads: SQL in engine-sql (persistence-state, transaction-settings, belief, config, access-control, sources).
-  getSource(sourceId: string) { return this.preparationRead(exec => sourcesImpl.getSource(unscopedExecutor(exec, 'sources: single-row read ran unscoped through executeRaw'), sourceId)); }
+  getSource(sourceId: string, opts?: { timeoutMs?: number }) {
+    if (opts?.timeoutMs) return sourcesImpl.getSource({ executeRaw: (sql, params) => this.executeRaw(sql, params, { timeoutMs: opts.timeoutMs }) }, sourceId);
+    return this.preparationRead(exec => sourcesImpl.getSource(refuseAborted(unscopedExecutor(exec, 'sources: single-row read ran unscoped through executeRaw')), sourceId)); }
   getConfigValues(keys: readonly string[]) { return this.preparationRead(exec => configImpl.getConfigValues(unscopedExecutor(exec, 'config: keyed read ran unscoped through executeRaw'), keys)); }
   readStoredConfigValue(key: string) { return this.ownRawRead(exec => configImpl.readStoredConfigValue(exec, key)); }
   readManagedModeRows() { return this.preparationRead(exec => persistenceStateImpl.readManagedModeRows(unscopedExecutor(exec, 'persistence: managed-mode read ran unscoped through executeRaw'))); }
@@ -1470,7 +1473,7 @@ export class PostgresEngine implements BrainEngine {
   readExactSnippetChunks(keys: readonly cliReadsOpsImpl.ExactSnippetKey[], opts: { excludePrivate: boolean }) { return cliReadsOpsImpl.readExactSnippetChunks(this.executeRaw.bind(this), keys, opts); }
   listExactRescanChunks(pageIds: readonly number[], opts: { excludePrivate: boolean }) { return cliReadsOpsImpl.listExactRescanChunks(this.executeRaw.bind(this), pageIds, opts); }
   listHeldFenceCells(keys: readonly cliReadsOpsImpl.HeldFenceCellKey[]) { return cliReadsOpsImpl.listHeldFenceCells(this.executeRaw.bind(this), keys); }
-  readFenceOverlayRows(page: { sourceId: string; slug: string }, incoming: readonly cliReadsOpsImpl.FenceOverlayIncomingRow[], opts: { hideHeld: boolean }) { return cliReadsOpsImpl.readFenceOverlayRows(this.executeRaw.bind(this), page, incoming, opts); }
+  readFenceOverlayRows(page: { sourceId: string; slug: string }, incoming: readonly cliReadsOpsImpl.FenceOverlayIncomingRow[], opts: { hideHeld: boolean }) { return this.ownRawRead(raw => cliReadsOpsImpl.readFenceOverlayRows(raw.executeRaw.bind(raw), page, incoming, opts)); } // a preparation's read: ends at its deadline (TYPED_PREPARATION_READS)
   listFenceRowTrust(keys: readonly cliReadsOpsImpl.FenceRowKey[]) { return cliReadsOpsImpl.listFenceRowTrust(this.executeRaw.bind(this), keys); }
   listExtractionPendingPages(opts: { sourceIds?: string[]; sourceId?: string; limit: number; offset: number }) { return cliReadsOpsImpl.listExtractionPendingPages(this.executeRaw.bind(this), opts); }
   listUnattributedFacts(opts: { sourceIds: string[]; worldOnly: boolean; excludePrivateProvenance: boolean; limit: number; offset: number }) { return cliReadsOpsImpl.listUnattributedFacts(this.executeRaw.bind(this), opts); }
@@ -1754,7 +1757,7 @@ export class PostgresEngine implements BrainEngine {
   listFencedFactsOfMissingPages(sourceId: string) { return factsCycleImpl.listFencedFactsOfMissingPages(this.executeRaw.bind(this), sourceId); }
   readFenceRowNumHint(sourceId: string, slug: string) { return factsCycleImpl.readFenceRowNumHint(this.executeRaw.bind(this), sourceId, slug); }
   readSourceCheckoutPath(sourceId: string) { return factsCycleImpl.readSourceCheckoutPath(this.executeRaw.bind(this), sourceId); }
-  readLiveStoredBody(sourceId: string, slug: string, lock = false) { return factsCycleImpl.readLiveStoredBody(this.executeRaw.bind(this), sourceId, slug, lock); }
+  readLiveStoredBody(sourceId: string, slug: string, lock = false) { return lock ? factsCycleImpl.readLiveStoredBody(this.executeRaw.bind(this), sourceId, slug, lock) : this.ownRawRead(raw => factsCycleImpl.readLiveStoredBody(raw.executeRaw.bind(raw), sourceId, slug, lock)); } // a locking read keeps the caller's transaction; the plain read ends at a preparation's deadline
   listPageStates(sourceId: string, slug: string) { return factsCycleImpl.listPageStates(this.executeRaw.bind(this), sourceId, slug); }
   countSegmentedVersionsOfPage(sourceId: string, slug: string) { return factsCycleImpl.countSegmentedVersionsOfPage(this.executeRaw.bind(this), sourceId, slug); }
 
@@ -2078,6 +2081,7 @@ export class PostgresEngine implements BrainEngine {
   countConversationWindowFacts(sourceId: string, slug: string, key: string) { return factsConversationImpl.countConversationWindowFacts(this.executeRaw.bind(this), sourceId, slug, key); }
   countConversationFactsOutsideWindows(sourceId: string, slug: string, keys: readonly string[]) { return factsConversationImpl.countConversationFactsOutsideWindows(this.executeRaw.bind(this), sourceId, slug, keys); }
   clearConversationPageFacts(sourceId: string, slug: string, windows?: { keys: readonly string[]; keep: boolean; unanchored: boolean }) { return factsConversationImpl.clearConversationPageFacts(this.executeRaw.bind(this), sourceId, slug, windows); }
+  narrowConversationExpiredCopies(sourceId: string, slug: string, facts: string[]) { return factsConversationImpl.narrowConversationExpiredCopies(this.executeRaw.bind(this), sourceId, slug, facts); }
   findSameClaimFenceRow(sourceId: string, slug: string, fact: string, source: string | null) { return factsConversationImpl.findSameClaimFenceRow(this.executeRaw.bind(this), sourceId, slug, fact, source); }
   findOntologyTwin(sourceId: string, slug: string, factId: number) { return factsConversationImpl.findOntologyTwin(this.executeRaw.bind(this), sourceId, slug, factId); }
   readRelinkSource(sourceId: string) { return factsConversationImpl.readRelinkSource(this.executeRaw.bind(this), sourceId); }
@@ -2129,6 +2133,7 @@ export class PostgresEngine implements BrainEngine {
   listCallOffCueFacts(scope: factsTrustImpl.FactPoolScope, pairs: ReadonlyArray<{ source_id: string; entity_slug: string }>) { return factsRecallImpl.listCallOffCueFacts(this.executeRaw.bind(this), scope, pairs); }
   listPoolEntityPairs(scope: factsTrustImpl.FactPoolScope, filters: factsTrustImpl.FactPoolFilters) { return factsRecallImpl.listPoolEntityPairs(this.executeRaw.bind(this), scope, filters); }
   listFactRowsByIds(sourceIds: readonly string[], ids: readonly number[]) { return factsRecallImpl.listFactRowsByIds(this.executeRaw.bind(this), sourceIds, ids); }
+  listPooledFactRows(scope: factsTrustImpl.FactPoolScope, filters: factsTrustImpl.FactPoolFilters | undefined, ids: readonly number[]) { return factsRecallImpl.listPooledFactRows(this.executeRaw.bind(this), scope, filters, ids); }
   listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string) { return factsTrustImpl.listOntologyStreamSlugs(this.executeRaw.bind(this), sourceId, entitySlug, dimension); }
   readOntologyRival(sourceId: string, entitySlug: string, dimension: string, excludeId: number) { return factsTrustImpl.readOntologyRival(this.executeRaw.bind(this), sourceId, entitySlug, dimension, excludeId); }
   listBeliefStreamSlugs(table: 'facts' | 'takes' | 'pages', ids: readonly number[]) { return factsTrustImpl.listBeliefStreamSlugs(this.executeRaw.bind(this), table, ids); }
@@ -2149,6 +2154,7 @@ export class PostgresEngine implements BrainEngine {
   // Shared-skill membership (engine-sql/shared-skill-members.ts)
   readSharedSkillCatalogIdentity() { return sharedSkillMembersImpl.readSharedSkillCatalogIdentity(this.autocommitSql); }
   listSharedSkillCatalogHeads(q: SharedSkillMembersSql.SharedSkillHeadQuery) { return sharedSkillMembersImpl.listSharedSkillCatalogHeads(this.engineSql, q); }
+  readSharedSkillPackRow(sourceId: string, incarnation: string) { return sharedSkillMembersImpl.readSharedSkillPackRow(this.engineSql, sourceId, incarnation); }
   readSharedSkillPolicyRow(sourceId: string, incarnation: string, lock: boolean) { return sharedSkillMembersImpl.readSharedSkillPolicyRow(this.engineSql, sourceId, incarnation, lock); }
   writeSharedSkillPolicy(w: SharedSkillMembersSql.SharedSkillPolicyWrite) { return sharedSkillMembersImpl.writeSharedSkillPolicy(this.autocommitSql, w); }
   writeSharedSkillRevision(w: SharedSkillMembersSql.SharedSkillRevisionWrite) { return sharedSkillMembersImpl.writeSharedSkillRevision(this.autocommitSql, w); }
@@ -2437,6 +2443,7 @@ export class PostgresEngine implements BrainEngine {
   listRetiredDeactivations() { return connectGateImpl.listRetiredDeactivations(unscopedExecutor(this.engineSql, 'connect gate: persistence read ran unscoped through executeRaw')); }
   // Group A (decide store). The reads a doctor check reaches run bounded: they honour a read deadline as the typed preparation reads do (statement-deadline.ts BOUNDED_TYPED_READS).
   private async decideRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>): Promise<T> { throwIfRequestAborted(); return this.preparationRead(exec => fn(unscopedExecutor(exec, 'decide store: master engine.executeRaw, unscoped (it refused an aborted request, GBRA-156)'))); }
+
   private async engineRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>): Promise<T> { throwIfRequestAborted(); return this.preparationRead(exec => fn(unscopedExecutor(abortGuarded(exec), 'N3 typed read: master engine.executeRaw, unscoped (it refused an aborted request and kept its deadline)'))); } // master's executeRaw reads: refuse an aborted request (GBRA-156); end at a doctor deadline or preparation clock (BOUNDED_TYPED_READS, TYPED_PREPARATION_READS)
   readDecideState(key: string) { return this.decideRead(exec => decideStoreImpl.readDecideState(exec, key)); }
   upsertDecideState(key: string, value: string) { return decideStoreImpl.upsertDecideState(this, key, value); }
@@ -2505,6 +2512,12 @@ export class PostgresEngine implements BrainEngine {
   listKnownBeliefSubjectKeys(sourceId: string, keys: readonly string[]) { return beliefPurgeLedgerImpl.listKnownBeliefSubjectKeys(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, keys); }
   async listCoveredSources(subjectKey: string) { return this.engineRead(exec => beliefImpl.listCoveredSources(exec, subjectKey)); }
   isFolderRestricted(sourceId: string, slug: string) { return this.preparationRead(exec => accessControlImpl.isFolderRestricted(unscopedExecutor(exec, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug)); }
+  readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string }, opts?: { limit?: number; timeoutMs?: number }) { return entityReadsImpl.readIgnoredPrivacyLabelPages(this, sourceId, scope, opts); }
+  readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }) { return entityReadsImpl.readLivePageFrontmatter(this, sourceId, slug, opts); }
+  listLocalPathSources() { return this.ownRawRead(exec => sourcesImpl.listLocalPathSources(exec)); }
+  listSourceRoutingRows() { return this.ownRawRead(exec => sourcesImpl.listSourceRoutingRows(exec)); }
+  countDefaultSourceSplit() { return this.ownRawRead(exec => sourcesImpl.countDefaultSourceSplit(exec)); }
+  readSourceRow(sourceId: string) { return this.ownRawRead(exec => sourcesImpl.readSourceRow(exec, sourceId)); }
   // The member lookup and the folder access read run through this engine's executeRaw, as access/caller.ts did; under a
   // preparer's read deadline they run as the other typed preparation reads do (preparationRead), ending at the deadline.
   readLiveMember(via: MemberBindingVia, key: string) { return this.ownRawRead(exec => accessControlImpl.readLiveMember(exec, via, key)); }
@@ -2706,8 +2719,6 @@ export class PostgresEngine implements BrainEngine {
   listNameVariantCardCandidates(sourceId: string, q: entityReadsImpl.NameVariantCandidateQuery, opts?: { excludePrivate?: boolean }) { return this.preparationRead(exec => entityReadsImpl.listNameVariantCardCandidates(unscopedExecutor(exec, 'entities: name variant card candidates ran unscoped through executeRaw'), sourceId, q, opts)); }
   countDistinctInboundLinkers(sourceIds: readonly string[], slugs: readonly string[]) { return this.preparationRead(exec => entityReadsImpl.countDistinctInboundLinkers(unscopedExecutor(exec, 'entities: inbound linkers ran unscoped through executeRaw'), sourceIds, slugs)); }
   readExtractionLagCounts(q: entityReadsImpl.ExtractionLagQuery) { return entityReadsImpl.readExtractionLagCounts(this, q); }
-  readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string }, opts?: { limit?: number; timeoutMs?: number }) { return entityReadsImpl.readIgnoredPrivacyLabelPages(this, sourceId, scope, opts); }
-  readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }) { return entityReadsImpl.readLivePageFrontmatter(this, sourceId, slug, opts); }
   readEntityAnchoredPages(sourceId: string, entitySlug: string) { return entityReadsImpl.readEntityAnchoredPages(this, sourceId, entitySlug); }
   readPageTitlesById(ids: readonly number[]) { return entityReadsImpl.readPageTitlesById(this, ids); }
   readImageSealProbe(sourceId: string, slug: string) { return this.ownRawRead(exec => entityReadsImpl.readImageSealProbe(exec, sourceId, slug)); }
@@ -2715,19 +2726,15 @@ export class PostgresEngine implements BrainEngine {
   readPrefixAnchoredPages(sourceId: string, prefix: string) { return this.ownRawRead(exec => entityReadsImpl.readPrefixAnchoredPages(exec, sourceId, prefix)); }
   readPrivateOnlySlugs(slugs: readonly string[], scope?: pageVisibilityImpl.PrivateOnlySlugScope, opts?: { includeDeleted?: boolean }) { return this.ownRawRead(exec => pageVisibilityImpl.readPrivateOnlySlugs(exec, slugs, scope, opts)); }
   readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]) { return entityReadsImpl.readTextMentionPages(this, sourceIds, slugs); }
-  listLocalPathSources() { return sourcesImpl.listLocalPathSources(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
   listSourcePathRows() { return sourcesImpl.listSourcePathRows(unscopedExecutor(this.engineSql, 'sources: sources add read it unscoped through executeRaw')); }
   readPlainSyncSource(sourceId: string) { return sourcesImpl.readPlainSyncSource(unscopedExecutor(this.engineSql, 'sources: plain-directory sync read it unscoped through executeRaw'), sourceId); }
   readOwnerOnlySourcesPresent() { return this.preparationRead(exec => sourcesImpl.readOwnerOnlySourcesPresent(unscopedExecutor(refuseAborted(exec), 'sources: the owner-only check read it unscoped through executeRaw'), ownerOnlyLineageReadable(this))); }
   readOwnerOnlySourceConfig(sourceId: string) { return this.preparationRead(exec => sourcesImpl.readOwnerOnlySourceConfig(unscopedExecutor(refuseAborted(exec), 'sources: the owner-only check read it unscoped through executeRaw'), sourceId)); }
-  listSourceRoutingRows() { return sourcesImpl.listSourceRoutingRows(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
-  countDefaultSourceSplit() { return sourcesImpl.countDefaultSourceSplit(unscopedExecutor(this.engineSql, 'sources: the default-write guard read it unscoped through executeRaw')); }
   listStaleSyncSourceIds() { return sourcesImpl.listStaleSyncSourceIds(unscopedExecutor(this.engineSql, 'sources: the advisor read it unscoped through executeRaw')); }
   listSourceIds() { return this.engineSqlRead(exec => sourcesImpl.listSourceIds(unscopedExecutor(exec, 'sources: get_backlinks read it unscoped through executeRaw'))); }
   readSoleSourceId() { return this.engineSqlRead(exec => sourcesImpl.readSoleSourceId(unscopedExecutor(exec, 'sources: the corpus source check read it unscoped through executeRaw'))); }
   readFirstSourceId() { return this.engineSqlRead(exec => sourcesImpl.readFirstSourceId(unscopedExecutor(exec, 'sources: doctor origin_twins read it unscoped through executeRaw'))); }
   lockAllSourceRows(mode: 'update' | 'share') { return sourcesImpl.lockAllSourceRows(this.autocommitSql, mode); }
-  readSourceRow(sourceId: string) { return this.engineSqlRead(exec => sourcesImpl.readSourceRow(unscopedExecutor(exec, 'sources: source checks read it unscoped through executeRaw'), sourceId)); }
   readLiveSlugAliases(sourceId: string, targets: readonly string[]) { return this.engineSqlRead(exec => linkSlugReadsImpl.readLiveSlugAliases(unscopedExecutor(exec, 'link preparation: the live alias targets read unscoped through executeRaw'), sourceId, targets)); }
   readSourceSlugProbe(sourceId: string, afterId: number) { return this.engineSqlRead(exec => linkSlugReadsImpl.readSourceSlugProbe(unscopedExecutor(exec, 'link preparation: the source slug fingerprint read unscoped through executeRaw'), sourceId, afterId)); }
   readStoredSlugSpellings(key: string, scope: slugSpellingsImpl.StoredSpellingScope, after: string, keys?: readonly string[] | null) { return this.engineSqlRead(exec => slugSpellingsImpl.readStoredSlugSpellings(unscopedExecutor(exec, 'slug params: the stored-spelling scan read unscoped through executeRaw'), key, scope, after, keys)); }
@@ -2745,7 +2752,6 @@ export class PostgresEngine implements BrainEngine {
   isSourceClaimed(sourceId: string) { return sourcesImpl.isSourceClaimed(unscopedExecutor(this.engineSql, 'sources: sync-authority read the claim unscoped through executeRaw'), sourceId); }
   readSourceChunkerVersion(sourceId: string) { return sourcesImpl.readSourceChunkerVersion(unscopedExecutor(this.engineSql, 'sources: sync preflight read it unscoped through executeRaw'), sourceId); }
   setSourceChunkerVersion(sourceId: string, version: string) { return sourcesImpl.setSourceChunkerVersion(this.autocommitSql, sourceId, version); }
-  markSourceSynced(sourceId: string, opts?: sourcesImpl.SourceSyncStampOptions) { return sourcesImpl.markSourceSynced(this.autocommitSql, sourceId, opts); } // autocommitSql: keeps executeRaw's read-only-default retry (#7183)
   advanceSyncCheckpoint(input: sourcesImpl.SyncCheckpointAdvance) { return sourcesImpl.advanceSyncCheckpoint(this.autocommitSql, input); }
   renameSource(sourceId: string, name: string) { return sourcesImpl.renameSource(this.autocommitSql, sourceId, name); }
   readFederationExposedPages(sourceId: string, hidePrivate: boolean) { return federationExposureImpl.readFederationExposedPages(unscopedExecutor(this.engineSql, 'federation warning: the exposed pages read unscoped through executeRaw'), sourceId, hidePrivate); }
@@ -2862,11 +2868,16 @@ export class PostgresEngine implements BrainEngine {
   async listSourceLocalPaths(): Promise<string[]> {
     return this.preparationRead(exec => sourcesImpl.listSourceLocalPaths(unscopedExecutor(exec, 'sources: unscoped on master (the filesystem lock read it through executeRaw)')));
   }
+  // Each fallback shape is its own bounded read: under a read deadline a shared transaction would stay failed after the first missing-column error (25P02).
+  listSourceRecords() { return cliReadsImpl.listSourceRecords(this, run => this.ownRawRead(run)); }
+  listActiveSourceConfigs() { return this.ownRawRead(exec => sourcesImpl.listActiveSourceConfigs(exec)); }
+  markSourceSynced(sourceId: string, opts?: sourcesImpl.SourceSyncStampOptions) { return sourcesImpl.markSourceSynced(this.autocommitSql, sourceId, opts); } // autocommitSql: keeps executeRaw's read-only-default retry (#7183)
+  readSourceIncarnation(sourceId: string) { return this.ownRawRead(exec => cliReadsImpl.readSourceIncarnation(exec, sourceId)); }
+  hasCompanyBrainReceipt(sourceId: string) { return this.ownRawRead(exec => cliReadsImpl.hasCompanyBrainReceipt(exec, sourceId)); }
+  readGuestSourceRow(sourceId: string) { return this.ownRawRead(exec => cliReadsImpl.readGuestSourceRow(exec, sourceId)); }
 
   // The CLI import and extract reads that ran unscoped through executeRaw (engine-sql/cli-reads-import.ts), on the current connection.
   private get cliReads() { return unscopedExecutor(refuseWrites(this.engineSql), 'cli reads: the import and extract paths ran these unscoped through executeRaw'); }
-  listSourceRecords() { return cliReadsImpl.listSourceRecords(this.cliReads); }
-  readSourceIncarnation(sourceId: string) { return this.engineSqlRead(exec => cliReadsImpl.readSourceIncarnation(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'), sourceId)); }
   readSyncDispatchRow(sourceId: string) { return syncDispatchImpl.readSyncDispatchRow(this, sourceId); }
   readRetainedSources(sourceIds: readonly string[]) { return this.engineSqlRead(exec => cliReadsImpl.readRetainedSources(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'), sourceIds)); }
   listLiveSlugSourceIds(slug: string) { return listReadsImpl.listLiveSlugSourceIds(this.executeRaw.bind(this), slug); }
@@ -2903,8 +2914,6 @@ export class PostgresEngine implements BrainEngine {
   readTakeHorizonRows(takeIds: readonly number[] | null) { return listReadsImpl.readTakeHorizonRows(this.executeRaw.bind(this), takeIds); }
   readLatestTakeGrades(takeIds: readonly number[]) { return listReadsImpl.readLatestTakeGrades(this.executeRaw.bind(this), takeIds); }
   readBeliefCoverageEvents(sourceId: string) { return beliefLedgerImpl.readBeliefCoverageEvents(this, sourceId); }
-  hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.cliReads, sourceId); }
-  readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this.cliReads, sourceId); }
   hasGuestSourceRow(sourceId: string) { return this.preparationRead(exec => cliReadsImpl.hasGuestSourceRow(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'), sourceId)); }
   upsertGuestSource(sourceId: string, writers: readonly string[], trustCeiling: string) { return collateGuestSourcesImpl.upsertGuestSource(this.executeRaw.bind(this), sourceId, writers, trustCeiling); }
   listGuestNotes(slug: string, guestSource?: string) { return collateGuestSourcesImpl.listGuestNotes(this.executeRaw.bind(this), slug, guestSource); }
@@ -3587,6 +3596,7 @@ export class PostgresEngine implements BrainEngine {
         }, { alwaysTransaction: true, jitOff: true, settings: () => ({ statement_timeout: String(remainingVectorBudget(deadline)) }) });
       },
       opts?.onVectorPoolMeta,
+      !!stmt.indexWalkSql && opts?.hnswIterativeScan !== 'off',
     );
     return rows.map(rowToSearchResult);
   }
@@ -3642,12 +3652,13 @@ export class PostgresEngine implements BrainEngine {
     const deadline = performance.now() + remainingMs;
     const shape = statementFor(true);
     const walk = indexWalk && !!shape.indexWalkSql;
+    const joined = !!shape.indexWalkSql && !walk && !(scopeScan && shape.scopeScanSql) && !exact;
     return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async tx => {
       const stmt = statementFor(await chunkManifestReads(this, this.engineSqlOn(tx)));
       const bound = [...stmt.params];
       bound[stmt.innerLimitIdx] = exact ? null : innerLimit;
       return run(tx, (scopeScan && stmt.scopeScanSql) || (walk && stmt.indexWalkSql) || (exact ? stmt.exactSql : stmt.sql), bound as Parameters<typeof tx.unsafe>[1]);
-    }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? shape.indexWalkOverfetch : undefined, !!shape.indexWalkSql && !walk && !(scopeScan && shape.scopeScanSql) && !exact) });
+    }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? shape.indexWalkOverfetch : undefined, joined, joined) });
   }
 
   async getEmbeddingsByChunkIds(ids: number[], column: string = 'embedding'): Promise<Map<number, Float32Array>> {
@@ -5004,6 +5015,7 @@ export class PostgresEngine implements BrainEngine {
   readPageVersionRow(versionId: number, pageId: number) { return overwriteReads.readPageVersionRow(this, versionId, pageId); }
   async replaceVersionChangeReasons(sourceId: string, rows: ReadonlyArray<{ id: number; reason: string }>, replacement: string) { return versionReasons.replaceVersionChangeReasons(this, sourceId, rows, replacement); }
   async pruneHoldingPageVersions(pageId: number) { return versionPrune.pruneHoldingPageVersions(this, pageId); }
+  async pruneInlineVersionsById(page: { pageId: number; sourceId: string; slug: string; type?: string | null; keep?: number | null }, versionIds: readonly number[]) { return versionPrune.pruneInlineVersionsById(this, page, versionIds); }
 
   async revertToVersion(
     slug: string,
@@ -5027,7 +5039,11 @@ export class PostgresEngine implements BrainEngine {
     const scope: string[] | null = opts?.sourceIds ?? (opts?.sourceId ? [opts.sourceId] : null);
     // S2: embedded_count keys on the registry-ACTIVE column (fallback to
     // legacy on a broken registry — diagnostics never crash).
+    // A cancelled request sends none of these statements (executeRaw refused it, and the import's schema warning used to read a count through it):
+    // checked before the registry lookup and again after it, since the abort can arrive while that lookup is awaited.
+    throwIfRequestAborted();
     const colId = await this.activeEmbeddingColId({ fallbackToLegacy: true });
+    throwIfRequestAborted();
     const [stats] = await sql`
       SELECT
         -- v0.26.5: exclude soft-deleted from page_count. Same posture as the
@@ -5056,6 +5072,7 @@ export class PostgresEngine implements BrainEngine {
           WHERE (${scope}::text[] IS NULL OR p.source_id = ANY(${scope}))) as timeline_entry_count
     `;
 
+    throwIfRequestAborted();
     const types = await sql`
       SELECT type, count(*)::int as count FROM pages p WHERE p.deleted_at IS NULL
         AND (${scope}::text[] IS NULL OR p.source_id = ANY(${scope}))
@@ -5323,7 +5340,13 @@ export class PostgresEngine implements BrainEngine {
     });
   }
 
-  async getConfig(key: string): Promise<string | null> {
+  async getConfig(key: string, opts?: { timeoutMs?: number }): Promise<string | null> {
+    // A caller that bounds the read (the privacy notice) reads the key itself, as master's one raw statement did: it takes no part in the request
+    // snapshot, whose lazy bulk read has no bound. The statement is one the server ends at the bound, not a read the client walks away from.
+    if (opts?.timeoutMs) {
+      const rows = await this.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [key], { timeoutMs: opts.timeoutMs });
+      return rows.length > 0 ? rows[0].value : null;
+    }
     const held = await requestConfigValue(this, key);
     if (held !== undefined) return held;
     // #1603: a transient pooler drop on this read used to throw / fall through
@@ -5735,7 +5758,7 @@ export class PostgresEngine implements BrainEngine {
   // Engine migration source reads (engine-sql/engine-migration.ts).
   async readEngineMigrationHistory() { return engineMigration.readEngineMigrationHistory(this); }
   async readMigrationRows(table: engineMigration.MigrationTable) { return engineMigration.readMigrationRows(this, table); }
-  async readMigrationPageColumns(slug: string, sourceId: string) { return engineMigration.readMigrationPageColumns(this, slug, sourceId); }
+  async readMigrationPageColumns(slug: string, sourceId: string, contentHash?: string | null) { return engineMigration.readMigrationPageColumns(this, slug, sourceId, contentHash ?? null); }
   async listManualLinkTransitions(slug: string, sourceId: string) { return engineMigration.listManualLinkTransitions(this, slug, sourceId); }
   async countLiveTimelineEntries() { return engineMigration.countLiveTimelineEntries(this); }
 
@@ -6098,8 +6121,8 @@ export class PostgresEngine implements BrainEngine {
   listFactWithdrawalKeys(sourceId: string, limit: number) { return trustWithdrawalsImpl.listFactWithdrawalKeys(unscopedExecutor(this.engineSql, 'trust: the withdrawal ledger read ran through executeRaw unscoped'), sourceId, limit); }
   readFactCacheWatermark(sourceId: string) { return trustWithdrawalsImpl.readFactCacheWatermark(unscopedExecutor(this.engineSql, 'trust: the withdrawal ledger read ran through executeRaw unscoped'), sourceId); }
   readTrustGeneration() { return trustWithdrawalsImpl.readTrustGeneration(unscopedExecutor(this.engineSql, 'trust: the policy generation read ran through executeRaw unscoped')); }
-  readSourcePurgeFlags(sourceId: string) { return trustWithdrawalsImpl.readSourcePurgeFlags(unscopedExecutor(this.engineSql, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId); }
-  listPurgedTakeRows(sourceId: string, takes: readonly trustWithdrawalsImpl.TakeClaimRow[], subject: string | null) { return trustWithdrawalsImpl.listPurgedTakeRows(unscopedExecutor(this.engineSql, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId, takes, subject); }
+  readSourcePurgeFlags(sourceId: string) { return this.engineSqlRead(exec => trustWithdrawalsImpl.readSourcePurgeFlags(unscopedExecutor(exec, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId)); }
+  listPurgedTakeRows(sourceId: string, takes: readonly trustWithdrawalsImpl.TakeClaimRow[], subject: string | null) { return this.engineSqlRead(exec => trustWithdrawalsImpl.listPurgedTakeRows(unscopedExecutor(exec, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId, takes, subject)); }
   lockFactForWithdrawal(spec: trustWithdrawalsImpl.WithdrawalLockSpec) { return trustWithdrawalsImpl.lockFactForWithdrawal(this.autocommitSql, spec); }
   queueWithdrawalReview(sourceId: string, factRef: string) { return trustWithdrawalsImpl.queueWithdrawalReview(this.autocommitSql, sourceId, factRef); }
   listSegmentedPagesBySlug(sourceId: string, slugs: readonly string[]) { return trustWithdrawalsImpl.listSegmentedPagesBySlug(unscopedExecutor(this.engineSql, 'trust: the withdrawal and purge ledger read ran through executeRaw unscoped'), sourceId, slugs); }

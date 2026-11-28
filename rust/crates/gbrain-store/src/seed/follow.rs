@@ -22,6 +22,7 @@ mod fingerprints;
 mod remove_core;
 mod remove_history;
 mod remove_ops;
+mod remove_state;
 #[cfg(test)]
 mod tests;
 
@@ -110,6 +111,7 @@ pub(super) fn follow_spec(relation: &str) -> Option<&'static Follow> {
         .iter()
         .chain(remove_history::SPECS)
         .chain(remove_ops::SPECS)
+        .chain(remove_state::SPECS)
         .find(|(name, _)| *name == relation)
         .map(|(_, spec)| spec)
 }
@@ -608,7 +610,10 @@ impl<'a> Apply<'a> {
         let named: BTreeSet<&[u8]> = todo.iter().map(|t| t.sort).collect();
         let mut kept = Vec::new();
         for t in todo {
-            if self.moves_key(&t) && self.blocked(tx, &t, &named).map_err(|e| wrap(t.n, e))? {
+            // A row that takes a hash a stored token holds is checked the same way, whatever its old version held.
+            let takes =
+                self.moves_key(&t) || self.held_by(&*tx, &t).map_err(|e| wrap(t.n, e))?.is_some();
+            if takes && self.blocked(tx, &t, &named).map_err(|e| wrap(t.n, e))? {
                 self.result.skipped_older += 1;
             } else {
                 kept.push(t);
@@ -733,6 +738,20 @@ impl<'a> Apply<'a> {
         Ok(false)
     }
 
+    /// The identity of the stored row, other than the call's own, that holds a unique key the digest identity does not
+    /// carry. Only `access_tokens` has one: its hash, which stays out of every digest entry.
+    fn held_by(&self, tx: &dyn KvRead, todo: &Todo) -> Result<Option<Identity>> {
+        if self.relation != "access_tokens" {
+            return Ok(None);
+        }
+        let Some(hash) = todo.row.value("token_hash") else {
+            return Ok(None);
+        };
+        Ok(crate::jobs::token_hash_holder(tx, hash)?
+            .filter(|id| todo.fresh.get("id") != Some(id))
+            .map(|id| Identity::from([("id".to_owned(), id)])))
+    }
+
     /// The live entries, other than the call's own, that hold a unique natural key of the row.
     fn holders(
         &mut self,
@@ -740,7 +759,8 @@ impl<'a> Apply<'a> {
         todo: &Todo,
         sorts: &BTreeSet<&[u8]>,
     ) -> Result<Vec<(Vec<u8>, Entry)>> {
-        if self.follow.unique.is_empty() {
+        let held = self.held_by(&*tx, todo)?;
+        if self.follow.unique.is_empty() && held.is_none() {
             return Ok(Vec::new());
         }
         if self.live.is_none() {
@@ -748,12 +768,13 @@ impl<'a> Apply<'a> {
         }
         let unique = self.follow.unique;
         let holds = |entry: &Entry| {
-            unique.iter().any(|set| {
-                set.iter().any(|col| todo.fresh.contains_key(*col))
-                    && set
-                        .iter()
-                        .all(|col| entry.identity.get(*col) == todo.fresh.get(*col))
-            })
+            held.as_ref() == Some(&entry.identity)
+                || unique.iter().any(|set| {
+                    set.iter().any(|col| todo.fresh.contains_key(*col))
+                        && set
+                            .iter()
+                            .all(|col| entry.identity.get(*col) == todo.fresh.get(*col))
+                })
         };
         Ok(self
             .live
@@ -1043,6 +1064,19 @@ const DEPENDENTS: &[(&str, &[Dependent])] = &[
             ),
             ("page_facts_reconcile", &[("page_id", "id")]),
             ("chronicle_page_state", &[("page_id", "id")]),
+            ("entity_identities", &[("page_id", "id")]),
+            (
+                "link_relationships",
+                &[("from_page_id", "id"), ("to_page_id", "id")],
+            ),
+            (
+                "link_transitions",
+                &[
+                    ("from_page_id", "id"),
+                    ("to_page_id", "id"),
+                    ("origin_page_id", "id"),
+                ],
+            ),
         ],
     ),
     (

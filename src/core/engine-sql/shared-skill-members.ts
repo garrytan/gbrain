@@ -91,6 +91,14 @@ export async function listSharedSkillCatalogHeads(exec: SqlExecutor, q: SharedSk
   [q.sourceIds, q.limit, q.sourceId, q.sourceIncarnation, q.packId, q.name, q.hidePrivate]);
 }
 
+/** A source incarnation's sealed skill pack: its id, revision, manifest and manifest hash, or undefined. */
+export interface SharedSkillPackRow { pack_id: string; revision: string; manifest: Record<string, unknown>; manifest_hash: string }
+export async function readSharedSkillPackRow(exec: SqlExecutor, sourceId: string, incarnation: string): Promise<SharedSkillPackRow | undefined> {
+  const [row] = await exec.executeRaw<SharedSkillPackRow>(
+    'SELECT pack_id,revision::text AS revision,manifest,manifest_hash FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [sourceId, incarnation]);
+  return row;
+}
+
 /** A source incarnation's stored publication policy and its epoch, or undefined; `lock` reads it FOR SHARE. */
 export async function readSharedSkillPolicyRow(exec: SqlExecutor, sourceId: string, incarnation: string, lock: boolean): Promise<{ epoch: string; policy: unknown } | undefined> {
   const sql = lock

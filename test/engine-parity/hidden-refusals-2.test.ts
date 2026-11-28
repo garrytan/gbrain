@@ -286,7 +286,8 @@ describe('engine parity: fail-soft reads on the search, put and entity paths', (
     const answer = { timeline: await read(true, SRC), low: await read(false, SRC), second: await read(false, 'second') };
     expect(answer).toEqual({
       timeline: [['notes/euro', 38 + 21 + 2, 40 + 21 + 4], ['notes/short', 6, 6], ['notes/spaces', 11, 12]],
-      low: [['notes/euro', 38, 40], ['notes/short', 6, 6], ['notes/spaces', 11, 12]],
+      // 6d2e6bd3bf: without the timeline the characters stay the body's, but the bytes still count the whole timeline.
+      low: [['notes/euro', 38, 40 + 4], ['notes/short', 6, 6], ['notes/spaces', 11, 12 + 3]],
       second: [['notes/other', 41, 41]],
     });
     return answer;

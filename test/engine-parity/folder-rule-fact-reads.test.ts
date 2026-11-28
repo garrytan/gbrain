@@ -121,7 +121,7 @@ describe('engine parity: remote fact reads of a member under a folder rule', () 
     }, (engine, backend) => inFreshHome(async () => {
       await seed(engine, backend);
       const recent = await remote(engine, member, 'recall', {});
-      const since = factIds(await remote(engine, member, 'recall', { since: '2000-01-01T00:00:00Z' }));
+      const since = factIds(await remote(engine, member, 'recall', { since: '2000-01-01T00:00:00Z', include_undated: true }));
       const byEntity: Record<string, unknown> = {};
       for (const f of FACTS) if (f.entity) byEntity[f.entity] = factIds(await remote(engine, member, 'recall', { entity: f.entity }));
       const pages: Record<string, unknown> = {};

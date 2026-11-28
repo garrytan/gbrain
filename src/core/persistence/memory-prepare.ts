@@ -29,8 +29,8 @@ import { claimColumns, storedClaim } from '../facts/typed-claim.ts';
 import { parseStoredActor } from '../access/actor-model.ts';
 import { withoutBody } from '../page-body/page-shape.ts';
 import { readConfigRows } from '../config-values.ts';
-import { ruleOwnerOnly } from '../rules/admission.ts';
-import { isRuleSlug } from '../rules/record.ts';
+import { refuseRuleFactTarget } from '../rules/admission.ts';
+import { pageFactDate } from '../facts/extract-from-fence.ts';
 
 const EMBEDDING_CONFIG_KEYS = ['embedding_dimensions', 'embedding_model'] as const;
 /** The embedding config rows as compared before and under lock: each key and value, in key order. */
@@ -79,8 +79,9 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       { fix: requestReceiptFix(row) });
   }
   const p = row.intent;
-  // C2: a standing rule page changes only through correct or gbrain rules; a remote fact on it would move its revision.
-  if (row.authority?.remote !== false && (isRuleSlug(row.slug) || isRuleSlug(p.entity_slug))) throw ruleOwnerOnly(isRuleSlug(row.slug) ? row.slug : String(p.entity_slug));
+  // C2: a standing rule page changes only through correct or gbrain rules; a fact on it, local or remote, and whatever
+  // redirect led there, would move its revision.
+  refuseRuleFactTarget(row.slug, p.entity_slug);
   // GST-2249 W1: a stored save made for an attested person never publishes shared, whenever it was admitted. An audience
   // (on_behalf_of) is not an attested person, so a shared agent's share: true still publishes.
   if (p.share === true && parseStoredActor(row.authority?.actingFor)) throw attestedShareRefused(opError);
@@ -88,8 +89,12 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const input: SingleFactIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as SingleFactIntent['kind'],
     visibility: (p.visibility ?? 'world') as SingleFactIntent['visibility'], entity_slug: p.entity_slug as string | null,
     ...(p.member_page === true || p.scope_page === true ? { page_slug: row.slug } : {}),
-    ...(claim ? { slot: { ...claim, valid_from: String(p.valid_from) } } : {}) };
+    ...(claim ? { slot: { ...claim, valid_from: p.valid_from == null ? null : String(p.valid_from) } } : {}) };
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
+  // #10288: a fact with no event date takes the page's fact date, as the projection of its empty fence cell does.
+  const pageDate = p.valid_from == null && snapshot ? pageFactDate({ slug: row.slug, frontmatter: snapshot.page.frontmatter, timeZone: await engine.getConfig('brain.timezone') }) : null;
+  const statedFrom = p.valid_from == null ? pageDate?.toISOString() ?? null : String(p.valid_from);
+  if (input.slot) input.slot = { ...input.slot, valid_from: statedFrom };
   if ((snapshot?.page.id ?? null) !== row.page_id && !rememberAcceptsPageCreatedSince(row, snapshot)) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
   if (p.member_page === true && snapshot && !memberPageIsOwn(row.slug, snapshot.page.frontmatter)) throw memberPageNotOwned(row.slug);
   if (p.scope_page === true && snapshot && !await scopePageIsShared(engine, { ...withoutBody(snapshot.page), source_id: row.source_id, slug: row.slug })) throw scopePageNotShared(row.source_id);
@@ -166,30 +171,32 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       ...(claim && JSON.stringify(storedClaim(duplicate)) !== JSON.stringify(claim) ? { claim_ignored: 'existing_claim' } : {}) }) };
   }
   const validUntil = p.valid_until ? new Date(String(p.valid_until)) : null;
-  const validFrom = new Date(String(p.valid_from));
+  const validFrom = statedFrom == null ? null : new Date(statedFrom);
   const context = p.entity_inferred ? appendContextNote(null, inferenceNote(p.entity_inferred as InferredVia)) : undefined;
-  const fact: NewFact & { valid_from: Date } = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
+  const fact: NewFact & { valid_from: Date | null } = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
     confidence: 1, embedding, embedding_model, source_session: typeof p.session_id === 'string' ? p.session_id : null,
     ...(context ? { context } : {}), ...claimColumns(p) };
   // #5575 B3: the row-level write gate at the request's declared tier (ENG-18); a held fact inserts nothing.
   const gate = decideFactWrite({ fact: input.fact, context: context ?? null, source: fact.source }, { sourceId: row.source_id, slug: row.slug, pageId: snapshot?.page.id ?? row.page_id,
     payload: { fact: input.fact, kind: input.kind, visibility: input.visibility, entity_slug: input.entity_slug, source: fact.source, context: context ?? null,
-      valid_from: validFrom.toISOString(), valid_until: validUntil?.toISOString() ?? null, source_session: fact.source_session, ...claimColumns(p) },
+      valid_from: validFrom?.toISOString() ?? null, valid_until: validUntil?.toISOString() ?? null, source_session: fact.source_session, ...claimColumns(p) },
     input: gateInput(requestChannelTrust(row) ?? { tier: 'unknown', origin: null }, row.id), cfg: await loadWriteGateConfig(engine) });
   if (gate.action === 'reject') throw writeGateRejectedError(gate.assessment);
   if (gate.action === 'hold') return { observedRevision, noop: true, validate, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
   const retiredUntil = status === 'superseded' ? supersededValidUntil(decision.candidate!, validFrom) : null;
   // The fact is published as a row of its entity page's facts fence, file before facts row (facts/fence-fact-append.ts).
+  // #10288: the fence cell holds only a stated date; an empty one is indexed at the page's fact date there.
+  const cellFact = p.valid_from == null ? { ...fact, valid_from: null } : fact;
   let fence: FenceFactAppend | undefined;
   if (p.fence === true && (snapshot || isHoldingSlug(row.slug))) {
     const old = decision.candidate;
-    fence = await prepareFenceFactAppend(engine, row, config, snapshot, { fact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
+    fence = await prepareFenceFactAppend(engine, row, config, snapshot, { fact: cellFact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
       supersede: status === 'superseded' && old?.source_markdown_slug === row.slug && old.row_num != null ? { rowNum: Number(old.row_num), validUntil: retiredUntil } : undefined }, signal);
   } else if (p.fence === true && p.member_page === true) {
-    fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
+    fence = await prepareFenceFactCreate(engine, row, config, { fact: cellFact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
       frontmatter: memberPageFrontmatter(row.slug.slice(MEMBER_PAGE_PREFIX.length), new Date(row.created_at)), heading: `# Memory of ${row.slug.slice(MEMBER_PAGE_PREFIX.length)}` }, signal);
   } else if (p.fence === true && p.scope_page === true) {
-    fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
+    fence = await prepareFenceFactCreate(engine, row, config, { fact: cellFact, pendingTier: fenceAppendPendingTier(writerTier), ...(widening ? { storedVisibility: widening.from } : {}),
       frontmatter: scopePageFrontmatter(new Date(row.created_at)), heading: '# Scope memory' }, signal);
   }
   // GBRA-190 G4: linking a fact saved without an entity retires its holding row in the same publication.

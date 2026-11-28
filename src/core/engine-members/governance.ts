@@ -16,6 +16,8 @@ export interface GovernanceMembers {
   readSharedSkillCatalogIdentity(): Promise<SharedSkillMembersSql.SharedSkillCatalogIdentity | undefined>;
   /** The live shared-skill heads of live sources that match the query, in key order, at most `limit` rows. */
   listSharedSkillCatalogHeads(query: SharedSkillMembersSql.SharedSkillHeadQuery): Promise<SharedSkillMembersSql.SharedSkillHeadRow[]>;
+  /** A source incarnation's sealed skill pack (id, revision, manifest, manifest hash), or undefined. */
+  readSharedSkillPackRow(sourceId: string, incarnation: string): Promise<SharedSkillMembersSql.SharedSkillPackRow | undefined>;
   /** A source incarnation's stored publication policy and epoch, or undefined; `lock` reads it `FOR SHARE`. */
   readSharedSkillPolicyRow(sourceId: string, incarnation: string, lock: boolean): Promise<{ epoch: string; policy: unknown } | undefined>;
   /** Upserts a source incarnation's publication policy under a new epoch and appends its audit row. */

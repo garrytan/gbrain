@@ -98,6 +98,27 @@ fn activation_needs_a_registered_root_and_no_legacy_lock_then_sets_the_flag() {
 }
 
 #[test]
+fn activation_makes_the_reviewed_writer_admin_state_stale() {
+    let b = brain("ssp-admin-state");
+    attach(&b, "default", "/srv/brain");
+    let brain_row = |text: String| serde_json::from_str::<Value>(&text).unwrap()["brain"].clone();
+    let before = b.writer_admin_state_text().unwrap();
+    assert_eq!(
+        brain_row(before.clone())["skill_bundles_enabled"],
+        json!(false)
+    );
+    assert_eq!(brain_row(before.clone())["writer_protocol_floor"], json!(1));
+    b.activate_shared_skill_publication(false).unwrap();
+    let after = b.writer_admin_state_text().unwrap();
+    assert_eq!(
+        brain_row(after.clone())["skill_bundles_enabled"],
+        json!(true)
+    );
+    assert_eq!(brain_row(after.clone())["writer_protocol_floor"], json!(2));
+    assert_ne!(before, after);
+}
+
+#[test]
 fn the_source_read_names_aliases_at_the_same_path() {
     let b = brain("ssp-source");
     attach(&b, "default", "/srv/brain");

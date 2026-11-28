@@ -370,6 +370,46 @@ describe('engine parity: versions', () => {
   );
 
   parityTest(
+    'pruneInlineVersionsById deletes exactly the named inline versions of the live page, honors the type fence and keep, and records the history gap',
+    { methods: ['putPage', 'getPage', 'createVersion', 'getVersions', 'pruneInlineVersionsById', 'softDeletePage', 'pickValidTimeEdition'] },
+    async (engine) => {
+      const slug = 'notes/history';
+      const labels = new Map<string, string>();
+      await engine.putPage(slug, { type: 'note', title: 'History', compiled_truth: 'Body.', timeline: '', frontmatter: { valid_from: '2026-01-01' } });
+      const ids: number[] = [];
+      for (let i = 1; i <= 8; i++) { const v = await engine.createVersion(slug, { sourceId: 'default' }); ids.push(Number(v.id)); labels.set(String(v.id), `v${i}`); }
+      const pageId = Number((await engine.getPage(slug, { sourceId: 'default' }))!.id);
+      const gap = async () => (await engine.pickValidTimeEdition({ pageId, asOf: '2026-07-01', excludePrivate: false, pinOrd: null, inlineMaxBytes: 1_000_000 }))?.gap_at instanceof Date;
+      const kept = async () => (await engine.getVersions(slug, { sourceId: 'default', includeBody: false })).map((v) => labels.get(String(v.id)) ?? 'unlabelled');
+      const page = { pageId, sourceId: 'default', slug };
+      const gapBefore = await gap();
+      const refused = [
+        await engine.pruneInlineVersionsById(page, []),
+        await engine.pruneInlineVersionsById({ ...page, slug: 'notes/moved' }, [ids[0]!]),
+        await engine.pruneInlineVersionsById({ ...page, sourceId: 'other' }, [ids[0]!]),
+        await engine.pruneInlineVersionsById({ ...page, type: 'person' }, [ids[0]!]),
+        await engine.pruneInlineVersionsById({ ...page, pageId: 987_654 }, [ids[0]!]),
+      ];
+      const afterRefused = await kept();
+      const gapRefused = await gap();
+      const sparedNewest = await engine.pruneInlineVersionsById({ ...page, keep: 7 }, [ids[0]!, ids[7]!, 424_242]);
+      const afterKeep = await kept();
+      const named = await engine.pruneInlineVersionsById({ ...page, type: 'note' }, [ids[2]!, ids[3]!, ids[3]!]);
+      const afterNamed = await kept();
+      const again = await engine.pruneInlineVersionsById({ ...page, type: 'note' }, [ids[2]!, ids[3]!]);
+      const gapAfter = await gap();
+      await engine.softDeletePage(slug, { sourceId: 'default' });
+      const deleted = await engine.pruneInlineVersionsById(page, [ids[1]!]);
+      const result = { gapBefore, refused, afterRefused, gapRefused, sparedNewest, afterKeep, named, afterNamed, again, gapAfter, deleted };
+      expect(result).toEqual({
+        gapBefore: false, refused: [0, 0, 0, 0, 0], afterRefused: ['v8', 'v7', 'v6', 'v5', 'v4', 'v3', 'v2', 'v1'], gapRefused: false, sparedNewest: 1,
+        afterKeep: ['v8', 'v7', 'v6', 'v5', 'v4', 'v3', 'v2'], named: 2, afterNamed: ['v8', 'v7', 'v6', 'v5', 'v2'], again: 0, gapAfter: true, deleted: 0,
+      });
+      return result;
+    },
+  );
+
+  parityTest(
     'pruneHoldingPageVersions keeps the newest five versions, deletes the older ones and records the history gap',
     { methods: ['putPage', 'getPage', 'createVersion', 'getVersions', 'pruneHoldingPageVersions', 'pickValidTimeEdition'] },
     async (engine) => {

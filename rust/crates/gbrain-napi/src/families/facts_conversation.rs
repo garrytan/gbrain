@@ -11,8 +11,8 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::conversation::{
-    ClearPageArgs, ConversationPageArgs, WindowKeyArgs, WindowKeysArgs, WindowMoveArgs,
-    WindowStampArgs,
+    ClearPageArgs, ConversationPageArgs, NarrowCopiesArgs, WindowKeyArgs, WindowKeysArgs,
+    WindowMoveArgs, WindowStampArgs,
 };
 use gbrain_store::facts::conversation_reads::{
     BatchRequestArgs, CounterArgs, EmbeddedAmongArgs, OntologyTwinArgs, PagesToExtractArgs,
@@ -162,6 +162,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: ClearPageArgs = required(args, "clearConversationPageFacts args")?;
             s.clear_conversation_page_facts(&a)
+        })
+    }
+
+    /// `narrowConversationExpiredCopies`: resolves once the page's wider expired extractor copies of the named claims are private.
+    #[napi]
+    pub fn narrow_conversation_expired_copies<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: NarrowCopiesArgs = required(args, "narrowConversationExpiredCopies args")?;
+            s.narrow_conversation_expired_copies(&a)
         })
     }
 
@@ -360,7 +373,7 @@ impl Brain {
         })
     }
 
-    /// `listClearedRelinkedFacts`: resolves `{ fact, entity_slug, context }` rows.
+    /// `listClearedRelinkedFacts`: resolves `{ fact, entity_slug, context, carried }` rows.
     #[napi]
     pub fn list_cleared_relinked_facts<'env>(
         &self,

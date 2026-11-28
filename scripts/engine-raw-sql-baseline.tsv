@@ -191,7 +191,7 @@ src/core/cycle/derived-write-through.ts	execute_raw	5
 src/core/cycle/drift.ts	execute_raw	2
 src/core/cycle/extract-atoms-generation.ts	execute_raw	4
 src/core/cycle/extract-atoms-input.ts	execute_raw	6
-src/core/cycle/extract-atoms-page-state.ts	execute_raw	4
+src/core/cycle/extract-atoms-page-state.ts	execute_raw	10	GST-4020: latest-scan read, atom inventory, reused-atom hash move, the locked origin re-read, the discovery read clock and renamed-origin read sit with the module's scan-state SQL until extract_atoms state moves behind engine methods
 src/core/cycle/extract-atoms.ts	execute_raw	5
 src/core/cycle/extract-takes.ts	execute_raw	3
 src/core/cycle/inline-drain.ts	execute_raw	3
@@ -220,6 +220,13 @@ src/core/embedding-migration-worst-case.ts	execute_raw	3
 src/core/embedding-migration.ts	execute_raw	29
 src/core/embedding-restamp.ts	execute_raw	2
 src/core/embedding-state.ts	execute_raw	1
+src/core/engine-swap/capability.ts	execute_raw	1	the write-pause estimate reads pg_class.reltuples and the pending persistence_requests count of the PGLite primary being swapped; a planning read, not a storage method
+src/core/engine-swap/checkpoint.ts	execute_raw	1	the checkpoint check counts rows per table in a throwaway in-memory PGLite loaded from the dump; it is not the brain engine
+src/core/engine-swap/failback-copy.ts	execute_raw	18	failback writes the rows the Rust engine's typed read calls returned into the fenced old primary as the swap run (dependent-row deletes, id-keyed upserts of takes, files, facts, open loops and sources, page timestamps); the Rust side is never read with SQL
+src/core/engine-swap/failback-read.ts	execute_raw	1	failback's closed loss list reads the old primary's table and column names from information_schema; names only, read before any write
+src/core/engine-swap/fence.ts	execute_raw	1	the swap fence lists the tables to fence on the primary before installing gbrain_graduation_fence through the graduation helpers (same SQL family as graduation-schema.ts)
+src/core/engine-swap/gates.ts	execute_raw	2	the swap blockers count access_rules, access_tokens and oauth_clients rows on the primary; counts only, read before any write
+src/core/engine-swap/pg-checkpoint.ts	execute_raw	4	the Postgres swap checkpoint reads server_version_num, pg_database_size, the table list and other gbrain sessions in pg_stat_activity on the Postgres primary; counts and names only, read before any write
 src/core/enrichment-service.ts	execute_raw	2
 src/core/entities/near-name.ts	execute_raw	1
 src/core/entities/resolve-on-save.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the live-page check before keeping an unbacked name tag
@@ -304,12 +311,13 @@ src/core/minions/terminal-events.ts	execute_raw	1
 src/core/minions/worker-shutdown.ts	execute_raw	1
 src/core/minions/worker.ts	execute_raw	2
 src/core/multi-source-drift.ts	execute_raw	1
-src/core/oauth-grants.ts	sql_template	16
+src/core/oauth-grants.ts	sql_template	31	#9364 refresh families: the v338 table probe, the family column on issue, the rotation record and its grace wipe, the replay lookup (owner read, then the owning client lock before the rotation row), the family revocation (tokens, sealed pairs, the owning client lock), the client-revoke and expiry sweeps (the grace-window wipe and the expired-record delete, each skipping locked rows); all run inside the OAuth client-row lock transaction, which has no engine method yet; converts with the rest of the OAuth grant lifecycle; GST-4024: revoking a rotated refresh token also clears its sealed pair under the same client lock sync 21: +1 over master (the merged grants file counts one more sql template than master 424b0fa0cf; no typed OAuth lifecycle member yet);
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/first-session.ts	execute_raw	3	first-session suggestion: the onboarding.first_session record compare-and-swap in config (insert and update) and the pointer read of recent world-visible pages under remoteReadFloorSql; converts with setup-history.ts
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
 src/core/onboard/propose.ts	execute_raw	7	master #10376 (GST-3955): job proposals read pages, links, open loops and mail from the brain; no typed engine members yet (sync 20)
 src/core/onboard/setup-history.ts	execute_raw	7	setup history import: install-receipt compare-and-swap in config and the card's archive-source counts; converts with src/core/transcripts/archive.ts
+src/core/ops/backlinks-paged.ts	execute_raw	1	sync 21: master 424b0fa0cf kept 3 here; the merged tree has one raw read left (the rest sit behind typed members); no typed member for the remaining read yet
 src/core/ops/jobs.ts	execute_raw	3
 src/core/ops/known-as-of.ts	execute_raw	3
 src/core/ops/page-upload.ts	execute_raw	2
@@ -327,6 +335,7 @@ src/core/page-searchability.ts	execute_raw	3
 src/core/page-spend.ts	execute_raw	4
 src/core/page-state/credential-reseal.ts	execute_raw	4
 src/core/page-state/guards.ts	execute_raw	11
+src/core/page-state/history-prune.ts	execute_raw	4	#9737 history prune preview: lists inline versions and their pages for the selection, the brain id the plan_hash binds and the sources a bare slug names; the page-state area is still raw SQL (versions.ts) and converts with it
 src/core/page-state/materialize.ts	execute_raw	5
 src/core/page-state/projection-status.ts	execute_raw	1
 src/core/page-state/rebuild-estimate.ts	execute_raw	1
@@ -356,6 +365,7 @@ src/core/persistence/connector-state.ts	execute_raw	5
 src/core/persistence/connector-sync.ts	execute_raw	25	#9990: callReads forwards a connector call's reads through one memoized call site; it adds no SQL
 src/core/persistence/consumer-lane.ts	execute_raw	2
 src/core/persistence/consumer.ts	execute_raw	3
+src/core/persistence/content-author-schema.ts	execute_raw	1	GST-4056: verifiedContentAuthor, one read of a page's verified content author at a revision (oversized backfill); moves behind a typed engine method with the pages readers
 src/core/persistence/context.ts	execute_raw	1
 src/core/persistence/core-guard.ts	execute_raw	2
 src/core/persistence/database-write.ts	execute_raw	2
@@ -515,7 +525,7 @@ src/core/repair/slug-autoheal.ts	execute_raw	1
 src/core/repair/slug-spelling-guards.ts	execute_raw	3	The slug-spelling apply's three writes in the page's own transaction: copying fact and take purge tombstones to the moved page's normal name, and re-keying its attachments. Only a page stored under an older spelling reaches them, which the Rust store never holds (it writes every slug in normal form), so they stay raw SQL and are the typed raw_sql refusal there (docs/designs/RUST_ENGINE.md, the slug-spelling apply row).
 src/core/repair/slug-spelling.ts	execute_raw	1	The preview scan and the per-page re-check read pages, sources and files with SQL like the sibling repairs (legacy-twins, rename-identity), and the collision check looks up every stored spelling of a name through the spelling index (raised from 9: the move counts the attachments updateSlug carries, for its report); a typed method comes with the Rust store serving these members.
 src/core/repair/unwithdrawn-facts.ts	execute_raw	2
-src/core/rules/correct.ts	execute_raw	1	master #10369 (GST-3827): the correction receipt row in config; no typed engine member yet (sync 20)
+src/core/rules/correct.ts	execute_raw	3	GST-3827 C2: the atomic claim of a config key (a new correction receipt, and the per-rule lease) and its compare-and-delete release (INSERT INTO config ... ON CONFLICT DO NOTHING RETURNING; DELETE ... WHERE key AND value); no typed engine method claims or releases a config key. +1 (#10456 final review): the remote fact read an entity check needs before it names the fact's page, the same predicate forget's readsUnder runs in memory-mutations.ts; no typed engine method reads a fact under the caller's policy
 src/core/rust-engine/store-members/managed-hold.ts	execute_raw	1	the managed_persistence hold: a held managed store answers with the Rust engine's own executeRaw refusal (it runs no SQL), so a user's Rust brain refuses exactly as before lane LM typed these statements
 src/core/schema-migrations/helpers.ts	execute_raw	12
 src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	execute_raw	1
@@ -558,9 +568,9 @@ src/core/shared-skills/compatibility.ts	execute_raw	2
 src/core/shared-skills/knowledge-guard.ts	execute_raw	3
 src/core/shared-skills/migration-export.ts	execute_raw	7
 src/core/shared-skills/migration-projection.ts	execute_raw	2
-src/core/shared-skills/migration.ts	execute_raw	2
+src/core/shared-skills/migration.ts	execute_raw	1
 src/core/shared-skills/optimizer.ts	execute_raw	1
-src/core/shared-skills/publication.ts	execute_raw	11
+src/core/shared-skills/publication.ts	execute_raw	8
 src/core/shared-skills/restore.ts	execute_raw	25
 src/core/shared-skills/retention.ts	execute_raw	12
 src/core/shared-skills/setup.ts	execute_raw	6
@@ -590,6 +600,7 @@ src/core/timeline-extract.ts	execute_raw	6
 src/core/timeline-write-through.ts	execute_raw	1
 src/core/transcripts/archive.ts	execute_raw	10
 src/core/transcripts/discover.ts	execute_raw	2
+src/core/transcripts/fence-acceptance.ts	execute_raw	5	#9427: the outside-fences scan moved here from doctor/checks/outside-content-fences.ts (its row moves with it) under a UTC session time zone so its fingerprint is stable, the brain id the plan_hash binds, and the apply row lock (insert-if-missing, SELECT FOR UPDATE) that keeps two applies from dropping each other; the transcripts area is still raw SQL and converts with it
 src/core/transcripts/hermes.ts	driver_call	1
 src/core/transcripts/ingest.ts	execute_raw	3
 src/core/transcripts/recover.ts	execute_raw	1
@@ -610,8 +621,7 @@ src/core/trust/review.ts	execute_raw	15
 src/core/trust/supersede-handlers.ts	execute_raw	10	GST-2897 B (#9670, opened before this ratchet): the held-share accept reads the fact's visibility and widens it; no typed engine method exists yet
 src/core/url-source-origin.ts	execute_raw	1
 src/core/value/card.ts	execute_raw	6	master #10374/#10398 (GST-3656): the value card's counts over pages, links, facts and retrievals; no typed engine members yet (sync 20)
-src/core/vector-index.ts	driver_call	2
-src/core/vector-index.ts	execute_raw	9
+src/core/vector-index.ts	execute_raw	11	dropAndRebuild sends its index swap (DROP INDEX, ALTER INDEX RENAME) through the transaction engine executeRaw instead of the driver handle (its two driver_call sites removed), so a shadowed transaction sees it
 src/core/vector-prewarm.ts	execute_raw	4
 src/core/verbs/entity-references.ts	execute_raw	1
 src/core/verbs/entity-source.ts	execute_raw	1
@@ -637,13 +647,6 @@ src/shadow/fingerprints.ts	execute_raw	6	the fingerprint probe and fact-fingerpr
 src/shadow/follow.ts	execute_raw	1	selectWhere: the shadow follow producer reads page ids and the keys of rows a delete removes, on the engine or transaction the write runs on
 src/shadow/follower.ts	execute_raw	1	the shadow follower re-reads the changed keys from the primary in one read-only REPEATABLE READ transaction; only the primary's rows can say what the Rust store must hold
 src/shadow/replay-copy.ts	execute_raw	9	shadow replay: writes seed rows into a fresh PGLite replay copy (the Rust copy takes the same rows through importRelation)
-src/core/engine-swap/capability.ts	execute_raw	1	the write-pause estimate reads pg_class.reltuples and the pending persistence_requests count of the PGLite primary being swapped; a planning read, not a storage method
-src/core/engine-swap/checkpoint.ts	execute_raw	1	the checkpoint check counts rows per table in a throwaway in-memory PGLite loaded from the dump; it is not the brain engine
-src/core/engine-swap/failback-copy.ts	execute_raw	18	failback writes the rows the Rust engine's typed read calls returned into the fenced old primary as the swap run (dependent-row deletes, id-keyed upserts of takes, files, facts, open loops and sources, page timestamps); the Rust side is never read with SQL
-src/core/engine-swap/failback-read.ts	execute_raw	1	failback's closed loss list reads the old primary's table and column names from information_schema; names only, read before any write
-src/core/engine-swap/fence.ts	execute_raw	1	the swap fence lists the tables to fence on the primary before installing gbrain_graduation_fence through the graduation helpers (same SQL family as graduation-schema.ts)
-src/core/engine-swap/gates.ts	execute_raw	2	the swap blockers count access_rules, access_tokens and oauth_clients rows on the primary; counts only, read before any write
-src/core/engine-swap/pg-checkpoint.ts	execute_raw	4	the Postgres swap checkpoint reads server_version_num, pg_database_size, the table list and other gbrain sessions in pg_stat_activity on the Postgres primary; counts and names only, read before any write
 src/shadow/write-capture.ts	execute_raw	2	the write-comparison preimage copies the rows a sampled page or link write touches from the primary in one read-only snapshot, exactly as the seed reads them; only the primary's rows can seed the scratch Rust store; +1 the same snapshot counts the withdrawn and purged facts that overlay the copied pages' bodies (an overlay the scratch store does not have makes the sample uncomparable)
 src/shadow/writer-hooks.ts	execute_raw	21	the maintainer-approved writer hooks on a Postgres primary while a Rust shadow runs: catalog reads of the brain's tables and triggers, CREATE/DROP TRIGGER, the hooks advisory lock and lock timeout inside each install, repair and removal transaction, the gap rows (a repair's, and the one a removal records), and the one-transaction replace of every hook with its server-version and effectiveness checks; trigger DDL has no typed engine method and Rust never holds these hooks
 src/shadow/writer-observations.ts	execute_raw	4	swap eligibility's writer observations live in the primary only while a Rust shadow follows it (Rust never holds them): one upsert per writing process after commit under a SET LOCAL lock timeout and statement timeout (two statements), and the eligibility read; the primary's own table by design

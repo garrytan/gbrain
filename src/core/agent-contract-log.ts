@@ -56,12 +56,16 @@ export function recordAgentContractEvent(event: AgentContractEvent): void {
   appendBoundedJsonl(agentContractLogPath(), { ts: new Date().toISOString(), ...event, version: event.version ?? VERSION });
 }
 
-/** Read back recent events (newest last). Never throws. */
+/** Read back recent events (newest last). Never throws; a torn or non-event line is skipped, not fatal (#10447). */
 export function readAgentContractEvents(limit = 500): Array<AgentContractEvent & { ts: string }> {
-  try {
-    const lines = readFileSync(agentContractLogPath(), 'utf8').split('\n').filter(Boolean);
-    return lines.slice(-limit).map(l => JSON.parse(l));
-  } catch {
-    return [];
+  let text: string;
+  try { text = readFileSync(agentContractLogPath(), 'utf8'); } catch { return []; }
+  const events: Array<AgentContractEvent & { ts: string }> = [];
+  for (const line of text.split('\n')) {
+    let event: unknown;
+    try { event = line ? JSON.parse(line) : null; } catch { continue; }
+    const e = event as { ts?: unknown; code?: unknown } | null;
+    if (e && typeof e.ts === 'string' && typeof e.code === 'string') events.push(event as AgentContractEvent & { ts: string });
   }
+  return events.slice(-limit);
 }

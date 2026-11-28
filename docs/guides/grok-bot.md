@@ -94,7 +94,8 @@ gbrain connect with --harness grok-bot, that credentials file, --install and
 --root /workspace/gbrain. Use the generated absolute /workspace/gbrain/bin/gbrain
 launcher for every memory command. Keep secrets out of chat and command output.
 
-Run gbrain mcp verify and show me the server checks. Save the generated
+Run gbrain mcp verify --credentials-file /private/bot-example.json and show
+me the server checks. Save the generated
 GBRAIN-INSTRUCTIONS.md as a private native skill and enable it for this Bot;
 keep your current identity and other instructions. Then remember a harmless
 randomized test fact with provenance, recall it in a fresh conversation, and
@@ -104,6 +105,23 @@ tell me which native steps remain unverified.
 The Bot's memory now lives on your machine: back it up, inspect it, and
 revoke the Bot's client on the host whenever it should stop. `gbrain mcp
 expose --status` on your computer re-checks the service and the public URL.
+
+### Troubleshoot calls from the Bot
+
+- **Check the connection from the Bot.** Run `whoami` through the generated
+  launcher to check the client and source. A platform connector's Connected
+  badge, missing tool namespace, or trust refusal for the current turn isn't
+  a GBrain server response.
+- **Keep the CLI result intact.** Capture stdout and stderr separately and
+  save the CLI's exit status before parsing JSON. Don't pipe `2>&1` into a JSON
+  parser. Check each command's `--help`; don't assume every command takes
+  `--json`. If your helper closes stdin, pass the Markdown to
+  `put <slug> --content "$markdown"` as an argument instead of redirecting it.
+- **Check a lost write reply before retrying.** For `put`, keep the UUID you
+  passed as `--request-id`. Use the same launcher to run
+  `write-request -- <request-id>`. If it's pending, wait; if it committed,
+  read the page back. If there is no receipt and you've confirmed nothing was
+  written, retry the same write with the same request ID.
 
 ## Alternative: install GBrain inside the Bot
 
@@ -139,7 +157,8 @@ Grok documents one account-wide cloud computer: files, browser sessions, and
 command-line credentials are shared. It names `/workspace` for durable files
 and treats manually installed packages as replaceable. Use one root and its
 repair helper across Bots; separate Bot names or GBrain sources do not create
-a privacy boundary on that computer.
+a privacy boundary on that computer. A shared GBrain client doesn't isolate
+Bot personas or prove which Bot made a call.
 [Grok Bot computer documentation](https://docs.x.ai/grok-bot/computer-and-apps)
 (updated August 11, 2026; checked September 9, 2026).
 
@@ -230,7 +249,8 @@ and the Bot's native skill activation are separate observed steps. Before
 calling your installation complete, check:
 
 - For the published-brain path: `gbrain mcp expose --status` verifies on your
-  computer and `gbrain mcp verify` passes its server checks from inside the Bot.
+  computer and `gbrain mcp verify --credentials-file <handoff-file>` passes its
+  server checks from inside the Bot.
 - The launcher writes, recalls, corrects, and forgets the randomized test fact.
 - A fresh conversation invokes that same launcher through the native skill.
 - Every intended Bot uses the same root; concurrent calls recover from a busy

@@ -24,7 +24,7 @@ import type {
   SharedSkillPolicyWrite, SharedSkillRevisionKey, SharedSkillRevisionWrite,
 } from '../../engine-sql/shared-skill-members.ts';
 import type { StoredSkillRevision } from '../../shared-skills/model.ts';
-import type { SharedMemberMigrationRow } from '../../engine-sql/shared-skill-members.ts';
+import type { SharedMemberMigrationRow, SharedSkillPackRow } from '../../engine-sql/shared-skill-members.ts';
 import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { readSharedSkillServingEpoch } from './access-grants.ts';
@@ -71,6 +71,14 @@ export const listSharedSkillCatalogHeads: StoreMember<[q: SharedSkillHeadQuery],
   const rows = await call('listSharedSkillCatalogHeads', () => brain.listSharedSkillCatalogHeads(q)) as SharedSkillHeadRow[];
   return rows.map(row => withDates(row, HEAD_DATES));
 };
+
+/** The sealed pack row the store keeps for the source incarnation (readSharedSkillPack), or undefined. */
+export const readSharedSkillPackRow: StoreMember<[sourceId: string, incarnation: string], SharedSkillPackRow | undefined> =
+  async (brain, sourceId, incarnation) => {
+    const row = await call('readSharedSkillPackRow', () => brain.readSharedSkillPack({ sourceId, incarnation })) as SharedSkillPackRow | null;
+    // The SQL statement selects these four columns; the store row also names its key, so it is narrowed the same way.
+    return row ? { pack_id: row.pack_id, revision: row.revision, manifest: row.manifest, manifest_hash: row.manifest_hash } : undefined;
+  };
 
 /** The store runs one write at a time, so `lock` takes no row lock. */
 export const readSharedSkillPolicyRow: StoreMember<[sourceId: string, incarnation: string, lock: boolean], { epoch: string; policy: unknown } | undefined> =

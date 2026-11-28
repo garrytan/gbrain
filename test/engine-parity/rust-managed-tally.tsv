@@ -18,6 +18,7 @@ test/engine-parity/alias-trust.test.ts	6	0
 test/engine-parity/attendance-pages.test.ts	1	0
 test/engine-parity/attest-rights.test.ts	1	0
 test/engine-parity/attested-actor-link.test.ts	1	0
+test/engine-parity/backlinks-hidden-target.test.ts	1	2
 test/engine-parity/backup-readiness-callers.test.ts	3	0
 test/engine-parity/belief-ledger.test.ts	13	0
 test/engine-parity/belief-purge-ledger.test.ts	7	0
@@ -142,7 +143,7 @@ test/engine-parity/fact-trajectory-widening.test.ts	3	0
 test/engine-parity/fact-update-guard.test.ts	5	0
 test/engine-parity/fact-visibility-widening.test.ts	5	0
 test/engine-parity/facts-arm-query-strict.test.ts	3	0
-test/engine-parity/facts-conversation-sites.test.ts	22	0
+test/engine-parity/facts-conversation-sites.test.ts	23	0
 test/engine-parity/facts-cycle-sites.test.ts	16	0
 test/engine-parity/facts-cycle.test.ts	15	0
 test/engine-parity/facts-doctor.test.ts	17	0
@@ -188,6 +189,7 @@ test/engine-parity/handover-reads.test.ts	2	1
 test/engine-parity/harness-consumer-stop.test.ts	2	0
 test/engine-parity/held-fact-folder-rule.test.ts	1	0
 test/engine-parity/held-fence-cells.test.ts	5	0
+test/engine-parity/hidden-exact-identity.test.ts	8	2
 test/engine-parity/hidden-refusals-2.test.ts	12	0
 test/engine-parity/hidden-refusals.test.ts	5	0
 test/engine-parity/holding-page-purges.test.ts	3	0
@@ -195,9 +197,11 @@ test/engine-parity/hot-memory-meta.test.ts	3	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
 test/engine-parity/identity-auto-sweeps.test.ts	3	0
 test/engine-parity/identity-finder.test.ts	5	0
+test/engine-parity/ignored-privacy-label-reads.test.ts	3	0
+test/engine-parity/import-command.test.ts	3	0
 test/engine-parity/import-folder-stamp.test.ts	5	0
 test/engine-parity/import-members.test.ts	10	0
-test/engine-parity/import-path.test.ts	8	0
+test/engine-parity/import-path.test.ts	9	0
 test/engine-parity/import-writes.test.ts	11	0
 test/engine-parity/jobs-checks.test.ts	10	0
 test/engine-parity/jobs-health.test.ts	11	0
@@ -233,10 +237,11 @@ test/engine-parity/meeting-pages.test.ts	1	0
 test/engine-parity/meetings-sync.test.ts	1	0
 test/engine-parity/memory-mutation-reads.test.ts	6	0
 test/engine-parity/memory-proposal-reads.test.ts	3	0
-test/engine-parity/mention-coverage.test.ts	9	0
+test/engine-parity/mention-coverage.test.ts	8	1
 test/engine-parity/mention-pass.test.ts	4	0
 test/engine-parity/migrate-embeddings-usage.test.ts	1	0
 test/engine-parity/migrate-engine-source.test.ts	2	0
+test/engine-parity/mirror-read-only-flag.test.ts	1	0
 test/engine-parity/mixed-set-forwarding.test.ts	4	0
 test/engine-parity/notifier-freshness.test.ts	3	0
 test/engine-parity/notifier-resident.test.ts	4	0
@@ -312,7 +317,7 @@ test/engine-parity/read-shared-revision.test.ts	3	0
 test/engine-parity/read-shared-sources.test.ts	5	0
 test/engine-parity/reads-privacy.test.ts	52	0
 test/engine-parity/reason-tombstones.test.ts	3	0
-test/engine-parity/recall-members.test.ts	4	0
+test/engine-parity/recall-members.test.ts	5	0
 test/engine-parity/receipt-compaction-step.test.ts	1	0
 test/engine-parity/rechunk-chunk-ids.test.ts	2	0
 test/engine-parity/referrer-reads.test.ts	5	0
@@ -389,6 +394,7 @@ test/engine-parity/segmented-purge-writes.test.ts	7	0
 test/engine-parity/segmented-rewrite.test.ts	4	0
 test/engine-parity/session-state-cap.test.ts	13	0
 test/engine-parity/session-state.test.ts	7	0
+test/engine-parity/shared-skill-adoption.test.ts	3	0
 test/engine-parity/shared-skill-members.test.ts	10	1
 test/engine-parity/slot-ends-callers.test.ts	3	0
 test/engine-parity/slot-ends-refusal.test.ts	1	0
@@ -403,6 +409,7 @@ test/engine-parity/source-last-commit.test.ts	1	0
 test/engine-parity/source-order-callers.test.ts	5	0
 test/engine-parity/source-resolver-reads.test.ts	27	0
 test/engine-parity/source-scope-reads.test.ts	4	0
+test/engine-parity/source-suggestion.test.ts	1	0
 test/engine-parity/source-verify-reads.test.ts	2	0
 test/engine-parity/sources-add-json.test.ts	1	0
 test/engine-parity/spend-log.test.ts	11	0
@@ -473,7 +480,7 @@ test/engine-parity/valid-time-member-reads.test.ts	3	0
 test/engine-parity/vector-candidate-window.test.ts	2	0
 test/engine-parity/vector-options.test.ts	4	0
 test/engine-parity/version-preimage.test.ts	4	0
-test/engine-parity/versions-raw.test.ts	22	0
+test/engine-parity/versions-raw.test.ts	23	0
 test/engine-parity/volunteer-events.test.ts	6	0
 test/engine-parity/wanted-links.test.ts	5	0
 test/engine-parity/wanted-markers.test.ts	4	0

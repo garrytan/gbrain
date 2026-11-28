@@ -165,7 +165,7 @@ test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistenc
 test/embedding-dim-check-facts.test.ts	postgres-engine fact insert cast (T6, codex #20)	1	source-surface-helper
 test/enforced-member-classes.test.ts	enforced member allow-list	6	readFileSync
 test/engine-guard-wiring.test.ts	engine guard wrappers are wired into an engine	2	readFileSync
-test/engine-sql-jobs.test.ts	(file-level)	7	readFileSync
+test/engine-sql-jobs.test.ts	(file-level)	8	readFileSync
 test/engine-status-brain-ref-safety.test.ts	the PGLite lock is unchanged	3	readFileSync
 test/engine-status-brain-ref-safety.test.ts	the brain_ref write is best-effort and off the critical path	4	readFileSync
 test/engine-swap-cli.test.ts	engine_swap_refused recovery table	1	readFileSync
@@ -288,6 +288,7 @@ test/openclaw-plugin-manifest.test.ts	bundled-skill reference closure (nothing b
 test/openclaw-plugin-manifest.test.ts	plugin membership curation (skills = plugin ∪ exclusions, disjoint)	9	readFileSync
 test/openclaw-plugin-manifest.test.ts	root OpenClaw plugin manifest	2	readFileSync
 test/openclaw-route.test.ts	OpenClaw route	4	readFileSync
+test/openclaw-skill-plugin.serial.test.ts	(file-level)	81	readFileSync
 test/owner-widening-census-gst3058.test.ts	(file-level)	1	exec-scan
 test/page-embedding-budget-statements.test.ts	the ledger grant statement writes out page-spend.ts\'s reservation text	1	readFileSync
 test/paid-lanes-switch-5903.test.ts	#5903 e2e-status accepts a skipped tier2 only under GBRAIN_PAID_LANES=0	9	readFileSync
@@ -343,6 +344,7 @@ test/scripts/check-item-allowlist-catches.test.ts	CLI	2	readFileSync
 test/scripts/check-public-surface.test.ts	dropped manifest entries	7	bun-file
 test/scripts/check-public-surface.test.ts	the base it compares with	10	bun-file
 test/scripts/check-public-surface.test.ts	the committed manifest	3	bun-file
+test/scripts/check-test-discriminates.test.ts	(file-level)	3	exec-scan
 test/scripts/chunk-visibility-ratchet.test.ts	check-chunk-visibility.ts	6	readFileSync
 test/scripts/ci-bounded-run.test.ts	(file-level)	7	readFileSync
 test/scripts/ci-executed-counts.test.ts	CLI	2	readFileSync
@@ -438,15 +440,18 @@ test/shadow-replay.test.ts	replay child (in-memory arms)	4	readFileSync
 test/shadow-replay.test.ts	review fixes (ship final review of the queued head)	4	readFileSync
 test/shadow-replay.test.ts	review fixes (ship pass 2)	3	readFileSync
 test/shadow-replay.test.ts	the per-brain hash key (review of 3e7a623341)	3	readFileSync
+test/shared-skills-adoption-keeps-files.test.ts	re-adoption after a reviewed SKILL.md edit (${name})	12	readFileSync
+test/shared-skills-case-collisions.test.ts	two skills cannot publish paths that collide by letter case (${name})	7	readFileSync
 test/shared-skills-catalog.test.ts	(file-level)	22	readFileSync
 test/shared-skills-export.serial.test.ts	(file-level)	15	readFileSync
+test/shared-skills-import-closure.test.ts	(file-level)	28	readFileSync
 test/shared-skills-init.serial.test.ts	real combined brain initialization	6	readFileSync
 test/shared-skills-migration-cli.serial.test.ts	(file-level)	1	readFileSync
 test/shared-skills-optimizer.serial.test.ts	(file-level)	15	readFileSync
 test/shared-skills-publication-sparse.test.ts	(file-level)	4	readFileSync
 test/shared-skills-setup.test.ts	packaged default skills	2	readFileSync
 test/shared-skills-setup.test.ts	shared-skills migration recovery (#5569, #5476, A-NEW-4)	4	readFileSync
-test/shared-skills-setup.test.ts	staged skill migration	13	readFileSync
+test/shared-skills-setup.test.ts	staged skill migration	17	readFileSync
 test/shared-skills-writer-boundary.test.ts	(file-level)	7	readFileSync
 test/skill-resolver-contract.test.ts	build input (the --from-json catalog)	2	readFileSync
 test/skill-resolver-contract.test.ts	turn input	1	readFileSync

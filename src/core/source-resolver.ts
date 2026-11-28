@@ -25,7 +25,9 @@ import { SOURCE_ID_RE, isValidSourceId, ALL_SOURCES } from './source-id.ts';
 import { isTrustedDotfile, realpathOrResolve, realpathOrResolveAsync } from './path-confine.ts';
 import { noteResolvedSource } from './fix-routing.ts';
 import { hookSessionCwd } from './session-cwd.ts';
-import { sortSourcesById, sourceConfigText, sourceRecordsRawConfig } from './source-rows.ts';
+import { sortSourcesById, sourceConfigText } from './source-rows.ts';
+import { countDefaultSourceSplit } from './engine-sql/sources.ts';
+import { isMissingSchemaObject } from './utils.ts';
 
 // Re-export so scope-resolution call sites can import the sentinel from
 // either module (#1712).
@@ -341,17 +343,17 @@ async function listRegisteredLocalPathSources(
   } catch (err) {
     rethrowCapabilityRefusal(err);
     // A brain older than the `archived` column: every source with a path, without the flag (all treated as active).
-    return (await legacySourceRows(engine)).filter(row => row.local_path !== null).map(({ id, local_path }) => ({ id, local_path: local_path! }));
+    return (await legacySourceRows(engine)).filter(row => row.local_path !== null).map(({ id, local_path, archived }) => ({ id, local_path: local_path!, archived }));
   }
 }
 
 /**
  * Every source row through `listSourceRecords`, which re-reads a brain older than the `archived` column with the
- * columns it has. The resolver's fallback after an `archived`-aware read fails: rows carry only id, local_path and
- * config, so the archived flag the fallback never had is never consulted.
+ * columns it has. The resolver's fallback after the routing read fails (an old schema, or any other failure such as a
+ * timeout): rows carry the archived flag whenever the brain has the column, and every caller drops an archived source.
  */
-async function legacySourceRows(engine: BrainEngine): Promise<Array<{ id: string; local_path: string | null; config: unknown }>> {
-  return (await engine.listSourceRecords()).map(({ id, local_path, config }) => ({ id, local_path, config }));
+async function legacySourceRows(engine: BrainEngine): Promise<Array<{ id: string; local_path: string | null; config: unknown; archived?: boolean }>> {
+  return (await engine.listSourceRecords()).map(({ id, local_path, config, archived }) => ({ id, local_path, config, archived }));
 }
 
 /**
@@ -393,7 +395,8 @@ async function pickSoleNonDefaultSource(
   const rows: Array<{ id: string; config?: unknown }> = routing
     ? routing.filter(row => row.local_path !== null && row.id !== 'default' && row.archived === false
       && (fromSnapshot ? parseSourceConfig(row.config).role : sourceConfigText(row.config, 'role')) !== 'storage_manifest')
-    : (await legacySourceRows(engine)).filter(row => row.local_path !== null && row.id !== 'default').map(({ id }) => ({ id }));
+    : (await legacySourceRows(engine)).filter(row => row.local_path !== null && row.id !== 'default' && row.archived !== true
+      && sourceConfigText(row.config, 'role') !== 'storage_manifest').map(({ id }) => ({ id }));
   const listed = routing;
   const defaultHasPages = (): Promise<boolean> => listed
     ? Promise.resolve(listed.some(row => row.default_has_pages))
@@ -552,7 +555,10 @@ export async function assessDefaultWriteGuard(
     // fire the guard on a live default-dominant brain, and a graveyard in
     // 'default' could mask a live non-default-dominant one. Every sibling
     // predicate in this module filters live rows; so does this.
-    const { defaultPages, nonDefaultPages, nonDefaultSources } = await engine.countDefaultSourceSplit();
+    // An engine object with no typed member (a hermetic stub, an out-of-tree engine) is read the way master read it, through executeRaw.
+    const { defaultPages, nonDefaultPages, nonDefaultSources } = typeof engine.countDefaultSourceSplit === 'function'
+      ? await engine.countDefaultSourceSplit()
+      : await countDefaultSourceSplit(engine);
     // Strict `>` keeps a default-dominant (fresh / legacy) brain un-guarded:
     // with nonDefaultPages 0, the condition is false and 'default' stays valid.
     const shouldGuard = nonDefaultSources >= 1 && nonDefaultPages > defaultPages;
@@ -684,7 +690,7 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
   const request = pending && await pending;
   const rows = routing ? (routing.id !== null && routing.archived === false ? [routing] : [])
     : request ? request.filter(row => row.id === id && row.archived === false)
-    : (await engine.listAllSources()).filter(row => row.id === id);
+    : await engine.readSourceRow(id).then(row => (row && !row.archived ? [row] : []));
   if (rows.length === 0) {
     const nearest = await nearestSourceId(engine, id);
     throw new SourceTargetError(
@@ -701,7 +707,9 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
  */
 async function nearestSourceId(engine: BrainEngine, id: string): Promise<string | null> {
   try {
-    const sources = sortSourcesById(await engine.listAllSources()).map(({ id: sourceId, name }) => ({ id: sourceId, name: name as string | null }));
+    // listSourceRecords is a bounded typed read (statement-deadline.ts): inside a doctor check it ends at the deadline, as master's statement did.
+    const sources = sortSourcesById((await engine.listSourceRecords()).filter(row => row.archived === false))
+      .map(({ id: sourceId, name }) => ({ id: sourceId, name: name as string | null }));
     const named = sources.filter(s => s.name === id);
     if (named.length === 1) return named[0]!.id;
     const prefixed = sources.filter(s => s.id.startsWith(id) || (s.name ?? '').startsWith(id));
@@ -811,7 +819,7 @@ export async function getDefaultSourcePath(
   // (absent means NULL), so it is not read again.
   const localPath = seen.registered
     ? seen.registered.find(r => r.id === sourceId)?.local_path ?? null
-    : (await engine.getSource(sourceId))?.local_path ?? null;
+    : (await engine.readSourceRow(sourceId))?.local_path ?? null; // the row the source checks read: `getSource` also selects columns a brain older than v90 lacks
   if (localPath) return localPath;
 
   // Legacy fallback: pre-v0.18 brains stored the repo path in the global
@@ -1053,10 +1061,12 @@ async function liveSourceRows(engine: BrainEngine): Promise<Array<{ id: string; 
   const request = pending && await pending;
   if (request) return request.filter(row => row.archived === false).map(({ id, config, archived }) => ({ id, config, archived }));
   try {
-    return sortSourcesById(await sourceRecordsRawConfig(engine)).map(({ id, config }) => ({ id, config, archived: false }));
+    return sortSourcesById(await engine.listActiveSourceConfigs()).map(({ id, config }) => ({ id, config, archived: false }));
   } catch (err) {
     rethrowCapabilityRefusal(err);
-    return sortSourcesById(await legacySourceRows(engine)).map(({ id, config }) => ({ id, config }));
+    // Only a brain older than the `archived` column falls back; any other failure (a timeout, an unreadable table) is the caller's to see.
+    if (!isMissingSchemaObject(err, 'column', 'archived')) throw err;
+    return sortSourcesById((await legacySourceRows(engine)).filter(row => row.archived !== true)).map(({ id, config }) => ({ id, config }));
   }
 }
 
@@ -1141,7 +1151,11 @@ let sourcesQueryShape: 'archived' | 'legacy' | null = null;
 async function otherSourceExists(engine: BrainEngine): Promise<boolean> {
   if (sourcesQueryShape !== 'legacy') {
     try {
-      const rows = await engine.listAllSources();
+      const rows = await engine.listAllSources().catch(async (err: unknown) => {
+        // listAllSources parses every config; one source whose config is not JSON must not decide this existence check, so ask for the rows with their config as stored.
+        if (!(err instanceof SyntaxError)) throw err;
+        return (await engine.listSourceRoutingRows()).filter(row => row.archived === false);
+      });
       sourcesQueryShape = 'archived';
       return rows.some(row => row.id !== 'default');
     } catch (err) {

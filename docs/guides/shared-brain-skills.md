@@ -128,6 +128,40 @@ only, and leaves unknown consent pending. References, assets, and scripts need
 separate owner approval; even their metadata is not an implicit disclosure.
 Private skills stay excluded from remote publication.
 
+A shared file under `skills/conventions/` has one copy for every skill that
+holds it, so changing it in one skill republishes it in the others. A
+publication that would give that file a wider audience, or another file class,
+in a skill that already holds it refuses `local_conflict` and writes nothing.
+This includes `import_skill_proposal` on the brain host. Keep the file's current
+audience and class, or fork it under the publishing skill's own directory.
+A remote editor's refusal names only the shared file, never the other skills
+that hold it.
+
+The same refusal applies when a skill that readers cannot see is the only one
+holding the file. A readers file in a skill with a narrower SKILL.md audience,
+or in a private skill, is not public, so publishing it through a public skill
+refuses. This includes a rewrite of a shared file that gives the hidden file to
+another, public skill, and an adoption batch that lists the hidden skill
+unchanged. Narrow the file's audience to match, or fork it. A new file that no
+skill held before publishes.
+
+That refusal's reason is `shared_file_hidden_holder`. A publication also
+refuses when a skill that holds the file narrows its own SKILL.md audience in
+it, and another skill in the same publication would show the file to the
+callers the holder stops showing it to. That refusal's reason is
+`shared_file_holder_narrowed`. Keep the holder's audience, or fork the file.
+Both reasons stay under the code `local_conflict`. A queued publication that is
+refused keeps its reason in the waiter's answer and in a replay.
+
+Paths are compared the way a case-insensitive checkout (macOS, Windows) stores
+them. A publication that adds a path differing only by letter case from a path
+another skill publishes, such as `skills/conventions/guide.md` next to
+`skills/conventions/Guide.md`, or a file inside a directory whose name folds to
+another skill's file, refuses `local_conflict` and writes nothing. Use the
+exact spelling the other skill publishes to share the file, or pick another
+name. A remote editor's refusal names only the path it proposed. A pack that
+already holds such a pair keeps publishing its other changes.
+
 Beyond the fresh-setup default, the owner approves a versioned policy through
 `set_skill_policy`, not through an editor's content update. For example, the
 following **MCP arguments** approve only prose and the tools used by the default
@@ -541,6 +575,16 @@ nothing, and does not record the run as partial, so it never counts toward the
 three partial runs in a row that stop v0.53.0. Run `gbrain apply-migrations --migration 0.53.0 --yes` again
 when no other gbrain process holds the brain. A change to the skill files
 themselves is still a conflict.
+
+The same client run is refused `owner_unavailable` at the ownership stage, and
+`gbrain sources writer activate --shared-skills --expected-state ...` refuses it
+too, since only the owner re-checks the reviewed state and writes the activation
+flag (in one transaction). On the owner, the migration reads that stored flag
+and adopts the pack of a source whose registered absolute root it owns. An empty
+content root stops that source with `action_required` and a reason that starts
+`packaged_pack_unsupported`, because the packaged memory pack cannot be installed
+on a Rust brain yet: add the pack files (or adopt a reviewed pack), then run the
+migration again.
 
 An install whose 0.53.0 migration already shows as wedged (three partial runs
 before parking existed) resumes with

@@ -84,6 +84,7 @@ on:
       - 'src/core/migration-orchestration-lock.ts'
       - 'test/apply-migrations-rust-swap.serial.test.ts'
       - 'test/apply-migrations-rust-client-conflict.serial.test.ts'
+      - 'test/apply-migrations-rust-skill-adoption.serial.test.ts'
       - 'src/core/shared-skills/migration.ts'
       - 'test/token-member-cli-parity.serial.test.ts'
       - 'test/rust-mcp-receipts.serial.test.ts'
@@ -126,6 +127,7 @@ on:
       - 'src/core/migration-orchestration-lock.ts'
       - 'test/apply-migrations-rust-swap.serial.test.ts'
       - 'test/apply-migrations-rust-client-conflict.serial.test.ts'
+      - 'test/apply-migrations-rust-skill-adoption.serial.test.ts'
       - 'src/core/shared-skills/migration.ts'
       - 'test/token-member-cli-parity.serial.test.ts'
       - 'test/rust-mcp-receipts.serial.test.ts'
@@ -242,15 +244,30 @@ jobs:
           key: ${{ steps.cachename.outputs.value }}
           restore-keys: |
             rust-checks-${{ runner.os }}-${{ runner.arch }}-
+      # A pull request into rust-engine/main has its own Cargo.lock, so its cache key misses and the 8.5 GB master cache is
+      # restored under it. The df lines here and after the unit tests record the free bytes around the build.
+      - name: Disk before the build
+        run: df -B1 /
       - name: Format
         working-directory: rust
         run: cargo fmt --check
       - name: Clippy
         working-directory: rust
         run: cargo clippy --all-targets --locked -- -D warnings
+      # No debug info in the test binaries. With it, the trunk's 235 integration test binaries took about 59 GB and filled
+      # the disk even with 26 GB of SDKs removed (run 46167447668: 59 GB free before clippy, 250 MB left after; rust/target 114 GB).
+      # Without it the whole test build is about 5 GB. A failing test still prints its panic message and file:line.
       - name: Unit tests
         working-directory: rust
+        env:
+          CARGO_PROFILE_TEST_DEBUG: '0'
         run: cargo test --locked
+      - name: Disk after the unit tests
+        if: always()
+        shell: bash
+        run: |
+          df -B1 /
+          du -sb rust/target 2>/dev/null || true
       # A pinned prebuilt binary, checked against its SHA-256, so CI does not compile cargo-deny
       # and does not depend on a third-party action.
       - name: Install cargo-deny 0.21.0
@@ -360,7 +377,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$SHARD" = 1 ]; then
-            bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts test/rust-engine-store-snapshot.test.ts test/rust-managed-hold.test.ts
+            bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts test/rust-engine-store-snapshot.test.ts test/rust-managed-hold.test.ts test/rust-skill-activation-serialized.test.ts
             # The engine swap run on the real addon: every state, kill and resume, full disk, failed digest and probe, failback.
             bun test --timeout=120000 test/engine-swap-run.serial.test.ts
             # The swap killed mid-run (a real SIGKILL at each state), then --resume: one engine, the fence as recorded, every page once.
@@ -465,6 +482,15 @@ jobs:
           GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
         run: bash scripts/run-with-receipt.sh rust-store apply-migrations-rust-client-conflict -- bun test --timeout=900000 test/apply-migrations-rust-client-conflict.serial.test.ts
+      # Shared skills on a swapped Rust brain: the reviewed activation, then v0.53.0 adopting the content root's pack.
+      # Same ownership rule as above: a missing addon is an error, and the receipt check fails the lane when no test ran.
+      - name: A swapped Rust brain activates shared skills and v0.53.0 adopts its pack
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store apply-migrations-rust-skill-adoption -- bun test --timeout=900000 test/apply-migrations-rust-skill-adoption.serial.test.ts
       # The shadow seed leaves the swap's writer-evidence tables behind (rust seed::NOT_COPIED). Same ownership rule as
       # above: a missing addon is an error here, and the next step fails the lane when no test ran.
       - name: The shadow seed skips the writer-evidence tables

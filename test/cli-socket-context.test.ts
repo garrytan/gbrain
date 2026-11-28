@@ -25,7 +25,7 @@ import { _uninstallOutputCaptureForTests, installOutputCapture } from '../src/co
 let engine: PGLiteEngine;
 const op = { params: {} };
 /** The typed `sources` reads source resolution makes (they run SQL inside the engine, past the proxy's executeRaw). */
-const SOURCE_READ_MEMBERS = ['listAllSources', 'getSource', 'listSourceRecords', 'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit'];
+const SOURCE_READ_MEMBERS = ['listAllSources', 'getSource', 'listSourceRecords', 'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'listActiveSourceConfigs', 'readSourceRow'];
 const noop = { emitResponseMeta: () => {}, emitNotice: () => {} };
 
 beforeAll(async () => {

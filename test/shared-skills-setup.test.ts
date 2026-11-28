@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { adoptSharedSkillpack } from '../src/core/shared-skills/publication.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { setupSharedBrainContent, contentSetupKey } from '../src/core/shared-skills/setup.ts';
@@ -27,6 +28,8 @@ function fixture(root: string | null = null) {
     ...stubSourceMembers(() => [source], { defaultHasPages: () => hasPages }),
     // The source policy reads the source through the typed readSourceState member (engine-sql/write-misc.ts).
     readSourceState: async (id: string) => (id === source.id ? { incarnation: source.incarnation, archived: false, local_path: source.local_path, config: {} } : null),
+    // The sealed pack row comes from the typed member every engine serves (engine-sql/shared-skill-members.ts).
+    readSharedSkillPackRow: async () => undefined,
     getConfig: async (key: string) => config.get(key) ?? null,
     setConfig: async (key: string, value: string) => { config.set(key, value); },
     executeRaw: async (sql: string) => {
@@ -34,7 +37,6 @@ function fixture(root: string | null = null) {
       if (sql.includes('FROM persistence_brain')) return [{ brain_id: brainId, enabled: false, skill_bundles_enabled: false }];
       if (sql.includes('FROM sources')) return [source];
       if (sql.includes('EXISTS(SELECT 1 FROM pages')) return [{ present: hasPages }];
-      if (sql.includes('FROM shared_skill_packs')) return [];
       if (sql.includes('FROM source_ingestion_receipts')) return [];
       throw new Error(`Unexpected SQL: ${sql}`);
     },
@@ -52,14 +54,25 @@ function writePack(root: string) {
 
 /**
  * Makes the fixture a Rust brain: raw SQL on shared-skill tables refuses by name, the brain singleton comes from the
- * writer admin state (managed-mode.ts) and the sealed pack from the store (rust-publication.ts) through `readPack`.
+ * writer admin state (managed-mode.ts) and the sealed pack row from the typed member, answered here by `readPack`.
  */
-function asRustBrain(f: ReturnType<typeof fixture>, readPack: (key: { sourceId: string; incarnation: string }) => Promise<unknown>) {
+function asRustBrain(f: ReturnType<typeof fixture>, readPack: (key: { sourceId: string; incarnation: string }) => Promise<unknown>,
+  activated?: { localPath: string }) {
   Object.assign(f.ctx.engine, {
     kind: 'rust',
     readWriterAdminState: async () => JSON.stringify({ brain: { id: f.brainId, enabled: false, mode_epoch: 0, skill_bundles_enabled: false, writer_protocol_floor: 1 } }),
+    // On Rust the typed pack-row member reads the store's pack row (store-members/shared-skill-members.ts).
+    readSharedSkillPackRow: async (sourceId: string, incarnation: string) => (await readPack({ sourceId, incarnation })) ?? undefined,
+    // No installation has enrolled (the members stage the migration reports last).
+    listSharedMemberMigrationRows: async () => [],
     _admit: async () => {},
-    storeFor: async () => ({ brain: { readSharedSkillPack: readPack } }),
+    // The store's shared-publication flag: off, as on a brain nobody activated.
+    // With `activated`, shared publication is on and the store's source row registers `localPath` with no alias.
+    storeFor: async () => ({ brain: {
+      readSharedSkillPublication: async () => (activated ? { skill_bundles_enabled: true, writer_protocol_floor: 2 } : { skill_bundles_enabled: false, writer_protocol_floor: 1 }),
+      readSharedSkillSource: async (id: string) => (activated && id === f.source.id
+        ? { id, incarnation: f.incarnation, archived: false, local_path: activated.localPath, aliases: [] } : null),
+    } }),
   });
   const sqlRead = f.ctx.engine.executeRaw.bind(f.ctx.engine);
   f.ctx.engine.executeRaw = (async (sql: string, params?: unknown[]) => {
@@ -262,6 +275,51 @@ describe('staged skill migration', () => {
     Object.assign(f.ctx.engine, { ownerRole: 'owner' });
     expect((await runSharedSkillsMigration(f.ctx)).status).toBe('conflict');
     expect(readFileSync(join(root, 'skills/memory-care/SKILL.md'), 'utf8')).toBe('private: true\nLocal instructions');
+  });
+  test('a client of a Rust brain\'s owner with no edit stops at ownership as owner_unavailable, never reading the store', async () => {
+    const root = temp(), f = fixture(root); writePack(root);
+    const storeReads: string[] = [];
+    asRustBrain(f, async () => { storeReads.push('readSharedSkillPack'); return null; });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    Object.assign(f.ctx.engine, { ownerRole: 'client', storeFor: async () => { storeReads.push('storeFor'); throw new Error("The Rust engine's store is closed"); } });
+    storeReads.length = 0;
+    const client = await runSharedSkillsMigration(f.ctx);
+    expect(client.status).toBe('action_required');
+    expect(client.sources[0].stages.at(-1)).toMatchObject({ stage: 'ownership', status: 'action_required', code: 'owner_unavailable' });
+    expect(storeReads).toEqual([]);
+  });
+  test('on an activated Rust brain the registered root owns the source only as an absolute path', async () => {
+    const root = temp(), f = fixture(root); writePack(root);
+    // A legacy relative path resolves against the directory that launched the upgrade; launch it from the pack itself.
+    Object.assign(f.source, { local_path: '.' });
+    asRustBrain(f, async () => null, { localPath: '.' });
+    const previous = process.cwd();
+    process.chdir(root);
+    let relative: Awaited<ReturnType<typeof runSharedSkillsMigration>>;
+    try { relative = await runSharedSkillsMigration(f.ctx, { dryRun: true }); } finally { process.chdir(previous); }
+    Object.assign(f.source, { local_path: root });
+    expect(relative.sources[0].stages.at(-1)).toMatchObject({ stage: 'ownership', status: 'action_required' });
+    expect(relative.sources[0].stages.at(-1)?.reason).toContain('writer_registration_required');
+    asRustBrain(f, async () => null, { localPath: root });
+    const absolute = await runSharedSkillsMigration(f.ctx, { dryRun: true });
+    expect(absolute.sources[0].stages.map(stage => [stage.stage, stage.status])).toContainEqual(['ownership', 'complete']);
+  });
+  test('on an activated Rust brain an empty content root stops as action required, never a conflict', async () => {
+    const root = temp(), f = fixture(root);
+    asRustBrain(f, async () => null, { localPath: root });
+    const report = await runSharedSkillsMigration(f.ctx);
+    expect(report.sources[0].stages.at(-1)).toMatchObject({ stage: 'projection', status: 'action_required' });
+    expect(report.sources[0].stages.at(-1)?.reason).toContain('packaged_pack_unsupported');
+    expect(report.status).not.toBe('conflict');
+  });
+  test('adoption bound to a checked incarnation refuses source_changed for a recreated source, before anything is read or admitted', async () => {
+    const reads: string[] = [];
+    const engine = { kind: 'pglite',
+      readSourceIncarnationArchived: async (id: string) => { reads.push(`source:${id}`); return { incarnation: randomUUID(), archived: false }; },
+      executeRaw: async (sql: string) => { reads.push(sql); return []; } } as unknown as BrainEngine;
+    const ctx = { engine, config: { engine: 'pglite' }, remote: false, dryRun: false, logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+    await expect(adoptSharedSkillpack(ctx, 'default', { expected_incarnation: randomUUID() })).rejects.toMatchObject({ code: 'source_changed' });
+    expect(reads).toEqual(['source:default']);
   });
   test('a deferred client check keeps the evidence that refuses a moved root', async () => {
     const root = temp(), moved = temp(), f = fixture(root); writePack(root); writePack(moved);

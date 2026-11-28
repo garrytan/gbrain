@@ -35,6 +35,7 @@ import type { PrincipalGrant } from './model.ts';
 import { expandReadShared } from './read-shared.ts';
 import { brainServes } from '../access/serves.ts';
 import { memberFloorScope } from '../access/member-sources.ts';
+import { STDIO_MAY_ACT_FOR_KEY } from '../access/audience.ts';
 
 export const NOTICE_CODE = 'unscoped_multi_user_token';
 export const BOT_HARNESSES: readonly string[] = ['openclaw', 'hermes', 'grok-bot', 'muse'];
@@ -188,10 +189,18 @@ export function subjectLabel(s: ExposureSubject): string {
 /** Source grants can separate channels only when they sit in different sources. */
 const splitBySource = (census: ChatCensus | null | undefined): boolean => !census || census.chat_sources.length >= 2;
 
-/** The binding command: a credential bound to a member, or the harness's people labelled and its server bound. */
+/** A stdio server a bot harness spawns: several people talk to it, so it acts for each turn's audience (config mcp.stdio_may_act_for). */
+const botStdio = (s: ExposureSubject): boolean => s.kind === 'stdio' && BOT_HARNESSES.includes(s.harness);
+
+/**
+ * The binding command: a credential bound to a member; for a bot harness's stdio server, the members it may act for
+ * (setup refuses --members and --stdio-member there, and the doctor check clears once the list is set); otherwise the
+ * harness's people labelled and its server bound.
+ */
 export function bindArgv(s: ExposureSubject): string[] {
   if (s.kind === 'legacy_token') return ['gbrain', 'auth', 'rescope', '--token', s.name, '--member', '<member>'];
   if (s.kind === 'oauth_client') return ['gbrain', 'auth', 'rescope', '--client', s.id, '--member', '<member>'];
+  if (botStdio(s)) return ['gbrain', 'config', 'set', STDIO_MAY_ACT_FOR_KEY, '<members>'];
   return ['gbrain', 'setup', s.harness, '--serves', 'several', '--members', '<id,...>'];
 }
 
@@ -225,6 +234,7 @@ export function remedyText(s: ExposureSubject, census?: ChatCensus | null): stri
   const target = s.kind === 'legacy_token' ? `--token ${s.name}` : s.kind === 'oauth_client' ? `--client ${s.id}` : null;
   const steps: string[] = [target
     ? `bind the credential to the person who uses this agent (gbrain auth rescope ${target} --member <id>), or, for one agent several people share, to their audience (gbrain auth rescope ${target} --may-act-for <members>; its harness then names each request's audience)`
+    : botStdio(s) ? `let this harness's server act for each person it answers (${bindArgv(s).join(' ')}, after labelling them with gbrain access serves several --members <id,...>; its harness then names each turn's audience, and a call that names none reads everything the server reads)`
     : `label each person and bind this harness's server (${bindArgv(s).join(' ')}; --stdio-member <member> when one person alone uses the harness)`];
   if (splitBySource(census)) {
     steps.push(s.kind === 'stdio'
@@ -242,7 +252,8 @@ export function exposureFix(s: ExposureSubject, census?: ChatCensus | null): Act
   const verify = { argv: ['gbrain', 'doctor', '--only', NOTICE_CODE, '--json'] };
   const message = `${subjectLabel(s)} lets the agent read every channel it reaches, so when several people use the agent it may show one person another person's messages. ${remedyText(s, census).replace(/^Fix: (.)/, (_m, c: string) => c.toUpperCase())}`;
   return { ask_user: true, argv: bindArgv(s), consent: ['credentials'], actor: 'agent', requires_exclusive: false, docs: DOCS, verify,
-    inputs: s.kind === 'stdio'
+    inputs: botStdio(s) ? [{ name: 'members', how: 'Ask the user who talks to this agent (gbrain access member list), comma-separated; label new people first with gbrain access serves several --members <id,...>.' }]
+      : s.kind === 'stdio'
       ? [{ name: 'id,...', how: 'Ask the user who talks to this agent (gbrain access member list); use --stdio-member <member> instead when one person alone uses it.' }]
       : [{ name: 'member', how: 'Ask the user which member uses this agent (gbrain access member list); when several people share it, rescope with --may-act-for <members> instead.' }],
     why: 'A bound credential reads only what its member, or each request\'s audience, may read; the secret is unchanged.', user_message: message };

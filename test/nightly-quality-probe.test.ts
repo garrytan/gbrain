@@ -18,7 +18,7 @@ import {
 } from '../src/core/cycle/nightly-quality-probe.ts';
 import type { CrossModalBatchSummary } from '../src/core/cycle/nightly-probe-adapters.ts';
 import type { QualityProbeFailure } from '../src/core/audit-quality-probe.ts';
-import { estimateChatCostUsd, recordChatUsage } from '../src/core/ai/chat-usage.ts';
+import { estimateChatCostUsd, recordChatUsage, registerChatUsageSink, withChatPhase } from '../src/core/ai/chat-usage.ts';
 import { DEFAULT_SLOTS } from '../src/core/cross-modal-eval/runner.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -764,6 +764,36 @@ describe('runNightlyQualityProbe: metered chat spend (#5506)', () => {
       const [event] = await readEvents();
       expect([event.chat_calls, event.chat_cost_usd, event.unpriced_chat_calls]).toEqual([2, 0, 2]);
     });
+  });
+
+  test('#10425: both stages record under phase:nightly_quality_probe; calls outside the run and an enclosing phase keep theirs', async () => {
+    const phases: Array<[string, string | null]> = [];
+    const unregister = registerChatUsageSink(record => { phases.push([record.model, record.phase]); });
+    try {
+      await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+        const deps = (now: Date) => makeDeps({
+          now: () => now,
+          runLongMemEval: async () => { recordChatUsage({ model: 'acme:reader', usage }); },
+          runCrossModalBatch: async () => {
+            recordChatUsage({ model: 'acme:judge', usage });
+            return { exitCode: 0, summary: { pass_count: 10, fail_count: 0, inconclusive_count: 0, error_count: 0, est_cost_usd: 0, verdict: 'pass' } };
+          },
+        });
+        recordChatUsage({ model: 'acme:direct', usage });
+        expect((await runNightlyQualityProbe(deps(new Date()))).outcome).toBe('pass');
+        const nextNight = new Date(Date.now() + 25 * 60 * 60 * 1000);
+        expect((await withChatPhase('job:example', () => runNightlyQualityProbe(deps(nextNight)))).outcome).toBe('pass');
+      });
+      expect(phases).toEqual([
+        ['acme:direct', null],
+        ['acme:reader', 'phase:nightly_quality_probe'],
+        ['acme:judge', 'phase:nightly_quality_probe'],
+        ['acme:reader', 'job:example'],
+        ['acme:judge', 'job:example'],
+      ]);
+    } finally {
+      unregister();
+    }
   });
 
   test('a run that fails part-way records the spend metered up to the failure', async () => {

@@ -320,6 +320,12 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
       Object.assign(guest, { canonical: error.code, docs: error.docs });
       throw guest;
     }
+    // secrets.on_write: a refused secret keeps the frozen invalid_params; the canonical code, docs and why ride along.
+    if (error.code === 'secret_in_write') {
+      const secret = verbError('invalid_params', error.message, error.suggestion ?? 'Remove the secret and send the write again with a new request_id.');
+      Object.assign(secret, { canonical: 'secret_in_write', docs: error.docs, why: error.why, detail: error.detail });
+      throw secret;
+    }
     // GBRA-585: an entity page this connection cannot read or write keeps the frozen code; page_not_found is the canonical
     // code (a caller refusal, not an outage, so no doctor step), and the next step is the save this connection can make.
     if (error.code === 'page_not_found') {
@@ -338,7 +344,8 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
     // GST-1113: a refusal's reason (scope_page_not_shared, source_not_attested) rides along additively; the frozen code stays.
     if (error.reason && !frozen.reason) frozen.reason = error.reason;
     // #6608: an unbound-source refusal keeps its detail, docs and ask-the-user fix additively; the frozen code stays.
-    if (error.detail === 'unbound_source') Object.assign(frozen, { detail: error.detail, docs: error.docs, fix: error.fix, retryable: error.retryable });
+    // #10067: so does its read-only-mirror form.
+    if (error.detail === 'unbound_source' || error.detail === 'read_only_mirror') Object.assign(frozen, { detail: error.detail, docs: error.docs, fix: error.fix, retryable: error.retryable });
     // GBRA-200: a write-grant refusal keeps the caller's writable sources and its retry fix additively.
     if (error.writableSourceIds) Object.assign(frozen, { writableSourceIds: error.writableSourceIds, fix: error.fix });
     if (isWriteErrorCode(error.code)) frozen.writeError=error.code;

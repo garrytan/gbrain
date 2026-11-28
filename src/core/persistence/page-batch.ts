@@ -11,6 +11,8 @@
  * any content.
  */
 import { normalizeSlug } from '../utils.ts';
+import { scanText } from '../secret-scan.ts';
+import { stripNul } from '../batch-rows.ts';
 import { randomUUID } from 'node:crypto';
 import { pageQuarantinedNotice } from '../quarantine.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -33,6 +35,7 @@ import { emitFenceNotice, initializeLocalPersistence, pageMutationSource, pendin
   withLiveSearchable } from './page-mutations.ts';
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import type { PageTypeWarning } from './page-input.ts';
+import type { SecretsRedacted } from './write-secrets.ts';
 import { clientRequestIdOf, parseWriteRequestId } from './preconditions.ts';
 import { parseWireWriteWaitMs } from './write-wait.ts';
 
@@ -45,7 +48,7 @@ const PREPARE_CONCURRENCY = 8;
 const BATCH_ADMISSION_BUDGET_MS = 30_000;
 const PAGE_KEYS = new Set(['slug', 'content', 'expected_revision', 'allow_empty', 'allow_shrink', 'drop_timeline', 'reason']);
 interface BatchPage { slug: string; content: string; expected_revision?: unknown; allow_empty?: unknown; allow_shrink?: unknown; drop_timeline?: unknown; reason?: string }
-interface PageResult { index: number; slug: string; row?: WriteRequest; refusal?: OperationError; typeWarning?: PageTypeWarning | null; repeatOf?: number }
+interface PageResult { index: number; slug: string; row?: WriteRequest; refusal?: OperationError; typeWarning?: PageTypeWarning | null; secretsRedacted?: SecretsRedacted | null; repeatOf?: number }
 interface BatchMarker { id: string; index: number; size: number; repeats?: number[] }
 
 const invalid = (message: string, suggestion: string) => new OperationError('invalid_params', message, suggestion);
@@ -68,7 +71,7 @@ function parsePages(value: unknown): BatchPage[] {
     const { reason: raw, ...rest } = record;
     let reason: string | null;
     try { reason = admitChangeReason(raw); } catch (error) {
-      if (error instanceof OperationError) error.message = `pages[${index}] (${record.slug}): ${error.message} No page of this batch was written.`;
+      if (error instanceof OperationError) error.message = `pages[${index}]${slugHoldsSecret(record.slug) ? '' : ` (${record.slug})`}: ${error.message} No page of this batch was written.`;
       throw error;
     }
     return (reason === null ? rest : { ...rest, reason }) as unknown as BatchPage;
@@ -89,6 +92,9 @@ interface Repeats { repeatOf: (number | undefined)[]; refusals: Map<number, Oper
  * that slug is refused on its own, naming the other indexes; the rest of the
  * batch is written.
  */
+/** GST-4024: a slug holding a secret-shaped value is never echoed back in a reply or a refusal; its entry index names it. */
+const slugHoldsSecret = (slug: string) => scanText(stripNul(slug)).length > 0;
+
 function findRepeats(pages: BatchPage[]): Repeats {
   const bySlug = new Map<string, number[]>();
   pages.forEach((page, index) => bySlug.set(normalizeSlug(page.slug), [...(bySlug.get(normalizeSlug(page.slug)) ?? []), index]));
@@ -101,8 +107,9 @@ function findRepeats(pages: BatchPage[]): Repeats {
     if (indexes.every(index => same(pages[index]!, first))) { for (const index of indexes.slice(1)) repeatOf[index] = indexes[0]; continue; }
     for (const index of indexes) {
       const others = indexes.filter(other => other !== index).map(other => `pages[${other}]`).join(', ');
-      refusals.set(index, invalid(`Slug ${pages[index]!.slug} appears at pages[${index}] and ${others} with different content or options; none of them was written. The other pages of this batch were.`,
-        `Keep one version of ${pages[index]!.slug}: send it alone in a new put_pages call with a new request_id. Identical repeats of a page are written once and need no change.`));
+      const slug = slugHoldsSecret(pages[index]!.slug) ? null : pages[index]!.slug;
+      refusals.set(index, invalid(`${slug ? `Slug ${slug}` : 'The slug'} appears at pages[${index}] and ${others} with different content or options; none of them was written. The other pages of this batch were.`,
+        `Keep one version of ${slug ?? `pages[${index}]`}: send it alone in a new put_pages call with a new request_id. Identical repeats of a page are written once and need no change.`));
     }
   }
   return { repeatOf, refusals };
@@ -122,10 +129,16 @@ async function readBatch(ctx: OperationContext, batchId: string): Promise<WriteR
 
 function pageEntry(result: PageResult): Record<string, unknown> {
   const base = { index: result.index, slug: result.slug, ...(result.repeatOf !== undefined ? { repeat_of: result.repeatOf } : {}) };
-  if (result.refusal) return { ...base, state: 'refused', error: result.refusal.toJSON() };
+  if (result.refusal) {
+    // GST-4024: a refused entry never echoes a slug holding a secret: not one the screen refused (it may have matched only
+    // through the page's own text), nor one that scans as a secret on its own. The index names the entry.
+    const { slug: _slug, ...unnamed } = base;
+    const hide = result.refusal.canonicalCode === 'secret_in_write' || slugHoldsSecret(result.slug);
+    return { ...(hide ? unnamed : base), state: 'refused', error: result.refusal.toJSON() };
+  }
   if (!result.row) return { ...base, state: 'not_admitted' };
   const row = result.row;
-  const warning = result.typeWarning ? { type_warning: result.typeWarning } : {};
+  const warning = { ...(result.typeWarning ? { type_warning: result.typeWarning } : {}), ...(result.secretsRedacted ? { secrets_redacted: result.secretsRedacted } : {}) };
   if (!isTerminal(row)) return { ...base, request_id: row.request_id, state: row.state, ...warning };
   try {
     const receipt = writeResponse(row);
@@ -288,7 +301,8 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
   const first = attempted[0];
   if (first instanceof OperationError && first.code === 'permission_denied'
     && attempted.every(entry => entry instanceof OperationError && entry.code === first.code && entry.message === first.message)) throw first;
-  const conflicts = prepared.flatMap((entry, index) => entry instanceof OperationError && entry.code === 'idempotency_conflict' ? [pages[index]!.slug] : []);
+  const conflicts = prepared.flatMap((entry, index) => entry instanceof OperationError && entry.code === 'idempotency_conflict'
+    ? [slugHoldsSecret(pages[index]!.slug) ? `pages[${index}]` : pages[index]!.slug] : []);
   if (conflicts.length) {
     throw opError('idempotency_conflict', `Batch ${batchId} was already accepted with different content for ${conflicts.join(', ')}. Nothing new was admitted.`,
       `Replays must repeat the batch exactly (same pages, same order). To check the original batch, call put_pages with only request_id ${batchId}; to write the changed pages, send them in a new put_pages call with a new request_id.`);
@@ -300,7 +314,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
     if (entry === undefined) return;
     if (entry instanceof OperationError) results[index]!.refusal = entry;
     else if (entry.prior) results[index]!.row = entry.prior;
-    else { admissions.push({ index, admission: entry.admission }); results[index]!.typeWarning = entry.typeWarning; }
+    else { admissions.push({ index, admission: entry.admission }); Object.assign(results[index]!, { typeWarning: entry.typeWarning, secretsRedacted: entry.secretsRedacted }); }
   });
   if (admissions.length) {
     let admitted: WriteRequest[];

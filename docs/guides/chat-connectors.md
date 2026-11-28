@@ -186,6 +186,7 @@ a page is judged and synthesized again only after its text changes.
 | `session_corpus_dir` set, `conversation_pages` unset | corpus files + conversation pages |
 | `gbrain config set dream.synthesize.conversation_pages true` | conversation pages, with or without a corpus dir |
 | `gbrain config set dream.synthesize.conversation_pages false` | corpus files only |
+| `dream.synthesize.since` | if set, discover only pages whose frontmatter date meets the [synthesis cutoff](cron-schedule.md#resume-synthesis-without-processing-the-backlog) |
 
 With neither a corpus dir nor `conversation_pages` set, synthesis is not
 configured; when the source holds conversation pages the phase warns

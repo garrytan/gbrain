@@ -22,8 +22,9 @@ import type { SqlEngine } from '../persistence/model.ts';
 import { truncateUtf8 } from '../text-safe.ts';
 import { corpusTextForExtraction } from '../context/corpus-segments.ts';
 import { AtomPageStateError, type AtomPageInput } from './extract-atoms-page-state.ts';
-import { planExtraction, type ExtractionPlan, type StoredWatermark } from '../extraction-watermark.ts';
-import { publicBody } from '../mentions/aliases.ts';
+import { EXTRACTION_PIPELINE_VERSION, planExtraction, type ExtractionPlan, type StoredWatermark } from '../extraction-watermark.ts';
+import { sanitizeRemoteBody } from '../remote-body.ts';
+import { createHash } from 'node:crypto';
 
 export const DEFAULT_EXTRACT_MAX_INPUT_CHARS = 50_000;
 export const EXTRACT_MAX_INPUT_CHARS_KEY = 'cycle.extract_atoms.max_input_chars';
@@ -58,6 +59,8 @@ export interface ExtractAtomsInput {
   inputChars: number;
   /** A page's watermark plan (extraction-watermark.ts), stored once the item's extraction succeeded. */
   plan?: ExtractionPlan;
+  /** A page's whole model input under this extractor version, stored with a complete scan (GST-4020: an edit that leaves it unchanged reuses the atoms). */
+  inputSha256?: string;
 }
 
 /**
@@ -67,20 +70,27 @@ export interface ExtractAtomsInput {
  * Large pages A7: a page whose stored watermark still matches its body reads
  * the text appended since (`watermark`); a tail read is partial input too, so
  * the #6503 disposition holds (no completion stamp, nothing retired).
- * A page is read as a world reader sees it (`publicBody`: facts fence rows
- * other than world and the takes fence removed), so neither the prompt, the
- * atoms nor a verified quote can carry a row a remote read of the page hides;
- * the cap and the watermark apply to that text.
+ * A page is read as a world reader sees it (`sanitizeRemoteBody` over its
+ * canonical body: the takes fence, facts rows other than world, withdrawn rows
+ * and `omitRows`, the world rows held from world readers (GST-2891), removed),
+ * so neither the prompt, the atoms nor a verified quote can carry a row a
+ * remote read of the page hides; the cap and the watermark apply to that text.
  */
-export function extractAtomsInput(item: ExtractAtomsItem, maxInputChars: number, watermark: StoredWatermark | null = null): ExtractAtomsInput {
+export function extractAtomsInput(item: ExtractAtomsItem, maxInputChars: number, watermark: StoredWatermark | null = null,
+  omitRows?: ReadonlySet<number>): ExtractAtomsInput {
   if (item.kind === 'page') {
-    const body = publicBody(item.content);
+    const body = sanitizeRemoteBody(item.content, { omitRows });
     const plan = planExtraction(body, watermark, { cap: maxInputChars, pipeline: 'extract_atoms', emptyTail: 'head' });
-    return { promptContent: plan.text, truncated: plan.mode !== 'full', inputChars: body.length, plan };
+    return { promptContent: plan.text, truncated: plan.mode !== 'full', inputChars: body.length, plan, inputSha256: atomInputDigest(body) };
   }
   const text = corpusTextForExtraction(item.filePath, item.content);
   const promptContent = truncateUtf8(text, maxInputChars);
   return { promptContent, truncated: promptContent.length < text.length, inputChars: text.length };
+}
+
+/** The digest of a page's model input, keyed by the extractor version so a prompt change re-extracts. */
+export function atomInputDigest(body: string): string {
+  return createHash('sha256').update(`extract_atoms:${EXTRACTION_PIPELINE_VERSION.extract_atoms}\0${body}`).digest('hex');
 }
 
 /** The one stderr line per cut item; names the knob that raises the cap. Null for a complete appended-tail read. */

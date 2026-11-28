@@ -247,6 +247,7 @@
         "sweep",
         "sync",
         "takes",
+        "telemetry",
         "think",
         "transcripts",
         "trust",
@@ -368,6 +369,7 @@
         "sweep",
         "sync",
         "takes",
+        "telemetry",
         "think",
         "transcripts",
         "trust",
@@ -443,6 +445,7 @@
         "post-upgrade",
         "self-upgrade",
         "skill-resolver",
+        "telemetry",
         "trust",
         "upgrade"
       ],

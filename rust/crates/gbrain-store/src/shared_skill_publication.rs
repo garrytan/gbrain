@@ -121,6 +121,14 @@ fn flag(read: &dyn KvRead) -> Result<Option<FlagRecord>> {
     get_json(read, &keys::meta(FLAG))
 }
 
+/// The stored `(skill_bundles_enabled, writer_protocol_floor)`, or the column defaults
+/// `(false, 1)` before any activation: the values the SQL engines keep on `persistence_brain`.
+pub(crate) fn publication_flag_in(read: &dyn KvRead) -> Result<(bool, i64)> {
+    Ok(flag(read)?.map_or((false, 1), |f| {
+        (f.skill_bundles_enabled, f.writer_protocol_floor)
+    }))
+}
+
 /// True once publication was activated on this brain (`skill_bundles_enabled`), whatever the floor.
 pub(crate) fn publication_activated(read: &dyn KvRead) -> Result<bool> {
     Ok(flag(read)?.is_some_and(|f| f.skill_bundles_enabled))

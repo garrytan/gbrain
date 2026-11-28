@@ -221,3 +221,4 @@ src/core/vector-index.ts	kind_compare	5
 src/core/vector-prewarm.ts	kind_compare	2
 src/mcp/resolve-ipc-binding.ts	kind_compare	1
 src/mcp/status-mode.ts	kind_compare	1
+src/core/telemetry/client.ts	kind_compare	2	opt-in telemetry's deployment label (deploymentOf): it names the engine for the report and sends 'unknown' for any other kind, so a third engine never falls into a pglite or postgres branch
