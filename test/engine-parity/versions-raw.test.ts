@@ -85,6 +85,21 @@ describe('engine parity: versions', () => {
   );
 
   parityTest(
+    'createVersion keeps its reason; getVersions reads it back as replaced_because',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      await engine.putPage('notes/ver-why', { type: 'note', title: 'Why', compiled_truth: 'Dated 2026-01-02.', timeline: '' });
+      const created = await engine.createVersion('notes/ver-why', { reason: 'Corrected date' });
+      await engine.putPage('notes/ver-why', { type: 'note', title: 'Why', compiled_truth: 'Dated 2026-01-03.', timeline: '' });
+      await engine.createVersion('notes/ver-why');
+      const reasons = (await engine.getVersions('notes/ver-why')).map((v) => [v.compiled_truth, v.replaced_because ?? null]);
+      expect(reasons).toContainEqual(['Dated 2026-01-02.', 'Corrected date']);
+      const meta = (await engine.getVersions('notes/ver-why', { includeBody: false })).map((v) => v.replaced_because ?? null);
+      return { created: [created.compiled_truth, (created as { change_reason?: string | null }).change_reason ?? null], reasons: sorted(reasons.map((r) => JSON.stringify(r))), meta };
+    },
+  );
+
+  parityTest(
     'revertToVersion restores body and frontmatter from the snapshot',
     { methods: ['putPage', 'createVersion', 'revertToVersion', 'getPage'] },
     async (engine) => {

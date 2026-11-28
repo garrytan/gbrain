@@ -1,8 +1,8 @@
 /**
  * The page-write reads and upkeep that belong to no other domain (engine-sql/write-misc.ts): page admission's source
  * row, a write's source state, the worktree binding, the extracted-event check, the shared skillpack reads and the
- * memory proposal upkeep. The source read and the binding are served by gbrain-store (`write_misc`,
- * `persistence::worktrees`); the rest answer for state the store does not keep.
+ * memory proposal upkeep. The source read, the binding and the pack roots are served by gbrain-store (`write_misc`,
+ * `persistence::worktrees`, `shared_skill_publication`); the rest answer for state the store does not keep.
  *
  * Export only BrainEngine members from this file: index.ts spreads the whole module into STORE_MEMBERS.
  */
@@ -39,14 +39,33 @@ export const readAdmissionSource: StoreMember<[sourceId: string], AdmissionSourc
   };
 };
 
-/**
- * The store answers as a current schema with no shared skillpacks does: the table exists (the store is never on a
- * schema from before shared skills) and holds no pack, so listSharedSkillPackRoots returns nothing.
- */
+/** The store is never on a schema from before shared skills, so the pack table is always there (listSharedSkillPackRoots). */
 export const sharedSkillPackTablePresent: StoreMember<[], boolean> = async () => true;
 
-/** The store keeps no shared skillpacks (see sharedSkillPackTablePresent), so no pack has roots, bound worktree or not. */
-export const listSharedSkillPackRoots: StoreMember<[hostId: string], SharedSkillPackRoot[]> = async () => [];
+/**
+ * The shared skillpack roots as engine-sql/write-misc.ts joins them: each source's pack at the source's current
+ * incarnation (gbrain-store `shared_skill_publication` pack records), the source's local path, and, when the source's
+ * binding is of that incarnation, host `hostId`'s worktree path (null without a host row) and the binding's relative
+ * path. A brain that never activated shared publication holds no pack: the store writes a pack only once it is active.
+ */
+export const listSharedSkillPackRoots: StoreMember<[hostId: string], SharedSkillPackRoot[]> = async (brain, hostId) => {
+  const member = 'listSharedSkillPackRoots';
+  const flag: { skill_bundles_enabled: boolean } = await storeCall({ member }, () => brain.readSharedSkillPublication());
+  if (!flag.skill_bundles_enabled) return [];
+  const sources: Array<{ id: string; incarnation: string; local_path: string | null }> =
+    await storeCall({ member }, () => brain.listAllSources({ includeArchived: true }));
+  const roots: SharedSkillPackRoot[] = [];
+  for (const source of sources) {
+    const pack: { source_incarnation: string } | null = await storeCall({ member, sourceId: source.id },
+      () => brain.readSharedSkillPack({ sourceId: source.id, incarnation: source.incarnation }));
+    if (!pack) continue;
+    const binding: WorktreeBinding | null = await storeCall({ member, sourceId: source.id }, () => brain.getWorktreeBinding(source.id, hostId));
+    const bound = binding !== null && binding.source_incarnation === pack.source_incarnation;
+    roots.push({ source_id: source.id, source_incarnation: pack.source_incarnation, source_root: source.local_path,
+      worktree_root: bound ? binding.local_path : null, relative_path: bound ? binding.relative_path : null });
+  }
+  return roots;
+};
 
 /**
  * The source's binding as host `hostId` sees it, from the binding records an unmanaged claim keeps

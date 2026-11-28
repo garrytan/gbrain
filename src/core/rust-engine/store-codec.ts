@@ -148,12 +148,13 @@ export function toTimelineEntry<T extends object>(entry: T): T {
 
 /**
  * A version as `getVersions` returns it: the frontmatter's valid-time dates (`validDate`, as the SQL twin reads
- * them), the reason the next write gave (none is kept), and no `content_hash`, which PGLite's list leaves out.
+ * them), the reason the next write gave (the store's `replaced_because`, null when none), and no `content_hash`,
+ * which PGLite's list leaves out.
  */
 export function toVersion<T extends object>(version: T): T {
   const { content_hash: _hash, ...rest } = withDates(version, ['snapshot_at']) as Row;
   const frontmatter = (rest.frontmatter ?? {}) as Row;
-  return { ...rest, replaced_because: null, valid_from: validDate(frontmatter.valid_from), valid_until: validDate(frontmatter.valid_until) } as T;
+  return { ...rest, replaced_because: rest.replaced_because ?? null, valid_from: validDate(frontmatter.valid_from), valid_until: validDate(frontmatter.valid_until) } as T;
 }
 
 /** The row `createVersion` returns: PGLite hands back the whole inserted row, columns and defaults included. */

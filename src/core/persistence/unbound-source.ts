@@ -4,6 +4,8 @@ import type { SqlEngine, WriteRequest } from './model.ts';
 import { managedPersistenceEnabled } from './ownership.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 import { detachRestoredPage } from './detached-pages.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
+import { capabilityMissing } from '../rust-engine/errors.ts';
 
 /**
  * #5254: a Postgres page write to a filesystem source with no canonical owner
@@ -142,12 +144,22 @@ export type UnboundWriteDecision = { kind: 'claim' } | { kind: 'database_only'; 
  */
 export async function decideUnboundWrite(engine: BrainEngine,
   input: { sourceId: string; sourceKind: string | null; fileBacked: boolean; path: string | null }): Promise<UnboundWriteDecision> {
-  if (isConnectorSourceKind(input.sourceKind)) return { kind: 'database_only', reason: 'connector_database' };
+  if (isConnectorSourceKind(input.sourceKind)) return databaseOnlyDecision(engine, 'connector_database');
   if (engine.kind === 'pglite' && !(await readDatabaseOnlyActivatedSources(engine)).includes(input.sourceId)) return { kind: 'claim' };
   if (input.fileBacked || await readUnboundWritePolicy(engine) !== 'database_only') {
     throw unboundSourceError(input.sourceId, input.path, input.fileBacked ? 'file_backed' : 'database_only_eligible', !await managedPersistenceEnabled(engine));
   }
-  return { kind: 'database_only', reason: 'unbound_source' };
+  return databaseOnlyDecision(engine, 'unbound_source');
+}
+
+/**
+ * A database-only write to a source with no owner. Its publication rechecks the binding and stamps the page through raw
+ * SQL (assertUnboundPublication, classifyUnboundPage), so an engine without raw SQL (Rust) refuses it here, before
+ * admission: no request is admitted that can only end failed.
+ */
+function databaseOnlyDecision(engine: BrainEngine, reason: 'connector_database' | 'unbound_source'): UnboundWriteDecision {
+  if (lacksRawSql(engine)) throw capabilityMissing('raw_sql', `a database-only write to a source with no canonical owner (${reason})`);
+  return { kind: 'database_only', reason };
 }
 
 export function unboundPublicationHint(sourceId: string): string {

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 332/656
+# covered: 333/656
 # mention_pass: 0/1
 # belief_purge: 0/2
 # connect_gate: 0/4
@@ -69,7 +69,7 @@
 # belief_reads: 0/1
 # search_vector: 0/1
 # open_loops: 5/7
-# write_misc: 0/32
+# write_misc: 1/32
 # entity_reads: 2/2
 # owner_only: 1/1
 # wanted_links: 2/2
@@ -302,11 +302,11 @@ transaction	lifecycle	yes	20	no	yes	yes	serves
 transactionDirect	lifecycle	yes	1	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	52	yes	yes	yes	serves
-readPageSnapshot	pages	yes	36	no	yes	yes	serves
-readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
+getPage	pages	yes	55	yes	yes	yes	serves
+readPageSnapshot	pages	yes	37	no	yes	yes	serves
+readPageSnapshotsBatch	pages	yes	2	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	serves
-putPage	pages	yes	216	yes	yes	yes	serves
+putPage	pages	yes	218	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -519,8 +519,8 @@ readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 deleteRewrittenSegmentDerivations	segmented_body	no	0	no	-	-	-
-createVersion	versions	yes	6	no	yes	yes	serves
-getVersions	versions	yes	5	no	yes	yes	serves
+createVersion	versions	yes	7	no	yes	yes	serves
+getVersions	versions	yes	6	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
 readLatestVersionIdAtTier	versions	no	0	no	-	-	-
 countOnboardSignal	stats_ingest	yes	1	no	yes	yes	refuses:health
@@ -680,7 +680,7 @@ countOpenLoopsByCounterpartyEmail	open_loops	yes	1	no	yes	yes	serves
 purgeStaleAppliedCaptures	open_loops	no	0	no	-	-	-
 listPendingCoreEditNotices	open_loops	no	0	no	-	-	-
 readEntityOpenLoops	open_loops	yes	4	no	yes	yes	serves
-readSourceState	write_misc	no	0	no	-	-	-
+readSourceState	write_misc	yes	1	no	yes	yes	serves
 readAdmissionSource	write_misc	no	0	no	-	-	-
 sharedSkillPackTablePresent	write_misc	no	0	no	-	-	-
 listSharedSkillPackRoots	write_misc	no	0	no	-	-	-
