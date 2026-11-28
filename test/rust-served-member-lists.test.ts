@@ -9,8 +9,9 @@
  *    test/fixtures/served-member-lists/local-only.tsv, one row per member with a one-line reason.
  * 2. Fails on: a new store-returning member or typed read on none of these lists (the failure names it; the persistence
  *    upkeep store and ten entity and version reads arrived this way and refused on the served arms), a local-only row for
- *    a member that is gone or is also served, remote or denied, a row with no reason, or a change in the number of rows
- *    under the frozen baseline reason other than the one this file names.
+ *    a member that is gone or is also served, remote or denied, a row with no reason, or any change to the set of members
+ *    under the frozen baseline reason other than the one this file pins: a new row, and also a swap (one baseline row out,
+ *    a new member in under the same reason), which keeps the count.
  * 3. Existing coverage: rust-owner-ipc-remote.test.ts checks every remote read is a typed or frozen hand read and never
  *    a write; rust-served-store-returning.serial.test.ts checks the managed stores are served. Neither fails when a new
  *    member joins no list.
@@ -18,6 +19,7 @@
  *    single member write is always refused, and its whole operations are the closed list of served/remote-whole-ops.ts.
  */
 import { describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { RUST_ENGINE_MEMBERS } from '../src/core/rust-engine/members.ts';
@@ -29,8 +31,13 @@ const ROOT = join(import.meta.dir, '..');
 const LOCAL_ONLY_FILE = 'test/fixtures/served-member-lists/local-only.tsv';
 /** The frozen baseline reason (multiuser d0a230d4ac, 2026-11-28): no served parity file proves the member remotely. */
 const BASELINE_REASON = 'ruling A default';
-/** Rows under the baseline reason. Lower it in the commit that moves a row out; it never rises. */
+/**
+ * The baseline member set, pinned by its size and a sha256 of its sorted names joined by newlines. Lower
+ * BASELINE_FROZEN_SIZE and update BASELINE_DIGEST only in the commit that moves a row out of the baseline reason; never to
+ * add a member. A new local-only member takes its own real reason.
+ */
 const BASELINE_FROZEN_SIZE = 1529;
+const BASELINE_DIGEST = '4cd08ce6aa6e88b727b3b62e6076d9e6af1632dbdc6236fb36800772b74d8835';
 
 const localOnlyRows = readFileSync(join(ROOT, LOCAL_ONLY_FILE), 'utf8').split('\n')
   .filter(line => line !== '' && !line.startsWith('#') && line !== 'member\treason')
@@ -63,6 +70,16 @@ function unclassified(lists: Lists): string[] {
   return problems;
 }
 
+/** How the rows under the baseline reason differ from the pinned set: its size, then its digest. */
+function baselineDrift(rows: readonly { member: string; reason: string }[]): string[] {
+  const names = rows.filter(row => row.reason === BASELINE_REASON).map(row => row.member).sort();
+  const digest = createHash('sha256').update(names.join('\n')).digest('hex');
+  return [
+    ...(names.length !== BASELINE_FROZEN_SIZE ? [`${names.length} rows under '${BASELINE_REASON}', not ${BASELINE_FROZEN_SIZE}`] : []),
+    ...(digest !== BASELINE_DIGEST ? [`the members under '${BASELINE_REASON}' are not the pinned set (sha256 ${digest})`] : []),
+  ];
+}
+
 const REAL: Lists = { stores: declaredStoreMembers(), typedReads: OWNER_IPC_TYPED_READS, served: STORE_RETURNING_MEMBERS, remote: OWNER_IPC_REMOTE_READS, deny: OWNER_IPC_REMOTE_DENY, localOnly: LOCAL_ONLY };
 
 describe('the served member lists guard', () => {
@@ -87,10 +104,19 @@ describe('the served member lists guard', () => {
     expect(bad).toEqual([]);
   });
 
-  test('the rows are sorted and unique, and the frozen baseline reason only shrinks', () => {
+  test('the rows are sorted and unique, and the members under the frozen baseline reason are the pinned set', () => {
     const names = localOnlyRows.map(row => row.member);
     expect(names).toEqual([...new Set(names)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
-    expect(localOnlyRows.filter(row => row.reason === BASELINE_REASON).length).toBe(BASELINE_FROZEN_SIZE);
+    expect(baselineDrift(localOnlyRows)).toEqual([]);
+  });
+
+  test('the baseline pin refuses a swap: one baseline row out and a new member in under the same reason', () => {
+    const [out, ...kept] = localOnlyRows.filter(row => row.reason === BASELINE_REASON);
+    const swapped = [...kept, { member: 'readNewThing', reason: BASELINE_REASON }];
+    expect(out).toBeDefined();
+    expect(swapped.length).toBe(BASELINE_FROZEN_SIZE);
+    expect(baselineDrift(swapped)).toEqual([expect.stringContaining(`the members under '${BASELINE_REASON}' are not the pinned set`)]);
+    expect(baselineDrift([...localOnlyRows, { member: 'readNewThing', reason: BASELINE_REASON }]).length).toBe(2);
   });
 
   test('the guard names a new store-returning member and a new typed read that join no list', () => {
