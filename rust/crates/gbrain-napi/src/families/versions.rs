@@ -66,6 +66,21 @@ impl Brain {
         self.run(env, move |s| s.prune_holding_page_versions(page_id))
     }
 
+    /// `pruneInlineVersionsById({ pageId, sourceId, slug, type?, keep?, versionIds })`: resolves how many inline versions
+    /// the approved `gbrain pages prune-history` plan's ids deleted.
+    #[napi]
+    pub fn prune_inline_versions_by_id<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: gbrain_store::pages::PruneByIdSpec =
+                required(spec, "pruneInlineVersionsById spec")?;
+            s.prune_inline_versions_by_id(&a)
+        })
+    }
+
     /// `readLatestVersionIdAtTier(pageId, tier)`: resolves the page's newest version id stamped
     /// with the tier, or null.
     #[napi]

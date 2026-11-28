@@ -107,6 +107,7 @@ export async function writeSingleFact(
   const managed = await managedPersistenceEnabled(engine);
 
   const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
+  const { refuseRuleFactTarget } = await import('../rules/admission.ts');
   const { decideSingleFact } = await import('./single-prepare.ts');
   const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
@@ -125,6 +126,7 @@ export async function writeSingleFact(
   const resolved = entityRef
     ? await resolveEntitySlugWithSource(engine, sourceId, entityRef)
     : null;
+  refuseRuleFactTarget(entityRef, resolved?.slug);
   // #5504: a slug the resolver invented is not an entity. Unmanaged writes
   // store NULL (nothing for the stub guard to refuse); the managed intent keeps
   // it database-only as attribution. Decided before the dedup lookup so the
@@ -139,7 +141,7 @@ export async function writeSingleFact(
   if (await isFactWithdrawn(engine, sourceId, visibility, factText, resolvedSlug)) {
     const { factWithdrawnRefusal } = await import('./single-prepare.ts');
     throw await factWithdrawnRefusal(engine, sourceId, { fact: factText, kind, visibility, entity_slug: resolvedSlug },
-      { excludePrivate: await resolveExcludePrivatePages(engine, input.remote) });
+      { excludePrivate: await resolveExcludePrivatePages(engine, input.remote), remote: input.remote !== false });
   }
 
   // Embedding (NOT an LLM call): powers dedup + downstream recall. Fail-soft —
@@ -166,8 +168,8 @@ export async function writeSingleFact(
     // unmanaged path stores it, so dedup is per entity.
     const { publishManagedEntityFacts } = await import('./managed-fact-write.ts');
     const written = await publishManagedEntityFacts(engine, sourceId, resolvedSlug, [{ fact: factText, kind, notability: 'medium',
-      source: input.provenance, visibility, confidence: input.confidence ?? 1.0, validFrom: new Date(), validUntil,
-      embedding, embedding_model: embeddingModel, sessionId: input.sessionId ?? null }], { supersede: true, attributeFallback: true, derivation: input.derivation });
+      source: input.provenance, visibility, confidence: input.confidence ?? 1.0, validFrom: null, validUntil,
+      embedding, embedding_model: embeddingModel, sessionId: input.sessionId ?? null }], { supersede: true, attributeFallback: true, requestedAt: new Date(), derivation: input.derivation });
     const storedSlug = await engine.readFactEntitySlugById(written.ids[0]);
     return { id: written.ids[0], status: written.superseded ? 'superseded' : written.inserted ? 'inserted' : 'duplicate', entity_slug: storedSlug,
       valid_until: validUntil, degraded_dedup: degradedDedup };
@@ -226,7 +228,7 @@ export async function writeSingleFact(
           context: null,
           visibility,
           confidence: input.confidence ?? 1.0,
-          validFrom: new Date(),
+          validFrom: null,
           validUntil,
           embedding,
           embedding_model: embedding ? embeddingModel : null,
@@ -306,7 +308,7 @@ async function expireSuperseded(engine: BrainEngine, oldId: number, newId: numbe
     const { forgetFactInFence } = await import('./forget.ts');
     const replacement = await engine.readSupersessionReplacement(newId, oldId);
     const rowNum = replacement?.same_page && replacement.row_num !== null ? Number(replacement.row_num) : null;
-    const validUntil = replacement ? supersededValidUntil({ valid_from: replacement.old_from, valid_until: replacement.old_until }, new Date(replacement.valid_from)) : new Date();
+    const validUntil = replacement ? supersededValidUntil({ valid_from: replacement.old_from, valid_until: replacement.old_until }, replacement.valid_from == null ? null : new Date(replacement.valid_from)) : new Date();
     await forgetFactInFence(engine, oldId, { supersededBy: { rowNum, validUntil } });
   } catch (err) {
     report('fence strike', err);

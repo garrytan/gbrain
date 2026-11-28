@@ -29,6 +29,7 @@ export const CONTENT_MEMBERS = {
   readVersionContent: 'page_versions',
   readPageVersionRow: 'page_versions',
   pruneHoldingPageVersions: 'page_versions',
+  pruneInlineVersionsById: 'page_versions',
   revertToVersion: 'page_versions',
   // page_body
   refreshPageBody: 'page_body',
@@ -115,6 +116,11 @@ export const CONTENT_MEMBERS = {
   hasUnsealedPages: 'chunks',
   currentCodeChunksExist: 'chunks',
   listQualifiedSymbolNames: 'chunks',
+  listSymbolLanguages: 'chunks',
+  listSupportedChunkIds: 'chunks',
+  listSymbolChunkIds: 'chunks',
+  listWalkChunkRows: 'chunks',
+  readReindexSpendInputs: 'chunks',
   listWithdrawalChunks: 'chunks',
   deleteChunksForPages: 'chunks',
   listContextualModeCandidates: 'chunks',
@@ -286,6 +292,12 @@ export const CONTENT_MEMBERS = {
 
   // embeddings: the vector catalog (engine-sql/embedding-catalog.ts), read from the per-vector records
   readChunkVectorColumn: 'embeddings',
+  readEmbeddingColumnTypmod: 'embeddings',
+  readEmbeddingSignatureCensus: 'embeddings',
+  countUnembeddedLiveFacts: 'embeddings',
+  countSynopsisTierPages: 'embeddings',
+  countEmbedSkipNullChunks: 'embeddings',
+  readFalseStampedChunkCounts: 'embeddings',
   readEmbeddingIdentity: 'embeddings',
   listEmbeddingStores: 'embeddings',
   hasStoredVectors: 'embeddings',

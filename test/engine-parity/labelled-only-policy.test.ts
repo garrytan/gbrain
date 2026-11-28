@@ -45,11 +45,10 @@ const OWNER = 'alice-example';
 const LABELLED = 'carol-example';
 const PLAIN = 'bob-example';
 
-// A create or capture of a page that names nobody the writer is, by a labelled-only member: the SQL engines refuse it with
-// access_labelled_only_unnamed. The Rust engine stops earlier, on the raw statement of a slug with no live row (hiddenUnder in
-// page-visibility.ts; the folder-rule read after it, gbrain_access_folder_rules, has no typed member either), with engine_capability_missing,
-// and writes nothing: a named loss (RUST_ENGINE.md, row 32e-b-3), pinned here. The day it answers access_labelled_only_unnamed this fails and the pin goes.
-const UNNAMED_CREATE_REFUSAL = { sql: 'access_labelled_only_unnamed', rust: 'engine_capability_missing' } as const;
+/** `value` with the ids and times that differ on every run (uuids, ISO timestamps) replaced, so arms compare by content. */
+function stable<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<id>').replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z/g, '<time>')) as T;
+}
 
 async function seed(engine: BrainEngine, backend: ParityBackend): Promise<void> {
   await createSource(engine, backend, SRC);
@@ -93,29 +92,24 @@ async function pageState(engine: BrainEngine, slug: string): Promise<{ body: str
 }
 
 describe('engine parity: a labelled-only member\'s remote writes', () => {
-  // Not a parityTest: on Rust a labelled-only member's create or capture of an unnamed page still reaches a raw statement the engine refuses
-  // (row 32e-b-3, UNNAMED_CREATE_REFUSAL), so it ends on engine_capability_missing there, and the harness fails a case that caught a
-  // refusal. What must match on every arm is that the write is refused and nothing is stored, and the rewrite of an open page is
-  // refused with the same code (the cases below compare the whole answer). That create and capture code is the one pinned difference.
-  test('a labelled-only member\'s put_page rewrite of an open page, and its put_page or capture of a new page, that do not name it are refused and write nothing on every arm (the create and capture code is a pinned Rust loss)', async () => {
-    for (const arm of arms()) {
-      await resetArm(arm);
-      const { engine } = arm;
-      await seed(engine, arm.backend);
-      await engine.putPage('notes/open', { type: 'note', title: 'Open', compiled_truth: 'First.', timeline: '', frontmatter: {} }, { sourceId: SRC });
-      const state = (slug: string) => pageState(engine, slug);
-      const snapshot = async () => ({ open: await state('notes/open'), fresh: await state('notes/fresh'), captured: await state('notes/captured'), pages: await engine.countSourcePages(SRC) });
-      const before = await snapshot();
-      const revision = (await engine.getPage('notes/open', { sourceId: SRC }))?.knowledge_revision;
-      const rewrite = await labelledWrite(engine, 'put_page', { slug: 'notes/open', content: '---\ntitle: Open\n---\nTaken over.', expected_revision: revision });
-      const create = await labelledWrite(engine, 'put_page', { slug: 'notes/fresh', content: '---\ntitle: Fresh\n---\nNew page.' });
-      const capture = await labelledWrite(engine, 'capture', { slug: 'notes/captured', content: '---\ntitle: Captured\n---\nCaptured page.' });
-      expect({ backend: arm.backend, rewrite, create, capture, after: await snapshot() })
-        .toEqual({ backend: arm.backend, rewrite: 'page_not_found', create: UNNAMED_CREATE_REFUSAL[arm.backend === 'rust' ? 'rust' : 'sql'], capture: UNNAMED_CREATE_REFUSAL[arm.backend === 'rust' ? 'rust' : 'sql'], after: before });
-      expect(before).toEqual({ open: { body: 'First.', versions: 0 }, fresh: { body: null, versions: 0 }, captured: { body: null, versions: 0 }, pages: 1 });
-    }
-    expect(arms().length).toBeGreaterThan(0);
-  }, 120_000);
+  // The create and the capture of a page that names nobody the writer is end on the same refusal on every arm, whole body included
+  // (code, message and the fix the operator is shown), and nothing is written.
+  parityTest('a labelled-only member\'s put_page rewrite of an open page, and its put_page or capture of a new page, that do not name it are refused with the same error and write nothing', { methods: ['readWriteVisibilityProbe', 'readLinkTargetPages'], timeout: 120_000 }, async (engine, backend) => {
+    await seed(engine, backend);
+    await engine.putPage('notes/open', { type: 'note', title: 'Open', compiled_truth: 'First.', timeline: '', frontmatter: {} }, { sourceId: SRC });
+    const state = (slug: string) => pageState(engine, slug);
+    const snapshot = async () => ({ open: await state('notes/open'), fresh: await state('notes/fresh'), captured: await state('notes/captured'), pages: await engine.countSourcePages(SRC) });
+    const before = await snapshot();
+    const revision = (await engine.getPage('notes/open', { sourceId: SRC }))?.knowledge_revision;
+    const rewrite = await memberWriteOutcome(engine, LABELLED, 'put_page', { slug: 'notes/open', content: '---\ntitle: Open\n---\nTaken over.', expected_revision: revision });
+    const create = await memberWriteOutcome(engine, LABELLED, 'put_page', { slug: 'notes/fresh', content: '---\ntitle: Fresh\n---\nNew page.' });
+    const capture = await memberWriteOutcome(engine, LABELLED, 'capture', { slug: 'notes/captured', content: '---\ntitle: Captured\n---\nCaptured page.' });
+    const after = await snapshot();
+    expect({ rewrite: (rewrite as { code?: unknown }).code, create: (create as { code?: unknown }).code, capture: (capture as { code?: unknown }).code, after })
+      .toEqual({ rewrite: 'page_not_found', create: 'access_labelled_only_unnamed', capture: 'access_labelled_only_unnamed', after: before });
+    expect(before).toEqual({ open: { body: 'First.', versions: 0 }, fresh: { body: null, versions: 0 }, captured: { body: null, versions: 0 }, pages: 1 });
+    return stable({ rewrite, create, capture, after });
+  });
 });
 
 describe('engine parity: writers a labelled-only member does not change', () => {
@@ -255,25 +249,90 @@ describe('engine parity: the links a labelled-only member\'s rewrite creates', (
 });
 
 describe('engine parity: a labelled-only member\'s create of a page that names it', () => {
-  // loss (32e-b-3 raw fallback): a labelled-only writer is held to the readers check for every slug, and for a slug with no live row
-  // hiddenUnder runs its raw fallback (page-visibility.ts executeRaw). The Rust engine refuses a raw statement with engine_capability_missing;
-  // PGLite and Postgres run it, find no row, and write a page that names the member. Not a parityTest: the harness fails a case that caught
-  // a refusal. On Rust nothing is written.
-  test('loss (32e-b-3 raw fallback): put_page or capture of a new page that names the member is written on PGLite and Postgres, and refused with engine_capability_missing on Rust, writing nothing', async () => {
-    for (const arm of arms()) {
-      await resetArm(arm);
-      const { engine } = arm;
-      await seed(engine, arm.backend);
-      const named = (title: string) => `---\ntitle: ${title}\nreadable_by: ["member:${LABELLED}"]\n---\nNew page.`;
-      const put = await memberWriteOutcome(engine, LABELLED, 'put_page', { slug: 'notes/fresh', content: named('Fresh') });
-      const capture = await memberWriteOutcome(engine, LABELLED, 'capture', { slug: 'notes/captured', content: named('Captured') });
-      const code = (out: WriteOutcome) => out === 'written' ? 'written' : String(out.code);
-      const stored = { fresh: (await pageState(engine, 'notes/fresh')).body, captured: (await pageState(engine, 'notes/captured')).body };
-      expect({ backend: arm.backend, put: code(put), capture: code(capture), stored })
-        .toEqual(arm.backend === 'rust'
-          ? { backend: arm.backend, put: 'engine_capability_missing', capture: 'engine_capability_missing', stored: { fresh: null, captured: null } }
-          : { backend: arm.backend, put: 'written', capture: 'written', stored: { fresh: 'New page.', captured: 'New page.' } });
+  // A labelled-only writer is held to the readers check for every slug, and a slug with no live row is judged on its soft-deleted
+  // row, if any (readPageHiddenFromWriter). A page that names the member, or a group it is in, is written on every arm, and the
+  // stored page is the same: its body, frontmatter, version count and knowledge_revision.
+  parityTest('put_page or capture of a new page that names the member, or a group it is in, is written and stores the same page on every arm', { methods: ['readWriteVisibilityProbe', 'readLinkTargetPages'], timeout: 120_000 }, async (engine, backend) => {
+    await seed(engine, backend);
+    await addGroup(engine, 'team', [LABELLED]);
+    const named = (title: string, reader: string) => `---\ntitle: ${title}\nreadable_by: ["${reader}"]\n---\nNew page.`;
+    const jobs = [['put_page', 'notes/by-member', `member:${LABELLED}`], ['capture', 'notes/captured-by-member', `member:${LABELLED}`],
+      ['put_page', 'notes/by-group', 'group:team'], ['capture', 'notes/captured-by-group', 'group:team']] as const;
+    const outcomes: Record<string, unknown> = {};
+    for (const [operation, slug, reader] of jobs) {
+      const out = await memberWriteOutcome(engine, LABELLED, operation, { slug, content: named(slug, reader) });
+      const page = await engine.getPage(slug, { sourceId: SRC });
+      outcomes[slug] = { out, body: page?.compiled_truth ?? null, frontmatter: page?.frontmatter ?? null, revision: page?.knowledge_revision ?? null, versions: (await engine.getVersions(slug, { sourceId: SRC })).length };
     }
-    expect(arms().length).toBeGreaterThan(0);
-  }, 120_000);
+    expect(Object.values(outcomes).map(o => (o as { out: unknown; body: unknown }).out)).toEqual(['written', 'written', 'written', 'written']);
+    expect(Object.values(outcomes).map(o => (o as { body: unknown }).body)).toEqual(['New page.', 'New page.', 'New page.', 'New page.']);
+    return stable(outcomes);
+  });
+});
+
+describe('engine parity: a labelled-only member\'s create of a page that names nobody, by the folder or page rules over it', () => {
+  const rule = (id: string, prefix: string, ...readers: string[]) => ({ id, prefix, readable_by: readers });
+  const LISTED = `member:${LABELLED}`;
+  const OTHER = `member:${OWNER}`;
+  // A slug with no live row is created only when a rule over it lists the member (the rule's readers and the member's satisfied rule
+  // ids overlap), whatever the page names. Each shape is a put_page and a capture of one slug, answered the same on every arm.
+  const shapes: Array<{ name: string; slug: string; rules: ReturnType<typeof rule>[]; answer: 'written' | 'access_labelled_only_unnamed' }> = [
+    { name: 'a folder rule that lists the member', slug: 'ruled/page', rules: [rule('team', 'ruled/', LISTED)], answer: 'written' },
+    { name: 'a folder rule that lists only another member', slug: 'ruled/page', rules: [rule('others', 'ruled/', OTHER)], answer: 'access_labelled_only_unnamed' },
+    { name: 'two folder rules, one that lists the member and one that lists another', slug: 'ruled/page', rules: [rule('team', 'ruled/', LISTED), rule('others', 'ruled/', OTHER)], answer: 'written' },
+    { name: 'a rule over another folder that lists the member', slug: 'ruled/page', rules: [rule('team', 'elsewhere/', LISTED)], answer: 'access_labelled_only_unnamed' },
+    { name: 'a page rule over the exact slug that lists the member', slug: 'ruled/page', rules: [rule('exact', 'ruled/page', LISTED), rule('exact-captured', 'ruled/page-captured', LISTED)], answer: 'written' },
+  ];
+  for (const shape of shapes) {
+    parityTest(`the create of a page that names nobody, under ${shape.name}, answers ${shape.answer} on every arm`, { methods: ['readWriteVisibilityProbe', 'readLinkTargetPages'], timeout: 120_000 }, async (engine, backend) => {
+      await seed(engine, backend);
+      await proposeRevision(engine, SRC, shape.rules, { origin: 'cli', store: 'database' });
+      const content = '---\ntitle: Ruled\n---\nNew page.';
+      const put = await memberWriteOutcome(engine, LABELLED, 'put_page', { slug: shape.slug, content });
+      const captureSlug = `${shape.slug}-captured`;
+      const capture = await memberWriteOutcome(engine, LABELLED, 'capture', { slug: captureSlug, content });
+      const code = (out: WriteOutcome) => out === 'written' ? 'written' : String((out as { code?: unknown }).code);
+      expect({ put: code(put), capture: code(capture) }).toEqual({ put: shape.answer, capture: shape.answer });
+      return stable({ put, capture, stored: { put: (await pageState(engine, shape.slug)).body, capture: (await pageState(engine, captureSlug)).body } });
+    });
+  }
+});
+
+describe('engine parity: a labelled-only member\'s create under a prefix whose folder rule is still pending', () => {
+  // A slug with no row is not hidden by anything, so the create is judged by what the page names alone; a page under a pending prefix
+  // that names the member is written, and one that names nobody is refused, the same on every arm.
+  for (const [name, readers, answer] of [['names the member', `readable_by: ["member:${LABELLED}"]\n`, 'written'], ['names nobody', '', 'access_labelled_only_unnamed']] as const) {
+    parityTest(`the create of a page that ${name}, under a pending prefix, answers ${answer} on every arm`, { methods: ['readWriteVisibilityProbe', 'readLinkTargetPages'], timeout: 120_000 }, async (engine, backend) => {
+      await seed(engine, backend);
+      await restrictFolder(engine, backend, SRC, 'notes/', 'pending');
+      const out = await memberWriteOutcome(engine, LABELLED, 'put_page', { slug: 'notes/fresh', content: `---\ntitle: Fresh\n${readers}---\nNew page.` });
+      const result = stable({ out, body: (await pageState(engine, 'notes/fresh')).body });
+      expect(out === 'written' ? 'written' : (out as { code?: unknown }).code).toBe(answer);
+      return result;
+    });
+  }
+});
+
+describe('engine parity: a labelled-only member\'s create over a soft-deleted page', () => {
+  // The write over a slug whose only row is soft-deleted is judged on that row (readPageHiddenFromWriter): a row that names the member
+  // is open to it (the write goes on to ask for the deleted row's revision), a row that names nobody is not, and the refusal reads as
+  // an unseen page. A refused write republishes nothing and leaves the deleted row as it was.
+  // A row under a prefix whose folder rule is still pending is hidden by the member-access part before the labelled-only part is judged,
+  // so it stays hidden even when it names the member (the writer's folder coverage reaches the store as part of the policy).
+  for (const shape of [{ name: 'names the member', frontmatter: { readable_by: [`member:${LABELLED}`] }, answer: 'revision_required', pending: false },
+    { name: 'names nobody', frontmatter: {}, answer: 'page_not_found', pending: false },
+    { name: 'names the member, under a prefix whose folder rule is still pending', frontmatter: { readable_by: [`member:${LABELLED}`] }, answer: 'page_not_found', pending: true }] as const) {
+    parityTest(`the put_page over a soft-deleted row that ${shape.name} answers ${shape.answer} on every arm`, { methods: ['readWriteVisibilityProbe', 'readLinkTargetPages'], timeout: 120_000 }, async (engine, backend) => {
+      await seed(engine, backend);
+      if (shape.pending) await restrictFolder(engine, backend, SRC, 'notes/', 'pending');
+      await engine.putPage('notes/gone', { type: 'note', title: 'Gone', compiled_truth: 'First.', timeline: '', frontmatter: shape.frontmatter }, { sourceId: SRC });
+      await engine.softDeletePage('notes/gone', { sourceId: SRC });
+      const snapshot = async () => { const row = await engine.getPage('notes/gone', { sourceId: SRC, includeDeleted: true }); return { live: await engine.getPage('notes/gone', { sourceId: SRC }), row: row && [row.deleted_at !== null, row.compiled_truth, row.frontmatter], versions: (await engine.getVersions('notes/gone', { sourceId: SRC })).length }; };
+      const before = await snapshot();
+      const out = await memberWriteOutcome(engine, LABELLED, 'put_page', { slug: 'notes/gone', content: `---\ntitle: Gone\nreadable_by: ["member:${LABELLED}"]\n---\nSecond.` });
+      const after = await snapshot();
+      expect({ answer: (out as { code?: unknown }).code, after }).toEqual({ answer: shape.answer, after: before });
+      return stable({ out, before, after });
+    });
+  }
 });

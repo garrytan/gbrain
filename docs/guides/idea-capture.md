@@ -55,8 +55,9 @@ capture_idea(message_text, source_context):
   link_to_other_originals(page, related_ideas)
   link_to_concepts(page, referenced_concepts)
 
-  // 5. SYNC
-  gbrain sync --no-pull --no-embed
+  // 5. SYNC — only for a source with a checkout
+  if source_has_checkout:
+    gbrain sync --no-pull --no-embed
 ```
 
 ### The Authorship Test
@@ -68,6 +69,20 @@ ABOUT the user to `brain/media/writings/`. The full filing-rules table (and
 the what-counts-as-original-thinking criteria) lives in
 [entity-detection.md](entity-detection.md) — the single home for the capture
 taxonomy.
+
+On `gbrain-base-v2`, explicitly write `type: concept` and `subtype: original`
+for `originals/`. For `ideas/`, use the following frontmatter. The folder
+does not set the subtype. If you use a different pack, follow its declared
+types; `gbrain-recommended` declares `type: original` for `originals/`.
+
+```markdown
+---
+type: concept
+subtype: idea
+---
+
+# Example product idea
+```
 
 ### Capture Standards
 

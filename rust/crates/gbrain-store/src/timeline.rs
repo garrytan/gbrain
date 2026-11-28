@@ -194,6 +194,14 @@ pub(crate) fn parse_date(text: &str) -> Result<String> {
 pub(crate) fn insert_entry(tx: &mut dyn KvWrite, mut record: TimelineRecord) -> Result<bool> {
     let dedup = record.dedup_key();
     record.id = next_id(tx, NEXT_TIMELINE_ID)?;
+    // The trigger runs before `ON CONFLICT DO NOTHING` finds the conflict, so a deduped add to a guest source refuses too.
+    let source = crate::guest_sources::page_source(&*tx, record.page_id)?;
+    crate::guest_sources::guard_row(
+        &*tx,
+        crate::guest_sources::GuardTable::TimelineEntries,
+        source.as_deref(),
+        crate::guest_sources::GuardOp::Insert,
+    )?;
     if tx.get(&dedup)?.is_some() {
         return Ok(false);
     }
@@ -282,6 +290,19 @@ pub(crate) fn put_entry(
             tx.delete(&dedup)?;
         }
     }
+    let source = crate::guest_sources::page_source(&*tx, new.page_id)?;
+    crate::guest_sources::guard_row(
+        &*tx,
+        crate::guest_sources::GuardTable::TimelineEntries,
+        source.as_deref(),
+        match old {
+            None => crate::guest_sources::GuardOp::Insert,
+            Some(old) => crate::guest_sources::GuardOp::Update {
+                content_changed: (&old.summary, &old.detail, &old.date)
+                    != (&new.summary, &new.detail, &new.date),
+            },
+        },
+    )?;
     let dedup = new.dedup_key();
     if tx
         .get(&dedup)?

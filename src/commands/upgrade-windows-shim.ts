@@ -1,0 +1,106 @@
+/**
+ * #10538: on Windows, Bun links a global package's bin as a small launcher, `<bin>\gbrain.exe`, next to its
+ * `gbrain.bunx` metadata. `gbrain upgrade` runs through that launcher and Windows keeps a running executable open, so
+ * `bun remove -g gbrain` deletes the package and `gbrain.bunx` but leaves `gbrain.exe`, and the next `bun add -g`
+ * (the restore too) fails with `failed to link gbrain: EEXIST`, leaving a launcher that only prints
+ * `could not find bin metadata file`. Windows does let a running executable be renamed, so the upgrade moves the orphaned
+ * launcher aside before each add, and a later run deletes the launchers moved aside once nothing holds them.
+ *
+ * Safety: only `gbrain.exe` and `gbrain.exe.stale[.<n>...]` directly inside Bun's own bin directory are ever touched,
+ * only a regular file small enough to be Bun's launcher is moved (a compiled gbrain release binary is tens of MB), and
+ * nothing happens off Windows.
+ */
+import { existsSync, lstatSync, readdirSync, renameSync, rmSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
+import { execFileSync } from '../core/spawn.ts';
+
+const SHIM = 'gbrain.exe';
+const STALE_SHIM = /^gbrain\.exe\.stale(\.\d+)*$/;
+/** Bun's Windows launcher is a few KB. */
+const MAX_SHIM_BYTES = 1024 * 1024;
+
+function inBinDir(dir: string, name: string): string {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- dir is Bun's own bin directory (bun pm bin -g or Bun's env vars) and name is a fixed launcher name or one that matched STALE_SHIM
+  return join(dir, name);
+}
+
+/** Whether Bun linked the launcher's metadata (`gbrain.bunx`) in `dir`. */
+export function shimLinked(dir: string): boolean {
+  return existsSync(inBinDir(dir, 'gbrain.bunx'));
+}
+
+/**
+ * The directory Bun links global bins into: what `askBun` (`bun pm bin -g`, which also honors bunfig's globalBinDir)
+ * reports, else BUN_INSTALL_BIN, else <BUN_INSTALL>/bin, else ~/.bun/bin.
+ */
+export function bunShimDir(env: NodeJS.ProcessEnv = process.env, askBun?: () => string): string {
+  if (askBun) {
+    try {
+      const reported = askBun().trim();
+      if (reported) return reported;
+    } catch {
+      // Bun could not answer: the environment's answer below is the one Bun uses without a bunfig override.
+    }
+  }
+  if (env.BUN_INSTALL_BIN) return env.BUN_INSTALL_BIN;
+  if (env.BUN_INSTALL) return inBinDir(env.BUN_INSTALL, 'bin');
+  return inBinDir(inBinDir(env.USERPROFILE || env.HOME || homedir(), '.bun'), 'bin');
+}
+
+/** Bun's own answer for its global bin directory (`bun pm bin -g`). */
+export function askBunForBinDir(env: NodeJS.ProcessEnv = process.env): string {
+  return execFileSync('bun', ['pm', 'bin', '-g'], { env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000 });
+}
+
+/**
+ * Deletes launchers an earlier upgrade moved aside: only regular files small enough to be Bun's launcher, so a backup of
+ * a real binary under the same name stays. One a process still holds stays for a later run.
+ */
+export function removeStaleShims(dir: string): string[] {
+  let names: string[] = [];
+  try {
+    names = readdirSync(dir);
+  } catch { // silent-read-ok: cleanup is best-effort; an unlistable bin dir keeps its stale launchers and the move still runs
+  }
+  const removed: string[] = [];
+  for (const name of names) {
+    if (!STALE_SHIM.test(name)) continue;
+    const path = inBinDir(dir, name);
+    try {
+      const stat = lstatSync(path);
+      if (!stat.isFile() || stat.size > MAX_SHIM_BYTES) continue;
+      rmSync(path);
+      removed.push(path);
+    } catch {
+      // Still running (EBUSY/EPERM): the next upgrade deletes it.
+    }
+  }
+  return removed;
+}
+
+/**
+ * Moves the launcher out of the way of the next `bun add -g`. Call it only where no installed package owns the launcher:
+ * right after `bun remove -g gbrain`, or after a failed add. Returns the move, or null when nothing was moved.
+ */
+export function moveAsideOrphanedShim(dir: string, platform: NodeJS.Platform = process.platform, pid: number = process.pid): { from: string; to: string } | null {
+  if (platform !== 'win32') return null;
+  removeStaleShims(dir);
+  const from = inBinDir(dir, SHIM);
+  if (!existsSync(from)) return null;
+  let to = inBinDir(dir, `${SHIM}.stale.${pid}`);
+  for (let n = 1; existsSync(to); n++) to = inBinDir(dir, `${SHIM}.stale.${pid}.${n}`);
+  try {
+    const stat = lstatSync(from);
+    if (!stat.isFile() || stat.size > MAX_SHIM_BYTES) {
+      console.error(`Left ${from} in place: it is not Bun's launcher (${stat.isFile() ? `${stat.size} bytes` : 'not a regular file'}); bun add may fail with EEXIST.`);
+      return null;
+    }
+    renameSync(from, to);
+  } catch (err) {
+    console.error(`Could not move ${from} aside (${(err as NodeJS.ErrnoException).code ?? String(err)}); bun add may fail with EEXIST.`);
+    return null;
+  }
+  console.error(`Moved the old Bun launcher ${from} aside to ${to}.`);
+  return { from, to };
+}

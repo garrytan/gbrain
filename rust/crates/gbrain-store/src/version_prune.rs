@@ -28,7 +28,7 @@ use crate::env::Env;
 use crate::error::Result;
 use crate::keys;
 use crate::kv::{KvRead, KvWrite};
-use crate::pages::{VersionRecord, read_page_by_id, versions_of, write_page};
+use crate::pages::{PruneByIdSpec, VersionRecord, read_page_by_id, versions_of, write_page};
 use crate::put_json;
 
 /// `PAGE_INLINE_MAX_BYTES` (`src/core/page-size-policy.ts`): a page whose inline body is over this
@@ -121,6 +121,67 @@ pub(crate) fn prune_holding(tx: &mut dyn KvWrite, env: &dyn Env, page_id: u64) -
     }
     mark_pruned_history(tx, env, page_id, &excess)?;
     Ok(excess.len() as u64)
+}
+
+/// `pruneInlineVersionsById`: deletes exactly the named inline (not segmented) versions of the page, marks the history it
+/// cut and answers how many it deleted. The page must still be live (`deleted_at IS NULL`), at the named source and slug,
+/// of the named type when one is named, and not an `agent_policy` page; otherwise it deletes nothing. `keep` spares the
+/// page's newest `keep` versions (`id NOT IN (... ORDER BY id DESC LIMIT keep)`).
+pub(crate) fn prune_inline_by_id(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    spec: &PruneByIdSpec,
+) -> Result<u64> {
+    let Ok(page_id) = u64::try_from(spec.page_id) else {
+        return Ok(0);
+    };
+    if spec.version_ids.is_empty() {
+        return Ok(0);
+    }
+    let Some(page) = read_page_by_id(&*tx, page_id)? else {
+        return Ok(0);
+    };
+    if page.source_id != spec.source_id
+        || page.slug != spec.slug
+        || spec
+            .page_type
+            .as_ref()
+            .is_some_and(|t| *t != page.page_type)
+        || page.deleted_at_us.is_some()
+        || page.page_type == AGENT_POLICY_TYPE
+    {
+        return Ok(0);
+    }
+    let all = versions_of(&*tx, page_id)?;
+    let spared: Vec<u64> = match spec.keep {
+        None => Vec::new(),
+        Some(keep) => {
+            let mut ids: Vec<u64> = all.iter().map(|v| v.id).collect();
+            ids.sort_unstable_by(|a, b| b.cmp(a));
+            ids.truncate(usize::try_from(keep.max(0)).unwrap_or(usize::MAX));
+            ids
+        }
+    };
+    let named: std::collections::BTreeSet<u64> = spec
+        .version_ids
+        .iter()
+        .filter_map(|id| u64::try_from(*id).ok())
+        .collect();
+    let mut pruned: Vec<u64> = all
+        .iter()
+        .filter(|v| {
+            named.contains(&v.id)
+                && v.body_storage.as_deref() != Some("segmented")
+                && !spared.contains(&v.id)
+        })
+        .map(|v| v.id)
+        .collect();
+    pruned.sort_unstable();
+    for id in &pruned {
+        tx.delete(&keys::version(page_id, *id))?;
+    }
+    mark_pruned_history(tx, env, page_id, &pruned)?;
+    Ok(pruned.len() as u64)
 }
 
 /// `EXISTS (SELECT 1 FROM pages WHERE id = $1 AND type IS DISTINCT FROM 'agent_policy')`: the live

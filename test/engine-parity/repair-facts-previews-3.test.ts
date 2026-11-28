@@ -205,7 +205,7 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
     expect(await engine.readFactSnapshots('default', [], false)).toEqual([]);
     const { shaped } = await previewOrStop(engine, backend, 'facts-home', null, {}, root);
     expect(shaped.listing.map((row: { class: string }) => row.class).sort()).toEqual(['entity_page_deleted', 'entity_page_exists', 'no_entity', 'ontology_observation']);
-    return byOrder({ rows: rows.map(row => ({ ...row, id: Number(row.id), valid_from: row.valid_from.toISOString() })), preview: shaped }, ids);
+    return byOrder({ rows: rows.map(row => ({ ...row, id: Number(row.id), valid_from: row.valid_from!.toISOString() })), preview: shaped }, ids);
   }));
 
   parityTest('facts-home applies the holding-page write the same way on every arm', {

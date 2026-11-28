@@ -25,6 +25,8 @@ export interface PageWriteOptions extends PageMutationPrecondition {
    * `none` tier, whose stamp also clears tier vectors.
    */
   contextualRetrieval?: { mode: string; corpusGeneration: string | null };
+  /** GST-4056: store the page's `content_author` exactly, none when it is null (an engine migration copy; EXACT_AUTHOR_MARK). */
+  exactContentAuthor?: boolean;
 }
 
 export interface PageKey {

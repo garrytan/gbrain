@@ -31,7 +31,7 @@ export const ENTITY_FACTS_CAP = 5;
 export const LINKED_FACTS_CAP = 3;
 const LINKED_ENTITIES_CAP = 2;
 
-export interface EntityFact { id: number; fact: string; entity_slug: string | null; kind: string; valid_from: string; source: string; linked_from?: string;
+export interface EntityFact { id: number; fact: string; entity_slug: string | null; kind: string; valid_from: string | null; source: string; linked_from?: string;
   /** #7043: every entity of the copies this row stands for, and how many rows it stands for. */
   entity_slugs?: string[]; collapsed_count?: number }
 

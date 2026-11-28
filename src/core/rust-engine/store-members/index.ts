@@ -4,6 +4,8 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import * as mentionPass from './mention-pass.ts';
+import * as guestSources from './guest-sources.ts';
+import * as guestNotes from './guest-notes.ts';
 import * as chunks from './chunks.ts';
 import * as config from './config.ts';
 import * as graph from './graph.ts';
@@ -123,6 +125,7 @@ import * as checkpointValidation from './checkpoint-validation.ts';
 import * as labelDoor from './label-door.ts';
 import * as pagePurge from './page-purge.ts';
 import * as pagePurgeHolds from './page-purge-holds.ts';
+import * as retentionPurge from './retention-purge.ts';
 import * as pagePurgeJournal from './page-purge-journal.ts';
 import * as pagePurgeScrubs from './page-purge-scrubs.ts';
 import * as purgeReceipt from './purge-receipt.ts';
@@ -211,6 +214,7 @@ import * as fenceCensus from './fence-census.ts';
 import * as doctorSources from './doctor-sources.ts';
 import * as sweepReads from './sweep-reads.ts';
 import * as graduationCatalog from './graduation-catalog.ts';
+import * as remediationRecords from './remediation-records.ts';
 import * as cliReadsExport from './cli-reads-export.ts';
 import * as beliefLedger from './belief-ledger.ts';
 import * as cycleReads from './cycle-reads.ts';
@@ -230,12 +234,15 @@ import * as pinnedQuestions from './pinned-questions.ts';
 import * as volunteerEvents from './volunteer-events.ts';
 import * as retrievalFeedback from './retrieval-feedback.ts';
 import * as gitGapCensus from './git-gap-census.ts';
+import * as evalHarnessReads from './eval-harness-reads.ts';
 
 const { readBrainMode: _brainModeHelper, ...writerReleaseMembers } = writerRelease;
 
 export const STORE_MEMBERS = {
   // The mention pass and the gazetteer, extract snapshot and explain reads (rust/docs/store/mention-state.md).
   ...mentionPass,
+  ...guestSources,
+  ...guestNotes,
   initSchema,
   ...config, ...sources, ...tags, ...versions, ...chunks, ...search, ...links, ...graph, ...timeline,
   getPage: pages.getPage, readPageSnapshot: pages.readPageSnapshot, putPage: pages.putPage, deletePage: pages.deletePage,
@@ -289,6 +296,7 @@ export const STORE_MEMBERS = {
   ...purgeReceipt,
   // The parks and owed-purge records of a derived-origin purge (rust/docs/store/label_door.md).
   ...pagePurgeHolds,
+  ...retentionPurge,
   ...memoryMutationReads,
   // The statements a forget's withdrawal commits and the fact_withdrawn refusal reads (rust/docs/store/trust.md).
   ...withdrawalCommit,
@@ -420,6 +428,7 @@ export const STORE_MEMBERS = {
   ...decideStore,
   // The engine graduation inventory's catalog reads, answered from the store's keyspace list (rust/docs/store/keyspaces.md).
   ...graduationCatalog,
+  ...remediationRecords,
   // The source-side reads of `gbrain migrate --to <engine>` (rust/docs/store/engine-migration.md).
   ...engineMigration,
   // The synopsis tier's configuration read (rust/docs/store/synopsis-tier.md).
@@ -447,6 +456,8 @@ export const STORE_MEMBERS = {
   // The dream cycle's persistence journal reads (rust/docs/store/dream.md, "Dream cycle statements").
   // A page publication's fence projection and fence guard statements, tier-only row changes and the unwithdrawn-facts restore (rust/docs/store/facts.md, "The fence projection's statements").
   ...fenceProjection,
+  // The memory-trust evals' harness reads (rust/docs/store/eval-harness-reads.md).
+  ...evalHarnessReads,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

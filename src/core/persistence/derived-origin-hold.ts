@@ -9,7 +9,6 @@
  * pruned. Rows are exempt from the op_checkpoints TTL sweep. No engine-sql imports, so `engine-sql/pages.ts` may import it.
  */
 import type { BrainEngine } from '../engine.ts';
-import type { SqlEngine } from './model.ts';
 
 export const DERIVED_ORIGIN_PARK_OP = 'derived-origin-park';
 export const DERIVED_ORIGIN_PARKED_CODE = 'derived_origin_parked';
@@ -47,8 +46,6 @@ export async function parkDerivedOrigin(engine: Pick<BrainEngine, 'upsertDerived
 export const OWED_PURGE_OP = 'owed-page-purge';
 export interface OwedPurge { source_id: string; page_id: number; deleted_us: string; request_id: string }
 
-const DELETED_US = (alias: string) => `floor(extract(epoch FROM ${alias}.deleted_at)*1000000)::bigint::text`;
-const OWED_TOMBSTONE = `EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL AND ${DELETED_US('p')} = o.completed_keys->0->>'deleted_us')`;
 
 /**
  * Records that the owner's purge `requestId` is owed for page `pageId`'s current tombstone; a page that is not a tombstone
@@ -60,23 +57,20 @@ export async function recordOwedPurge(engine: Pick<BrainEngine, 'recordOwedPurge
 }
 
 /** Drops the owner purge a park holds once its page's tombstone is not the one the hold was recorded for (restored, deleted again). */
-export async function releaseStaleHolds(engine: SqlEngine): Promise<void> {
-  await engine.executeRaw(`UPDATE op_checkpoints o SET updated_at=now(), completed_keys=jsonb_build_array((o.completed_keys->0) - 'held_request_id' - 'held_deleted_us')
-    FROM pages p WHERE o.op=$1 AND o.fingerprint=p.id::text AND (o.completed_keys->0) ? 'held_deleted_us'
-      AND (p.deleted_at IS NULL OR ${DELETED_US('p')} <> o.completed_keys->0->>'held_deleted_us')`, [DERIVED_ORIGIN_PARK_OP]);
+export async function releaseStaleHolds(engine: Pick<BrainEngine, 'releaseStaleOriginParkHolds'>): Promise<void> {
+  await engine.releaseStaleOriginParkHolds(DERIVED_ORIGIN_PARK_OP);
 }
 
 /** Read-only: every owed purge whose tombstone still exists as recorded. */
-export async function readOwedPurges(engine: SqlEngine): Promise<OwedPurge[]> {
+export async function readOwedPurges(engine: Pick<BrainEngine, 'listOwedPurgeRecords'>): Promise<OwedPurge[]> {
   // The fingerprint order never reaches output: the owed purges become a Set of page ids, which has no order to show.
-  const rows = await engine.executeRaw<{ owed: OwedPurge | string }>(`SELECT o.completed_keys->0 AS owed FROM op_checkpoints o WHERE o.op=$1 AND ${OWED_TOMBSTONE}
-    ORDER BY o.fingerprint`, [OWED_PURGE_OP]);
-  return rows.map(row => typeof row.owed === 'string' ? JSON.parse(row.owed) as OwedPurge : row.owed).map(owed => ({ ...owed, page_id: Number(owed.page_id) }));
+  const rows = await engine.listOwedPurgeRecords(OWED_PURGE_OP);
+  return rows.map(row => typeof row.owed === 'string' ? JSON.parse(row.owed) as OwedPurge : row.owed as OwedPurge).map(owed => ({ ...owed, page_id: Number(owed.page_id) }));
 }
 
 /** Drops the records whose tombstone was removed, restored or deleted again. */
-export async function pruneOwedPurges(engine: SqlEngine): Promise<void> {
-  await engine.executeRaw(`DELETE FROM op_checkpoints o WHERE o.op=$1 AND NOT ${OWED_TOMBSTONE}`, [OWED_PURGE_OP]);
+export async function pruneOwedPurges(engine: Pick<BrainEngine, 'pruneOwedPurgeRecords'>): Promise<void> {
+  await engine.pruneOwedPurgeRecords(OWED_PURGE_OP);
 }
 
 /** Removes the records of these pages; the purge that removes a page calls it in its transaction. */
@@ -93,8 +87,8 @@ export async function clearDerivedOriginParks(engine: Pick<BrainEngine, 'deleteO
 export const TOMBSTONE = 'EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL)';
 
 /** Drops the parks of pages that were restored or purged. */
-export async function pruneDerivedOriginParks(engine: SqlEngine): Promise<void> {
-  await engine.executeRaw(`DELETE FROM op_checkpoints o WHERE o.op=$1 AND NOT ${TOMBSTONE}`, [DERIVED_ORIGIN_PARK_OP]);
+export async function pruneDerivedOriginParks(engine: Pick<BrainEngine, 'pruneOriginParkRecords'>): Promise<void> {
+  await engine.pruneOriginParkRecords(DERIVED_ORIGIN_PARK_OP);
 }
 
 /** Read-only: every park whose page is still a tombstone, oldest first. */

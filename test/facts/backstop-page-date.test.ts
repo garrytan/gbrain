@@ -2,7 +2,7 @@
  * Page-body facts take the page's observation date, never the sync time.
  *
  * Protects: a dated note (meetings/2019-05-01-…) imported today stores its
- * extracted facts at 2019-05-01; an undated page keeps the now() default; an
+ * extracted facts at 2019-05-01; an undated page leaves the event date unknown; an
  * explicit caller validFrom still wins over the page date; and such facts
  * decay as old evidence in hot-memory ranking (effectiveConfidence).
  * Seams: gateway chat transport stub; in-memory PGLite.
@@ -51,12 +51,12 @@ describe('backstop valid_from for page-body facts', () => {
     expect(at.toISOString().slice(0, 10)).toBe('2019-05-01');
   });
 
-  test('an undated page keeps the now() default', async () => {
+  test('an undated page leaves the event date unknown', async () => {
     chatStub('Beta-example hired a designer');
-    const before = Date.now();
     const r = await runFactsBackstop({ slug: 'notes/beta-example-hiring', type: 'note', compiled_truth: BODY, frontmatter: {} }, ctx());
-    const at = await validFromOf(r.mode === 'inline' ? r.fact_ids : []);
-    expect(at.getTime()).toBeGreaterThanOrEqual(before - 60_000);
+    const rows = await engine.executeRaw<{ valid_from: Date | null }>('SELECT valid_from FROM facts WHERE id = $1', [(r.mode === 'inline' ? r.fact_ids : [])[0]]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].valid_from).toBeNull();
   });
 
   test('a caller validFrom still wins over the page date', async () => {

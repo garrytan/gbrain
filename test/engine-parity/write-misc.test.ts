@@ -1262,7 +1262,18 @@ describe('engine parity: write misc', () => {
     const seeded = await bindWorktree(engine, 'work').then(() => null, (e: unknown) => e);
     expect(seeded).toBeNull();
     const claimed = { work: await engine.isSourceClaimed('work'), loose: await engine.isSourceClaimed('loose') };
-    await engine.executeRaw('UPDATE sources SET incarnation = gen_random_uuid() WHERE id = $1', ['work']);
+    // The incarnation moves through the typed source members: removing the source drops its binding with it (as sources
+    // remove does) and inserting the same id again gives it a new incarnation. The binding of the old incarnation is then
+    // written back through the claim store, so the source has a binding that names an incarnation it no longer has, which
+    // is what moving the incarnation under a live binding leaves; a read that ignored the incarnation would answer true.
+    const before = await engine.readSourceState('work');
+    expect((await engine.deleteSourceRecord('work')).deleted).toBe(true);
+    await engine.insertSource({ id: 'work', name: 'work', local_path: '/var/tmp/work-root', config: { canonical: 'git' } });
+    const after = await engine.readSourceState('work');
+    expect(after!.incarnation).toMatch(UUID);
+    expect(after!.incarnation).not.toBe(before!.incarnation);
+    await bindWorktree(engine, 'work', before!.incarnation);
+    expect((await engine.getWorktreeBinding('work', HOST_A))?.source_incarnation).toBe(before!.incarnation);
     const answers = { ...claimed, afterIncarnation: await engine.isSourceClaimed('work') };
     expect(answers).toEqual({ work: true, loose: false, afterIncarnation: false });
     return answers;

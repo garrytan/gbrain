@@ -241,6 +241,7 @@ or a physical projection that leaves attribution untouched):
 - `src/commands/sync/rename-collision.ts` (2): the legacy sync rename (`updateSlug`, and the tombstone re-key when the destination slug is a soft-deleted row, #5431) runs with its `source_path` repair in one `maintenanceTransaction`; managed sources publish renames through the sync request preparer.
 - `src/core/company-brain/profile.ts` (1): legacy sync soft deletes (`softDeleteSyncPages`) run in `maintenanceTransaction`, inside the company-brain source check when one is active.
 - `src/core/connectors/api-source.ts` (1): an unmanaged connector's soft delete of a page whose item was deleted upstream (Apple Contacts) runs in `maintenanceTransaction`; managed sources delete through `ManagedConnectorSync`.
+- `src/core/cycle/extract-atoms-page-state.ts` (1): reusing an unmanaged page's atoms when its extraction input is unchanged (GST-4020) moves their `source_hash` and stamps the page's scan in one `maintenanceTransaction` under `withTrustKeep`, after re-reading the origin page and its atoms under row locks; managed pages are never reused.
 - `src/core/cycle/extract-facts.ts` (1): the unmanaged page reconcile and the expiry of fence facts whose page was soft-deleted run in `maintenanceTransaction`; managed brains publish `managed_maintenance_fence_facts` and `managed_maintenance_deleted_page_facts_expire` requests whose preparers write inside the coordinator publication. Both reconcile paths write at the page's tier and gate new rows. The fence reconcile, supersession, expiry and deleted-page statements are engine members in `engine-sql/facts-cycle.ts`, run on the same transaction.
 - `src/core/cycle/extract-takes.ts` (1): one projected-takes writer stamps each page's tier and runs the write gate: inside a receipted `managed_maintenance_takes_reextract` request per changed page on managed brains, one `maintenanceTransaction` per page tier for the unmanaged batch upsert.
 - `src/core/enrichment-service.ts` (2): the enrichment stub fallback write and its auto-timeline entry run in `maintenanceTransaction` at the source page's derived tier (the stub import is lowered to it afterwards).
@@ -252,7 +253,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/embedding-dim-check.ts` (1): embedding columns only (physical projection).
 - `src/core/extract/receipt-writer.ts` (1): the extraction receipt page runs in `maintenanceTransaction`.
 - `src/core/facts/backstop.ts` (1): the facts backstop's DB-only fallbacks insert each fact through one helper, in `maintenanceTransaction` at the extraction's derived tier; managed brains publish through the facts request preparer.
-- `src/core/facts/conversation-publication.ts` (2): the managed conversation-facts preparer clears each member page's prior rows and inserts its frozen entry (or a blocked outcome row) inside the coordinator publication of its admitted batch request, clearing only for a complete replacement (#7013); the unmanaged writer runs the same publication in `maintenanceTransaction`. Its page clear also expires the rows `gbrain facts relink --conversation` linked (after deleting the previous clear's expired copies), inside the same transaction (#6764). The segmented incremental run, unmanaged only, re-anchors moved windows' facts and stamps fresh rows' windows (`source_window`) in the same `maintenanceTransaction`.
+- `src/core/facts/conversation-publication.ts` (2): the managed conversation-facts preparer clears each member page's prior rows and inserts its frozen entry (or a blocked outcome row) inside the coordinator publication of its admitted batch request, clearing only for a complete replacement (#7013); the unmanaged writer runs the same publication in `maintenanceTransaction`. Its page clear expires the page's active extractor rows, the rows `gbrain facts relink --conversation` linked included, and keeps them as history, inside the same transaction (#6764, #10443). Narrowing a published claim to private narrows the page's expired copies of that claim in the same transaction. The segmented incremental run, unmanaged only, re-anchors moved windows' facts and stamps fresh rows' windows (`source_window`) in the same `maintenanceTransaction`.
 - `src/core/facts/conversation-relink.ts` (1): `gbrain facts relink --conversation`: a `managed_maintenance_conversation_relink` request on managed brains; the unmanaged relink runs in `writeDerivedFacts` (`maintenanceTransaction`).
 - `src/core/facts/fence-fact-append.ts` (1): `prepareFenceFactAppend` inserts the facts row of a fence row the request's page file holds, in its caller's coordinated publication after the page row (remember and its callers).
 - `src/core/facts/fence-write.ts` (1): the markdown-first fence reconcile insert runs in `maintenanceTransaction` (its page body mirror goes through `facts/file-body-guard.ts`).
@@ -327,11 +328,12 @@ or a physical projection that leaves attribution untouched):
 Three generation writes moved into typed engine members, so the engine layer holds their statements and the grep above no longer counts their callers; each still runs inside the same transaction as before: the atom completion stamp (`generations/adapters/atoms.ts` calls `stampPageFrontmatter`, `engine-sql/derivation-trust.ts`), the fact before-state restore (`generations/adapters/fact-rows.ts` `restoreFactRow` calls `restoreFactPreimage`, `engine-sql/facts.ts`) and the kept-row renumbering (`generations/fence-evidence.ts` `moveKeptRows` calls `moveKeptFactRows`, `engine-sql/generation-fence-evidence.ts`).
 
 Unattributed (on unmanaged brains these would write with `NULL` attribution).
-The list is empty: `gbrain extract` timeline walks, enrichment and meeting
-timeline extraction run as tiered derivers since #5575 (I2). A new writer
-that cannot be attributed yet is declared here:
+`gbrain extract` timeline walks, enrichment and meeting timeline extraction
+run as tiered derivers since #5575 (I2). A new writer that cannot be
+attributed yet is declared here:
 
 <!-- write-attribution-unattributed:start -->
+- `src/core/engine-swap/failback-copy.ts` (5): an engine swap failback writes the Rust engine's answer for each changed page, its tags, and the takes and facts that supersede others back into the fenced old primary, in the swap run's own transactions behind its write fence. It runs only during a failback, so it records no actor yet.
 <!-- write-attribution-unattributed:end -->
 
 ## The privacy boundary

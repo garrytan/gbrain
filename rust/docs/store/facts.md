@@ -16,7 +16,7 @@ typed claims. Each member gives the answer PGLite gives today, odd behavior incl
 | (the four list reads) | With a read eligibility (`eligible`, `minTrust`, `suppressFlagged`) each applies `projectionEligibleSql('facts')`, as `listSupersessions` does: it also hides a row whose live provenance page is quarantined, a row below the trust floor and, under suppression, a flagged agent-written-or-lower row. A policy with no floor and no suppression still hides the quarantined page's rows. |
 | `listSupersessions` | Superseded rows, newest supersession first. With a read eligibility (`eligible`, `minTrust`, `suppressFlagged`) it applies `projectionEligibleSql('facts')`: it also hides a row whose live provenance page is quarantined, a row below the trust floor and, under suppression, a flagged agent-written-or-lower row (`trust::TrustPolicy`). The store keeps no `needs_rederive` queue hides a row a purge marked (`generations/needs_rederive.rs`). |
 | `countUnconsolidatedFacts`, `getFactsHealth` | Counts of active rows (and the five entities with the most). |
-| `findCandidateDuplicates` | The recency arm: active same-entity rows, newest first, capped by `k`. The keyword arm (`keyword`, `factText`): the same rows less audit checkpoints, kept when `to_tsvector('english', fact)` matches the OR of the claim's `plainto_tsquery` lexemes (`keyword::or_of_lexemes`; none matches nothing), ordered by `ts_rank_cd` descending, then `created_at` and `id` descending. The cosine arm (`embedding`, no `keyword`): the same rows less audit checkpoints, kept when comparable (a vector from `embeddingModel`, `embedded_text_hash = md5(fact)`, the query's width), ordered by `halfvec` cosine distance to the query (cast to `halfvec` too; NaN last; equal distances by id). The keyword arm with an `embedding` keeps only the comparable rows and does not read the vector. An `embedding` with no (or an empty) `embeddingModel` finds nothing. The member refuses the keyword arm when `GBRAIN_FTS_LANGUAGE` is not `english`. |
+| `findCandidateDuplicates` | The recency arm: active same-entity rows, newest first, capped by `k`. The keyword arm (`keyword`, `factText`): the same rows less audit checkpoints, kept when `to_tsvector(config, fact)` matches the OR of the claim's `plainto_tsquery(config, …)` lexemes (`ftsConfig`: `english` or `german`) (`keyword::or_of_lexemes`; none matches nothing), ordered by `ts_rank_cd` descending, then `created_at` and `id` descending. The cosine arm (`embedding`, no `keyword`): the same rows less audit checkpoints, kept when comparable (a vector from `embeddingModel`, `embedded_text_hash = md5(fact)`, the query's width), ordered by `halfvec` cosine distance to the query (cast to `halfvec` too; NaN last; equal distances by id). The keyword arm with an `embedding` keeps only the comparable rows and does not read the vector. An `embedding` with no (or an empty) `embeddingModel` finds nothing. The member refuses the keyword arm when `GBRAIN_FTS_LANGUAGE` is neither `english` nor `german` (no Snowball port). |
 | `consolidateFact` | Stamps `consolidated_at` and `consolidated_into`. |
 | `findTrajectory` | Typed claims and events of an entity, oldest first, world rows only for remote callers (widened as in [Visibility widening](#visibility-widening-factswidenrs)). A point carries its `embedding` only when its `embedding_model` is the `embedding_model` config value and its `embedded_text_hash` is `md5(fact)`; otherwise null. |
 | `listUnattributedFacts` | The review-list read of `src/core/review-lists.ts`: active rows with no `entity_slug` in any of `sourceIds` (duplicates read once), less rows whose page or entity page is soft-deleted, `worldOnly` keeping `visibility = 'world'`, newest id first, then `offset` and `limit`. Each row is `id, fact, kind, visibility, source_id, created_at, source`, `created_at` in the `timestamptz::text` form (`2026-06-18 09:00:00.5+00`). `excludePrivate` applies the private-provenance policy below, as `src/core/review-lists.ts:30` does. The `BrainEngine` member `listUnattributedFacts` (`src/core/rust-engine/store-members/facts.ts`) calls it in place of the SQL of `src/core/engine-sql/cli-reads-ops.ts`; its `excludePrivateProvenance` becomes this policy. |
@@ -81,9 +81,12 @@ both. The provenance gate reads neither, with one exception in the first form: i
 judges the caller's own member page (`memory/members/<member>`, the actor's member or the first
 `member:` principal) with the identity. The member then sends that slug as `memberPage`, and
 `hidden_by_private_provenance` reads the identity on that page only (`provenance_identity`). The
-second form has no CASE and sends no `memberPage`. Any other caller (folder rules, audiences,
-lineage, labelled-only members) is refused with
-`engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`). A keyed-slug entity
+second form has no CASE and sends no `memberPage`. A labelled-only caller is served too: the member sends `labelledOnly: { identity, satisfiedRuleIds, member }`, and the
+store hides a fact unless it sits on `memory/members/<member>` and that page names `member:<member>` (`own_page_fact`,
+`labelledOnlyFactSql`); the entity and holding pages are judged without the labelled-only conjunct, as
+`privateEntityFilterForCaller` does. A non-owner caller under `access.members_read_lineage` (ordinary or labelled-only), or an
+audience whose policy matches none of the reference renderings (including a labelled-only audience of several identities),
+is refused with `engine_capability_missing` (row 32e-b-4 for lineage; `src/core/rust-engine/store-members/private-provenance.ts`). A keyed-slug entity
 (an `entity_slug` with no `/`) is judged at the name-key page directories (`NAME_KEY_PAGE_DIRS`) by
 `facts/privacy.rs`, as `privateEntityFilterForCaller` does.
 An anonymous caller on a brain that never named readers (`restricted` false in its
@@ -107,10 +110,12 @@ a private row the same `widen` record admits (`world_admits`):
 | Private-facts grant | a private row of a source in `privateFactSources` that has a page to check (not `unpagedFactSql`: no holding page, or a conversation, hook, sweep, transcript or connector lane) and whose pages keep it private for no reason: no holding, entity or provenance slug under `memory/members/`; the holding and provenance pages (`provenance_slug`) not derivation-private in any row, missing, soft-deleted or quarantined; the entity page not derivation-private; and not a held row the grant refuses (GST-2979: a visibility proposal names a copy the caller's reads admit by neither rule, along the hold chain; `widen.rs` `hold_refused`) | `grantedPrivateFactSql`, `factPagesOpenSql`, `factPageReasons` (`src/core/facts/private-fact-pages.ts`) |
 
 The member (`src/core/rust-engine/store-members/fact-visibility.ts`) sends the list alone when PGLite renders the
-bare list. Otherwise it sends `widen` only when the caller's text equals the rendering for a record of just its reader
-identity, private-readable grant and private-facts grant (`judgeWidenedCaller`), with `member` the member that
-record reads as and `memberPagePolicy` its page policy. Any other caller (an audience, an attested actor whose text
-differs, folder rules, a relaxed read) refuses with `engine_capability_missing`. Covered by
+bare list. Otherwise it sends `widen` only when the caller's text matches a fresh reference record of its reader
+identity, private-readable grant and private-facts grant, plus the supported labelled-only and lineage fields from
+`callerReference`, optionally with its satisfied folder rules and pending prefixes. `member` is the member that
+record reads as; `memberPagePolicy` carries its page policy and reference flags. A caller whose text matches none
+of these renderings refuses with `engine_capability_missing`. The separate private-provenance fact gate still
+refuses non-owner lineage reads (row 32e-b-4). Covered by
 `test/engine-parity/fact-visibility-widening.test.ts`, `fact-trajectory-widening.test.ts` and
 `fact-pool-widening.test.ts`, which share `fact-widening-fixture.ts`.
 
@@ -716,7 +721,7 @@ Parity: `test/engine-parity/remember-members.test.ts` (the members one by one) a
 
 ## Recall candidate-pool reads (`facts/recall.rs`)
 
-Six of the `facts-recall.ts` members are served: the pool reads a recall, a search that adds facts and a question recall make
+Seven of the `facts-recall.ts` members are served (`listPooledFactRows` is the seventh, wired in the adapter at sync 21): the pool reads a recall, a search that adds facts and a question recall make
 (`search/fact-relevance.ts`). The TypeScript members are `rust-engine/store-members/facts-recall.ts`; the napi family is
 `families/facts_recall.rs`. Every read admits a row as `listFactsForRelevance` does (`Pool::admits` in `facts/trust.rs`: the
 source, the expiry clauses, the audit sources, a quarantined provenance page, the visibility and private-provenance policies,
@@ -730,9 +735,12 @@ a soft-deleted page, the trust floor and the filters), so a row the caller canno
 | `listPoolUnbackedKeys(scope, keys, limit)` | The distinct `(source, entity)` pairs of pool rows whose entity is in `keys` and has no live page (none, or soft-deleted), by source then slug, at most `limit`. |
 | `listCallOffCueFacts(scope, pairs)` | For each pair, the newest 50 pool rows (by `valid_from`, then id) whose text holds one of 28 retraction or call-off phrases as whole words, case-insensitive (`\m...\M`, so `cancelledX` and `retractor` do not match; `called off-site` does). |
 | `listPoolEntityPairs(scope, filters)` | The distinct `(source, entity)` pairs of pool rows that have an entity. |
+| `listPooledFactRows(scope, filters, ids)` | The whole rows of the given ids that the pool admits now, in id order (recall's second read of its ranked ids, #10225: a fact narrowed since the pool read is left out). Unbuilt, and the TypeScript store member (`store-members/facts-recall.ts`) is not wired yet. |
 
-The TypeScript members refuse (`engine_capability_missing`) a vector-typed column (the store keeps `halfvec`) and a read policy
-other than the no-caller or reader-identity one; `hnswIterativeScan` only changes the Postgres plan, so the store ignores it.
+The TypeScript members refuse (`engine_capability_missing`) a vector-typed column (the store keeps `halfvec`) and any visibility
+or private-provenance policy whose text matches none of the supported reference renderings described above. Supported
+labelled-only callers with lineage off are served; non-owner lineage reads remain refused by the private-provenance
+fact gate (row 32e-b-4). `hnswIterativeScan` only changes the Postgres plan, so the store ignores it.
 Parity: `test/engine-parity/recall-members.test.ts` (edges of each member and the pool functions a search and a recall call, whole),
 and the same members in `facts-rest-sites.test.ts`.
 
@@ -857,9 +865,9 @@ The TypeScript member resolves the privacy policy as the chunk reads do (a calle
 | `listFactsForRelevance` | `search/fact-relevance.ts` | keyword and entity arms | The pool predicate and `similarity` are below. `entity_ended` refuses (it reads `fact_withdrawals` and `gbrain_fact_fingerprint`). |
 | `countUncomparableFacts` | `search/fact-relevance.ts` | yes | Per source, the most first, then by source id. |
 | `listSlotRows` | `search/slot-ends.ts` (`readSlotRows`) | yes (`facts/recall.rs`) | The pool rows, expired ones included in the read, that are still active conversation slot rows (unexpired, not superseded, a value hash, `dim_status` active, a conversation source) of the `(source, entity, dimension)` slots, by `valid_from` then id; no `similarity`. The other five recall pool reads of `engine-sql/facts-recall.ts` are served on rust-5a, not here. |
-| `matchSavedFacts` | `search/saved-facts-match.ts` | yes (`facts/saved_match.rs`) | The match columns, `need`, the cue flag, `trust_rank` and `pool_rank`, as below. The member refuses another correction cue, a non-`english` FTS language and a `worldOnly` read a private-facts grant widens. |
+| `matchSavedFacts` | `search/saved-facts-match.ts` | yes (`facts/saved_match.rs`) | The match columns, `need`, the cue flag, `trust_rank` and `pool_rank`, as below. The member passes the FTS language (`english` or `german`, keyword/stem_german.rs) and refuses another language (no Snowball port), another correction cue and a `worldOnly` read a private-facts grant widens. |
 | `readEntityNewestFacts` | `search/entity-facts.ts` | yes (`facts/saved_match.rs`) | The saved-fact columns plus the collapse columns, newest first (a fact dated after now ranks by `created_at`, as the SQL's `CASE WHEN valid_from > now() THEN created_at ELSE valid_from END`), then the highest id, 50 rows at most. The member refuses a `worldOnly` read a private-facts grant widens, and the caller rethrows that refusal instead of reading it as no facts. |
-| `matchHeadStems` | `search/saved-facts-match.ts` | yes (`facts/saved_match.rs`) | One row per name head, in input order, with the 1-based indexes of the terms its `to_tsvector` matches by `plainto_tsquery`; a stopword term matches nothing. The member refuses a non-`english` FTS language, and the caller rethrows that refusal instead of reading it as no match. |
+| `matchHeadStems` | `search/saved-facts-match.ts` | yes (`facts/saved_match.rs`) | One row per name head, in input order, with the 1-based indexes of the terms its `to_tsvector` matches by `plainto_tsquery`; a stopword term matches nothing. The member passes the FTS language (`english` or `german`) and refuses another (no Snowball port); the caller rethrows that refusal instead of reading it as no match. |
 | `readFactForOwnerAction` | `trust/owner-actions.ts` | yes | Served by `facts/trust_owner.rs`: the 16 bound columns in the SELECT's order, the stored tier, null for no fact. |
 | `listStandingPreferences` | `trust/review.ts` | yes | Served by `facts/trust_owner.rs`: the `standing_instruction` flag receipts and the source's claim state, with the owner floor and connector kinds the member passes. |
 | `listLexicalContestCandidates` | `trust/supersede-handlers.ts` | yes (`facts/contest.rs`) | Active rows of the entity, kind and visibility whose stamped tier ranks above the writer's (a writer that names no tier ranks 0), on `pageSlug` or, without one, on no owned memory page. Highest id first, at most 200; each row is `{ id, fact, trust_tier }`. |
@@ -879,7 +887,8 @@ provenance page hides the row; then the entity, session, `since` (on `valid_from
 - `similarity` is `1 - cosine distance` for a row whose vector has the query's model and length and whose
   `embedded_text_hash` is `md5(fact)`, else NULL. Distances are `f32` sums as `facts/embedding.rs`
   computes them, so values equal PGLite's to about 1e-6, not bit for bit. A `vector`-typed (not
-  `halfvec`) column and a non-`english` FTS language refuse in the member.
+  `halfvec`) column and an FTS language other than `english` or `german` (no Snowball port) refuse in the member;
+  under `german` the keyword arm stems with the German dictionary.
 - `countUncomparableFacts` keeps SQL's three-valued logic: with an undeclared column width a row counts
   only when a conjunct of the comparable test is false, so a vector with a NULL model is not counted.
 - `matchSavedFacts` reads its own candidates: active rows (a superseded row stays), no audit source,
@@ -1186,12 +1195,13 @@ Thirty members, the statements `facts/conversation-publication.ts`, `relink-publ
 | --- | --- |
 | `readNewestConversationFactId`, `maxConversationRowNum`, `countActiveConversationFacts`, `countPageConversationFacts`, `countConversationWindowFacts`, `countConversationFactsOutsideWindows`, `listHeldFactSlots`, `readConversationSlotValueHash` | The page's fact rows by (source, `source_markdown_slug`). A window key is `source_window->>'start'`, `'end'` and `'hash'` joined by `:`; a missing part or a window that is not an object gives no key, so the SQL's three-valued `IN` holds (an unanchored row is outside no list of keys and inside none). `valid_from` crosses as ISO text; the TypeScript side makes it a `Date`. |
 | `stampConversationSourceWindows`, `moveConversationSourceWindows` | `source_window` is a fact record field, stored as JSON in key order (`jsonb_order`); a record with no window omits the field, so earlier records stay byte-identical. A move reads every row's key before it writes any row, as one `UPDATE ... FROM (VALUES ...)` does, so a chain of moves applies at once. |
-| `deleteConversationOutcomeRows`, `clearConversationPageFacts` | One store write. The clear runs the SQL's five steps in order with one `now`: delete spent relinked rows, unslot expired rows, expire relinked rows, expire rows an open loop or another fact's `superseded_by` references, delete the rest. Each step picks its rows before it writes; rows a repair retired stay expired. It returns the sum of the expired and deleted counts. |
+| `narrowConversationExpiredCopies(sourceId, slug, facts)` | One store write (#10443). Sets to `private` each of the page's expired rows whose `source` starts with `cli:extract-conversation-facts`, whose visibility is wider, and whose claim fingerprint (`gbrain_fact_fingerprint`, so case and spacing fold) is one of `facts`', so history never shows a claim wider than the active row that replaced it. An active row, a row of another source and a row of another page stay as they are; a repeat changes nothing. |
+| `deleteConversationOutcomeRows`, `clearConversationPageFacts` | One store write. The clear runs the SQL's three steps in order with one `now` (#10443): unslot the expired rows, delete the page's audit rows (a window clear leaves them), expire every active row that is not an audit row. Each step picks its rows before it writes; an expired row keeps its row, so the open loops and `superseded_by` links that name it still resolve. It returns the sum of the deleted audit and expired counts. |
 | `listPurgeTombstoneMatches` | The fact purge ledger (`purge_hash_under`), with the unbacked-entity rule: an entity with no `/` that names no live page matches a tombstone under any subject. An outcome marker from no source or an audit source is excluded, as the SQL's `NOT (NULL AND true)` is. |
 | `findSpentConversationRequest`, `listConversationBatchRequests`, `readStoredConversationEntry`, `readPrincipalCounters` | The write journal records the store keeps under `keys::REQUEST` and the principal counters (`persistence::read_counter`). Batch requests sort by sequence, and a compacted request is left out. |
 | `countConversationPagesToExtract`, `listMergedEntityAliases`, `listEntityHintPages` | The source's live pages by type, the slug alias records, and hint pages with `retired` and `folder_restricted`. |
 | `findSameClaimFenceRow`, `findOntologyTwin`, `readRelinkSource`, `readReextractOutcomeRow` | Fence rows (`row_num`), the twin with the same (dimension, `value_hash`) preferring an active row, the source record, and the newest active terminal outcome row with the live page's content hash. |
-| `listUnbackedConversationRows`, `listUnlinkedConversationRows`, `listClearedRelinkedFacts`, `countEmbeddedFactsAmong` | Derived rows by page slug in byte order then id; cleared relinked rows newest first; distinct ids that carry an embedding. |
+| `listUnbackedConversationRows`, `listUnlinkedConversationRows`, `listClearedRelinkedFacts`, `countEmbeddedFactsAmong` | Derived rows by page slug in byte order then id; the page's expired conversation rows newest first with a `carried` flag for a relinked row whose entity page is live; distinct ids that carry an embedding. |
 | `lockPageById`, `factRelinkAttemptsTableExists` | No store call. A store write runs alone, so there is no row lock to take; the store always keeps the relink attempts records, so the table exists. |
 
 Two parity cases stop on Rust because their fixtures write through `executeRaw` (a compacted request; a restricted
@@ -1448,8 +1458,10 @@ Served on Rust: `listClaimConflictPairs`, `countClaimConflictPairs`, `listUnarch
   names it, by proposal id then by the order of `ids`, when both facts are active, in the source of the proposal and
   readable (world only for a remote caller, the fact privacy policy, the page and quarantine rules, and the trust
   floor).
-- `readLiveFactEntityPage` is none for a soft-deleted page or one the remote read floor hides. The privacy policies are
-  judged by the TypeScript members and a caller whose member pages, grants or lineage widen them is refused.
+- `readLiveFactEntityPage` is none for a soft-deleted page or one the remote page-read floor hides. Its TypeScript
+  member uses `storePageTextPolicy(remoteReadFloorSql)`, which serves supported labelled-only callers, including
+  lineage reads, and ordinary callers carrying pending folder prefixes when their policy text matches. This is
+  distinct from the fact-provenance floor (`storeFloorPolicy`) and the non-owner lineage fact-policy refusal.
 - `expireFactsOfGonePages` expires, in one write, the facts filed on a gone page (an ontology observation is not
   filed there), the conversation slots filed on it (the row gives up its dimension, value and slot), the facts extracted
   from it and filed on none, and the facts about it that no other page row holds. The first rule that matches a row

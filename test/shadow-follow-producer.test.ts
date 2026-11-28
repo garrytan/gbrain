@@ -14,7 +14,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
-import { failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from './helpers/follow-producer.ts';
+import { busyPreReadIsRelationLevel, driverWriteSurvivesFailedPreRead, nestedThatWaitsForALaterCallMatchesShadowOff, pgliteTemplateWriteIsSeen, writesKeepOrderBesideNestedTransaction, nestedFollowedWritesStayInTheirSavepoint, finishedNestedIsNotBusy, heldCallKeepsItsContext, heldCallRollsBackWithItsTransaction, outerWriteSurvivesNestedRollback, sampledSiblingDoesNotWaitForItself, unawaitedFollowedWriteCommits, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from './helpers/follow-producer.ts';
 import { mergeItems, type Invalidation } from '../src/shadow/invalidations.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from '../src/shadow/reads.ts';
 import { sqlWrites } from '../src/shadow/sql-writes.ts';
@@ -271,6 +271,20 @@ describe('invalidation items and lines', () => {
 
 describe('a failed pre-read', () => {
   test('does not abort the transaction around it', async () => { await failedPreReadKeepsTransaction(engine); });
+  test('does not undo sibling writes of the transaction that were in flight around it', async () => { await failedPreReadKeepsSiblingWrites(engine); });
+  test('a pre-read waits for a running nested transaction, whose own followed write never waits for it: both commit with no stall', async () => { await busyPreReadIsRelationLevel(engine); });
+  test('a callback that throws at once rolls back the write its pre-read held', async () => { await syncThrowRollsBackHeldWrite(engine); });
+  test('with write sampling on too, a call the sampler held does not wait for itself when it is let go', async () => { await sampledSiblingDoesNotWaitForItself(engine); }, 30_000);
+  test('a followed write the callback did not await is sent before the COMMIT and commits', async () => { await unawaitedFollowedWriteCommits(engine); });
+  test('followed writes inside a nested transaction stay in its savepoint and never wait on it', async () => { await nestedFollowedWritesStayInTheirSavepoint(engine); });
+  test('writes keep their submission order beside a running nested transaction', async () => { await writesKeepOrderBesideNestedTransaction(engine); });
+  test('a driver-handle write survives a failed shadow pre-read and reaches the follower', async () => { await driverWriteSurvivesFailedPreRead(engine); });
+  test('a write sent with the transaction handle\'s tagged template reaches the follower', async () => { await pgliteTemplateWriteIsSeen(engine); });
+  test('a nested transaction that waits for a later outer call commits what it commits with shadow off (a nested rollback, a later outer write)', async () => { await nestedThatWaitsForALaterCallMatchesShadowOff(engine); }, 30_000);
+  test('a call held behind a slow pre-read is rolled back with its transaction when the callback fails', async () => { await heldCallRollsBackWithItsTransaction(engine); });
+  test('a write sent while a nested transaction runs is not undone by that nested rollback', async () => { await outerWriteSurvivesNestedRollback(engine); });
+  test("a call held behind a pre-read keeps its own caller's context (a stored legacy slug spelling)", async () => { await heldCallKeepsItsContext(engine); });
+  test('a nested transaction already awaited does not make the next followed write busy', async () => { await finishedNestedIsNotBusy(engine); });
 });
 
 describe('raw SQL write targets', () => {
@@ -401,6 +415,17 @@ describe('members that write more than their arguments name', () => {
     expect(relations(items).sort()).toEqual(['decide_spend', 'decide_state', 'decision_receipts']);
   });
 
+  test('trust allow add and remove report the allow rule row they wrote, by id', async () => {
+    const h = followHarness(engine);
+    const added = await h.engine.addTrustAllowRule({ sourceId: 'default', uriPrefix: 'https://feeds.example.com/', reasonFamily: null, createdBy: 'local_cli:owner', reason: null });
+    const again = await h.engine.addTrustAllowRule({ sourceId: 'default', uriPrefix: 'https://feeds.example.com/', reasonFamily: null, createdBy: 'local_cli:owner', reason: null });
+    const ruleId = String(added.row!.id);
+    await h.engine.removeTrustAllowRule(Number(ruleId), 'local_cli:owner');
+    const items = h.batches.flatMap((b) => b.items) as Invalidation[];
+    expect([added.created, again.created]).toEqual([true, false]);
+    expect(rows(items, 'trust_allow_rules').map((i) => i.selector)).toEqual([{ id: ruleId }, { id: ruleId }, { id: ruleId }]);
+  });
+
   test('deleting pages also reports the owner marks and the slug stores it scrubs', async () => {
     await engine.putPage('people/sven', PAGE('Sven'));
     const h = followHarness(engine);
@@ -436,6 +461,10 @@ describe('write map coverage', () => {
     for (const name of ['normalizeFenceLines', 'hasNotifierCoverage', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'sharedSkillPackTablePresent', 'storedTimelineRowsByPageIds']) {
       expect(memberKind(name)).toBe('read_name');
     }
+  });
+
+  test('the typed reads the doctor and the purge parity cases added are read-only (no write plan)', () => {
+    for (const name of ['listPurgeTombstones', 'listHostRepositoryRoots', 'listPendingGitEffectPaths']) expect(memberKind(name)).toBe('read_name');
   });
 
   test('every mapped, ignored, raw, schema and read-named-write entry names a real engine member', () => {

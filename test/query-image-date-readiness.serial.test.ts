@@ -21,6 +21,7 @@ describe('image query retains date and readiness contracts outside hybrid search
     const engine = {
       getConfig: async () => null,
       getAllConfig: async () => ({}),
+      hasNotifierCoverage: async () => false,
       executeRaw: async (sql: string) => sql.includes('AS pending') ? [{ pending: false }] : [],
       // No page rows in this fake brain: the typed trust read finds nothing.
       readPageTrustRows: async () => [],

@@ -446,6 +446,46 @@ impl Store {
         })
     }
 
+    /// `readFactLiveVisibility(factId)`: the fact's `visibility` and whether it is unexpired (`live`), in any source;
+    /// `None` for no such fact.
+    pub fn read_fact_live_visibility(&self, fact_id: f64) -> Result<Option<Value>> {
+        let Some(id) = super::forget::fact_number("readFactLiveVisibility", fact_id)? else {
+            return Ok(None);
+        };
+        Ok(read_fact(&*self.read()?, id)?
+            .map(|f| json!({ "visibility": f.visibility, "live": f.expired_at_us.is_none() })))
+    }
+
+    /// `tightenFencedFactVisibility(sourceId, factId, rowNum)` (`a.ids` holds the one fact id): sets `visibility` to
+    /// `private` on the named world fact of the source at that fence row when it is unexpired. The ids it changed.
+    pub fn tighten_fenced_fact_visibility(
+        &self,
+        a: &DuplicateArgs,
+        row_num: f64,
+    ) -> Result<Vec<u64>> {
+        const OP: &str = "tightenFencedFactVisibility";
+        no_nul(OP, &[("sourceId", a.source_id.as_str())])?;
+        let ids = id_set(OP, &a.ids)?;
+        let row_num = bigint(OP, "rowNum", row_num)?;
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let mut changed = Vec::new();
+            for old in named_rows(&*tx, &a.source_id, &ids)? {
+                if old.visibility != "world"
+                    || old.row_num.map(i64::from) != Some(row_num)
+                    || old.expired_at_us.is_some()
+                {
+                    continue;
+                }
+                let mut new = old.clone();
+                new.visibility = "private".to_string();
+                write_fact(tx, trust, Some(&old), &new)?;
+                changed.push(old.id);
+            }
+            Ok(changed)
+        })
+    }
+
     /// `detachFenceRowFacts(sourceId, slug, rowNum)`: clears `row_num` and `source_markdown_slug` on the facts of the
     /// source at that fence row of that page. The ids it changed, by id.
     pub fn detach_fence_row_facts(&self, a: &FenceRowArgs) -> Result<Vec<u64>> {

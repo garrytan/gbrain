@@ -1,7 +1,7 @@
 /**
  * F2 (`search.long_page_unit`) on Postgres: the PGLite unit arm
  * (test/evidence-long-page.test.ts) run against a real Postgres brain. Pins
- * the off path (byte-identical to return_unit chunk), the frozen on-path
+ * `off` (byte-identical to return_unit chunk), unset as the `section` default, the frozen on-path
  * golden, the replay case (default 20,000-character threshold, section; a
  * medium and a short hit keep their ranked chunks), the cap and explicit-unit
  * paths unchanged with the key on, the serialized lean MCP `delivered {unit,
@@ -49,22 +49,31 @@ afterAll(async () => {
 }, 120_000);
 
 const long = (rows: Array<Record<string, unknown>>) => rows.find(r => r.slug === LONG_SLUG)!;
+const offCall = (name: string, params: Record<string, unknown>) => withConfig(engine, { [KEY]: 'off' }, () => mcpCall(engine, name, params));
 
 async function expectOffPathIsChunk(): Promise<Record<string, unknown>[]> {
   const metas: Record<string, unknown>[] = [];
   for (const [name, params] of [['search', { query: 'renewal fee' }], ['query', { query: 'renewal fee', expand: false }]] as const) {
-    await mcpCall(engine, name, params);
+    await offCall(name, params);
     const chunk = await mcpCall(engine, name, { ...params, return_unit: 'chunk' });
-    expect((await mcpCall(engine, name, params)).bytes).toBe(chunk.bytes);
-    expect((await withConfig(engine, { [KEY]: 'off' }, () => mcpCall(engine, name, params))).bytes).toBe(chunk.bytes);
+    expect((await offCall(name, params)).bytes).toBe(chunk.bytes);
     metas.push((JSON.parse(chunk.bytes) as { _meta: { retrieval: Record<string, unknown> } })._meta.retrieval);
   }
   return metas;
 }
 
 run('long-page delivery on Postgres', () => {
-  test('off (unset or `off`) is byte-identical to return_unit chunk', async () => {
+  test('`off` is byte-identical to return_unit chunk', async () => {
     await expectOffPathIsChunk();
+  });
+
+  test('unset is the section default: the long hit is widened, with the same bytes as the key set to section', async () => {
+    expect(await engine.getConfig(KEY)).toBeNull();
+    for (const [name, params] of [['search', { query: 'renewal fee' }], ['query', { query: 'renewal fee', expand: false }]] as const) {
+      const unset = await mcpCall(engine, name, params);
+      expect(long(unset.rows).delivered).toEqual({ unit: 'section', reason: 'long_page' });
+      expect(unset.bytes).toBe((await withConfig(engine, { [KEY]: 'section' }, () => mcpCall(engine, name, params))).bytes);
+    }
   });
 
   test('off is byte-identical to return_unit chunk with an embedding provider configured, where only the first call of a query pays its embedding', async () => {
@@ -94,7 +103,7 @@ run('long-page delivery on Postgres', () => {
   });
 
   test('replay: section at the default threshold widens only the long hit; every other row is its off-path bytes', async () => {
-    const off = await mcpCall(engine, 'search', { query: 'renewal fee' });
+    const off = await offCall('search', { query: 'renewal fee' });
     const on = await withConfig(engine, { [KEY]: 'section' }, () => mcpCall(engine, 'search', { query: 'renewal fee' }));
     expect(long(on.rows).delivered).toEqual({ unit: 'section', reason: 'long_page' });
     expect(on.rows.map(r => r.slug)).toEqual(expect.arrayContaining([MEDIUM_SLUG, 'notes/short-example']));
@@ -106,13 +115,13 @@ run('long-page delivery on Postgres', () => {
   test('the cap path and explicit chunk/window units are byte-identical with the key on', async () => {
     for (const params of [{ token_budget: 4000 }, { return_unit: 'chunk' }, { return_unit: 'window' }]) {
       const call = { query: 'renewal fee', ...params };
-      const off = await mcpCall(engine, 'search', call);
+      const off = await offCall('search', call);
       expect((await withConfig(engine, { [KEY]: 'section' }, () => mcpCall(engine, 'search', call))).bytes).toBe(off.bytes);
     }
   });
 
   test('snippet_chars 300: the widened section survives whole with delivered {unit, reason}; every other row is cut to 300 exactly as with the key off and marks delivered {truncated}', async () => {
-    const off = await mcpCall(engine, 'search', { query: 'renewal fee', snippet_chars: 300 });
+    const off = await offCall('search', { query: 'renewal fee', snippet_chars: 300 });
     const [on, full] = await withConfig(engine, { [KEY]: 'section' }, async () => [
       await mcpCall(engine, 'search', { query: 'renewal fee', snippet_chars: 300 }),
       await mcpCall(engine, 'search', { query: 'renewal fee' }),
@@ -149,7 +158,7 @@ run('long-page delivery on Postgres', () => {
         assembled: JSON.stringify(await assembleEvidenceForHits(engine, { hits: [{ source_id: 'default', slug: LONG_SLUG, chunk_id: chunk.id }], return_unit: 'auto', caller: { remote: true } })),
       };
     };
-    const off = await capture();
+    const off = await withConfig(engine, { [KEY]: 'off' }, capture);
     expect(await withConfig(engine, { [KEY]: 'section' }, capture)).toEqual(off);
   });
 

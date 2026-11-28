@@ -6,13 +6,15 @@
  * brain, repo-less included; doctor's rules_regression reads the same result.
  */
 import type { BrainEngine } from '../engine.ts';
+import { opError } from '../ops/contract.ts';
 import { listRulePages } from './section.ts';
-import type { RuleRecord } from './record.ts';
+import { ruleIdOf, ruleSlugOf, type RuleRecord } from './record.ts';
 
 export const RULE_CHECK_TOP = 5;
 
 export interface RuleCheckResult {
   rule_id: string;
+  source_id: string;
   question: string;
   pass: boolean;
   problems: string[];
@@ -29,14 +31,33 @@ export async function checkRule(engine: BrainEngine, rule: RuleRecord): Promise<
     if (!top.some(h => h.slug === rule.slug || (rule.corrects && h.slug === rule.corrects))) problems.push(`neither the rule nor ${rule.corrects ?? 'the page it corrects'} is in the top ${RULE_CHECK_TOP}`);
     for (const e of c.expect) if (!text.includes(e.toLowerCase())) problems.push(`expected "${e}" is missing`);
     for (const r of c.reject) if (text.includes(r.toLowerCase())) problems.push(`rejected "${r}" is present`);
-    out.push({ rule_id: rule.id, question: c.question, pass: problems.length === 0, problems });
+    out.push({ rule_id: rule.id, source_id: rule.source_id, question: c.question, pass: problems.length === 0, problems });
   }
   return out;
 }
 
-/** Every confirmed active rule's checks (or one rule's, by id). */
-export async function runRulesCheck(engine: BrainEngine, opts: { sourceId?: string; id?: string } = {}): Promise<{ checked: number; failed: number; results: RuleCheckResult[] }> {
-  const rows = (await listRulePages(engine, opts.sourceId ?? 'default')).filter(r => r.rule.status === 'active' && r.confirmed && (!opts.id || r.rule.id === opts.id));
+export interface RulesCheckReport {
+  checked: number;
+  failed: number;
+  results: RuleCheckResult[];
+  /** The rule asked for by id is not a confirmed active rule, so nothing was checked. */
+  not_checked?: { rule_id: string; status: string; confirmed: boolean; why: string };
+}
+
+/** Every confirmed active rule's checks, or one rule's by id (me/<name> or rules/me/<name>); an unknown id is refused. */
+export async function runRulesCheck(engine: BrainEngine, opts: { sourceId?: string; id?: string } = {}): Promise<RulesCheckReport> {
+  const sourceId = opts.sourceId ?? 'default';
+  const all = await listRulePages(engine, sourceId);
+  const slug = opts.id !== undefined ? ruleSlugOf(opts.id) : null;
+  const one = opts.id !== undefined ? all.find(r => r.rule.slug === slug) : null;
+  if (opts.id !== undefined && !one) {
+    throw opError('page_not_found', `No standing rule ${opts.id.slice(0, 80)} in source ${sourceId}, so nothing was checked.`, `gbrain rules list${sourceId === 'default' ? '' : ` --source ${sourceId}`} shows each rule's id.`);
+  }
+  if (one && !(one.rule.status === 'active' && one.confirmed)) {
+    return { checked: 0, failed: 0, results: [], not_checked: { rule_id: ruleIdOf(one.rule.slug), status: one.rule.status, confirmed: one.confirmed,
+      why: one.rule.status === 'active' ? 'it is not confirmed yet; only confirmed active rules are checked' : `it is ${one.rule.status}; only confirmed active rules are checked` } };
+  }
+  const rows = one ? [one] : all.filter(r => r.rule.status === 'active' && r.confirmed);
   const results: RuleCheckResult[] = [];
   for (const row of rows) results.push(...await checkRule(engine, row.rule));
   return { checked: results.length, failed: results.filter(r => !r.pass).length, results };

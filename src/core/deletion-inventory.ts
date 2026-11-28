@@ -93,7 +93,7 @@ const ROWS: readonly Row[] = [
   ['eval_contradictions_cache', 'out_of_scope', 'probed_reported', 'chunk_a_hash chunk_b_hash model_id prompt_version truncation_policy verdict', 'verdict'],
   ['eval_contradictions_runs', 'out_of_scope', 'probed_reported', 'run_id judge_model prompt_version source_tier_breakdown report_json', 'report_json'],
   ['eval_takes_quality_runs', 'out_of_scope', 'probed_reported', 'receipt_sha8_corpus receipt_sha8_prompt receipt_sha8_models receipt_sha8_rubric rubric_version verdict dim_scores receipt_json receipt_disk_path', 'receipt_json'],
-  ['extract_atoms_page_state', 'out_of_scope', 'no_memory_text', 'content_hash'],
+  ['extract_atoms_page_state', 'out_of_scope', 'no_memory_text', 'content_hash input_sha256'],
   ['extract_atoms_transcript_state', 'out_of_scope', 'no_memory_text', 'source_id file_path content_hash'],
   ['extract_rollup_7d', 'out_of_scope', 'no_memory_text', 'kind source_id halt_reasons'],
   ['fact_purges', 'out_of_scope', 'text_free_ledger', 'source_id visibility subject fact_hash actor reason'],
@@ -131,7 +131,8 @@ const ROWS: readonly Row[] = [
   ['oauth_clients', 'out_of_scope', 'secret_material', 'client_id client_secret_hash client_name redirect_uris grant_types scope token_endpoint_auth_method source_id federated_read bound_tools bound_source_id bound_brain_id bound_slug_prefixes surface surface_set_by allowed_operations delegated_slug_prefixes delegated_namespace grant_profile grant_repair_reasons source_grant takes_holders min_trust registered_via private_pages private_facts member_id may_act_for attest_actor attest_ops attest_read attest_sources'],
   ['oauth_codes', 'out_of_scope', 'secret_material', 'code_hash client_id scopes code_challenge code_challenge_method redirect_uri state resource'],
   ['oauth_grant_audit', 'out_of_scope', 'no_memory_text', 'client_id actor action before_grant after_grant'],
-  ['oauth_tokens', 'out_of_scope', 'secret_material', 'token_hash token_type client_id scopes resource grant_type'],
+  ['oauth_refresh_rotations', 'out_of_scope', 'secret_material', 'token_hash client_id family_id replaced_by_hash sealed_pair'],
+  ['oauth_tokens', 'out_of_scope', 'secret_material', 'token_hash token_type client_id scopes resource grant_type family_id'],
   ['op_checkpoint_paths', 'out_of_scope', 'no_memory_text', 'op fingerprint path'],
   ['op_checkpoints', 'out_of_scope', 'no_memory_text', 'op fingerprint completed_keys'],
   ['open_loops', 'swept', 'open_loops', 'source_id dedup_key loop_type counterparty_slug counterparty_source_id counterparty_email summary evidence thread_id page_slug status detector closed_by'],
@@ -155,7 +156,7 @@ const ROWS: readonly Row[] = [
   ['page_view_digests', 'out_of_scope', 'no_memory_text', 'revision view audience sha256'],
   ['page_versions', 'swept', 'page_versions', 'compiled_truth frontmatter timeline title type tags source_path write_principal_kind write_principal_id archived_principal_kind archived_principal_id trust_tier write_origin body_storage content_hash change_reason'],
   ['page_write_guards', 'out_of_scope', 'no_memory_text', 'slug'],
-  ['pages', 'swept', 'page_body', 'source_id slug type page_kind title compiled_truth timeline frontmatter content_hash effective_date_source import_filename database_only_reason withheld_source_path contextual_retrieval_mode corpus_generation search_vector source_path ingested_via source_uri source_kind embedding_signature revision_principal_kind revision_principal_id trust_tier write_origin body_storage body_flags truth_lead timeline_lead links_extract_failure page_readers folder_rule_ids'],
+  ['pages', 'swept', 'page_body', 'source_id slug type page_kind title compiled_truth timeline frontmatter content_hash content_author content_author_hash effective_date_source import_filename database_only_reason withheld_source_path contextual_retrieval_mode corpus_generation search_vector source_path ingested_via source_uri source_kind embedding_signature revision_principal_kind revision_principal_id trust_tier write_origin body_storage body_flags truth_lead timeline_lead links_extract_failure page_readers folder_rule_ids'],
   ['persistence_consumers', 'out_of_scope', 'no_memory_text', 'kind mode pool version nonce minted_under persistence_home host_json_path pid_ns boot_id process_start capabilities'],
   ['persistence_counters', 'out_of_scope', 'no_memory_text', 'key'],
   ['persistence_effects', 'swept', 'effect_recovery', 'kind data state source_id error_code outcome recovery claim_owner'],
@@ -280,6 +281,7 @@ export interface RustStoreEntry {
 
 type RustRow = [tag: string, kind: number | null, name: string, tables: string, index?: 'index', none?: [OutOfScopeReason, string]];
 const RUST_ROWS: readonly RustRow[] = [
+  ['0', null, 'guest_sources', 'guest_sources'],
   ['1', null, 'reason_tombstones', 'reason_purge_tombstones'],
   ['3', null, 'secret_store', 'secret_store secret_store_occurrence'],
   ['A', 0x01, 'take', 'takes'],

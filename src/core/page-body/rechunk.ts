@@ -146,9 +146,9 @@ async function flipBatch(tx: BrainEngine, page: RechunkPageRow, plan: BatchPlan,
   await tx.setMaterializingRevision(page.knowledge_revision);
   const applied = await withPageTierKept(tx, { sourceId: page.source_id, slug: page.slug }, () => applySegmentedBody(tx, {
     slug: page.slug, sourceId: page.source_id, pageId: page.id, promotion: false, retireMaxRows,
-    meta: { title: page.title, type: page.type as never, frontmatter: page.frontmatter ?? {}, page_kind: page.page_kind as never },
+    meta: { title: page.title, type: page.type as never, frontmatter: page.frontmatter ?? {}, page_kind: page.page_kind as never, content_author: page.content_author },
     prepared: { stagingId, expectedGeneration: generation, newGeneration: next, createRows: null, createChunks: null, closeOccurrences: [],
-      retireChunkOccurrences: plan.changed, unchunked: 0, priorStale: false, bodyUnchanged: false, stagedChunkIndexes: indexes,
+      retireChunkOccurrences: plan.changed, unchunked: 0, priorStale: false, bodyUnchanged: false, textUnchanged: false, stagedChunkIndexes: indexes,
       rows: { texts: 0, manifest: 0, chunks: indexes.length },
       body: { content_hash: page.content_hash, body_bytes: Number(page.body_bytes), truth_bytes: Number(page.truth_bytes),
         body_lines: Number(page.body_lines), segment_count: page.segment_count, segmenter_version: page.segmenter_version,

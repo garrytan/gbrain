@@ -116,14 +116,17 @@ export interface MigrationPageColumns {
   import_filename: string | null; source_kind: string | null; source_uri: string | null; ingested_via: string | null; ingested_at: Date | string | null;
   /** The text projection is at the knowledge revision. */
   sealed: boolean;
+  /** Who wrote the page's live text (GST-4056), kept only while the stored author hash still names the text `contentHash` (the copier's source text); else null; absent from a store that keeps no author (the Rust store, rust/docs/store/seed.md). */
+  content_author?: string | null;
 }
 
 /** The page's migration columns in any deletion state, or null for no such page. */
-export async function readMigrationPageColumns(exec: Raw, slug: string, sourceId: string): Promise<MigrationPageColumns | null> {
+export async function readMigrationPageColumns(exec: Raw, slug: string, sourceId: string, contentHash: string | null = null): Promise<MigrationPageColumns | null> {
   const [row] = await exec.executeRaw<MigrationPageColumns>(
     `SELECT page_kind,source_path,effective_date,effective_date_source,import_filename,source_kind,source_uri,ingested_via,ingested_at,
+            CASE WHEN content_author_hash = content_hash AND content_hash = $3 THEN content_author END AS content_author,
             text_projection_revision IS NOT DISTINCT FROM knowledge_revision AS sealed
-       FROM pages WHERE slug=$1 AND source_id=$2`, [slug, sourceId]);
+       FROM pages WHERE slug=$1 AND source_id=$2`, [slug, sourceId, contentHash]);
   return row ?? null;
 }
 

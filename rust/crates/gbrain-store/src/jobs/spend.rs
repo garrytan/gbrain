@@ -30,6 +30,7 @@
 //! Time: `now` is read once per call from the store's clock; an overdue hold is `expires_at < now`,
 //! a bounce in a window is `bounced_at > now - round(ms * 1000)` µs.
 
+use super::reads::{JobOwner, owned_or_unfenced};
 use super::*;
 use crate::env::parse_iso;
 
@@ -300,8 +301,9 @@ pub struct ExpireScope {
 pub struct SpendTreeSpec {
     #[serde(default)]
     pub job_ids: Vec<i64>,
+    /// GST-4010: the fenced caller (`owned_by`); `None` is unfenced.
     #[serde(default)]
-    pub owner: Option<String>,
+    pub owner: Option<JobOwner>,
 }
 
 /// One `minion_lease_pressure_log` row.
@@ -744,7 +746,7 @@ impl Store {
     /// `readJobSpendTree({ jobIds, owner })`: per described job that exists, the reservations of the job itself
     /// (`self: true`) and of its descendants to depth 20 (`self: false`), as `{ root, self, settled_cents, priced,
     /// unsettled }`: the settled actual cents (null with none priced), how many settled holds carry an actual amount and
-    /// how many do not. An owner-fenced caller counts only the descendants whose `__owner_client_id` is the owner. A
+    /// how many do not. An owner-fenced caller counts only the descendants it owns (`owned_by`). A
     /// part with no reservation has no row. By job id, then the descendants before the job itself.
     pub fn read_job_spend_tree(&self, spec: &SpendTreeSpec) -> Result<Value> {
         let read = self.read()?;
@@ -755,7 +757,7 @@ impl Store {
             };
             // `tree`: the job and its descendants, one level at a time (a node's children are the rows naming it as their
             // parent), with no memory of a node already seen, as `UNION ALL` has none.
-            let mut level = vec![(top.id, owner_text(&top))];
+            let mut level = vec![(top.id, owned_or_unfenced(&top, spec.owner.as_ref()))];
             let mut nodes = Vec::new();
             for depth in 0..=20 {
                 nodes.extend(level.iter().cloned());
@@ -766,7 +768,7 @@ impl Store {
                 for (id, _) in &level {
                     for child in ids_under(&*read, &child_prefix(*id))? {
                         if let Some(c) = load(&*read, child)? {
-                            next.push((c.id, owner_text(&c)));
+                            next.push((c.id, owned_or_unfenced(&c, spec.owner.as_ref())));
                         }
                     }
                 }
@@ -777,9 +779,9 @@ impl Store {
             }
             // `[sum, priced, unsettled, any]` for the descendants (0) and the job itself (1).
             let mut part = [(0_i64, 0_i64, 0_i64, false), (0_i64, 0_i64, 0_i64, false)];
-            for (id, owner) in nodes {
+            for (id, owned) in nodes {
                 let is_self = id == root;
-                if !is_self && spec.owner.is_some() && owner != spec.owner {
+                if !is_self && !owned {
                     continue;
                 }
                 for res_id in res_ids_of_job(&*read, id)? {
@@ -937,11 +939,6 @@ impl Store {
         }
         Ok(Value::Array(rows))
     }
-}
-
-/// `data->>'__owner_client_id'`.
-fn owner_text(row: &JobRecord) -> Option<String> {
-    row.data.get("__owner_client_id").and_then(jsonb_field_text)
 }
 
 /// The shadow follow (`seed/follow.rs`): removes the reservation `reservation_id` and its index

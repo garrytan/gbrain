@@ -104,8 +104,8 @@ export function classifyPath(path: string): 'test' | 'doc' | 'product' {
 }
 
 export function parseCounts(output: string): { pass: number; fail: number } {
-  const last = (re: RegExp) => { const all = [...output.matchAll(re)]; return all.length ? Number(all[all.length - 1][1]) : 0; };
-  return { pass: last(/^\s*(\d+) pass\b/gm), fail: last(/^\s*(\d+) fail\b/gm) };
+  const passes = [...output.matchAll(/^\s*(\d+) pass\b/gm)];
+  return { pass: Number(passes.at(-1)?.[1] ?? 0), fail: output.match(/^\(fail\) .+/gm)?.length ?? 0 };
 }
 
 /** The discrimination verdict for the run with the product hunks reversed. */
@@ -388,6 +388,9 @@ async function runTests(ctx: Ctx, wt: string, tests: string[], log: string): Pro
     const r = await runStep([process.execPath, '--no-env-file', 'test', '--timeout=60000', `./${test}`], { cwd: wt, env, log: fileLog, timeoutMs: ctx.timeoutMs });
     rmSync(home, { recursive: true, force: true });
     const counts = parseCounts(r.output);
+    if (/^# Unhandled error between tests/m.test(r.output)) {
+      progress(`${test}: Bun reported an unhandled error outside a test; check for an import that no longer resolves after reversal.`);
+    }
     total.pass += counts.pass;
     total.fail += counts.fail;
     total.timedOut ||= r.timedOut;
@@ -639,4 +642,3 @@ export async function main(argv: string[]): Promise<number> {
 }
 
 if (import.meta.main) process.exit(await main(process.argv.slice(2)));
-

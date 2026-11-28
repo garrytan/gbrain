@@ -541,7 +541,7 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(Number(row.id)).toBe(byUser);
     expect(row).toMatchObject({ source_id: SRC, entity_slug: 'people/a', fact: 'likes  TEA.', visibility: 'private', attributed_to: 'user', embedding_model: 'm1', row_num: null, source_markdown_slug: null, expired_at: null, valid_until: null, confidence: 1 });
     expect(row.created_at).toBeInstanceOf(Date);
-    expect(row.valid_from).toBeInstanceOf(Date);
+    expect(row.valid_from).toBeNull(); // #10288: a fact saved with no event date keeps it unknown
     expect(typeof row.embedding).toBe('string');
     // A row of another speaker is no match; the row of no speaker still is.
     const other = await find('people/a', 'assistant', null);
@@ -721,6 +721,44 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     return { all, floored };
   });
 
+  parityTest('listSingleFactMetadata under the remote provenance floor answers inside a caller record: a member, the owner, and a brain with no member-access restrictions', { methods: ['listSingleFactMetadata'] }, async (engine, backend) => {
+    const seed = new Seed(engine);
+    await putCallerPages(engine);
+    // A page derived from a page that names readers: the full form's origin walk hides it, and the short form a brain
+    // with no member-access restrictions renders does not.
+    await engine.putPage('notes/lineage', note('Lineage', '', { derived_from: ['notes/readers'] }));
+    const pages = ['notes/open', 'notes/private', 'notes/readers', 'notes/lineage', 'memory/members/alice-example'];
+    const ids: number[] = [];
+    for (const page of pages) ids.push(...await seed.fence([{ label: page, fact: 'Likes tea', row_num: 1, source_markdown_slug: page, entity_slug: 'people/a' }]));
+    ids.push(await seed.one('no page', { fact: 'Likes tea', entity_slug: 'people/a' }));
+    const records = {
+      member: { identity: ['member:alice-example'] },
+      owner: { owner: true, identity: ['member:alice-example'] },
+      open: { restricted: false, identity: ['member:alice-example'] },
+      ownerOpen: { owner: true, restricted: false, identity: ['member:alice-example'] },
+    } as const;
+    const list = async (sourceId: string, named: number[]) =>
+      (await engine.listSingleFactMetadata({ sourceId, ids: named, remoteFloor: true })).map((r) => seed.name(r.id)).sort();
+    const asRecords = async (read: () => Promise<unknown>) => {
+      const out: Record<string, unknown> = { none: await read() };
+      for (const [name, record] of Object.entries(records)) out[name] = await withCallerAccess({ ...record, identity: [...record.identity] }, read);
+      return out;
+    };
+    const byPage = await asRecords(() => list(SRC, ids));
+    // The floor judges every provenance page by the empty identity, so the caller's own member page stays hidden too.
+    const floor = ['no page', 'notes/open'];
+    const short = ['no page', 'notes/lineage', 'notes/open'];
+    expect(byPage).toEqual({ none: floor, member: floor, owner: floor, open: short, ownerOpen: short });
+    // An owner-only source: with no schema version the closed form hides every fact for any caller but the owner.
+    await createSource(engine, backend, 'fact-chat', { kind: 'imessage' });
+    const chat = await seed.one('chat-row', { fact: 'Likes tea', entity_slug: 'people/a' }, 'fact-chat');
+    const ownerOnly = await asRecords(async () => ({ open: await list(SRC, [ids[0]!]), chat: await list('fact-chat', [chat]) }));
+    const hidden = { open: [], chat: [] };
+    const shown = { open: ['notes/open'], chat: ['chat-row'] };
+    expect(ownerOnly).toEqual({ none: hidden, member: hidden, owner: shown, open: hidden, ownerOpen: shown });
+    return { byPage, ownerOnly };
+  });
+
   parityTest('listUnfencedFactRows lists the active unfenced rows in source, entity, id order with whether the entity has a live page', { methods: ['listUnfencedFactRows'] }, async (engine) => {
     const seed = new Seed(engine);
     await engine.putPage('people/alice', note('Alice', 'a'));
@@ -750,8 +788,8 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(Number(byName('alice').claim_value)).toBe(1.5);
     expect(byName('on-gone').page_exists).toBe(false);
     expect(byName('loose').page_exists).toBe(false);
-    expect(byName('alice').valid_from).toBeInstanceOf(Date);
-    const view = (rows: typeof everywhere) => rows.map(({ id, valid_from, ...row }) => ({ ...row, id: seed.name(id), valid_from: valid_from instanceof Date }));
+    expect(byName('alice').valid_from).toBeNull();
+    const view = (rows: typeof everywhere) => rows.map(({ id, valid_from, ...row }) => ({ ...row, id: seed.name(id), valid_from: valid_from === null }));
     return { everywhere: view(everywhere), one: seed.label(one), none };
   });
 
@@ -810,10 +848,10 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(seed.label(held)).toEqual(['fenced-1', 'fenced-2']);
     expect(held[0]).toMatchObject({ row_num: 1, fact: 'fenced 1', claim_metric: 'arr', entity_slug: 'people/alice', source: 'fence', confidence: 1, attributed_to: 'user', visibility: 'private' });
     expect(Number(held[0]!.claim_value)).toBe(2);
-    expect(held[0]!.valid_from).toBeInstanceOf(Date);
+    expect(held[0]!.valid_from).toBeNull();
     expect(elsewhere).toEqual([]);
     expect(otherSource).toEqual([]);
-    return { held: held.map(({ id, valid_from, ...row }) => ({ ...row, id: seed.name(id), valid_from: valid_from instanceof Date })), elsewhere, otherSource };
+    return { held: held.map(({ id, valid_from, ...row }) => ({ ...row, id: seed.name(id), valid_from: valid_from === null })), elsewhere, otherSource };
   });
 
   /** The withdrawal fixture: one claim on an entity, a name key, a loose row, a fenced row, a member-page row and a world copy. */

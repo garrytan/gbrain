@@ -1379,6 +1379,41 @@ impl Brain {
         })
     }
 
+    /// `readChunkInputHashes(pageId)`: `{ id, embedding_input_hash }` rows.
+    #[napi]
+    pub fn read_chunk_input_hashes<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_chunk_input_hashes(page_id))
+    }
+
+    /// `clearChunkEmbeddingsByIds(pageId, column, ids)`: resolves null.
+    #[napi]
+    pub fn clear_chunk_embeddings_by_ids<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.clear_chunk_embeddings_by_ids(page_id, &ids))
+    }
+
+    /// `writeChunkInputHashes(pageId, ids, hashes)`: resolves null.
+    #[napi]
+    pub fn write_chunk_input_hashes<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        ids: Vec<f64>,
+        hashes: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.write_chunk_input_hashes(page_id, &ids, &hashes)
+        })
+    }
+
     /// `hasDrainableProjectionJob()`: whether a drainable job is queued.
     #[napi]
     pub fn has_drainable_projection_job<'env>(

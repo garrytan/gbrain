@@ -4,7 +4,26 @@
   "run": "45568356657",
   "commit": "7c7de751d86800a9547ab35209bfecbccaa9c1b7",
   "source": "github",
-  "measuredFiles": 5550,
-  "totalFiles": 5685,
-  "mergeExisting": true
+  "measuredFiles": 5549,
+  "totalFiles": 5831,
+  "mergeExisting": true,
+  "coverageOnly": {
+    "addedFiles": 138,
+    "run": "46032755784",
+    "commit": "3dcd8bc1298e389bdd6e8e600072962230ea947f",
+    "runs": [
+      "46032755784",
+      "46030142564",
+      "46023075615",
+      "46017079416",
+      "46015059242"
+    ],
+    "commits": [
+      "3dcd8bc1298e389bdd6e8e600072962230ea947f",
+      "1b284a749361445271262f49e581e2fcc94bc2f8",
+      "c96fbb5173b53e1002295cc152a8ff8e3a515441",
+      "4c675918ecc17619dc86e0b5c70cb3559c7e03b6",
+      "c50e2d93552e23cffa3cb479d65b86bb5944a6f7"
+    ]
+  }
 }

@@ -165,7 +165,7 @@ for (const kind of testBackends()) {
         await engine.addLink(slug, TARGET, 'roadmap', 'mentions', 'manual', undefined, undefined, { fromSourceId: SRC, toSourceId: SRC });
         await engine.addTimelineEntry(slug, { date: '2026-09-01', summary: `Planning call ${canary}` }, { sourceId: SRC });
         await engine.createVersion(slug, { sourceId: SRC });
-        for (const [op, params] of [['remember', { fact: `Harbor fact ${canary}`, provenance: 'fixture', entity: slug, visibility: 'world' }],
+        for (const [op, params] of [['remember', { fact: `Harbor fact ${canary}`, provenance: 'fixture', entity: slug, visibility: 'world', valid_from: '2026-01-01' }],
           ['takes_add', { slug, claim: `Harbor take ${canary}`, kind: 'take', holder: 'world' }]] as const) {
           const out = await dispatchToolCall(engine, op, { ...params }, { remote: false, sourceId: SRC });
           if (out.isError) throw new Error(`fixture ${op}: ${out.content.map(c => c.text).join(' ')}`);
@@ -297,7 +297,7 @@ for (const kind of testBackends()) {
       await importFromContent(engine, DERIVED.summary, '---\ntype: note\ntitle: Retro summary\nderived_from: [notes/retro-origin]\n---\n# Retro summary\n\nHarbor ledger canaryretrosummary.', { sourceId: SRC });
       await importFromContent(engine, DERIVED.concept, '---\ntype: concept\ntitle: Retro concept\nvisibility: world\nsynthesized_by: fixture\n---\n# Retro concept\n\nHarbor ledger canaryretroconcept.', { sourceId: SRC });
       await engine.addLink(DERIVED.concept, DERIVED.atom, 'input', 'synthesized_from', 'concept-provenance', undefined, undefined, { fromSourceId: SRC, toSourceId: SRC });
-      const remembered = await dispatchToolCall(engine, 'remember', { fact: 'Retro fact canaryretrofact', provenance: 'fixture', entity: ORIGIN, visibility: 'world' }, { remote: false, sourceId: SRC });
+      const remembered = await dispatchToolCall(engine, 'remember', { fact: 'Retro fact canaryretrofact', provenance: 'fixture', entity: ORIGIN, visibility: 'world', valid_from: '2026-01-01' }, { remote: false, sourceId: SRC });
       expect(remembered.isError).not.toBe(true);
       const derivedSeen = async (who: string) => {
         const out: string[] = [];

@@ -309,6 +309,62 @@ pub(crate) fn refuse_purged(
     Ok(())
 }
 
+/// One fact purge tombstone of a source as `listPurgeTombstones` answers it (the `fact_purges` columns).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FactPurgeTombstone {
+    pub subject: String,
+    pub visibility: String,
+    pub fact_hash: String,
+    pub request_id: Option<String>,
+    pub actor: Option<String>,
+    pub reason: Option<String>,
+}
+
+/// Every fact purge tombstone of `source_id` with its request, actor and reason, in key order:
+/// (visibility, subject, fact_hash), each in byte order, as `ORDER BY visibility COLLATE "C",
+/// subject COLLATE "C", fact_hash COLLATE "C"` sorts them. A source id holding NUL names none.
+pub(crate) fn fact_purge_tombstones(
+    read: &dyn KvRead,
+    source_id: &str,
+) -> Result<Vec<FactPurgeTombstone>> {
+    if source_id.contains('\0') {
+        return Ok(Vec::new());
+    }
+    let prefix = key(&[source_id]);
+    let mut rows = Vec::new();
+    let mut failed = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        let parts: Vec<&[u8]> = k[prefix.len()..].split(|b| *b == 0).collect();
+        let [visibility, subject, fact_hash, ..] = parts.as_slice() else {
+            return true;
+        };
+        let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+        match serde_json::from_slice::<PurgeRecord>(v) {
+            Ok(r) => {
+                rows.push(FactPurgeTombstone {
+                    subject: text(subject),
+                    visibility: text(visibility),
+                    fact_hash: text(fact_hash),
+                    request_id: r.request_id,
+                    actor: r.actor,
+                    reason: r.reason,
+                });
+                true
+            }
+            Err(e) => {
+                failed = Some(e);
+                false
+            }
+        }
+    })?;
+    match failed {
+        Some(e) => Err(StoreError::invalid(format!(
+            "fact purges: corrupt record: {e}"
+        ))),
+        None => Ok(rows),
+    }
+}
+
 /// One tombstone of a source (`fact_purges` row) as the export lists it.
 pub(crate) struct SourcePurgeRow {
     pub visibility: String,
@@ -388,6 +444,62 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
         tx.delete(&k)?;
     }
     Ok(())
+}
+
+/// The shadow seed (`seed/state.rs`): stores a tombstone copied from another engine, with its own request id, actor, reason
+/// and time. `false` when the key is held.
+pub(crate) fn seed_fact_purge(
+    tx: &mut dyn KvWrite,
+    parts: [&str; 4],
+    request_id: Option<String>,
+    note: (Option<String>, Option<String>),
+    purged_at_us: i64,
+) -> Result<bool> {
+    let [source_id, visibility, subject, fact_hash] = parts;
+    no_nul(
+        "seed fact_purges",
+        &[
+            ("source_id", source_id),
+            ("visibility", visibility),
+            ("subject", subject),
+            ("fact_hash", fact_hash),
+            ("actor", note.0.as_deref().unwrap_or("")),
+            ("reason", note.1.as_deref().unwrap_or("")),
+        ],
+    )?;
+    if !VISIBILITIES.contains(&visibility) {
+        return Err(StoreError::invalid(format!(
+            "seed fact_purges: visibility must be private or world, not \"{visibility}\""
+        )));
+    }
+    let k = key(&parts);
+    if tx.get(&k)?.is_some() {
+        return Ok(false);
+    }
+    put_json(
+        tx,
+        &k,
+        &PurgeRecord {
+            request_id,
+            actor: note.0,
+            reason: note.1,
+            purged_at_us,
+        },
+    )?;
+    Ok(true)
+}
+
+/// The shadow follow (`seed/follow/remove_state.rs`): removes the tombstone of the key. `false` when there is none.
+pub(crate) fn remove_fact_purge(tx: &mut dyn KvWrite, parts: [&str; 4]) -> Result<bool> {
+    if parts.iter().any(|p| p.contains('\0')) {
+        return Ok(false);
+    }
+    let k = key(&parts);
+    if tx.get(&k)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&k)?;
+    Ok(true)
 }
 
 impl Store {

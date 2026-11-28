@@ -13,6 +13,7 @@ import { activationSuppressedSql, contestedRefSql } from '../eligibility/sql.ts'
 import { precedenceSql } from '../eligibility/precedence.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
+import type { RawQuery } from './executor.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** Driver-tolerant 42703 detector (the copy sources-load.ts keeps for its single-row read). */
@@ -25,27 +26,39 @@ function isUndefinedColumnError(err: unknown): boolean {
 
 /**
  * Every source, `default` first, then by id in byte order (`COLLATE "C"`, on any Postgres locale), with the columns `loadAllSources` reads. A brain whose schema lacks
- * `archived` or `newest_content_at` (pre-v0.26.5, pre-v109) is read again with the historical minimal columns.
+ * `newest_content_at` (pre-v109) is read again without it, and one that also lacks `archived` (pre-v0.26.5) with the historical minimal columns, so a brain
+ * that has `archived` always reports it.
  */
-export async function listSourceRecords(exec: LegacyUnscopedRead): Promise<SourceRecordRow[]> {
+export async function listSourceRecords(exec: RawQuery, attempt: <T>(run: (exec: RawQuery) => Promise<T>) => Promise<T> = run => run(exec)): Promise<SourceRecordRow[]> {
+  // `attempt` runs one shape as its own read: an engine that reads under a deadline puts each in its own transaction, which a missing-column error would otherwise leave failed for the next shape.
+  const read = (sql: string) => attempt(e => e.executeRaw<SourceRecordRow>(sql));
   try {
-    return await exec.executeRaw<SourceRecordRow>(
+    return await read(
       `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived, newest_content_at
          FROM sources
        ORDER BY (id = 'default') DESC, id COLLATE "C"`,
     );
   } catch (err) {
     if (!isUndefinedColumnError(err)) throw err;
-    return exec.executeRaw<SourceRecordRow>(
-      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
+  }
+  try {
+    return await read(
+      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived
          FROM sources
        ORDER BY (id = 'default') DESC, id COLLATE "C"`,
     );
+  } catch (err) {
+    if (!isUndefinedColumnError(err)) throw err;
   }
+  return read(
+    `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
+       FROM sources
+     ORDER BY (id = 'default') DESC, id COLLATE "C"`,
+  );
 }
 
 /** One source's config and incarnation, or null for an unknown id (the company-brain profile read). */
-export async function readSourceIncarnation(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceIncarnationRow | null> {
+export async function readSourceIncarnation(exec: RawQuery, sourceId: string): Promise<SourceIncarnationRow | null> {
   const [row] = await exec.executeRaw<SourceIncarnationRow>('SELECT config,incarnation FROM sources WHERE id=$1', [sourceId]);
   return row ?? null;
 }
@@ -64,7 +77,7 @@ export async function readRetainedSources(exec: LegacyUnscopedRead, sourceIds: r
 }
 
 /** Whether the source's current incarnation has a company-brain ingestion receipt. */
-export async function hasCompanyBrainReceipt(exec: LegacyUnscopedRead, sourceId: string): Promise<boolean> {
+export async function hasCompanyBrainReceipt(exec: RawQuery, sourceId: string): Promise<boolean> {
   const rows = await exec.executeRaw(`SELECT r.id FROM source_ingestion_receipts r JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation
       WHERE r.source_id=$1 AND r.profile='company-brain' LIMIT 1`, [sourceId]);
   return rows.length > 0;
@@ -74,11 +87,19 @@ export async function hasCompanyBrainReceipt(exec: LegacyUnscopedRead, sourceId:
  * The guest_sources row of `sourceId` (null fields when it has none) and whether row-level security hides
  * guest_sources from the role. A schema behind the guest-notes migration throws the missing-table error.
  */
-export async function readGuestSourceRow(exec: LegacyUnscopedRead, sourceId: string): Promise<GuestSourceLookupRow> {
+export async function readGuestSourceRow(exec: RawQuery, sourceId: string): Promise<GuestSourceLookupRow> {
   const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(GUEST_SOURCES_HIDDEN_SQL)} AS hidden, g.source_id, g.writers, g.trust_ceiling
     FROM (SELECT 1) AS one LEFT JOIN guest_sources g ON g.source_id = ${sourceId}`);
   const [row] = await exec.executeRaw<GuestSourceLookupRow>(text, params);
   return row ?? { hidden: false, source_id: null, writers: null, trust_ceiling: null };
+}
+
+/**
+ * Whether guest_sources holds a row for `sourceId` (guests grant-owner-clients: the source must be set up by `guests
+ * init`). The row alone, not guestSourceSql: a source whose config says guest but has no row is not a guest source here.
+ */
+export async function hasGuestSourceRow(exec: LegacyUnscopedRead, sourceId: string): Promise<boolean> {
+  return (await exec.executeRaw('SELECT 1 FROM guest_sources WHERE source_id = $1', [sourceId])).length > 0;
 }
 
 /** The guest sources among `sourceIds` (guestSourceSql), in no particular order. */

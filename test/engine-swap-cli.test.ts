@@ -84,18 +84,39 @@ describe('engine swap --plan', () => {
     expect(plan.routes.env).toEqual(['GBRAIN_DATABASE_URL']);
     expect(plan.routes.services).toEqual([{ name: 'com.gbrain.serve.plist', kind: 'launchd', sets: ['GBRAIN_DATABASE_URL'] }]);
     expect(typeof plan.disk.free_bytes).toBe('number');
-    expect(Object.keys(plan.deferred).sort()).toEqual(['capability_report', 'expected_write_pause']);
+    // The policy in force at the real clock: the opt-in override's 5 days until the end of Dec 8 PST, 14 days after.
+    expect(plan.policy.text).toMatch(/minimum shadow duration (5 days until 2026-12-09T08:00:00\.000Z|14 days)/);
+    expect(plan.policy.hash).toMatch(/^[0-9a-f]{16}$/);
+    expect(Array.isArray(plan.capability_report.served)).toBe(true);
+    expect(plan.write_pause.seconds).toBeGreaterThanOrEqual(1);
+    expect(plan.blockers).toEqual([]);
     expect(plan.plan_hash).toMatch(/^[0-9a-f]{16}$/);
     expect(r.stdout).not.toContain('VALUECANARY');
   });
 
-  test('the human plan names the verdict, every criterion and the deferred items, and no value', async () => {
+  test('the human plan states the way back, its known limits, what failback does not carry and the fingerprint rule', async () => {
+    const r = await run(['--to', 'rust', '--plan']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('Way back: After a swap, the old engine is not kept current; failback');
+    expect(r.stdout).toContain('Known limit: The Rust store\'s shadow digests are written only by the seed and the follower');
+    expect(r.stdout).toContain('Failback accepted losses (counted by its plan): page_version_collapse, new_row_ids');
+    expect(r.stdout).toMatch(/Failback does not carry \(no Rust read call returns it, or failback does not write it back\), \d+ table\(s\): .*page_versions/);
+    expect(r.stdout).toContain('Fingerprint rule (the probe\'s own rule, both directions)');
+    const json = JSON.parse((await run(['--to', 'rust', '--plan', '--json'])).stdout);
+    expect(json.way_back.losses.not_carried_tables).toContain('page_versions');
+    expect(json.way_back.known_limits.length).toBe(3);
+    expect(r.stdout).toContain('Named loss for remote callers: A remote read by the brain owner on a Rust brain refuses by name');
+    expect(json.way_back.remote_limits.length).toBe(1);
+  });
+
+  test('the human plan names the verdict, every criterion, the policy, the capability report and the write pause, and no value', async () => {
     const r = await run(['--to', 'rust', '--dry-run']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('verdict: NOT READY (no_shadow)');
     expect(r.stdout).toContain('8. [reported] speed (reported, not gating: D23)');
     expect(r.stdout).toContain('Capability report: ');
-    expect(r.stdout).toContain('Expected write pause: ');
+    expect(r.stdout).toContain('Expected write pause: about ');
+    expect(r.stdout).toMatch(/Readiness policy: minimum shadow duration (5 days until 2026-12-09T08:00:00\.000Z|14 days)/);
     expect(r.stdout).toContain('Nothing was written.');
     expect(r.stdout).not.toContain('VALUECANARY');
   });
@@ -109,10 +130,11 @@ describe('engine swap --plan', () => {
   });
 
   test.each([
-    [['--to', 'rust'], 'add --plan'],
-    [['--to', 'rust', '--yes', '--expect', 'abc'], 'not supported yet: --yes --expect'],
-    [['--to', 'postgres', '--plan'], '--to postgres is not available'],
-    [['--plan'], '--to (missing) is not available'],
+    [['--to', 'rust', '--yes'], '--yes needs --expect'],
+    [['--to', 'rust', '--plan', '--resume'], 'Use one of'],
+    [['--to', 'rust', '--bogus'], 'Not a flag of engine swap: --bogus'],
+    [['--to', 'mysql', '--plan'], '--to mysql is not an engine'],
+    [['--plan'], '--to (missing) is not an engine'],
   ])('%j is refused as usage, before the brain is opened', async (args, text) => {
     let opened = false;
     const r = await run(args as string[], { openEngine: async () => { opened = true; throw new Error('opened'); } });
@@ -206,7 +228,9 @@ describe('engine_swap_refused recovery table', () => {
 describe('the swap report names each write type criterion 5 does not compare', () => {
   const NAMED_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
   const sampled = (byFamily: Record<string, unknown>) => ({
-    write_comparisons: { state: 'measured', sample_rate: 1, comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: byFamily },
+    write_comparisons: { state: 'measured', sample_rate: 1, comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: byFamily,
+      // The write bar's call history (write-bar.ts); empty here, so the bar is its floor and 5 compared writes fail it.
+      qualifying_writes: { by_day: {}, first_seen: null } },
   }) as unknown as ShadowStatus;
   const plan = async (doc: ShadowStatus, json: boolean) => {
     const r = await run(['--to', 'rust', '--plan', ...(json ? ['--json'] : [])], { readShadowStatus: async () => doc });
@@ -302,12 +326,53 @@ describe('the swap report names each write type criterion 5 does not compare', (
     // The other line carries these, so the lines name them as sampled and no count is dropped.
     const other = new Set(['raw_sql', 'unmapped', 'other', 'config', 'wanted_links', 'entity_identities', 'raw_data', 'files', 'page_versions', 'synthesis_evidence', 'code_edges_chunk',
       // The trunk's chronicle ledger row (upsertChronicleRow, src/shadow/write-map.ts) is a non-pilot write counted on the other line.
-      'chronicle_page_state']);
+      'chronicle_page_state',
+      // The guest-source record, guest marks and trust allow rules (src/shadow/write-map.ts) are non-pilot writes counted on the other line.
+      'guest_sources', 'guest_marks', 'trust_allow_rules']);
     const stray = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(writeFamily)
       .filter(f => !named.has(f) && !other.has(f) && !/^(pages|links):[A-Za-z]+$/.test(f));
     expect(stray).toEqual([]);
     // No named type is also on the other line, and fact withdrawals never has a family of its own.
     expect([...other].filter(f => named.has(f))).toEqual([]);
     expect(Object.keys(WRITE_MAP).map(writeFamily)).not.toContain('fact_withdrawals');
+  });
+});
+
+describe('A1: the swap check waits a bounded 60 s for a moment when every sample is settled', () => {
+  const BUSY = 'brain busy: no 60 s lull with all samples settled; retry when idle';
+  const doc = (unresolved: number) => ({
+    write_comparisons: { state: unresolved ? 'capability_missing' : 'measured', sample_rate: 1, comparable: 5000, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, ...(unresolved ? { unresolved_replays: unresolved } : {}) },
+  }) as unknown as ShadowStatus;
+  /** A clock the fake sleep advances: the wait costs no real time. */
+  function clockRig() { let t = 1_000_000; const sleeps: number[] = []; return { sleeps, clock: () => t, sleep: async (ms: number) => { sleeps.push(ms); t += ms; } }; }
+  const crit5 = (stdout: string) => (JSON.parse(stdout) as { criteria: Array<{ n: number; state: string; detail: string }> }).criteria.find((c) => c.n === 5)!;
+
+  test('a brain that is never settled for 60 s refuses criterion 5 with exactly "brain busy: no 60 s lull with all samples settled; retry when idle", after waiting 60 s and no longer', async () => {
+    const rig = clockRig(); let reads = 0;
+    const r = await run(['--to', 'rust', '--plan', '--json'], { readShadowStatus: async () => { reads++; return doc(2); }, clock: rig.clock, sleep: rig.sleep });
+    const c = crit5(r.stdout);
+    expect(c.state).toBe('missing');
+    expect(c.detail.startsWith(BUSY)).toBe(true); // verbatim
+    expect(c.detail).toContain('the child keeps up only below ~19 samples/s on this VM'); // the limit is named in the report
+    expect(rig.sleeps.reduce((a, b) => a + b, 0)).toBe(60_000); // a constant 60 s, not a setting
+    expect(reads).toBe(61);
+  });
+
+  test('a brain with a lull passes on its first settled read: it stops waiting at once and reads criterion 5 from that read', async () => {
+    const rig = clockRig(); let reads = 0;
+    const r = await run(['--to', 'rust', '--plan', '--json'], { readShadowStatus: async () => doc(++reads < 3 ? 1 : 0), clock: rig.clock, sleep: rig.sleep });
+    const c = crit5(r.stdout);
+    expect(reads).toBe(3); // the first read with nothing unsettled
+    expect(rig.sleeps).toHaveLength(2);
+    expect(c.detail).not.toContain('brain busy');
+    expect(c.state).toBe('pass');
+  });
+
+  test('a settled status, or no shadow at all, is read once and never waits', async () => {
+    const rig = clockRig(); let reads = 0;
+    await run(['--to', 'rust', '--plan', '--json'], { readShadowStatus: async () => { reads++; return doc(0); }, clock: rig.clock, sleep: rig.sleep });
+    expect([reads, rig.sleeps.length]).toEqual([1, 0]);
+    await run(['--to', 'rust', '--plan', '--json'], { readShadowStatus: async () => null, clock: rig.clock, sleep: rig.sleep });
+    expect(rig.sleeps.length).toBe(0);
   });
 });

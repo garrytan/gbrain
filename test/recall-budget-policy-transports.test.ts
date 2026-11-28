@@ -41,7 +41,8 @@ beforeAll(async () => {
     await installFixtureChunks(tx, 'notes/telescope', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: text }]);
     for (let i = 0; i < 4; i++) {
       await tx.insertFact({
-        fact: `Garden observation ${i}: `.padEnd(144, 'x'), source: 'synthetic', visibility: 'world',
+        // The facts match the query: a query-only recall ranks facts by it (#10225).
+        fact: `Zebra telescope garden observation ${i}: `.padEnd(144, 'x'), source: 'synthetic', visibility: 'world',
         entity_slug: 'topics/garden', source_session: `garden-session-${i}`, valid_from: new Date(`2026-09-01T00:00:0${i}Z`),
       }, { source_id: 'default' });
     }

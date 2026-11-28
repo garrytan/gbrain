@@ -128,10 +128,12 @@ export async function upsertPageWriteGateReceipt(exec: SqlExecutor, sourceId: st
   return rows[0] ? Number(rows[0].id) : null;
 }
 
+/** The one statement `deleteStalePageWriteGateReceipts` sends (write_gate_receipts only): the shadow write sampler judges the member by it (shadow/write-capture.ts). */
+export const DELETE_STALE_PAGE_WRITE_GATE_RECEIPTS_SQL = `DELETE FROM write_gate_receipts r USING pages p
+    WHERE r.target_table = 'pages' AND r.target_id = p.id::text AND p.source_id = $1 AND p.slug = $2 AND r.content_hash IS DISTINCT FROM $3`;
+
 export async function deleteStalePageWriteGateReceipts(exec: SqlExecutor, sourceId: string, slug: string, contentHash: string | null): Promise<void> {
-  await exec.executeRaw(`DELETE FROM write_gate_receipts r USING pages p
-    WHERE r.target_table = 'pages' AND r.target_id = p.id::text AND p.source_id = $1 AND p.slug = $2 AND r.content_hash IS DISTINCT FROM $3`,
-  [sourceId, slug, contentHash]);
+  await exec.executeRaw(DELETE_STALE_PAGE_WRITE_GATE_RECEIPTS_SQL, [sourceId, slug, contentHash]);
 }
 
 export async function listWriteGateReceiptsFor(exec: LegacyUnscopedRead, targetTable: string, targetId: string, limit: number): Promise<WriteGateReceiptRow[]> {
@@ -228,6 +230,49 @@ export async function decideWriteGateHold(exec: SqlExecutor, id: number, status:
     `UPDATE write_gate_holds SET status = $2, decided_at = now(), decided_by = $3 WHERE id = $1 AND status = 'held' RETURNING id::text AS id`,
     [id, status, decidedBy]);
   return rows.length > 0;
+}
+
+/** A rule `addTrustAllowRule` inserts, as trust/allow-rules.ts normalized it; `createdBy` is the principal label. */
+export interface TrustAllowRuleInsert {
+  sourceId: string;
+  uriPrefix: string | null;
+  reasonFamily: string | null;
+  createdBy: string;
+  reason: string | null;
+}
+
+/** What `addTrustAllowRule` did: `source_active: false` wrote nothing; else the rule and whether this call inserted it. */
+export interface TrustAllowRuleAdd { source_active: boolean; row: Record<string, unknown> | null; created: boolean }
+
+/**
+ * `gbrain trust allow add`: refuses a source that is not active (nothing written), then inserts the rule, or reads the
+ * active rule with the same (source, prefix, family) when the partial unique index already holds one.
+ */
+export async function addTrustAllowRule(exec: SqlExecutor, rule: TrustAllowRuleInsert): Promise<TrustAllowRuleAdd> {
+  const [source] = await exec.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1 AND NOT archived', [rule.sourceId]);
+  if (!source) return { source_active: false, row: null, created: false };
+  const [inserted] = await exec.executeRaw<Record<string, unknown>>(
+    `INSERT INTO trust_allow_rules (source_id, uri_prefix, reason_family, created_by, reason) VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT DO NOTHING RETURNING *`, [rule.sourceId, rule.uriPrefix, rule.reasonFamily, rule.createdBy, rule.reason]);
+  if (inserted) return { source_active: true, row: inserted, created: true };
+  const [existing] = await exec.executeRaw<Record<string, unknown>>(
+    `SELECT * FROM trust_allow_rules WHERE removed_at IS NULL AND source_id = $1
+       AND uri_prefix IS NOT DISTINCT FROM $2 AND reason_family IS NOT DISTINCT FROM $3 ORDER BY id LIMIT 1`,
+    [rule.sourceId, rule.uriPrefix, rule.reasonFamily]);
+  return { source_active: true, row: existing ?? null, created: false };
+}
+
+/** `gbrain trust allow remove`: marks the active rule removed (the row stays as the receipt); null when none is active. */
+export async function removeTrustAllowRule(exec: SqlExecutor, id: number, removedBy: string): Promise<Record<string, unknown> | null> {
+  const [row] = await exec.executeRaw<Record<string, unknown>>(
+    'UPDATE trust_allow_rules SET removed_at = now(), removed_by = $2 WHERE id = $1 AND removed_at IS NULL RETURNING *', [id, removedBy]);
+  return row ?? null;
+}
+
+/** One rule by id, active or removed, or null. */
+export async function readTrustAllowRule(exec: LegacyUnscopedRead, id: number): Promise<Record<string, unknown> | null> {
+  const [row] = await exec.executeRaw<Record<string, unknown>>('SELECT * FROM trust_allow_rules WHERE id = $1', [id]);
+  return row ?? null;
 }
 
 /** The filter of `listTrustAllowRuleRows`: the sources to read (all when absent or empty), and whether removed rules count. */

@@ -550,3 +550,58 @@ fn freshness_targets_are_the_worktrees_committed_managed_imports_in_the_window()
             .is_empty()
     );
 }
+
+#[test]
+fn host_repository_roots_list_the_hosts_bound_paths_by_byte_path_with_their_sources() {
+    use gbrain_store::persistence::{HostBindingInsert, WorktreeInsert};
+    let dir = TempDir::new("host-repository-roots");
+    let store = open(&dir);
+    let host = "22222222-2222-4222-8222-222222222222";
+    let other = "33333333-3333-4333-8333-333333333333";
+    for (n, (path, h)) in [
+        ("/r/ac", host),
+        ("/r/a-z", host),
+        ("/r/ab", host),
+        ("/r/elsewhere", other),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let wt = format!("11111111-1111-4111-8111-11111111111{n}");
+        store
+            .insert_worktree(
+                &serde_json::from_value::<WorktreeInsert>(json!({"id": wt, "ownerHostId": h}))
+                    .unwrap(),
+            )
+            .unwrap();
+        store
+            .insert_host_binding(
+                &serde_json::from_value::<HostBindingInsert>(
+                    json!({"worktreeId": wt, "hostId": h, "localPath": path, "coordinationPath": path}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let rows = store.list_host_repository_roots(host).unwrap();
+    let paths: Vec<&str> = rows
+        .iter()
+        .map(|r| r["local_path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["/r/a-z", "/r/ab", "/r/ac"]);
+    assert!(rows.iter().all(|r| r["source_id"].is_null()));
+    assert!(store.list_host_repository_roots("not-a-uuid").is_err());
+    // No git effect is queued, with or without a host.
+    assert!(
+        store
+            .list_pending_git_effect_paths(Some(host))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .list_pending_git_effect_paths(None)
+            .unwrap()
+            .is_empty()
+    );
+}

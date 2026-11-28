@@ -79,6 +79,21 @@ export async function listFactSourcePages(raw: EngineRawRead, ids: readonly numb
   return rows.map(r => ({ id: Number(r.id), page_id: Number(r.page_id), slug: r.slug, title: r.title, type: r.type }));
 }
 
+/** A fact's holding page ref (`listFactHoldingRefs`): its source, `source_markdown_slug` as `slug`, and its entity. */
+export interface FactHoldingRefRow { id: number; source_id: string; slug: string | null; entity_slug: string | null }
+
+/**
+ * Each of `ids`'s source, holding page slug and entity (search/evidence-date.ts `factObservationDates`, for facts
+ * that do not carry their holding slug), facts of any source and any state; a missing id has no row. The rows come
+ * in no set order. The text is the one evidence-date.ts sent (pinned in test/engine-sql-caller-raw-sql-pins.test.ts).
+ */
+export async function listFactHoldingRefs(raw: EngineRawRead, ids: readonly number[]): Promise<FactHoldingRefRow[]> {
+  if (!ids.length) return [];
+  const rows = await raw<{ id: number | string; source_id: string; slug: string | null; entity_slug: string | null }>(
+    'SELECT id, source_id, source_markdown_slug AS slug, entity_slug FROM facts WHERE id = ANY($1::bigint[])', [[...ids]]);
+  return rows.map(r => ({ ...r, id: Number(r.id) }));
+}
+
 /** A typed-claim fact of `listTypedClaimFactsAtPages`. `id` is a JS number; `valid_from` is whatever the driver hands back. */
 export interface TypedClaimFactRow {
   id: number;
@@ -87,7 +102,8 @@ export interface TypedClaimFactRow {
   entity_slug: string;
   claim_metric: string;
   claim_period: string | null;
-  valid_from: Date | string;
+  /** Null for a fact with no event date (#10288). */
+  valid_from: Date | string | null;
 }
 
 /**
@@ -97,7 +113,7 @@ export interface TypedClaimFactRow {
  * test/engine-sql-caller-raw-sql-pins.test.ts).
  */
 export async function listTypedClaimFactsAtPages(raw: EngineRawRead, pageSlugs: readonly string[], entitySlugs: readonly string[]): Promise<TypedClaimFactRow[]> {
-  const rows = await raw<{ id: number | string; source_markdown_slug: string; source_id: string; entity_slug: string; claim_metric: string; claim_period: string | null; valid_from: Date | string }>(
+  const rows = await raw<{ id: number | string; source_markdown_slug: string; source_id: string; entity_slug: string; claim_metric: string; claim_period: string | null; valid_from: Date | string | null }>(
     `SELECT f.id, f.source_markdown_slug, f.source_id, f.entity_slug, f.claim_metric, f.claim_period, f.valid_from FROM facts f
      WHERE f.source_markdown_slug = ANY($1::text[]) AND f.entity_slug = ANY($2::text[]) AND f.claim_metric IS NOT NULL`,
     [[...pageSlugs], [...entitySlugs]]);
@@ -157,8 +173,8 @@ export async function listPoolUnbackedKeys(raw: EngineRawRead, scope: FactPoolSc
  * facts whose text matches the call-off words, under exactly the pool's read policy.
  */
 export async function listCallOffCueFacts(raw: EngineRawRead, scope: FactPoolScope, pairs: ReadonlyArray<{ source_id: string; entity_slug: string }>): Promise<CueFactRow[]> {
-  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC) AS call_off_rank
-       FROM facts f WHERE ${poolWhere(scope, undefined)} AND f.fact ~* ${CALL_OFF_SQL}
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY (CASE WHEN f.valid_from IS NULL OR f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC) AS call_off_rank
+       FROM facts f WHERE ${poolWhere(scope, undefined)} AND f.valid_from IS NOT NULL AND f.fact ~* ${CALL_OFF_SQL}
          AND (f.source_id, f.entity_slug) IN (SELECT * FROM unnest(${pairs.map(p => p.source_id)}::text[], ${pairs.map(p => p.entity_slug)}::text[]))) f
      WHERE f.call_off_rank <= ${CALL_OFF_DEPTH}`);
   return raw<FactCandidate>(text, params);
@@ -173,6 +189,15 @@ export async function listPoolEntityPairs(raw: EngineRawRead, scope: FactPoolSco
 /** The whole fact rows of these ids within these sources (recall's final read; the caller strips the embedding). */
 export async function listFactRowsByIds(raw: EngineRawRead, sourceIds: readonly string[], ids: readonly number[]): Promise<FactRowSqlShape[]> {
   return raw<FactRowSqlShape>('SELECT * FROM facts WHERE source_id = ANY($1::text[]) AND id = ANY($2::bigint[])', [[...sourceIds], [...ids]]);
+}
+
+/**
+ * The whole fact rows of these ids read again under the pool's read policy and filters (#10225), so a fact whose visibility,
+ * provenance or trust narrowed after the pool read is not returned (recall's final read; the caller strips the embedding).
+ */
+export async function listPooledFactRows(raw: EngineRawRead, scope: FactPoolScope, filters: FactPoolFilters | undefined, ids: readonly number[]): Promise<FactRowSqlShape[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT f.* FROM facts f WHERE ${poolWhere(scope, filters)} AND f.id = ANY(${[...ids]}::bigint[])`);
+  return raw<FactRowSqlShape>(text, params);
 }
 
 const READABLE_PAGE_SLUGS_HEAD = 'SELECT p.slug FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND ';

@@ -244,7 +244,10 @@ async function runProbe(
     }
   }
   const started = Date.now();
-  const engine = await createEngine(engineConfig);
+  // A Rust probe judges its store itself, below, after the addon loads (so a missing addon is still reported first),
+  // and never creates one: the engine's own store guard, which would refuse a missing store before that check, is
+  // left out, and the open that follows creates nothing.
+  const engine = await createEngine(engineKind === 'rust' ? { ...engineConfig, guard_store: false, create_store: false } : engineConfig);
   // Opening a Rust store creates it, like PGLite: a path holding no store (no records.redb) is reported after the
   // addon check, never made. A store with no FORMAT file is incomplete: a first open writes FORMAT last, after the
   // record file and the brain's records, so a first open that stopped early leaves a record file (empty, or holding

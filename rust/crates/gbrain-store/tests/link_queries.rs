@@ -825,7 +825,8 @@ fn long_page_sizes_count_served_bodies_in_characters_and_bytes() {
         id
     };
     // A timeline of [[:space:]] alone counts nothing; U+00A0 is not in the class, so it counts.
-    // The separator (TIMELINE_SEPARATOR) is 21 ASCII characters.
+    // The separator (TIMELINE_SEPARATOR) is 21 ASCII characters. Without the timeline the characters stay the
+    // compiled truth's, but the bytes still count the whole timeline (the read returns it).
     let spaces = put("notes/spaces", "default", "h\u{e9}llo", " \n\t", true);
     let euro = put("notes/euro", "default", "ab", "x\u{20ac}", true);
     let nbsp = put("notes/nbsp", "default", "", "\u{a0}", true);
@@ -857,9 +858,9 @@ fn long_page_sizes_count_served_bodies_in_characters_and_bytes() {
     assert_eq!(
         sizes(false, default_scope),
         json!([
-            { "id": euro, "chars": 2, "bytes": 2 },
-            { "id": spaces, "chars": 5, "bytes": 6 },
-            { "id": nbsp, "chars": 0, "bytes": 0 },
+            { "id": euro, "chars": 2, "bytes": 2 + 4 },
+            { "id": spaces, "chars": 5, "bytes": 6 + 3 },
+            { "id": nbsp, "chars": 0, "bytes": 2 },
         ])
     );
     // Without a source clause the other source's sealed page is read too.

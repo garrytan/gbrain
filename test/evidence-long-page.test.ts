@@ -1,8 +1,8 @@
 /**
  * F2 plumbing: `search.long_page_unit` delivers long non-conversation hits in
  * an existing unit (`window`, `section`, `page`) under an implied `auto`, on
- * `search` and `query` only. Off (the default) is byte-identical to
- * `return_unit: "chunk"`; the on path is pinned by its own frozen golden
+ * `search` and `query` only. Unset is `section` (the default); `off` is
+ * byte-identical to `return_unit: "chunk"`; the on path is pinned by its own frozen golden
  * (test/fixtures/goldens/evidence-delivery/long-page-on-path.json).
  *
  * Long means a rendered body of at least `search.long_page_min_chars`
@@ -27,6 +27,9 @@ import {
 import { searchConfigValueRefusal } from '../src/core/search/config-values.ts';
 import { leanRow } from '../src/core/search/lean-rows.ts';
 import { runThink } from '../src/core/think/index.ts';
+import { prepareMarkdownChunks } from '../src/core/markdown-chunks.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 import { CONVERSATION_PAGE, DECIDING, LONG_SLUG, MEDIUM_SLUG, mcpCall, opCall, seedLongPages, withConfig } from './helpers/long-page-fixture.ts';
 
 const GOLDEN = join(import.meta.dir, 'fixtures/goldens/evidence-delivery/long-page-on-path.json');
@@ -43,23 +46,47 @@ beforeAll(async () => {
 afterAll(async () => { await engine?.disconnect(); }, 120_000);
 
 const long = (rows: Array<Record<string, unknown>>) => rows.find(r => r.slug === LONG_SLUG)!;
+const offCall = (name: string, params: Record<string, unknown>) => withConfig(engine, { [KEY]: 'off' }, () => mcpCall(engine, name, params));
+
+describe('default on a fresh brain', () => {
+  let fresh: PGLiteEngine;
+  beforeAll(async () => {
+    fresh = new PGLiteEngine();
+    await fresh.connect({});
+    await fresh.initSchema();
+    await seedLongPages(fresh);
+  }, 240_000);
+  afterAll(async () => { await fresh?.disconnect(); }, 120_000);
+
+  test('a fresh repo-less brain with search.long_page_unit unset delivers the long hit by section, as if it were set to section', async () => {
+    expect(await fresh.getConfig(KEY)).toBeNull();
+    expect(await fresh.getConfig('sync.repo_path')).toBeNull();
+    expect((await fresh.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM sources WHERE local_path IS NOT NULL`))[0].n).toBe(0);
+    const policy = await withLongPagePolicy(fresh, await resolveEvidencePlan(fresh, { remote: true, returnUnit: undefined, returnWindow: undefined, budget: undefined, snippetChars: undefined, snippetCap: 0, op: 'search' }));
+    expect(policy?.longPage).toEqual({ unit: 'section', minChars: DEFAULT_LONG_PAGE_MIN_CHARS });
+    for (const [name, params] of [['search', { query: 'renewal fee' }], ['query', { query: 'renewal fee', expand: false }]] as const) {
+      const unset = await mcpCall(fresh, name, params);
+      const section = await withConfig(fresh, { [KEY]: 'section' }, () => mcpCall(fresh, name, params));
+      expect(long(unset.rows).delivered).toEqual({ unit: 'section', reason: 'long_page' });
+      expect(unset.bytes).toBe(section.bytes);
+    }
+  });
+});
 
 describe('off path', () => {
-  test('unset and `off` are byte-identical to return_unit chunk on search and query, with no delivery keys', async () => {
+  test('`off` is byte-identical to return_unit chunk on search and query, with no delivery keys', async () => {
     for (const [name, params] of [['search', { query: 'renewal fee' }], ['query', { query: 'renewal fee', expand: false }]] as const) {
       const chunk = await mcpCall(engine, name, { ...params, return_unit: 'chunk' });
-      const unset = await mcpCall(engine, name, params);
-      const off = await withConfig(engine, { [KEY]: 'off' }, () => mcpCall(engine, name, params));
-      expect(unset.bytes).toBe(chunk.bytes);
+      const off = await offCall(name, params);
       expect(off.bytes).toBe(chunk.bytes);
-      expect(unset.bytes).not.toContain('"delivered"');
-      expect(unset.bytes).not.toContain('"delivery"');
+      expect(off.bytes).not.toContain('"delivered"');
+      expect(off.bytes).not.toContain('"delivery"');
     }
   });
 
-  test('an unknown stored value reads as off; config set refuses it', async () => {
+  test('an unknown or blank stored value reads as off; config set refuses it', async () => {
     const chunk = await mcpCall(engine, 'search', { query: 'renewal fee', return_unit: 'chunk' });
-    expect((await withConfig(engine, { [KEY]: 'sentence' }, () => mcpCall(engine, 'search', { query: 'renewal fee' }))).bytes).toBe(chunk.bytes);
+    for (const stored of ['sentence', '', '  ']) expect((await withConfig(engine, { [KEY]: stored }, () => mcpCall(engine, 'search', { query: 'renewal fee' }))).bytes).toBe(chunk.bytes);
     expect(longPageUnitValueProblem('section')).toBeNull();
     expect(searchConfigValueRefusal(KEY, 'sentence')?.message).toContain('off, window, section, page');
     expect(longPageMinCharsValueProblem('20000')).toBeNull();
@@ -74,7 +101,7 @@ describe('on path (serialized lean MCP output)', () => {
     const medium = await engine.getPage(MEDIUM_SLUG);
     expect(new TextEncoder().encode(medium!.compiled_truth).length).toBeGreaterThan(8_000);
     expect(medium!.compiled_truth.length).toBeLessThan(DEFAULT_LONG_PAGE_MIN_CHARS);
-    const off = await mcpCall(engine, 'search', { query: 'renewal fee' });
+    const off = await offCall('search', { query: 'renewal fee' });
     const on = await withConfig(engine, { [KEY]: 'section' }, () => mcpCall(engine, 'search', { query: 'renewal fee' }));
     const payload = JSON.parse((JSON.parse(on.bytes) as { content: Array<{ text: string }> }).content[0].text) as Array<Record<string, unknown>>;
     expect(payload.map(r => r.slug)).toEqual(off.rows.map(r => r.slug));
@@ -99,7 +126,7 @@ describe('on path (serialized lean MCP output)', () => {
 
   for (const unit of ['window', 'section', 'page'] as const) {
     test(`${unit}: the long row carries delivered {unit, reason}; short rows are their off-path bytes`, async () => {
-      const off = await mcpCall(engine, 'search', { query: 'renewal fee' });
+      const off = await offCall('search', { query: 'renewal fee' });
       const on = await withConfig(engine, { [KEY]: unit }, () => mcpCall(engine, 'search', { query: 'renewal fee' }));
       const row = long(on.rows);
       expect(row.delivered).toEqual({ unit, reason: 'long_page' });
@@ -115,7 +142,7 @@ describe('on path (serialized lean MCP output)', () => {
   });
 
   test('term words that recur in non-deciding clauses: the unit is anchored on the ranked hit, never on term overlap', async () => {
-    const off = long((await mcpCall(engine, 'search', { query: 'renewal fee' })).rows);
+    const off = long((await offCall('search', { query: 'renewal fee' })).rows);
     const deliveredText = async (unit: string) => String(long((await withConfig(engine, { [KEY]: unit }, () => mcpCall(engine, 'search', { query: 'renewal fee' }))).rows).chunk_text);
     const section = await deliveredText('section');
     expect(section).toContain(String(off.chunk_text).slice(0, 120));
@@ -139,7 +166,7 @@ describe('on path (serialized lean MCP output)', () => {
   });
 
   test('a long page whose matching span no longer fits the budget keeps its ranked chunk (long_page_chunk)', async () => {
-    const off = await mcpCall(engine, 'search', { query: 'renewal fee' });
+    const off = await offCall('search', { query: 'renewal fee' });
     const on = await withConfig(engine, { [KEY]: 'section', 'search.return_budget_conversation': '40' }, () => mcpCall(engine, 'search', { query: 'renewal fee' }));
     const row = long(on.rows);
     expect(row.delivered).toEqual({ unit: 'chunk', reason: 'long_page_chunk' });
@@ -200,7 +227,7 @@ describe('precedence', () => {
     for (const params of [{ token_budget: 4000 }, { return_unit: 'chunk' }, { return_unit: 'window' }]) {
       for (const name of ['search', 'query'] as const) {
         const call = { query: 'renewal fee', ...(name === 'query' ? { expand: false } : {}), ...params };
-        const off = await mcpCall(engine, name, call);
+        const off = await offCall(name, call);
         const on = await withConfig(engine, { [KEY]: 'section' }, () => mcpCall(engine, name, call));
         expect(`${name} ${JSON.stringify(params)}: ${on.bytes}`).toBe(`${name} ${JSON.stringify(params)}: ${off.bytes}`);
       }
@@ -208,7 +235,7 @@ describe('precedence', () => {
   });
 
   test('snippet_chars 300: the widened section survives whole and keeps delivered {unit, reason}; every other row is cut to 300 exactly as with the key off and marks delivered {truncated}', async () => {
-    const off = await mcpCall(engine, 'search', { query: 'renewal fee', snippet_chars: 300 });
+    const off = await offCall('search', { query: 'renewal fee', snippet_chars: 300 });
     const [on, full] = await withConfig(engine, { [KEY]: 'section' }, async () => [
       await mcpCall(engine, 'search', { query: 'renewal fee', snippet_chars: 300 }),
       await mcpCall(engine, 'search', { query: 'renewal fee' }),
@@ -245,7 +272,7 @@ describe('other callers stay byte-identical with the key on', () => {
       });
       return { recall, assembled, think: prompts[0] };
     };
-    const off = await capture();
+    const off = await withConfig(engine, { [KEY]: 'off' }, capture);
     for (const unit of ['window', 'section', 'page']) expect(await withConfig(engine, { [KEY]: unit }, capture)).toEqual(off);
   });
 });
@@ -275,6 +302,21 @@ describe('selection limits (size preflight)', () => {
     const sel = await selectLongPages(sized({ 1: half, 2: half, 3: 25_000 }), plan, [hit(1), hit(2), hit(3)], {});
     expect([...sel.longPages!.pages]).toEqual([1, 3]);
     expect([...sel.longPages!.kept]).toEqual([[2, 'long_page_bytes']]);
+  });
+
+  test('detail low counts the timeline toward the byte limit too: the long-page read returns it whatever the detail', async () => {
+    const slug = 'notes/timeline-heavy-example';
+    const compiled_truth = `## Summary\n\n${'The archive summary is kept here for reference. '.repeat(500)}`;
+    const timeline = `- 2026-01-01 ${'x'.repeat(LONG_PAGE_MAX_INPUT_BYTES)}`;
+    await asOwner(engine, tx => tx.putPage(slug, { type: 'note' as never, title: slug, compiled_truth, timeline, frontmatter: {} }));
+    await installFixtureChunks(engine, slug, await prepareMarkdownChunks({ compiled_truth, timeline }));
+    const page = await engine.getPage(slug);
+    expect(compiled_truth.length).toBeGreaterThanOrEqual(DEFAULT_LONG_PAGE_MIN_CHARS);
+    for (const scope of [{ detail: 'low' as const }, {}]) {
+      const sel = await selectLongPages(engine, plan, [hit(page!.id, slug)], scope);
+      expect([...sel.longPages!.pages]).toEqual([]);
+      expect([...sel.longPages!.kept]).toEqual([[page!.id, 'long_page_bytes']]);
+    }
   });
 
   test('conversation and saved-fact hits are never preflighted', async () => {

@@ -1,9 +1,14 @@
 # Rust engine (experimental)
 
-This folder holds an optional Rust engine for gbrain. Nothing in gbrain uses it yet. Today it is a
-small Node-API addon that proves the pieces a Rust engine needs: that Bun can load it, call it,
-cancel its work, survive its panics and shut it down cleanly. You do not need Rust to build, test
-or run gbrain.
+This folder holds an optional Rust engine for gbrain: a Node-API addon (`crates/gbrain-napi`) over a brain
+store (`crates/gbrain-store`, see "The brain store"). A brain whose config sets `engine: 'rust'` and an absolute
+`database_path` opens it through `src/core/engine-construct.ts` (the `rust` case), which loads only a verified
+cached addon or the development override (`src/core/rust-engine/addon-loader.ts`); no other engine loads it. The
+TypeScript engine (`src/core/rust-engine.ts`) serves the BrainEngine members listed in
+`src/core/rust-engine/store-members/index.ts` from the store and refuses every other member with
+`engine_capability_missing` (`src/core/rust-engine/members.ts`). The store has more native methods than those
+members call. The smoke scripts here prove that Bun can load the addon, call it, cancel its work, survive its panics
+and shut it down cleanly. You do not need Rust to build, test or run gbrain.
 
 ## What you need
 
@@ -199,6 +204,7 @@ Errors from the addon are real `Error` objects with a `code`:
 | `internal_error` | Rust code panicked. Carries a `diagnosticId`; the panic text is not sent to the caller. |
 | `engine_shutdown` | A call arrived after shutdown began. |
 | `store_locked` | Another handle or process has the brain open. |
+| `store_missing` | `open` with `createMissing: false` found no brain in the directory (no `FORMAT`, no record file). Nothing was created. The TypeScript wrapper maps it to `brain_missing`. |
 | `format_unknown` | `FORMAT` or the format record is not a version this build reads. Nothing was written. |
 | `store_closed` | The brain is not open on this handle. |
 | `store_io` | The file system or the storage engine failed; the write did not commit. |

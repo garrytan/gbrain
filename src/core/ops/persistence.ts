@@ -147,7 +147,8 @@ async function publicReceipt(ctx: OperationContext, row: WriteRequest, facts?: W
     processingOptions: intent?.processingOptions, syncOptions: intent?.syncOptions, repoPath: intent?.repoPath }) : null;
   // #5929: a trusted local reader learns when the owner that ran the attempt is on another build.
   const mismatch = ctx.remote === false ? (await import('../persistence/publication-failure.ts')).ownerBuildMismatch(row.error_detail, (await import('../../version.ts')).VERSION) : null;
-  const withdrawn = (await import('../facts/withdrawal.ts')).withdrawnFromDetail(row.error_detail);
+  // Only a trusted local reader sees a stored withdrawal's detail; a remote reader gets the receipt without it.
+  const withdrawn = ctx.remote === false ? (await import('../facts/withdrawal.ts')).withdrawnFromDetail(row.error_detail) : undefined;
   const diagnostic = isWriteErrorCode(row.error_code) ? writeFailureDiagnostic(row.error_code, row.error_message) : null;
   // #6650: the classification the receipt's own columns support, with the structured next step (verify is read-only).
   const terminal = isTerminalOrRecovering(row) ? (await import('../persistence/terminal-classify.ts')).classifyTerminal({ request_id: row.request_id, source_id: row.source_id,

@@ -251,6 +251,8 @@ export interface LedgerMembers {
   insertRetrievalEvents(events: RetrievalFeedbackSql.RetrievalEventInsert[]): Promise<void>;
   /** One retrieval event with its pages by rank and its links by byte of source, edge key and target, or null. */
   readRetrievalEvent(id: string): Promise<RetrievalFeedbackSql.RetrievalEventRead | null>;
+  /** Each page row's content hash and learned page weight (halved toward neutral after an edit), null without one (search/feedback-boost.ts); in no set order. */
+  readPageFeedbackWeights(pageIds: readonly number[]): Promise<RetrievalFeedbackSql.PageFeedbackWeightRow[]>;
   /** Applies one batch of ratings (targets already distinct): each newly stored rating moves its element's weight. */
   applyRetrievalRatings(args: RetrievalFeedbackSql.RetrievalRatingBatch): Promise<RetrievalFeedbackSql.AppliedRatingRow[]>;
   /** The Git-gap census reads (commands/sources-git-gap.ts; engine-sql/git-gap-census.ts). The source's checkout root and incarnation. */
