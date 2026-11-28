@@ -17,7 +17,7 @@ import { writeSeedRecord } from '../src/shadow/seed.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { closeAllOwedAtExit, OWED_WINDOW_MS, OWED_WINDOW_SAMPLES, ShadowSupervisor } from '../src/shadow/supervisor.ts';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
-import { carriesKnownLoss, holdBlocker, owedPath, readOwed, readWriteTally, unfoldedLines, WINDOW_BLOCKER_PREFIX, WINDOW_LOST_REASON, writeOwed, writeTallyPath, WriteTally, type OwedRecord } from '../src/shadow/write-compare.ts';
+import { carriesKnownLoss, holdBlocker, owedPath, readOwed, readWriteSnapshot, readWriteTally, unfoldedLines, WINDOW_BLOCKER_PREFIX, WINDOW_LOST_REASON, writeOwed, writeTallyPath, WriteTally, type OwedRecord } from '../src/shadow/write-compare.ts';
 import { tallyOn } from './helpers/shadow-write-compare-scenarios.ts';
 import * as writeCompare from '../src/shadow/write-compare.ts';
 import * as fsm from 'node:fs';
@@ -965,6 +965,24 @@ describe('D3: the blocker\'s own rules (written before the booking, read from th
     expect(stat(dir)).toMatchObject({ state: 'capability_missing', write_windows_lost: 1 }); // this version
     expect(oldBooks(dir, 'fi')).toBe('skips'); expect(oldBooks(dir, 'window-lost-fi')).toBe('skips'); // the frozen 692d2614c9 reader: both unreadable, nothing booked, nothing removed
     ownerPass(dir, epoch); expect(frozen424Windows(dir, epoch)).toBe(1); // one pass of this version cleans the gap up
+  });
+
+  test('the count of lost-window sessions (the status snapshot\'s windowFiles) is above 0 in every shape of a booked window, never 0 where the previous release\'s count read above 0, and counts a session once when its settled marker and its blocker are both on disk', () => {
+    const windows = (dir: string, epoch: string): number => readWriteSnapshot(dir, epoch).windowFiles; // the set of sessions with a lost window: the one number a status or swap check reads beside the tally's reason count
+    const shapes: Array<[string, (dir: string, epoch: string) => void, number]> = [
+      ['child end-of-input booking, the child died before its cleanup (the settled marker and the blocker are both on disk: one session, counted once)', (dir, epoch) => { marker(dir, 'ct', { owed: 3 }); bookWindow(dir, epoch, 'ct', 3); expect(readOwed(dir, 'ct')).toMatchObject({ v: 2 }); expect(blockerOf(dir, 'ct')).toMatchObject({ v: 2 }); }, 1],
+      ['owner orphan pass (the session\'s file is gone, the blocker stays)', (dir, epoch) => { marker(dir, 'ct', { owed: 3 }); ownerPass(dir, epoch); expect(readOwed(dir, 'ct')).toBeNull(); expect(blockerOf(dir, 'ct')).not.toBeNull(); }, 1],
+      ['client journal path (no epoch, folded by the owner pass)', (dir, epoch) => { marker(dir, 'ct', { owed: 3 }); const c = new WriteTally(dir, () => null, () => true, process.pid, 'ct'); c.missing(3, 0, 1); c.flush(); ownerPass(dir, epoch); }, 1],
+      ['an older build\'s tombstone in the session\'s own file, read in place', (dir, epoch) => { writeOwed(dir, { v: 2, session: 'ct', serving_pid: deadPid(), child_pid: deadPid(), owed: 3, closed: false, child_exited: false, open_until: 1, booked_epoch: epoch }); const t = new WriteTally(dir, () => epoch, () => true, process.pid, 'ct'); t.note('uncomparable', 'pipe_unflushed', 2, false, 2, 2); t.note('uncomparable', WINDOW_LOST_REASON, 1, false, 1, 1); t.save(); expect(blockerOf(dir, 'ct')).toBeNull(); }, 1],
+      ['two sessions with a lost window each', (dir, epoch) => { marker(dir, 'ct', { owed: 3 }); marker(dir, 'cu', { owed: 2 }); ownerPass(dir, epoch); }, 2],
+    ];
+    for (const [shape, make, sessions] of shapes) {
+      const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch); make(dir, epoch);
+      expect([shape, windows(dir, epoch)]).toEqual([shape, sessions]);
+      expect(windows(dir, epoch)).toBeGreaterThan(0);
+      if (frozen424Windows(dir, epoch) > 0) expect([shape, windows(dir, epoch) > 0]).toEqual([shape, true]); // where the previous release\'s count reads above 0, this one does too
+      expect(stat(dir)).toMatchObject({ state: 'capability_missing', write_windows_lost: sessions });
+    }
   });
 
   test('mixed versions: an older build\'s tombstone in the session file is read in place (counted once, the rest booked plain, nothing rewritten), and the supervisor\'s locked publication keeps it', () => {
