@@ -71,6 +71,8 @@ import { assertLifetimeIdHeadroom } from '../persistence/journal.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenancePreflight, planFactFenceAdoption, submitFactFenceAdoption, submitPlannedFactFenceAdoption, type HeldDrop, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
+import { segmentedBodyMatchesFile } from '../page-body/segment-facts.ts';
+import { wholeBodySnapshot } from '../persistence/segmented-apply.ts';
 import { resolveFactWriteTarget } from '../persistence/fact-write-target.ts';
 import { submissionAuthority } from '../persistence/authority.ts';
 import { currentVerifiedLocalWriter, registerLocalWriter } from '../persistence/identity.ts';
@@ -537,7 +539,7 @@ export type ManagedPagePlan =
 
 /** The page's current snapshot and its Facts table with `group` planned in (planFence), read-only; null when the page is gone. */
 export async function planPageFence(engine: BrainEngine, sourceId: string, slug: string, group: UnfencedFactRow[]) {
-  const snapshot = await engine.readPageSnapshot(slug, { sourceId });
+  const snapshot = await wholeBodySnapshot(engine, await engine.readPageSnapshot(slug, { sourceId }), 'extract_facts');
   return snapshot ? { snapshot, fence: await planFence(engine, sourceId, slug, serializePageToMarkdown(snapshot.page, snapshot.tags), group) } : null;
 }
 
@@ -629,10 +631,15 @@ async function fenceManaged(engine: BrainEngine, plan: UnfencedFactsPlan): Promi
  * same page (#6608): the receipt, page version and projection follow, and an `unbound_source` write rechecks at
  * publication that the source is still unbound and the page still has no canonical file.
  */
+async function fenceMaintenanceWriter(engine: BrainEngine, sourceId: string) {
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [sourceId]);
+  return submissionAuthority({ engine, remote: false, sourceId } as OperationContext, 'submit_job', sourceId, source!.incarnation, 'maintenance');
+}
+
 async function fenceDatabaseOnlyPage(engine: BrainEngine, sourceId: string, entitySlug: string, reason: NonNullable<WriteAuthority['databaseOnlyReason']> | null,
   group: UnfencedFactRow[], outcome: UnfencedFactsOutcome): Promise<void> {
   try {
-    const snapshot = await engine.readPageSnapshot(entitySlug, { sourceId });
+    const snapshot = await wholeBodySnapshot(engine, await engine.readPageSnapshot(entitySlug, { sourceId }), 'extract_facts');
     if (!snapshot) { outcome.skipped_no_page += group.length; return; }
     const fence = await planFence(engine, sourceId, entitySlug, serializePageToMarkdown(snapshot.page, snapshot.tags), group);
     if ('warnings' in fence) { outcome.failed_pages.push(`${entitySlug} (${fence.warnings.join('; ')})`); return; }
@@ -640,8 +647,7 @@ async function fenceDatabaseOnlyPage(engine: BrainEngine, sourceId: string, enti
     if (fence.assignments.length === 0) return;
     assertPersistenceAccepting(engine);
     if (!currentVerifiedLocalWriter()) await registerLocalWriter(engine, 'cli');
-    const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [sourceId]);
-    const writer = await submissionAuthority({ engine, remote: false, sourceId } as OperationContext, 'submit_job', sourceId, source!.incarnation, 'maintenance');
+    const writer = await fenceMaintenanceWriter(engine, sourceId);
     if (reason) writer.databaseOnlyReason = reason;
     await submitFactFenceAdoption(engine, { writer, binding: null }, entitySlug, { content: fence.body, expectedRevision: snapshot.revision,
       assignments: fence.assignments.map(a => ({ id: Number(a.id), row_num: a.row_num })), file: false });
@@ -675,7 +681,35 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
     const stored = page && await readStoredBody(engine, sourceId, entitySlug);
     if (!page || !stored) { outcome.skipped_no_page += group.length; return; }
     if (bodyUnread(page)) {
-      outcome.failed_pages.push(`${entitySlug} (page_body_segmented: the page is stored in segments, so its file is not compared or rewritten here; its rows stay unfenced, active and searchable)`);
+      // A segmented page: compare its stored body with the file region by region, then plan on the file and publish
+      // through the coordinator (it keeps the revision and the segmented storage); a file that differs is drift.
+      if (await segmentedBodyMatchesFile(engine, page, filePath) !== 'fresh') {
+        outcome.failed_pages.push(fileDatabaseDriftToken(entitySlug, sourceId, 'before'));
+        return;
+      }
+      const snapshot = await wholeBodySnapshot(engine, await engine.readPageSnapshot(entitySlug, { sourceId }), 'extract_facts');
+      if (!snapshot) { outcome.skipped_no_page += group.length; return; }
+      const planned = await planFence(engine, sourceId, entitySlug, bytes, group);
+      if ('warnings' in planned) { outcome.failed_pages.push(`${entitySlug} (${planned.warnings.join('; ')})`); return; }
+      recordUnadoptable(outcome, entitySlug, planned.rejected);
+      if (planned.assignments.length === 0) return;
+      assertPersistenceAccepting(engine);
+      if (!currentVerifiedLocalWriter()) await registerLocalWriter(engine, 'cli');
+      const writer = await fenceMaintenanceWriter(engine, sourceId);
+      await submitFactFenceAdoption(engine, { writer, binding: null }, entitySlug, { content: planned.body, expectedRevision: snapshot.revision,
+        assignments: planned.assignments.map(a => ({ id: Number(a.id), row_num: a.row_num })), file: false });
+      // The coordinator published the fence into the segmented body; the file agreed with it before, so it only gains the
+      // fence. A file that moved since the comparison is left as it is (the next run reports the drift).
+      if (readFileSync(filePath, 'utf-8') === bytes) {
+        const tmpPath = `${filePath}.tmp`;
+        writeFileSync(tmpPath, planned.body, 'utf-8');
+        renameSync(tmpPath, filePath);
+      } else {
+        outcome.failed_pages.push(fileDatabaseDriftToken(entitySlug, sourceId, 'during'));
+      }
+      outcome.fenced += planned.assignments.length;
+      outcome.pages_touched += 1;
+      outcome.fenced_slugs.push(entitySlug);
       return;
     }
     if (!fileBodyMatchesStored(bytes, entitySlug, stored)) {
@@ -753,7 +787,7 @@ export async function auditUnadoptableFacts(engine: BrainEngine, plan: UnfencedF
     const [sourceId, entitySlug] = key.split('\0');
     let body: string;
     if (plan.managed || plan.databaseOnly.has(key)) {
-      const snapshot = await engine.readPageSnapshot(entitySlug, { sourceId });
+      const snapshot = await wholeBodySnapshot(engine, await engine.readPageSnapshot(entitySlug, { sourceId }), 'extract_facts');
       if (!snapshot) continue;
       body = serializePageToMarkdown(snapshot.page, snapshot.tags);
     } else {
