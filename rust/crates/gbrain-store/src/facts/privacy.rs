@@ -132,6 +132,14 @@ pub struct PrivacyPolicy {
     /// provenance page by the privacy part too.
     #[serde(default)]
     pub provenance_privacy_off: bool,
+    /// The owner lineage read's fact policy (`privateProvenanceFilterUnderPolicy` with a lineage page, GST-2490,
+    /// the owner's opt-in off and no audience): a provenance page that is neither `member_page` nor another
+    /// member page (`memory/members/`) is judged by `identity` under the owner read rule (`lineageAccessSql`,
+    /// the origin test of `gbrain_access_origin_hidden_for`); the member pages are judged as without it, by
+    /// the ordinary origin test. Only the TypeScript member's owner lineage record match sets it, with
+    /// `owner_read` for the entity and holding pages.
+    #[serde(default)]
+    pub owner_lineage: bool,
     /// The labelled-only conjunct (`labelledOnlySql`, GBRA-108 design 1): the page names one of the identities
     /// (`page_readers && identity`) or has a folder rule in `satisfied_rule_ids` (`folder_rule_ids && satisfied`),
     /// ANDed with the rest of the policy, so it only narrows. A stored write's writer carries it with no lineage (a write
@@ -370,7 +378,18 @@ fn hidden_by_provenance_page_with(
         return Ok(false);
     };
     let access = if restricted {
-        let (identity, owner_read) = provenance_judge(policy, slug);
+        // The owner lineage read judges every page that is not a member page as the owner, under the owner read rule;
+        // any other page is judged by the provenance judge (the member lineage form), with the owner read rule off under
+        // the owner lineage read.
+        let lineage_page = policy.owner_lineage
+            && policy.member_page.as_deref() != Some(slug.as_str())
+            && !slug.starts_with(super::MEMBER_PAGE_PREFIX);
+        let (identity, owner_read) = if lineage_page {
+            (policy.identity.as_slice(), true)
+        } else {
+            let (identity, owner_read) = provenance_judge(policy, slug);
+            (identity, owner_read && !policy.owner_lineage)
+        };
         member_access_allows_by(read, &page, identity, policy, true, owner_only, owner_read)?
     } else {
         !names_readers(&page)
@@ -2212,5 +2231,71 @@ mod tests {
         assert!(!hidden(&off, "memory/members/carol-example"));
         assert!(hidden(&off, "open/origin-carol"));
         assert!(hidden(&off, "walk/atom-carol"));
+    }
+
+    /// `privateProvenanceFilterUnderPolicy` for the owner's lineage read (`owner_lineage`): a provenance page that is not
+    /// a member page is judged by the owner's identity under the owner read rule, so its own `readable_by` page and a
+    /// page derived from it are served while a page derived from another member's origin stays hidden; member pages keep
+    /// the ordinary test. Without `owner_lineage` the non-member page is judged with no identity.
+    #[test]
+    fn the_owner_lineage_policy_judges_a_non_member_provenance_page_as_the_owner() {
+        let store = crate::test_support::store();
+        let put = |slug: &str, frontmatter: Value| {
+            let input: crate::pages::PageInput = serde_json::from_value(json!({
+                "type": "note", "title": slug, "compiled_truth": "body", "timeline": "", "frontmatter": frontmatter,
+            }))
+            .unwrap();
+            store.put_page(slug, &input, &Default::default()).unwrap();
+        };
+        put("notes/open", json!({}));
+        put(
+            "notes/owner-origin",
+            json!({ "readable_by": ["member:owner-example"] }),
+        );
+        put(
+            "notes/bob-origin",
+            json!({ "readable_by": ["member:bob-example"] }),
+        );
+        put(
+            "notes/from-owner",
+            json!({ "derived_from": ["notes/owner-origin"] }),
+        );
+        put(
+            "notes/from-bob",
+            json!({ "derived_from": ["notes/bob-origin.md"] }),
+        );
+        put(
+            "memory/members/bob-example",
+            json!({ "readable_by": ["member:bob-example"] }),
+        );
+        let fact = |slug: &str| FactRecord {
+            source_id: "default".into(),
+            entity_slug: Some("people/subject-example".into()),
+            source_markdown_slug: Some(slug.into()),
+            visibility: "world".into(),
+            ..Default::default()
+        };
+        let hidden = |slug: &str, owner_lineage: bool| {
+            let read = store.read().unwrap();
+            let policy = PrivacyPolicy {
+                identity: vec!["member:owner-example".into()],
+                member_page: Some("memory/members/owner-example".into()),
+                provenance_privacy_off: true,
+                owner_read: true,
+                owner_lineage,
+                owner_only: OwnerOnlyForm::Off,
+                ..Default::default()
+            };
+            hidden_by_provenance_page(&*read, &fact(slug), &policy, true).unwrap()
+        };
+        assert!(!hidden("notes/open", true));
+        assert!(!hidden("notes/owner-origin", true));
+        assert!(!hidden("notes/from-owner", true));
+        assert!(hidden("notes/bob-origin", true));
+        assert!(hidden("notes/from-bob", true));
+        assert!(hidden("memory/members/bob-example", true));
+        // The form before the lineage flag judged the owner's own origin with no identity: it hid it.
+        assert!(hidden("notes/owner-origin", false));
+        assert!(!hidden("notes/open", false));
     }
 }

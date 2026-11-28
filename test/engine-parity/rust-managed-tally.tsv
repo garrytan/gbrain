@@ -151,7 +151,7 @@ test/engine-parity/facts-purge.test.ts	30	0
 test/engine-parity/facts-quoted.test.ts	5	0
 test/engine-parity/facts-repair-sites.test.ts	20	0
 test/engine-parity/facts-repair.test.ts	21	0
-test/engine-parity/facts-rest-sites.test.ts	28	1
+test/engine-parity/facts-rest-sites.test.ts	29	1
 test/engine-parity/facts-superseded-claims.test.ts	1	0
 test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	13	0
@@ -254,6 +254,7 @@ test/engine-parity/op-checkpoint.test.ts	2	0
 test/engine-parity/open-loops.test.ts	7	0
 test/engine-parity/open-pages.test.ts	5	0
 test/engine-parity/orphan-lifetimes.test.ts	1	0
+test/engine-parity/owner-fact-reads.test.ts	1	0
 test/engine-parity/owner-only-marks.test.ts	1	1
 test/engine-parity/owner-only-reads.test.ts	4	0
 test/engine-parity/owner-only-row-delete-marks.test.ts	2	0
@@ -330,7 +331,7 @@ test/engine-parity/remember-members.test.ts	9	0
 test/engine-parity/remember-meta.test.ts	3	0
 test/engine-parity/remember-supersede.test.ts	3	0
 test/engine-parity/remember-whole.test.ts	1	0
-test/engine-parity/remote-access-matrix.test.ts	3	2
+test/engine-parity/remote-access-matrix.test.ts	5	0
 test/engine-parity/remote-links.test.ts	10	0
 test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/repair-aliases.test.ts	1	0

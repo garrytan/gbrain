@@ -679,6 +679,50 @@ describe('engine parity: facts write-path and recall statements that left execut
     return out;
   });
 
+  parityTest('readMemberPageWithdrawal for the brain owner counts a withdrawn row of any visibility, and judges a derived page by the owner read of its origins', {
+    methods: ['readMemberPageWithdrawal', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'putPage'],
+  }, async (engine) => {
+    const PAGE = 'memory/members/alice-example';
+    await engine.putPage(PAGE, note('Alice', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/alice-origin', note('Alice origin', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/bob-origin', note('Bob origin', { readable_by: ['bob-example'] }));
+    await engine.putPage('notes/from-alice', note('From Alice', { derived_from: ['notes/alice-origin'] }));
+    await engine.putPage('notes/from-bob', note('From Bob', { derived_from: ['notes/bob-origin.md'] }));
+    await engine.putPage('notes/open', note('Open'));
+    const ids = await fenced(engine, [
+      { fact: 'private claim on open page', entity_slug: 'people/a', source_markdown_slug: 'notes/open', visibility: 'private' },
+      { fact: 'claim from alice origin', entity_slug: 'people/a', source_markdown_slug: 'notes/from-alice' },
+      { fact: 'claim from bob origin', entity_slug: 'people/a', source_markdown_slug: 'notes/from-bob' },
+    ]);
+    for (const id of ids.values()) await engine.expireFact(id);
+    const T = '2026-06-01T00:00:00Z';
+    await engine.insertFactWithdrawal(SRC, 'private', 'private claim on open page', 'people/a', T);
+    await engine.insertFactWithdrawal(SRC, 'world', 'claim from alice origin', 'people/a', T);
+    await engine.insertFactWithdrawal(SRC, 'world', 'claim from bob origin', '*', T);
+    const ask = async (fact: string, visibility: string, owner: boolean) => {
+      const row = await engine.readMemberPageWithdrawal({
+        sourceId: SRC, visibility, fact, entitySlug: 'people/a', page: PAGE, owner, identity: ['member:alice-example'], satisfied: [],
+      });
+      if (row !== null) expect(row.withdrawn_at).toMatch(PG_TEXT);
+      return row && { subject: row.subject, visibility: row.visibility };
+    };
+    const out = {
+      privateAsOwner: await ask('private claim on open page', 'private', true),
+      privateAsMember: await ask('private claim on open page', 'private', false),
+      aliceOriginAsOwner: await ask('claim from alice origin', 'world', true),
+      aliceOriginAsMember: await ask('claim from alice origin', 'world', false),
+      bobOriginAsOwner: await ask('claim from bob origin', 'world', true),
+    };
+    expect(out).toEqual({
+      privateAsOwner: { subject: 'people/a', visibility: 'private' },
+      privateAsMember: null,
+      aliceOriginAsOwner: { subject: 'people/a', visibility: 'world' },
+      aliceOriginAsMember: null,
+      bobOriginAsOwner: null,
+    });
+    return out;
+  });
+
   parityTest('expireSupersededFact and restoreSupersededFact move the old fact of a pair and back, once; readPairFactRow reads it', {
     methods: ['readPairFactRow', 'expireSupersededFact', 'restoreSupersededFact', 'insertFact', 'transaction'],
   }, async (engine) => {

@@ -110,6 +110,11 @@ export interface StorePrivacyPolicy {
    */
   provenanceLineage?: boolean;
   /**
+   * The owner lineage read's fact policy (GST-2490, the opt-in off, no audience): a provenance page that is neither
+   * `memberPage` nor another member page is judged by `identity` under the owner read rule (`lineageAccessSql`).
+   */
+  ownerLineage?: boolean;
+  /**
    * The labelled-only conjunct (`labelledOnlySql`): the page names one of `identity` or has a folder rule in `satisfiedRuleIds`
    * (`LabelledOnly` in privacy.rs). `lineage`: access.members_read_lineage is on, so a derived page also passes when every
    * origin names the caller (gbrain_access_origin_labelled_for). `member`: the caller's member id, the one member page a fact
@@ -221,6 +226,9 @@ export function storePrivacyPolicy(
     if (folders.satisfiedRuleIds.length || folders.folderCoverage.length) records.push({ ...readers, ...folders, ...reference.record, hidePrivate: true, restricted: !open });
     if (access.owner) {
       records.push({ ...readers, hidePrivate: access.hidePrivate, restricted: !open, owner: true, ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) });
+      if (access.lineage && !access.ownerReadsRestricted && access.audienceKindMembers.length === 0) {
+        records.push({ ...readers, ...folders, hidePrivate: access.hidePrivate, restricted: !open, owner: true, lineage: true, ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) });
+      }
     }
     for (const record of records) {
       for (const form of FACT_FORMS) {
@@ -236,7 +244,9 @@ export function storePrivacyPolicy(
         const lineage = record.lineage === true && record.owner !== true;
         const lineageCase = form.memberCase && canonical.includes(`CASE WHEN starts_with(pp.slug, '${MEMBER_PAGE_PREFIX}') THEN`);
         const lineageFlags = lineage ? { provenanceLineage: lineageCase, callerRecord: true } : {};
-        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...reference.flags, ...lineageFlags };
+        // The owner's own lineage read (the owner record with lineage, GST-2490): the owner read rule, served as `ownerLineage`.
+        const ownerLineageFlags = record.lineage === true && record.owner === true ? { ownerRead: true, ownerLineage: true } : {};
+        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...reference.flags, ...lineageFlags, ...ownerLineageFlags };
       }
     }
     return undefined;
@@ -448,6 +458,12 @@ export function storePageTextPolicy(
       const owner = renderForStoreCaller({ ...callerReaders, ...folders, hidePrivate: access.hidePrivate, restricted: !open, owner: true,
         ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) }, () => privatePagesFilterForCaller('p'));
       if (text === normalizeConceptInputs(owner)) return { ...pagePolicyFlags(owner), ...callerReaders, ...stored, callerRecord: true };
+      // The remote owner's lineage read (GST-2490, the opt-in off, no audience): the owner read rule, served as `ownerRead`.
+      if (access.lineage && !access.ownerReadsRestricted && access.audienceKindMembers.length === 0) {
+        const lineage = renderForStoreCaller({ ...callerReaders, ...folders, hidePrivate: access.hidePrivate, restricted: !open, owner: true, lineage: true,
+          ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) }, () => privatePagesFilterForCaller('p'));
+        if (text === normalizeConceptInputs(lineage)) return { ...pagePolicyFlags(lineage), ...callerReaders, ...stored, callerRecord: true, ownerRead: true };
+      }
     }
     return undefined;
   });
