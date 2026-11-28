@@ -18,17 +18,14 @@
  *  - Seam: none. Pages are seeded with putPage, sealChunks, setPageAliases and addLink; the operations run as production code.
  */
 import { expect } from 'bun:test';
-import { parityArms, type EngineMethod } from './harness.ts';
+import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { remoteView, seedEntityBrain } from '../helpers/served-remote-brain.ts';
 
 const { parityTest } = parityArms(testBackends());
-
-const SEEDING: EngineMethod[] = ['putPage', 'sealChunks', 'setPageAliases', 'addLink', 'setConfig'];
-
 parityTest('a remote entity card lists the referring records and the text mentions of an entity, never a hidden page', {
-  methods: [...SEEDING, 'readReferrerGroupRows', 'readReferrerRecordCandidates', 'readReferrerRecordPages', 'readTextMentionPages'],
+  methods: ['putPage', 'sealChunks', 'setPageAliases', 'addLink', 'setConfig', 'readReferrerGroupRows', 'readReferrerRecordCandidates', 'readReferrerRecordPages', 'readTextMentionPages'],
   timeout: 240_000,
 }, async (engine: BrainEngine) => {
   await seedEntityBrain(engine);
@@ -49,7 +46,7 @@ parityTest('a remote entity card lists the referring records and the text mentio
 });
 
 parityTest('a remote context_pack and volunteer_context resolve a name, read the trust generation and the live keys of its alias, and count usage', {
-  methods: [...SEEDING, 'readTrustGeneration', 'readReflexPages', 'readReflexLiveKeys', 'readVolunteerUsage'],
+  methods: ['putPage', 'sealChunks', 'setPageAliases', 'addLink', 'setConfig', 'readTrustGeneration', 'readReflexPages', 'readReflexLiveKeys', 'readVolunteerUsage'],
   timeout: 240_000,
 }, async (engine: BrainEngine) => {
   await seedEntityBrain(engine);
