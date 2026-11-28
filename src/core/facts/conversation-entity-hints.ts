@@ -30,7 +30,8 @@ import { folderRestrictedSql, isPrivatePage } from '../search/private-visibility
 /** Hints a conversation page forwards: a meeting's attendees plus what it links run to a few dozen (extract_facts keeps ENTITY_HINTS_CAP). */
 export const CONVERSATION_ENTITY_HINTS_CAP = 40;
 
-const AUTHORED_LINK_SOURCES = new Set(['markdown', 'frontmatter', 'wikilink-resolved', 'manual']);
+/** Link sources the page's author wrote (conversation-memo.ts re-arms a free relink miss when one arrives). */
+export const AUTHORED_LINK_SOURCES = new Set(['markdown', 'frontmatter', 'wikilink-resolved', 'manual']);
 
 export async function conversationEntityHints(engine: BrainEngine, sourceId: string, pageSlug: string,
   factVisibility: FactVisibility): Promise<string[]> {

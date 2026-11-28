@@ -33,6 +33,31 @@ export async function inferConversationSubject(engine: BrainEngine, sourceId: st
   return inferred;
 }
 
+/**
+ * #10588: the subject a conversation page's own authored links prove when whole-source inference proves none
+ * (`conversationEntityHints`, the set the extractor gets). Inside that small set a first name is not ambiguous: the
+ * fact names exactly one hinted page, by its full title (any case) or, for a person page, by the first word of its
+ * title written as the title writes it. Two hinted pages named, or none, prove nothing, and a withdrawn claim is never
+ * attached.
+ */
+export async function inferSubjectFromHints(engine: BrainEngine, sourceId: string, visibility: FactVisibility, fact: string,
+  hints: ReadonlyArray<{ slug: string; title: string; type: string | null }>): Promise<string | null> {
+  const wordChar = (ch: string) => /[\p{L}\p{N}_]/u.test(ch);
+  const names = (needle: string, caseless: boolean) => {
+    if (needle.length < 2) return false;
+    const hay = caseless ? fact.toLowerCase() : fact;
+    const word = caseless ? needle.toLowerCase() : needle;
+    for (let at = hay.indexOf(word); at !== -1; at = hay.indexOf(word, at + 1)) {
+      if (!wordChar(hay.charAt(at - 1)) && !wordChar(hay.charAt(at + word.length))) return true;
+    }
+    return false;
+  };
+  const named = hints.filter(hint => names(hint.title.trim(), true)
+    || ((hint.type === 'person' || hint.slug.startsWith('people/')) && names(hint.title.trim().split(/\s+/)[0] ?? '', false)));
+  if (named.length !== 1) return null;
+  return await isFactWithdrawn(engine, sourceId, visibility, fact, named[0]!.slug) ? null : named[0]!.slug;
+}
+
 export async function inferConversationSubjects<T extends { fact: string; entity_slug?: string | null; context?: string | null }>(
   engine: BrainEngine, sourceId: string, visibility: FactVisibility, rows: T[]): Promise<T[]> {
   if (!rows.length || !(await isEntityInferenceEnabled(engine))) return rows;

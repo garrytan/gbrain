@@ -158,6 +158,63 @@ test('requirement, policy and source incarnation changes require renewed approva
   blocked = await syncBrain(ctx, params(first)); expect(blocked.skills).toEqual([]); expect(blocked.blocked_skills[0].source_incarnation).toBe(nextIncarnation);
 });
 
+async function movePolicy(policyBody: Record<string, unknown> = policy) {
+  policyEpoch = randomUUID();
+  await engine.executeRaw('UPDATE shared_skill_policies SET epoch=$1::uuid, policy=$2::text::jsonb', [policyEpoch, JSON.stringify(policyBody)]);
+  await projectFixture('UPDATE shared_skill_heads SET policy_epoch=$1', [policyEpoch]);
+}
+
+test('#6797 an approved join on an active enrollment renews a moved policy epoch', async () => {
+  const ctx = await context(), first = await join(ctx);
+  expect((await syncBrain(ctx, ack(first))).delivery.installation).toBe('self_reported');
+  await movePolicy();
+  expect((await syncBrain(ctx, params(first))).status).toBe('requirements_changed');
+  const refreshed = await join(ctx);
+  expect(refreshed.status).toBe('catalog_visible');
+  expect(refreshed.installation_id).toBe(first.installation_id);
+  expect(refreshed.enrollment_epoch).toBe(first.enrollment_epoch + 1);
+  expect(refreshed.skills.map(skill => skill.name)).toEqual(['fixture']);
+  expect(refreshed.delivery.installation).toBe('unverified');
+  await expect(syncBrain(ctx, ack(first))).rejects.toMatchObject({ code: 'membership_inactive' });
+  const recorded = await syncBrain(ctx, ack(refreshed));
+  expect(recorded.acknowledgment).toBe('recorded');
+  expect(recorded.delivery.installation).toBe('self_reported');
+  const repeated = await join(ctx);
+  expect(repeated.enrollment_epoch).toBe(refreshed.enrollment_epoch);
+  expect(repeated.batch_token).toBe(refreshed.batch_token);
+});
+
+test('#6797 an approved join never grants a new capability or a new source incarnation', async () => {
+  const ctx = await context(), first = await join(ctx);
+  // @ts-expect-error Exercise unapproved wire input, which the public type excludes.
+  await expect(joinBrain(ctx, { adapter: 'codex', follow_policy: { approved: false } })).rejects.toMatchObject({ code: 'follow_approval_required' });
+  await movePolicy({ ...policy, requirements: ['paid-tool'] });
+  await publish(['paid-tool']);
+  const widened = await join(ctx);
+  expect(widened.status).toBe('requirements_changed');
+  expect(widened.enrollment_epoch).toBe(first.enrollment_epoch);
+  expect(widened.skills).toEqual([]);
+  const nextIncarnation = randomUUID();
+  await projectFixture("UPDATE sources SET incarnation=$1::uuid WHERE id='default'", [nextIncarnation]);
+  incarnation = nextIncarnation;
+  await engine.executeRaw('INSERT INTO shared_skill_policies(source_id,source_incarnation,epoch,policy) VALUES($1,$2::uuid,$3::uuid,$4::text::jsonb)', ['default', incarnation, policyEpoch, JSON.stringify(policy)]);
+  await publish();
+  const recreated = await join(ctx);
+  expect(recreated.enrollment_epoch).toBe(first.enrollment_epoch);
+  expect(recreated.skills).toEqual([]);
+  expect(recreated.blocked_skills[0].source_incarnation).toBe(nextIncarnation);
+});
+
+test('#6797 narrowing an active enrollment issues a batch its acknowledgment records', async () => {
+  const ctx = await context();
+  const first = await joinBrain(ctx, { adapter: 'codex', follow_policy: { approved: true, source_ids: ['default'] } });
+  const narrowed = await joinBrain(ctx, { adapter: 'codex', follow_policy: { approved: true, source_ids: [] } });
+  expect(narrowed.enrollment_epoch).toBe(first.enrollment_epoch + 1);
+  expect(narrowed.skills).toEqual([]);
+  expect((await syncBrain(ctx, ack(narrowed))).acknowledgment).toBe('recorded');
+  await expect(joinBrain(ctx, { adapter: 'codex', follow_policy: { approved: true, source_ids: ['default'] } })).rejects.toMatchObject({ code: 'follow_approval_required' });
+});
+
 test('concurrent leave and acknowledgment cannot reactivate an enrollment', async () => {
   const ctx = await context(), first = await join(ctx);
   const results = await Promise.allSettled([syncBrain(ctx, ack(first)), leaveBrain(ctx, params(first))]);

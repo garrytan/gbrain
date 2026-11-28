@@ -112,6 +112,27 @@ async function bindPolicy(ctx: OperationContext, sourceIds: string[] | null): Pr
   return { source_ids: sourceIds, sources, requirements };
 }
 
+/**
+ * #6797: what an approved join on an active enrollment renews. A source already bound, at the same incarnation, whose
+ * current policy asks for no capability the binding lacks takes its current policy epoch and capabilities. A new source,
+ * a new capability or a new incarnation keeps the old pin (its skills stay blocked) until the owner approves a new
+ * enrollment, so a replayed follow approval (`--refresh-skills`) never grants more than the user approved.
+ */
+function renewPins(bound: BoundPolicy, current: BoundPolicy, sourceIds: string[] | null): BoundPolicy {
+  const sources: Record<string, string> = {};
+  const requirements: BoundPolicy['requirements'] = {};
+  for (const [id, incarnation] of Object.entries(bound.sources)) {
+    if (sourceIds && !sourceIds.includes(id)) continue;
+    const key = `${id}/${incarnation}`;
+    const pinned = bound.requirements[key];
+    if (!pinned) continue;
+    const now = current.sources[id] === incarnation ? current.requirements[key] : undefined;
+    sources[id] = incarnation;
+    requirements[key] = now && now.capabilities.every(capability => pinned.capabilities.includes(capability)) ? now : pinned;
+  }
+  return { source_ids: sourceIds, sources, requirements };
+}
+
 function filtered(member: Member, skills: SkillDeliveryEntry[]) {
   const accepted: SkillDeliveryEntry[] = [];
   const blocked: SkillDeliveryEntry[] = [];
@@ -193,11 +214,10 @@ export async function joinBrain(ctx: OperationContext, params: { adapter: string
       const prior = member.follow_policy.source_ids;
       if (prior && (!sourceIds || sourceIds.some(s => !prior.includes(s)))) fail('follow_approval_required', 'An active membership can only narrow its follow policy; leave and approve a new enrollment to widen it.',
         `Installation ${member.installation_id} follows only ${prior.join(', ')}. To follow more, ask the user to approve the wider policy, then leave_brain and join_brain again with it.`);
-      if (JSON.stringify(prior) !== JSON.stringify(sourceIds)) {
-        member.follow_policy = { ...member.follow_policy, source_ids: sourceIds };
-        member.epoch = Number(member.epoch) + 1;
-        member.issued_sequence = 0; member.acknowledged_sequence = 0;
-        await engine.executeRaw(`UPDATE shared_skill_members SET follow_policy=$2::text::jsonb,epoch=$3,issued_sequence=0,acknowledged_sequence=0,desired_view=NULL,acknowledged_view=NULL WHERE installation_id=$1::uuid`, [member.installation_id, JSON.stringify(member.follow_policy), member.epoch]);
+      const renewed = renewPins(member.follow_policy, await bindPolicy(authority.ctx, sourceIds), sourceIds);
+      if (stableJson(renewed) !== stableJson(member.follow_policy)) {
+        await engine.executeRaw(`UPDATE shared_skill_members SET follow_policy=$2::text::jsonb,epoch=epoch+1,issued_sequence=0,acknowledged_sequence=0,desired_view=NULL,acknowledged_view=NULL WHERE installation_id=$1::uuid`, [member.installation_id, JSON.stringify(renewed)]);
+        member = await ownMember(tx, member.installation_id, authority.principal);
       }
     } else {
       if (member && new Date(member.join_window).getTime() > Date.now() - 3_600_000 && member.join_count >= 10) fail('rate_limited', 'Enrollment rate limit reached for this principal and adapter.',
