@@ -50,6 +50,28 @@ export function noteLostWrite(dir: string, reason: string, at: number = Date.now
   try { appendFileSync(join(dir, FOREIGN_FILE), `${JSON.stringify({ at, pid: process.pid, reason })}\n`); } catch { /* the next full pass repairs it */ }
 }
 
+/** The serving process's record of writes its child will never hear of (attach.ts `onLost`). */
+export interface LostWriteRecorder {
+  /** A write was lost: leave a line for the owner (one a second is enough: the owner reads any line as "a write was lost"). */
+  note(reason: string): void;
+  /** Before a seal: false when a loss is still unrecorded (the close must not seal). */
+  flush(): boolean;
+  /** The loss still waiting to be recorded, or null. */
+  pending(): string | null;
+  stop(): void;
+}
+
+export function lostWriteRecorder(o: { dir: string; now?: () => number }): LostWriteRecorder {
+  const now = o.now ?? Date.now;
+  let lostAt = 0;
+  return {
+    note(reason) { const at = now(); if (at - lostAt < 1_000) return; lostAt = at; try { noteLostWrite(o.dir, reason, at); } catch { lostAt = 0; } },
+    flush: () => true,
+    pending: () => null,
+    stop() {},
+  };
+}
+
 /** Size of the invalidation file: 0 when there is none, null when it cannot be read. */
 function foreignSize(dir: string): number | null {
   try { return statSync(join(dir, FOREIGN_FILE)).size; } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 0 : null; }

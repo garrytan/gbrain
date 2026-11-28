@@ -13,7 +13,7 @@ import type { FollowOptions } from './follow.ts';
 import { ShadowFollower } from './follower.ts';
 import { openReadSource, type ReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
-import { noteLostWrite } from './follow-child.ts';
+import { lostWriteRecorder } from './follow-child.ts';
 import { confirmSeal, sealMark, type SealDeps } from './seal.ts';
 import { createLsnWatch, makeAskHandler, type LsnWatch } from './checks.ts';
 import { epochWatch, readEpoch } from './evidence-epoch.ts';
@@ -122,12 +122,12 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   const askConfirm = (): Promise<void> => (sealDeps ? (confirm ??= confirmSeal(sealDeps)) : Promise.resolve());
   // A write the child will never hear of leaves a line for whichever process owns the store next (follow-child.ts), so no
   // seal is trusted over it. One line a second is enough: the owner reads any line as "a write was lost".
-  let lostAt = 0;
+  const lost = lostWriteRecorder({ dir });
   const follower = reads ? new ShadowFollower({
     reads, send: (line) => supervisor.send(line), rpc,
     onDirty: (relation) => reconciler?.markDirty(relation),
     onFirstBatch: () => { void reconciler?.probe().catch(() => undefined); },
-    onLost: (reason) => { const now = Date.now(); if (now - lostAt < 1_000) return; lostAt = now; try { noteLostWrite(dir, reason, now); } catch { lostAt = 0; } },
+    onLost: (reason) => lost.note(reason),
   }) : undefined;
   generation = () => follower?.published;
   const reconciler = reads ? new Reconciler({ dir, reads, rpc, follower, ready: askConfirm }) : undefined;
