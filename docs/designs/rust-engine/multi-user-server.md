@@ -360,7 +360,19 @@ Replay: when the server has no record of a retried request id, `run_doctor` alon
 (`replayableWholeRead`), and only while its definition is still `mutating: false` and `idempotent: true` and the call
 carries only `tier` or `only`; anything else fails closed with `outcome_unknown`. A replayed doctor has no write of its
 own; like every doctor run it refreshes the fence census cache (fence_integrity's scan record), as a second call does.
+That refresh (`writeFenceScanRecord`, `clearFenceCandidateParts`) is the same effect as any second doctor call, on every
+engine, so a replay means no second write of its own, not zero commits.
 `test/rust-served-remote-doctor.serial.test.ts` proves the one frame, the equal report, the scope refusal and the replay.
+On the Rust arm a doctor run catches the raw-SQL refusal of four check files (timeline-dedup-repair, report-remote,
+schema-pack-checks, calibration), pinned in `test/rust-stop-pins/l3-served-doctor.tsv`. The sites are on the main trunk
+too, so the pins belong to lane 2b (main trunk) and stay until main removes the sites.
+
+**Reads that stay on the default ruling, by owning slice.** S4 (retrieval): `readFactsFtsIndexState`,
+`readSourcesNotReadable`. S5 (jobs, write requests, skills, membership): `countWaitingJobs`, `filterUnarchivedSourceIds`,
+`listAudienceAccessMembers`, `lockLegacyAccessTokens`, `readCredentialBindingForUpdate`, `readLiveAccessTokenRows`,
+`readLiveOauthClients`. S6 (pages, entities, status, code, storage, other): `countRepoBoundSources`,
+`listConnectorSources`, `listOriginTwinCounts`, `listOrphanConnectorCheckpoints`, `readDoctorSources`,
+`readOriginIndexState`, `readServerEncoding`, `sumEmbedBackfillChars`.
 
 **Follow-up (A1).** Once per-user access lifts, a non-owner principal's remote `put_page` needs its own privacy and
 visibility parity case (its readers, a private page it may not see, an owner-only source): today only the owner's floor sends
