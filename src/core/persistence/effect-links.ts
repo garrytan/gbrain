@@ -112,13 +112,14 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
   const snapshot = await engine.readPageSnapshot(effect.data.slug, { sourceId });
   if (!snapshot || snapshot.page.id !== effect.data.page_id || snapshot.revision !== effect.revision) return skip(engine, 'superseded');
   if (!await isAutoLinkEnabled(engine) || !await isRemoteAutoLinksEnabled(engine)) return skip(engine, 'disabled');
-  const { targets, skipped } = await mentionTargets(engine, snapshot, sourceId);
+  const { targets, skipped: readSkipped } = await mentionTargets(engine, snapshot, sourceId);
   const beliefs = unmanagedBeliefPoint(sourceId, [snapshot.page.slug], 'remote_auto_links');
   await engine.transaction(async tx => {
     const live = await lockedPage(tx, effect, row, snapshot, targets, hostId);
     if (!live) return;
     if (live.revision !== snapshot.revision) { await skip(tx, 'superseded'); return; }
-    const { wanted, owned, hidden } = await writableTargets(tx, row, live, targets, skipped);
+    // Each run starts from the skips read before the transaction: a callback may run more than once (an optimistic retry).
+    const { wanted, owned, hidden, skipped } = await writableTargets(tx, row, live, targets, readSkipped);
     const obsolete = owned.filter(link => !wanted.has(link.slug)).map(link => link.id);
     const kept = new Set(owned.map(link => link.slug));
     const additions = mentionEdges(live.page.slug, sourceId, wanted, kept);
@@ -158,7 +159,7 @@ async function runAppendLinksEffect(engine: BrainEngine, effect: PersistenceEffe
   if (text === null) return skip(engine, 'superseded');
   const { page } = snapshot;
   const { candidates } = await extractPageLinks(page.slug, text, {}, page.type, liveResolver(engine, sourceId), await mentionOptions(engine));
-  const { targets, skipped } = mentionCandidates(candidates, page.slug, sourceId);
+  const { targets, skipped: readSkipped } = mentionCandidates(candidates, page.slug, sourceId);
   const beliefs = unmanagedBeliefPoint(sourceId, [page.slug], 'remote_auto_links');
   await engine.transaction(async tx => {
     const live = await lockedPage(tx, effect, row, snapshot, targets, hostId);
@@ -166,7 +167,7 @@ async function runAppendLinksEffect(engine: BrainEngine, effect: PersistenceEffe
     // Another write (on a busy log, another append) landed between the read and the page lock, which now holds writers off:
     // the range is read again at the live revision and applies only when it still reads as before, so the effect never retries.
     if (live.revision !== snapshot.revision && await appendedText(tx, live, range, true, audience) !== text) { await skip(tx, 'superseded'); return; }
-    const { wanted, owned } = await writableTargets(tx, row, live, targets, skipped);
+    const { wanted, owned, skipped } = await writableTargets(tx, row, live, targets, readSkipped);
     const additions = mentionEdges(live.page.slug, sourceId, wanted, new Set(owned.map(link => link.slug)));
     const added = await beliefs.run(tx, async () => additions.length ? await tx.addLinksBatch(additions, { auditSite: 'addLinksBatch' }) : 0);
     await completeEffect(tx, effect, linksOutcome(added, 0, skipped));
@@ -242,12 +243,13 @@ async function lockedPage(tx: BrainEngine, effect: PersistenceEffect, row: Write
 
 /**
  * The targets that get an edge: existing pages of the source, visible to the writer (a remote writer that excludes
- * private pages never links one) and inside its slug grant; the rest are added to `skipped` with the reason. A page
+ * private pages never links one) and inside its slug grant; the rest are returned in `skipped` after the skips read
+ * before the transaction (`before`, never changed, so a callback that runs again starts from the same list), each with the reason. A page
  * the writer may not read under the member-access part (GBRA-218; no operator hatch relaxes it) is skipped as
  * `missing`, so the receipt cannot tell it from an absent page, and is returned in `hidden` so it is never recorded
  * as wanted. Also the edges this producer already owns from the page.
  */
-async function writableTargets(tx: BrainEngine, row: WriteRequest, live: PageSnapshot, targets: Map<string, string>, skipped: SkippedLinkTarget[]) {
+async function writableTargets(tx: BrainEngine, row: WriteRequest, live: PageSnapshot, targets: Map<string, string>, before: readonly SkippedLinkTarget[]) {
   const sourceId = live.page.source_id;
   const hidePrivate = row.authority.remote && ((row.authority.excludePrivate ?? true) || await excludesPrivateWrites(tx, true));
   const policy = row.authority.remote && targets.size ? await writerReadPolicy(tx, row.authority) : null;
@@ -256,13 +258,14 @@ async function writableTargets(tx: BrainEngine, row: WriteRequest, live: PageSna
   const hidden = new Set(existing.filter(page => !page.readable).map(page => page.slug));
   const granted = await targetGrant(tx, row.authority);
   const wanted = new Map<string, string>();
+  const skipped = [...before];
   for (const [slug, context] of targets) {
     const reason = !found.has(slug) ? 'missing' : hidePrivate && !found.get(slug) ? 'not_visible' : !granted(slug) ? 'outside_grant' : null;
     if (reason) skipped.push({ slug, reason });
     else wanted.set(slug, context);
   }
   const owned = await tx.readOwnedLinks(REMOTE_MENTION_LINK_SOURCE, live.page.id);
-  return { wanted, owned, hidden };
+  return { wanted, owned, hidden, skipped };
 }
 
 /** Plain `mentions` edges from the page to each wanted target it does not already have from this producer. */
