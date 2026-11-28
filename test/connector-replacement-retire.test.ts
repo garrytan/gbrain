@@ -324,6 +324,10 @@ describe('google contacts on a managed brain: a replacement still pending when t
       let stalled = false;
       installFaultHook(async (point) => { if (point === 'consumer:preparing' && !stalled) { stalled = true; await new Promise(r => setTimeout(r, 6_500)); } });
       try { await run(); } finally { installFaultHook(undefined); quiet.mockRestore(); screen.mockRestore(); }
+      expect(stalled).toBe(true);
+      const [replacement] = await engine.executeRaw<{ state: string; error_code: string | null }>(
+        "SELECT state, error_code FROM persistence_requests WHERE source_id=$1 AND slug='people/alice-example' ORDER BY created_at DESC LIMIT 1", [f.id]);
+      expect(replacement).toMatchObject({ state: 'failed', error_code: 'purged_content' });
       expect(await live(engine, f.id)).toEqual(['people/bob-example']);
     }
   }), 180_000);

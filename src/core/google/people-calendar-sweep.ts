@@ -187,8 +187,9 @@ async function applyContact(deps: GoogleSyncDeps, c: ContactData,
   const contactsDir = deps.cfg.contactsDir;
   // The id-keyed lookup, ownership, collision and staged-rename rules are shared with the apple-contacts source
   // (contact-page-apply.ts); the id lookup mirrors the calendar sweep's event_id keying.
+  let existing: string | null = null;
   await applyContactPage(c.resourceName, !!c.deleted, {
-    existingPath: () => contactPageRelPathByContactId(deps, c.resourceName),
+    existingPath: async () => (existing = await contactPageRelPathByContactId(deps, c.resourceName)),
     owner: (relPath) => contactOwner(deps, relPath),
     baseSlug: () => personSlugFromContact(c, false, contactsDir),
     tombstoneSlugs: () => [personSlugFromContact(c, false, contactsDir), personSlugFromContact(c, true, contactsDir), contactIdSlug(c.resourceName, contactsDir)],
@@ -198,7 +199,8 @@ async function applyContact(deps: GoogleSyncDeps, c: ContactData,
       contactsDir,
     ),
     write: async (relPath, markdown) => {
-      const landed = await storedSlug(deps, await importRendered(deps, relPath, markdown, sweep.activePack, sweep.summary, sweep.countedSlugs));
+      let landed = await importRendered(deps, relPath, markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
+      if (landed !== null && existing !== null && landed !== slugifyPath(existing)) landed = await storedSlug(deps, landed);
       if (landed !== null) sweep.touched.add(landed);
       return landed;
     },
