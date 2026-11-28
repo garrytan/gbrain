@@ -73,7 +73,7 @@ export function spendBasis(job: { spend_authorization?: SpendAuthorization | nul
   const r = job.spend_authorization;
   if (job.spend_authorization_invalid) return { basis: 'invalid', why: 'The stored spend authorization is malformed, so the worker refuses to run this job; cancel it and run the producing command again.' };
   if (!r) return { basis: 'unrecorded', why: 'No submit-time spend authorization exists for this job; it runs under its producer\'s own budget (client daily budget, cycle budget, configured embedding caps or --max-usd), if any.' };
-  const unmetered = r.cap_source === 'user' ? '' : ' A model with no known price runs unmetered under this cap (it warns); register its rate with `gbrain pricing set` to meter it.';
+  const unmetered = r.cap_source === 'user' ? '' : ' A non-embedding model with no known price runs unmetered under this cap (it warns); capped embeddings require known pricing and a provider token ceiling.';
   if (r.uncapped) return { basis: r.kind, why: `The user authorized ${r.command} without a cost ceiling (${r.via ?? 'max_usd'}); spend is ledgered against group ${r.group_id}.` };
   if (r.kind === 'legacy_default') return { basis: r.kind, why: `This job was queued before submit-time authorization existed, so it runs under the $${r.cap_usd!.toFixed(2)} default cap. Re-run ${r.command} with --max-usd <usd> to authorize a different amount.${unmetered}` };
   return { basis: r.kind, why: `The user approved $${r.cap_usd!.toFixed(2)} (${r.cap_source}) for ${r.command}; every job of group ${r.group_id} shares that total.${unmetered}` };

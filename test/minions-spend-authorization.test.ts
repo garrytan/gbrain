@@ -254,3 +254,25 @@ test('a priced model with no context ceiling refuses as no_context_ceiling under
     await engine.setConfig('pricing.overrides', previous ?? '{}');
   }
 });
+
+test('derived embedding approvals refuse unknown price or ceiling before provider work', async () => {
+  const job = await claimed('subagent', {}, record(1, 'derived'));
+  let calls = 0;
+  for (const [model, expected] of [['example:unpriced-model', 'no_pricing'], ['openai:text-embedding-3-small', 'no_context_ceiling']]) {
+    await expect(runWithJobSpend(engine, job, ctxFor(job), async () => invokeAI(
+      { operation: 'test-embed', kind: 'embedding', model: model! },
+      async () => { calls++; return 'unexpected'; }, () => null,
+    ))).rejects.toThrow(expected);
+  }
+  expect(calls).toBe(0);
+});
+
+test('a zero-price embedding route needs no token ceiling under a user cap', async () => {
+  const job = await claimed('subagent', {}, record(1, 'user'));
+  let calls = 0;
+  await runWithJobSpend(engine, job, ctxFor(job), () => invokeAI(
+    { operation: 'test-free-embed', kind: 'embedding', model: 'ollama:local-test' },
+    async () => { calls++; return 'ok'; }, () => ({ inputTokens: 5, outputTokens: 0 }),
+  ));
+  expect(calls).toBe(1);
+});

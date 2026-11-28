@@ -17,6 +17,8 @@ import { AUDIT_ROW_SOURCES } from './facts/audit-sources.ts';
 import { resolveMaxChunkTokens } from './embedding-input-limit.ts';
 import { estimateTokens } from './chunkers/token-estimate.ts';
 import { eligibleFactEmbedding, staleFactEmbedding, readOversizedStaleFacts, oversizedFactLine, OVERSIZED_FACT_FIX } from './facts/embedding-identity.ts';
+import { configuredEmbeddingCapUsd } from './embedding-budget.ts';
+import { AIConfigError } from './ai/errors.ts';
 
 export interface EmbedFactsOpts extends EmbedFactsOptions {
   signal?: AbortSignal;
@@ -138,8 +140,10 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
     || selectedConfig?.embedding_dimensions !== undefined && selectedConfig.embedding_dimensions !== dims) {
     throw new Error('Embedding configuration differs from the database; finish the reviewed model migration first');
   }
+  const configuredCap = await configuredEmbeddingCapUsd(engine);
+  const cap = configuredCap === undefined ? opts.maxCostUsd : Math.min(configuredCap, opts.maxCostUsd ?? Infinity);
   const tracker = new BudgetTracker({
-    label: 'embed.facts', maxCostUsd: opts.maxCostUsd, maxRuntimeMs: budgetMs,
+    label: 'embed.facts', maxCostUsd: cap, maxRuntimeMs: budgetMs,
     pricingOverrides: await loadPricingOverrides(engine),
   });
   const budgetTimer = budgetMs === undefined ? null : AbortSignal.timeout(budgetMs);
@@ -161,7 +165,6 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
     result.attempted += fitting.length;
     try {
       signal.throwIfAborted();
-      const inputCeiling = fitting.reduce((sum, row) => sum + Math.max(1, Buffer.byteLength(row.fact, 'utf8')), 0);
       const vectors = await withAIInvocationGuard(async call => {
         signal.throwIfAborted();
         if (call.kind !== 'embedding') throw new Error('Fact backfill permits embedding calls only');
@@ -173,10 +176,17 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
         if (await engine.getConfig('embedding_model') !== dbModel || await engine.getConfig('embedding_dimensions') !== dbDims) {
           throw new Error('Embedding model changed during fact backfill; rerun the scoped preview');
         }
-        const reservation = tracker.reserve({ modelId: call.model, kind: 'embed', estimatedInputTokens: inputCeiling, maxOutputTokens: 0 });
+        const inputCeiling = call.maxInputTokens;
+        if (tracker.hasCostCap && tracker.isPriced(call.model, 'embed')
+          && !tracker.hasZeroCost(call.model, 'embed') && inputCeiling === undefined) {
+          throw new AIConfigError(`No provider token ceiling is known for ${call.model}; fact repair cannot bound its spend.`,
+            'Declare a provider-enforced input limit before running this capped repair.');
+        }
+        const reservedTokens = inputCeiling ?? fitting.reduce((sum, row) => sum + Math.max(1, Buffer.byteLength(row.fact, 'utf8')), 0);
+        const reservation = tracker.reserve({ modelId: call.model, kind: 'embed', estimatedInputTokens: reservedTokens, maxOutputTokens: 0 });
         return { settle: async usage => {
           if (!usage) result.cost_estimated = true;
-          tracker.record({ modelId: call.model, reservation, kind: 'embed', inputTokens: usage?.inputTokens ?? inputCeiling, outputTokens: 0 });
+          tracker.record({ modelId: call.model, reservation, kind: 'embed', inputTokens: usage?.inputTokens ?? reservedTokens, outputTokens: 0, estimated: usage === null });
         } };
       }, () => embed(fitting.map(row => row.fact), {
         abortSignal: signal, embeddingModel: model, dimensions: dims, inputType: 'document',

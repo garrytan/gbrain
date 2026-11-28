@@ -125,15 +125,25 @@ describe('embed --max-usd is metered', () => {
   });
 
   test('#6984: a model priced only by pricing.overrides runs under a user cap instead of refusing no_pricing', async () => {
-    configureGateway({ embedding_model: 'openrouter:qwen/qwen3-embedding-8b', embedding_dimensions: DIMS, env: { OPENROUTER_API_KEY: 'sk-or-test-fake' } });
+    configureGateway({ embedding_model: 'voyage:voyage-4-nano', embedding_dimensions: DIMS, env: { VOYAGE_API_KEY: 'sk-fake' } });
     __setEmbedTransportForTests((async ({ values }: { values: string[] }) => { calls++; return { embeddings: values.map(() => new Array(DIMS).fill(0.001)), usage: { tokens: 10 } }; }) as never);
-    await engine.setConfig('pricing.overrides', JSON.stringify({ 'openrouter:qwen/qwen3-embedding-8b': { pricePerMTok: 0.01 } }));
+    await engine.setConfig('pricing.overrides', JSON.stringify({ 'voyage:voyage-4-nano': { pricePerMTok: 0.01 } }));
     try {
       const { out, exit } = await cli(['--slugs', ...SLUGS, '--max-usd', '0.10']);
       expect(out).not.toContain('no_pricing');
       expect(exit).toBe(0);
       expect(await embedded()).toEqual(SLUGS);
     } finally { await engine.unsetConfig('pricing.overrides'); }
+  });
+
+  test('the configured run cap applies even when consent carries a higher cap', async () => {
+    await engine.setConfig('embed.backfill_max_usd', '0.000001');
+    try {
+      const { exit } = await cli(['--slugs', ...SLUGS, '--max-usd', '1']);
+      expect(exit).toBe(BUDGET_STOP_EXIT_CODE);
+      expect(calls).toBe(0);
+      expect(await embedded()).toEqual([]);
+    } finally { await engine.unsetConfig('embed.backfill_max_usd'); }
   });
 
   test('a free provider needs no authorization and runs unmetered', async () => {

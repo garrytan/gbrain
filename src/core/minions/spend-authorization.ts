@@ -195,10 +195,18 @@ export async function spendRefusal(
   engine: BrainEngine,
   job: Pick<MinionJob, 'id' | 'name'>,
   record: SpendAuthorization,
-  cause: { kind: 'cost'; overdueHolds?: boolean } | { kind: 'no_pricing' | 'no_context_ceiling'; model: string },
+  cause: { kind: 'cost'; overdueHolds?: boolean } | { kind: 'no_pricing' | 'no_context_ceiling'; model: string; embedding?: boolean },
 ): Promise<SpendGroupRefusedError> {
   const group = groupAmounts(record, await readGroupSpend(engine, `group:${record.group_id}`));
   const listArgv = ['gbrain', 'jobs', 'list', '--group', record.group_id, '--json'];
+  if (cause.kind === 'no_context_ceiling' && cause.embedding) {
+    const e = opError('no_context_ceiling',
+      `Job ${job.id} (${record.command}) stopped: gbrain knows no provider token ceiling for ${cause.model}, so the approved $${record.cap_usd!.toFixed(2)} cap cannot bound it. No provider call was made.`,
+      'Ask the user to select an embedding model with a known provider ceiling, or explicitly approve an uncapped run.',
+      { why: 'A capped embedding attempt must reserve the provider maximum before sending.',
+        fix: { argv: listArgv, consent: [], actor: 'agent', requires_exclusive: false, why: 'Inspect the stopped job and its spend group.' } });
+    return new SpendGroupRefusedError({ ...e.toJSON(), group } as SpendRefusalEnvelope);
+  }
   if (cause.kind === 'no_context_ceiling') {
     const capped = resumeArgv(record, null);
     const rerun = capped ? shellQuote(capped) : `${record.command} with --yes instead of --max-usd`;
@@ -311,7 +319,9 @@ export async function runWithJobSpend<T>(
     const max = maximumInvocationCents(call, pricingOverrides);
     if (max === null) {
       const kind = unboundedInvocationCause(call, pricingOverrides);
-      if (record.cap_source === 'user') throw (seen.refusal = await spendRefusal(engine, job, record, { kind, model: call.model }));
+      if (record.cap_source === 'user' || call.kind === 'embedding') {
+        throw (seen.refusal = await spendRefusal(engine, job, record, { kind, model: call.model, embedding: call.kind === 'embedding' }));
+      }
       if (!warned) {
         warned = true;
         process.stderr.write(kind === 'no_context_ceiling'
@@ -380,7 +390,7 @@ export function spendSubmitSummary(record: SpendAuthorization, jobs: MinionJob[]
   }
   if (reused.length) lines.push(`[spend] ${reused.length} finished job(s) reused: ${reused.join(', ')}.`);
   if (!record.uncapped && record.cap_source !== 'user') {
-    lines.push(`[spend] A model with no known price runs unmetered under this ${record.cap_source} cap (it warns); register its rate with \`gbrain pricing set\` to meter it.`);
+    lines.push(`[spend] A non-embedding model with no known price runs unmetered under this ${record.cap_source} cap (it warns); capped embeddings require known pricing and a provider token ceiling.`);
   }
   return { summary: { group_id: record.group_id, cap_usd: record.cap_usd, cap_source: record.cap_source, uncapped: record.uncapped === true,
     queued_job_ids: fresh, reused_job_ids: reused, kept: [...kept.values()] }, lines };

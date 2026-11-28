@@ -29,6 +29,8 @@ function prices(call: AIInvocation, overrides?: PricingOverrides): { input: numb
 
 export function maximumInvocationCents(call: AIInvocation, overrides?: PricingOverrides): number | null {
   const p = prices(call, overrides);
+  // A genuinely free route has zero liability even without a context bound.
+  if (p && p.input === 0 && p.output === 0 && p.read === 0 && p.write === 0) return 0;
   const maxOutputTokens = call.maxOutputTokens ?? (call.kind === 'embedding' || call.kind === 'rerank' ? 0 : undefined);
   if (!p || !Number.isSafeInteger(call.maxInputTokens) || call.maxInputTokens! < 0
     || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens! < 0) return null;

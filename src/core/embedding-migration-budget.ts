@@ -180,9 +180,12 @@ export async function authorizeMigrationBudget(engine: BrainEngine, plan: Embedd
   return async (call: AIInvocation): Promise<AIInvocationPermit> => {
     if (call.kind !== 'embedding' && call.kind !== 'rerank') throw new Error('Migration permits embedding and reranker probes only');
     if (call.model !== (call.kind === 'embedding' ? plan.to_model : rerankerModel)) throw new Error('Provider model differs from the authorized migration plan; no request dispatched');
-    if (!Number.isSafeInteger(call.maxInputTokens) || call.maxInputTokens! <= 0) throw new Error('Provider request has no conservative input ceiling; no request dispatched');
     const kind: BudgetKind = call.kind === 'embedding' ? 'embed' : 'rerank';
-    const reserved = reservationCostUsd(call.model, kind, call.maxInputTokens!, 0, pricingOverrides);
+    const bounded = Number.isSafeInteger(call.maxInputTokens) && call.maxInputTokens! > 0;
+    if (!bounded && reservationCostUsd(call.model, kind, 1, 0, pricingOverrides) !== 0) {
+      throw new Error('Provider request has no conservative input ceiling; no request dispatched');
+    }
+    const reserved = reservationCostUsd(call.model, kind, bounded ? call.maxInputTokens! : 0, 0, pricingOverrides);
     if (reserved === null) {
       throw new Error(`Migration authorization cannot price ${call.model} (${kind}); no request dispatched. ${noPricingSteps(noPricingGuidance(call.model, kind))}`);
     }

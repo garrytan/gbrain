@@ -41,7 +41,6 @@ import { estimateCostFromChars } from './embedding-pricing.ts';
 import { reservationCostUsd, usageCostUsd } from './budget/reservation-cost.ts';
 import { BudgetTracker, type PricingOverrides } from './budget/budget-tracker.ts';
 import { getCurrentBudgetTracker, withBudgetTracker } from './ai/gateway.ts';
-import { recordOnTracker } from './ai/budget-record.ts';
 import { RESERVATION_WINDOW_SQL, RESERVED_AT_SQL, reserveDerivationSpend, settleLedgerReservation, type PageSpendDecision, type PageSpendGrant,
   type PageSpendKind, type PageSpendSignature } from './page-spend.ts';
 import { PAGE_INLINE_MAX_BYTES, budgetRowAppliesFilter, isLargePageBytes } from './page-size-policy.ts';
@@ -265,7 +264,7 @@ export function estimateFactsExtractionUsd(model: string, chars: number, maxOutp
  * attempts may have billed (`billed`): each attempt, a retry wrapper's every entry included, at its reported usage
  * topped up with the attempt's worst case, unless the provider definitively refused it before generating (a 4xx other
  * than 408 or 499, with no usage). A 5xx, a 529, a proxy's 499 or 504, a timeout, an abort or a reset connection is
- * booked. An embedding that failed without reported usage is booked as nothing (the embedding ledger's own rule).
+ * booked. A failed embedding without reported usage books its conservative debit.
  * The step runs with the SDK's hidden retries off (providerRetries 0), so each attempt is a call it reserved for.
  *
  * Each attempt is also reserved and recorded on the caller's tracker (`parent`) as it happens, so the caller's cap
@@ -275,29 +274,21 @@ class MeteredStepTracker extends BudgetTracker {
   billedUsd = 0;
   billedAttempts = 0;
   unpricedAttempts = 0;
-  constructor(opts: ConstructorParameters<typeof BudgetTracker>[0], private readonly parent: BudgetTracker | null, private readonly pricing?: PricingOverrides) { super(opts); }
-
-  override reserve(estimate: Parameters<BudgetTracker['reserve']>[0]): ReturnType<BudgetTracker['reserve']> {
-    super.reserve(estimate);
-    return this.parent?.reserve(estimate);
-  }
-
-  override release(reservation: ReturnType<BudgetTracker['reserve']>): void {
-    this.parent?.release(reservation);
+  constructor(opts: ConstructorParameters<typeof BudgetTracker>[0], parent: BudgetTracker | null, private readonly pricing?: PricingOverrides) {
+    super({ ...opts, parentTracker: parent ?? undefined });
   }
 
   override record(actual: Parameters<BudgetTracker['record']>[0]): void {
     const failed = actual.failed === true || (actual.label?.endsWith('.failed') ?? false);
     const tokens = failed && actual.billed ? actual.billed : { inputTokens: actual.inputTokens, outputTokens: actual.outputTokens ?? 0 };
-    const unbilled = failed && (((actual.kind ?? 'chat') === 'embed' && actual.estimated === true) || (tokens.inputTokens === 0 && tokens.outputTokens === 0));
+    const unbilled = failed && tokens.inputTokens === 0 && tokens.outputTokens === 0;
     if (!unbilled) {
       const cost = usageCostUsd(actual.modelId, tokens.inputTokens, tokens.outputTokens, actual.kind ?? 'chat', this.pricing);
       this.billedAttempts++;
       if (cost === null) this.unpricedAttempts++;
       else this.billedUsd += cost;
     }
-    recordOnTracker(this.parent, actual);
-    super.record({ ...actual, reservation: undefined });
+    super.record(actual);
   }
 }
 
@@ -306,7 +297,7 @@ class MeteredStepTracker extends BudgetTracker {
  * step may make), run `call`, and book what its provider calls actually cost, read from a budget tracker scoped to the call.
  * Every attempt the provider answered is booked whatever the step's outcome (a truncated, malformed or refused answer, a
  * throw after the provider answered), and so is every failed attempt it may have billed (MeteredStepTracker); one it
- * definitively refused before generating (a rate limit, an auth error) and a failed embedding are not; an unpriced
+ * definitively refused before generating (a rate limit or an auth error) is not; an unpriced
  * model books the reservation; a step with no billed attempt books nothing. The attempts are reserved and recorded on
  * the caller's tracker too, so the caller's cap bounds them. `unpricedModel` names the model when the step was refused
  * under an unpriced model's ceiling estimate or booked its reservation because the model has no price: the caller's

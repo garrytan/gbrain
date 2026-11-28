@@ -63,6 +63,8 @@ import { planPageEmbedding } from '../page-embedding-budget.ts';
 import { acquirePageEmbeddingLease, pageEmbeddingLeaseUnavailable } from '../page-embedding-lease.ts';
 import { chunkGenerationFilter, chunkManifestReads } from '../search/safe-chunks.ts';
 import { classifyItemFailure, ItemRun } from '../item-failure.ts';
+import { withEmbeddingBudget } from '../embedding-budget.ts';
+import { BudgetExhausted } from '../budget/budget-tracker.ts';
 
 const effectStatusFix = (effect: Pick<PersistenceEffect, 'source_id'>): Action => readFix(
   `Shows source ${effect.source_id}'s canonical owner with its blocking, retrying and parked effects, read-only.`,
@@ -86,6 +88,8 @@ export interface EffectWorkerOptions {
   hostId: string;
   limit?: number;
   signal?: AbortSignal;
+  /** Called when a run-wide embedding cap stops this pass. */
+  onBudgetStopped?: () => void;
   /** Failure boundary injection; production never supplies this. */
   boundary?: (name: 'before_mirror_file' | 'after_mirror_file' | 'before_mirror_commit') => Promise<void>;
   embedding?: { signature: string; model: string; embed: typeof embedBatch };
@@ -674,6 +678,11 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
     if (code === 'embedding_configuration') {
       await failEffect(engine, effect, 'embedding_configuration'); return;
     }
+    if (error instanceof BudgetExhausted && error.reason === 'cost') {
+      const base = effect.data.embedding_retry_base ?? effect.data.embedding_attempt_base ?? 0;
+      await requeueEffect(engine, effect, { ...effect.data, embedding_retry_base: base + 1 }, 'embedding_budget_refused', transientBackoffMs(0));
+      return;
+    }
     // #7772: the guard marks whatever the invocation preflight throws as a refusal, the stop signal's abort included; a stopped consumer retries below.
     if ((code !== 'embedding_storage_unavailable' && !signal?.aborted && isAIInvocationPolicyError(error)) || (error as { tag?: string } | null)?.tag === 'BUDGET_EXHAUSTED') {
       await failEffect(engine, effect, 'embedding_budget_refused'); return;
@@ -814,7 +823,7 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
   const touched = new Set<string>();
   const derived: DerivedFailures = { run: new ItemRun('effects.derived_retry_budget'), counted: [] };
   const waited = new Set<string>();
-  try { return await runEffectPass(engine, config, opts, touched, derived, waited); }
+  try { return await withEmbeddingBudget(engine, () => runEffectPass(engine, config, opts, touched, derived, waited), { label: 'persistence-embedding-effects' }); }
   finally {
     for (const path of waited) clearWaiting(path);
     await settleDerivedFailures(engine, derived).catch(() => { /* an unsettled claim expires and the effect is claimed again */ });
@@ -849,6 +858,7 @@ async function releaseAfterConnectionLoss(engine: BrainEngine, effects: Persiste
 async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: EffectWorkerOptions, touched: Set<string>, derived: DerivedFailures,
   waited: Set<string>): Promise<number> {
   const limit = Math.max(1, Math.min(opts.limit ?? 2, 20));
+  let budgetStopped = false;
   // GBRA-133: a Git or mirror effect waits for a contended worktree (other processes yield to it after a grace) instead of
   // trying once per claim; a root this pass already waited out is tried once, so one busy root costs the pass one wait.
   const stalled = new Set<string>();
@@ -909,7 +919,12 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
         : effect.kind === 'links' ? runLinksEffect(engine, effect, opts.hostId)
           : embedPage(engine, config, effect, opts, attempt));
       if (DERIVED_KINDS.includes(effect.kind)) derived.run.succeed();
-    } catch (error) { await recordFailure(engine, effect, error, opts.signal, attempt.target, derived); }
+    } catch (error) {
+      const refused = effect.kind === 'embedding' && error instanceof BudgetExhausted && error.reason === 'cost';
+      if (refused) budgetStopped = true;
+      await recordFailure(engine, effect, error, opts.signal, attempt.target, derived);
+      if (refused) opts.onBudgetStopped?.();
+    }
     finally { await lock?.release(); }
   };
   // A git effect first needs its durability probe (git child processes, one
@@ -1067,7 +1082,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
   for (;;) {
     let setAside: PersistenceEffect | null = null;
     try {
-      while (attempted < limit && !opts.signal?.aborted) {
+      while (attempted < limit && !opts.signal?.aborted && !budgetStopped) {
         setAside = null;
         const effect = await claimPersistenceEffect(engine, opts.hostId, opts.deadOwners);
         if (!effect) break;

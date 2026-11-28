@@ -40,6 +40,7 @@ import { refreshFenceClear } from './worktree-refresh-schema.ts';
 import { faultPoint } from './fault-points.ts';
 import { abandonedClaimCutoff, EFFECT_OWNER_KEY_SQL, PROCESS_STARTED_AT, releaseAbandonedClaims } from './effect-journal.ts';
 import { readWriteSwitchSnapshot, writeSwitchOn } from './switches.ts';
+import { withEmbeddingBudget } from '../embedding-budget.ts';
 import { consumerConnectionRoute, consumerStatementEngine, poolerExposureLine } from './consumer-lane.ts';
 import { isConnectionLoss } from '../retry-matcher.ts';
 import { INSPECT_OWNER_RETRY_MS } from './health.ts';
@@ -867,12 +868,16 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
         this.drainNotice(drain);
         if (!done) await yieldToEventLoop();
       }
-      for (let ran = limit; ran >= limit && !signal.aborted;) {
-        ran = await runPersistenceEffects(this.engine, this.config, { hostId: this.hostId, limit, signal, deadOwners: this.deadOwnerKeys });
-        drain.ran += ran;
-        this.drainNotice(drain);
-        if (ran >= limit) await yieldToEventLoop();
-      }
+      let budgetStopped = false;
+      await withEmbeddingBudget(this.engine, async () => {
+        for (let ran = limit; ran >= limit && !signal.aborted && !budgetStopped;) {
+          ran = await runPersistenceEffects(this.engine, this.config, { hostId: this.hostId, limit, signal, deadOwners: this.deadOwnerKeys,
+            onBudgetStopped: () => { budgetStopped = true; } });
+          drain.ran += ran;
+          this.drainNotice(drain);
+          if (ran >= limit) await yieldToEventLoop();
+        }
+      }, { label: 'persistence-embedding-drain' });
     } finally {
       this.draining = undefined;
       if (drain.noticedAt) this.drainNotice(drain, true);

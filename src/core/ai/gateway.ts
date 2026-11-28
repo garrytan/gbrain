@@ -33,7 +33,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
 
-import { DEFAULT_CHARS_PER_TOKEN, DEFAULT_SAFETY_FACTOR, embedRequestMaxInputTokens, planEmbedRequests, rerankRequestMaxInputTokens, truncateEmbedInputs } from './embed-batch-plan.ts';
+import { DEFAULT_CHARS_PER_TOKEN, DEFAULT_SAFETY_FACTOR, capBatchItems, embedRequestBudgetInputTokens, planEmbedRequests, rerankRequestMaxInputTokens, truncateEmbedInputs } from './embed-batch-plan.ts';
 export { splitByTokenBudget, capBatchItems, NO_BATCH_CAP_SUB_BATCH_ITEMS } from './embed-batch-plan.ts';
 import { BudgetTracker, type BudgetReservation } from '../budget/budget-tracker.ts';
 import { failedCallUsage, recordOnTracker } from './budget-record.ts';
@@ -1247,9 +1247,8 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
       }
     }
     if (json.usage && typeof json.usage === 'object' && json.usage.prompt_tokens === undefined) {
-      json.usage.prompt_tokens = typeof json.usage.total_tokens === 'number'
-        ? json.usage.total_tokens
-        : 0;
+      if (typeof json.usage.total_tokens === 'number') json.usage.prompt_tokens = json.usage.total_tokens;
+      else delete json.usage;
       modified = true;
     }
     if (!modified) return resp;
@@ -1402,9 +1401,8 @@ export const perplexityCompatFetch = (async (input: RequestInfo | URL, init?: Re
       }
     }
     if (json.usage && typeof json.usage === 'object' && json.usage.prompt_tokens === undefined) {
-      json.usage.prompt_tokens = typeof json.usage.total_tokens === 'number'
-        ? json.usage.total_tokens
-        : 0;
+      if (typeof json.usage.total_tokens === 'number') json.usage.prompt_tokens = json.usage.total_tokens;
+      else delete json.usage;
       modified = true;
     }
     if (!modified) return resp;
@@ -1632,7 +1630,6 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   // global default. resolveEmbeddingProvider validates the override at the
   // recipe layer — bad model strings throw AIConfigError with a clear hint.
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
-  const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
   const truncated = truncateEmbedInputs(texts);
 
@@ -1656,57 +1653,20 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const envCap = Number.isFinite(envCapRaw) && envCapRaw > 0 ? envCapRaw : undefined;
   // #4616: empty inputs never reach the provider; screenEmbeddings refuses them per item.
   const sent = sendableEmbeddingInputs(truncated);
-  const batches = sent.length ? planEmbedRequests(sent.map(i => truncated[i]!), recipe, effectiveSafetyFactor(recipe), envCap) : [];
-
-  // Reserve the worst-case batch tokens after every preflight that can throw
-  // (dims, batch planning), so a config error leaves no hold; record() below settles it.
-  const charsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
-  const totalChars = truncated.reduce((s, t) => s + t.length, 0);
-  const reservation = tracker?.reserve({
-    modelId: `${recipe.id}:${modelId}`, estimatedInputTokens: Math.ceil(totalChars / Math.max(charsPerToken, 1)), maxOutputTokens: 0, kind: 'embed', label: 'gateway.embed',
-  });
+  const planned = sent.length ? planEmbedRequests(sent.map(i => truncated[i]!), recipe, effectiveSafetyFactor(recipe), envCap) : [];
+  // A capped/guarded SDK invocation must be one provider request: an internal
+  // parallel split can fail one request while siblings are still billable.
+  const bounded = hasAIInvocationGuard() || (__budgetStore.getStore()?.hasCostCap ?? false);
+  const limit: unknown = bounded && planned.length ? await model.maxEmbeddingsPerCall : undefined;
+  const batches = typeof limit === 'number' && Number.isSafeInteger(limit) && limit > 0
+    ? planned.flatMap(batch => capBatchItems(batch, limit)) : planned;
 
   const allEmbeddings: Float32Array[] = [];
-  let _embedThrew = false;
-  // Provider-reported input tokens summed across sub-batches; null as soon as
-  // any sub-batch's provider did not report (all-or-nothing: a partial sum
-  // would undercharge the budget while looking measured).
-  let reportedTokens: number | null = 0;
-  try {
-    for (const batch of batches) {
-      const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts);
-      allEmbeddings.push(...result.embeddings);
-      reportedTokens = reportedTokens !== null && result.reportedTokens !== null
-        ? reportedTokens + result.reportedTokens
-        : null;
-    }
-    return screenEmbeddings(truncated, sent, allEmbeddings, `${recipe.id}:${modelId}`);
-  } catch (err) {
-    _embedThrew = true;
-    throw err;
-  } finally {
-    if (tracker) {
-      // Charge what the provider reported (embedMany surfaces usage.tokens)
-      // when every sub-batch reported it; otherwise fall back to the
-      // chars-per-token estimate over the truncated input. On failure, A3
-      // amended says charge the pessimistic estimate — embed has no output
-      // side, so the input estimate IS the worst case.
-      const measured = !_embedThrew && reportedTokens !== null && reportedTokens > 0
-        ? reportedTokens
-        : null;
-      recordOnTracker(tracker, {
-        modelId: `${recipe.id}:${modelId}`,
-        reservation,
-        requestedModelId: resolveTarget,
-        inputTokens: measured ?? Math.ceil(totalChars / Math.max(charsPerToken, 1)),
-        outputTokens: 0,
-        embeddingDims: expected,
-        kind: 'embed',
-        label: _embedThrew ? 'gateway.embed.failed' : 'gateway.embed',
-        estimated: measured === null,
-      });
-    }
+  for (const batch of batches) {
+    const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts);
+    allEmbeddings.push(...result.embeddings);
   }
+  return screenEmbeddings(truncated, sent, allEmbeddings, `${recipe.id}:${modelId}`);
 }
 
 /**
@@ -1774,14 +1734,21 @@ export function __getShrinkStateForTests(recipeId: string): ShrinkEntry | undefi
   return entry ? { ...entry } : undefined;
 }
 
+/** Only a request-shaped limit rejection is known not to have billed. */
+function unbilledEmbedAttempt(recipeId: string, error: unknown): boolean {
+  if (isUnbilledEmbeddingRejection(recipeId, error)) return true;
+  if (!isTokenLimitError(error) || !error || typeof error !== 'object') return false;
+  const status = 'statusCode' in error ? error.statusCode : 'status' in error ? error.status : undefined;
+  return status === 400 || status === 413 || status === 422;
+}
+
 /**
  * Embed a single sub-batch with automatic halving on token-limit errors.
  * If the batch is already at MIN_SUB_BATCH and still fails, throws.
  *
  * `reportedTokens` is the provider's usage.tokens for this sub-batch (summed
  * across halves when the batch split), or null when the provider did not
- * report usage — the caller's budget record falls back to the chars-per-token
- * estimate in that case.
+ * report usage — capped calls debit the provider ceiling; uncapped telemetry uses a character estimate.
  */
 async function embedSubBatch(
   texts: string[],
@@ -1792,10 +1759,33 @@ async function embedSubBatch(
   modelId: string,
   opts?: EmbedOpts,
 ): Promise<{ embeddings: Float32Array[]; reportedTokens: number | null }> {
+  const tracker = __budgetStore.getStore() ?? null;
+  const guarded = hasAIInvocationGuard();
+  const needsBound = guarded || (tracker?.hasCostCap ?? false);
+  const limit: unknown = needsBound ? await model.maxEmbeddingsPerCall : undefined;
+  const sdkLimit = limit === null || limit === Infinity ? null : typeof limit === 'number' ? limit : undefined;
+  const ceiling = needsBound ? embedRequestBudgetInputTokens(texts, recipe, modelId, sdkLimit) : null;
+  const servedModel = `${recipe.id}:${modelId}`;
+  if (tracker?.hasCostCap && tracker.isPriced(servedModel, 'embed')
+    && !tracker.hasZeroCost(servedModel, 'embed') && ceiling === null) {
+    throw new AIConfigError(`No provider token ceiling is known for ${servedModel}; a capped embedding run cannot bound its spend, so nothing was sent.`,
+      `Declare a provider-enforced input limit for ${servedModel}, or run without a USD cap.`);
+  }
+  const estimate = Math.ceil(texts.reduce((n, text) => n + text.length, 0) / Math.max(1, recipe.touchpoints.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN));
+  const reservedTokens = tracker?.hasCostCap && ceiling !== null ? ceiling : estimate;
+  const reservation = tracker?.reserve({ modelId: servedModel, estimatedInputTokens: reservedTokens,
+    maxOutputTokens: 0, kind: 'embed', label: 'gateway.embed' });
+  let attempted = false;
+  let unbilled = false;
+  let measured: number | null = null;
+  let failed = true;
   try {
-    const maxRetries = hasAIInvocationGuard() ? 0 : opts?.maxRetries ?? __budgetStore.getStore()?.providerRetries; // PR 4 (Wave B incremental derivation, transcripts): an embed in a metered page step makes only the attempts it reserved for
-    const callTransport = () => invokeAI({ operation: 'gateway.embed', kind: 'embedding', model: `${recipe.id}:${modelId}`,
-      maxInputTokens: embedRequestMaxInputTokens(texts, recipe, modelId), maxOutputTokens: 0, estimatedInputTokens: Math.ceil(texts.reduce((n, text) => n + text.length, 0) / (recipe.touchpoints.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN)) }, () => _embedTransport({
+    // SDK-internal retries would make multiple billable attempts against one hold.
+    const maxRetries = guarded || tracker?.hasCostCap ? 0 : opts?.maxRetries ?? tracker?.providerRetries;
+    const callTransport = () => invokeAI({ operation: 'gateway.embed', kind: 'embedding', model: servedModel,
+      ...(ceiling !== null ? { maxInputTokens: ceiling } : {}), maxOutputTokens: 0, estimatedInputTokens: estimate }, () => {
+      attempted = true;
+      return _embedTransport({
       model,
       values: texts,
       providerOptions: providerOpts,
@@ -1805,16 +1795,39 @@ async function embedSubBatch(
       // deadline) — shorter wins.
       abortSignal: withDefaultTimeout(opts?.abortSignal, AI_EMBED_TIMEOUT_MS),
       ...(maxRetries !== undefined ? { maxRetries } : {}),
-    }), sdkInvocationUsage, err => isTokenLimitError(err) || isUnbilledEmbeddingRejection(recipe.id, err) ? { inputTokens: 0, outputTokens: 0 } : null);
+      });
+    }, sdkInvocationUsage, err => unbilledEmbedAttempt(recipe.id, err) ? { inputTokens: 0, outputTokens: 0 } : null);
     // Carry the threaded input_type across the SDK boundary via
     // __embedInputTypeStore (the adapter strips it from providerOptions —
     // see the store's doc comment). Populated only when dimsProviderOptions
     // actually emitted one, so non-asymmetric paths run store-empty and the
     // fetch shims leave their wire bodies untouched.
     const threadedInputType = providerOpts?.openaiCompatible?.input_type;
-    const result = await (threadedInputType === 'query' || threadedInputType === 'document'
-      ? __embedInputTypeStore.run(threadedInputType, callTransport)
-      : callTransport());
+    const result = await (async () => {
+      try {
+        const value = await (threadedInputType === 'query' || threadedInputType === 'document'
+          ? __embedInputTypeStore.run(threadedInputType, callTransport)
+          : callTransport());
+        const usage = value.usage;
+        const tokens = usage && 'tokens' in usage ? usage.tokens : undefined;
+        measured = typeof tokens === 'number' && Number.isFinite(tokens) && tokens > 0 ? tokens : null;
+        failed = false;
+        return value;
+      } catch (error) {
+        unbilled = unbilledEmbedAttempt(recipe.id, error);
+        throw error;
+      } finally {
+        if (tracker) {
+          if (!attempted) tracker.release(reservation);
+          else recordOnTracker(tracker, {
+            modelId: servedModel, reservation, requestedModelId: opts?.embeddingModel ?? getEmbeddingModel(),
+            inputTokens: unbilled ? 0 : measured ?? reservedTokens, outputTokens: 0,
+            embeddingDims: expectedDims, kind: 'embed', label: failed ? 'gateway.embed.failed' : 'gateway.embed',
+            estimated: measured === null,
+          });
+        }
+      }
+    })();
 
     if (!Array.isArray(result.embeddings) || result.embeddings.length !== texts.length) {
       throw new AIConfigError(
@@ -1831,7 +1844,7 @@ async function embedSubBatch(
     }
 
     recordSubBatchSuccess(recipe);
-    const usageTokens = (result as { usage?: { tokens?: unknown } }).usage?.tokens;
+    const usageTokens = measured;
     return {
       embeddings: embeddings.map((e: number[]) => new Float32Array(e)),
       reportedTokens: typeof usageTokens === 'number' && Number.isFinite(usageTokens) && usageTokens > 0

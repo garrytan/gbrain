@@ -32,6 +32,7 @@ import { configureGateway, embed, resetGateway, __setEmbedTransportForTests } fr
 import { planEmbeddingMigration, readMigrationState, runSchemaTransition } from '../src/core/embedding-migration.ts';
 import { readContentChunksEmbeddingDim } from '../src/core/embedding-dim-check.ts';
 import { authorizeMigrationBudget } from '../src/core/embedding-migration-budget.ts';
+import { planMigrationWorstCase } from '../src/core/embedding-migration-worst-case.ts';
 import { invokeAI, withAIInvocationGuard, type AIInvocation } from '../src/core/ai/invocation-guard.ts';
 import { runMigrateEmbeddings } from '../src/commands/migrate-embeddings.ts';
 
@@ -184,7 +185,7 @@ for (const kind of testBackends()) {
       let attempts = 0;
       __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
         attempts++;
-        if (values.length > 1) throw new Error("Invalid 'input': maximum request size is 300000 tokens per request.");
+        if (values.length > 1) throw Object.assign(new Error("Invalid 'input': maximum request size is 300000 tokens per request."), { status: 400 });
         return { values, warnings: [], embeddings: values.map(vector), usage: { tokens: 10 } };
       });
       await withAIInvocationGuard(async request => { reserved.push(request.maxInputTokens!); return debit(request); },
@@ -212,6 +213,28 @@ for (const kind of testBackends()) {
       expect(dispatched).toBe(false);
       expect((await budget()).requests).toBe(1);
     });
+
+    test('the preflight includes provider token ceilings for every probe and smoke query', async () => {
+      const worst = await planMigrationWorstCase(engine, await plan());
+      expect(worst.input_tokens).toBeGreaterThanOrEqual(6 * 8191);
+    });
+    test('an unknown paid provider ceiling refuses before migration authorization', async () => {
+      const unknown = { ...await plan(), to_model: 'openrouter:synthetic/embedding' };
+      await expect(planMigrationWorstCase(engine, unknown)).rejects.toThrow('No provider token ceiling');
+      expect((await readMigrationState(engine)).state).toBeNull();
+    });
+
+    test('an explicitly free model does not require an input ceiling', async () => {
+      const freeModel = 'openrouter:synthetic/embedding';
+      await engine.setConfig('pricing.overrides', JSON.stringify({ [freeModel]: { input: 0, output: 0 } }));
+      const freePlan = { ...await plan(), to_model: freeModel };
+      expect((await planMigrationWorstCase(engine, freePlan)).usd).toBe(0);
+      const debit = await authorizeMigrationBudget(engine, freePlan, 1);
+      await withAIInvocationGuard(debit, () => invokeAI(
+        { kind: 'embedding', operation: 'synthetic', model: freeModel }, async () => 'ok', () => usage(1_000)));
+      expect((await budget()).debited_usd).toBe(0);
+    });
+
 
     test('a cap equal to the printed worst-case authorization completes the migration', async () => {
       const rate = 1_000;
@@ -282,7 +305,7 @@ for (const kind of testBackends()) {
       expect(printed).not.toBeNull();
       let rejected = 0;
       __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
-        if (values.length > 1) { rejected++; throw new Error("Invalid 'input': maximum request size is 300000 tokens per request."); }
+        if (values.length > 1) { rejected++; throw Object.assign(new Error("Invalid 'input': maximum request size is 300000 tokens per request."), { status: 400 }); }
         return { values, warnings: [], embeddings: values.map(vector), usage: { tokens: Buffer.byteLength(values[0], 'utf8') } };
       });
       const run = await cli(['--max-cost-usd', printed![1], '--json']);

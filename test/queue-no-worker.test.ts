@@ -27,7 +27,7 @@ import type { OperationContext } from '../src/core/operations.ts';
 import type { Notice } from '../src/core/agent-output.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { resetGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
 
 let engine: PGLiteEngine;
@@ -121,6 +121,16 @@ describe('CLI jobs submit on PGLite', () => {
     } finally {
       log.mockRestore();
     }
+  }));
+  test('an explicitly submitted embedding job stores its approved cap on the trusted row', () => inHome(async () => {
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    configureGateway({ embedding_model: 'voyage:voyage-4', embedding_dimensions: 1024, env: { VOYAGE_API_KEY: 'fake' } });
+    try {
+      await runJobsSubmit({ args: ['submit', 'embed', '--params', '{"sourceId":"default"}', '--queue-only', '--max-usd', '1'], engine, queue: new MinionQueue(engine) } as never);
+      const [row] = await engine.executeRaw<{ spend_authorization: { cap_usd: number; cap_source: string; kind: string } }>(
+        "SELECT spend_authorization FROM minion_jobs WHERE name='embed' ORDER BY id DESC LIMIT 1");
+      expect(row.spend_authorization).toMatchObject({ kind: 'authorized', cap_usd: 1, cap_source: 'user' });
+    } finally { log.mockRestore(); resetGateway(); }
   }));
 });
 

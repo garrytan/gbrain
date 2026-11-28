@@ -7,6 +7,7 @@ import { MinionWorker } from '../../core/minions/worker.ts';
 import { reportInlineWorkerConfiguration } from '../jobs-readiness.ts';
 import { intFlagValue, numberFlagValue } from '../../cli/flag-values.ts';
 import { spendSubmitSummary, type SpendAuthorization } from '../../core/minions/spend-authorization.ts';
+import { jobSpendAuthorization } from '../../core/minions/spend-authorization.ts';
 
 export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext): Promise<void> {
   // Lazy: jobs.ts imports this module statically, so a static import back would be a cycle.
@@ -94,6 +95,7 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
     return;
   }
 
+  let spendAuthorization: SpendAuthorization | undefined;
   // A4: an explicit embedding backfill submitted from the CLI is paid work (the worker-side handlers keep running unattended).
   const { EMBED_BACKFILL_JOB_NAMES, requireEmbedBackfillConsent } = await import('../../core/embed-consent.ts');
   if (EMBED_BACKFILL_JOB_NAMES.has(name)) {
@@ -101,10 +103,13 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
     const { setCliExitVerdict } = await import('../../core/cli-force-exit.ts');
     const argv = ['gbrain', 'jobs', ...args.filter(a => a !== '--yes')];
     try {
-      await requireEmbedBackfillConsent(engine, {
+      const auth = await requireEmbedBackfillConsent(engine, {
         command: 'jobs submit', argv, preview_argv: [...argv, '--dry-run'], args,
         scope: { all: data.all === true, ...(typeof data.sourceId === 'string' ? { sourceId: data.sourceId } : {}), unestimated: Array.isArray(data.slugs) },
       });
+      if (auth?.consented_effects.includes('paid')) {
+        spendAuthorization = jobSpendAuthorization(auth, { command: `jobs submit ${name}`, of: 1, argv });
+      }
     } catch (e) {
       if (!isConsentRefusal(e)) throw e;
       setCliExitVerdict(printConsentRefusal(e, { json: hasFlag(args, '--json') }));
@@ -113,7 +118,6 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
   }
 
   // A4 + T8: queued paid enrich/subagent work needs the user's authorization; it is stored on the row and the worker enforces its cap.
-  let spendAuthorization: SpendAuthorization | undefined;
   // W4.5: a re-embedding reindex job carries the user's authorization too; its handler refuses a job without one.
   if (name === 'reindex' && data.dryRun !== true && data.noEmbed !== true) {
     const { requireReindexConsent } = await import('../../core/reindex-consent.ts');

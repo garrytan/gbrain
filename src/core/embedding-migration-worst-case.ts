@@ -20,7 +20,8 @@
  * while the known embedding bound is still enforced.
  */
 import type { BrainEngine } from './engine.ts';
-import { embedRequestCeilings, rerankRequestMaxInputTokens } from './ai/embed-batch-plan.ts';
+import { embedRequestBudgetCeilings, rerankRequestMaxInputTokens } from './ai/embed-batch-plan.ts';
+import { AIConfigError } from './ai/errors.ts';
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import type { ChunkInput, CRMode } from './types.ts';
 import { readContentChunksEmbeddingDim } from './embedding-dim-check.ts';
@@ -49,7 +50,6 @@ const DRAIN_PROBES = 2;
 const SMOKE_QUERIES = 3;
 export const SMOKE_QUERY_TITLE_UNITS = 160;
 export const SMOKE_QUERY_CHUNK_UNITS = 512;
-const SMOKE_QUERY_MAX_TOKENS = (SMOKE_QUERY_TITLE_UNITS + 1 + SMOKE_QUERY_CHUNK_UNITS) * 3;
 /** embedStaleFacts' default batch size. */
 const FACT_BATCH = 100;
 const SCAN_PAGE = 2000;
@@ -150,12 +150,20 @@ async function eachStaleFactBatch(engine: BrainEngine, plan: EmbeddingMigrationP
 export async function planMigrationWorstCase(engine: BrainEngine, plan: EmbeddingMigrationPlan, opts: { rerankerModel?: string } = {}): Promise<MigrationWorstCase> {
   const envCap = Number.parseInt(process.env.GBRAIN_EMBED_MAX_BATCH_TOKENS ?? '', 10);
   const ceilings: number[] = [];
-  const ceilingsOf = (texts: string[]) => texts.length
-    ? embedRequestCeilings(texts, plan.to_model, Number.isFinite(envCap) && envCap > 0 ? envCap : undefined) : [];
+  const overrides = await loadPricingOverrides(engine);
+  const free = usageCostUsd(plan.to_model, 1, 0, 'embed', overrides) === 0;
+  const ceilingsOf = (texts: string[]) => {
+    if (!texts.length) return [];
+    const bounds = embedRequestBudgetCeilings(texts, plan.to_model, Number.isFinite(envCap) && envCap > 0 ? envCap : undefined);
+    if (bounds !== null) return bounds;
+    if (free) return [0];
+    throw new AIConfigError(`No provider token ceiling is known for ${plan.to_model}; the migration cannot bound its spend before changing vectors.`,
+      'Select an embedding model with a known provider-enforced token ceiling.');
+  };
   const add = (texts: string[]) => { ceilings.push(...ceilingsOf(texts)); };
   add([MIGRATION_PROBE_TEXT]);
   for (let i = 0; i < DRAIN_PROBES; i++) add([EMBED_PROBE_TEXT]);
-  for (let i = 0; i < SMOKE_QUERIES; i++) ceilings.push(SMOKE_QUERY_MAX_TOKENS);
+  for (let i = 0; i < SMOKE_QUERIES; i++) add([MIGRATION_PROBE_TEXT]);
   const target = resolveMaxChunkTokens(process.env, plan.to_model);
   const sizes = { current: resolveMaxChunkTokens(), target };
   await eachStalePage(engine, plan, sizes, add);
@@ -163,7 +171,6 @@ export async function planMigrationWorstCase(engine: BrainEngine, plan: Embeddin
   await eachStaleFactBatch(engine, plan, add);
   const embedTokens = ceilings.reduce((sum, n) => sum + n, 0);
   const rerankTokens = opts.rerankerModel ? rerankRequestMaxInputTokens(RERANKER_PROBE.query, RERANKER_PROBE.documents) : 0;
-  const overrides = await loadPricingOverrides(engine);
   const embedUsd = usageCostUsd(plan.to_model, embedTokens, 0, 'embed', overrides);
   const rerankUsd = opts.rerankerModel ? usageCostUsd(opts.rerankerModel, rerankTokens, 0, 'rerank', overrides) : 0;
   const unpriced = [...(embedUsd === null ? [plan.to_model] : []), ...(rerankUsd === null ? [opts.rerankerModel!] : [])];

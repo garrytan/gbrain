@@ -31,3 +31,8 @@ test('#6546 an override row keeps the table cache-write semantics', () => {
 test('#6546 an unpriced route stays unpriced', () => {
   expect(maximumInvocationCents(call({ kind: 'chat', model: 'example:unpriced-model', maxInputTokens: 10, maxOutputTokens: 10 }), {})).toBeNull();
 });
+
+test('zero-price embeddings have zero maximum without a context ceiling', () => {
+  expect(maximumInvocationCents(call({ kind: 'embedding', model: 'ollama:local-test' }))).toBe(0);
+  expect(maximumInvocationCents(call({ kind: 'embedding', model: 'openai:text-embedding-3-small' }))).toBeNull();
+});

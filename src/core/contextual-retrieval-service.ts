@@ -43,6 +43,7 @@ import { createHash } from 'crypto';
 import * as fs from 'node:fs';
 import { embedBatch } from './embedding.ts';
 import { embeddingSendBlocked, embeddingsDisabled } from './embedding-disabled.ts';
+import { withEmbeddingBudget } from './embedding-budget.ts';
 import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.ts';
 import {
   buildContextualPrefix,
@@ -336,7 +337,7 @@ async function assertEmbeddingSendAllowed(engine: BrainEngine): Promise<void> {
 
 async function sendEmbeddings(engine: BrainEngine, texts: string[], abortSignal: AbortSignal | undefined): Promise<Float32Array[]> {
   await assertEmbeddingSendAllowed(engine);
-  return embedBatch(texts, { abortSignal });
+  return withEmbeddingBudget(engine, () => embedBatch(texts, { abortSignal }), { label: 'contextual-embeddings' });
 }
 
 async function reembedPage(args: ReembedPageArgs): Promise<ReembedPageResult> {

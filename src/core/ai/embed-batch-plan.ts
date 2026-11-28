@@ -109,19 +109,52 @@ export function planEmbedRequests(texts: string[], recipe: Recipe, safetyFactor:
   return maxBatchItems ? tokenBatches.flatMap(b => capBatchItems(b, maxBatchItems)) : tokenBatches;
 }
 
-/**
- * #5680: the most input tokens one request can bill. Every token covers at
- * least one UTF-8 byte of its input, and a declared per-input limit caps each
- * text, so the ceiling follows the request's own texts instead of the
- * recipe's whole batch cap. Additive, so it bounds any later split or retry
- * of the same texts.
- */
+/** Byte-based batching estimate, not an authorization bound: providers may add tokens. */
 export function embedRequestMaxInputTokens(texts: string[], recipe: Recipe, modelId: string): number {
   const perInput = recipe.touchpoints?.embedding?.max_input_tokens?.[modelId] ?? Infinity;
   return texts.reduce((sum, text) => sum + Math.min(Math.max(1, Buffer.byteLength(text, 'utf8')), perInput), 0);
 }
 
-/** Per-request input ceilings `embed()` would reserve for these texts on `modelStr`, at the declared safety factor (empty inputs are never sent, #4616). */
+const PUBLISHED_EMBED_INPUT_LIMITS: Readonly<Record<string, number>> = {
+  'voyage:voyage-4-large': 32_768, 'voyage:voyage-4': 32_768, 'voyage:voyage-4-lite': 32_768,
+};
+
+/**
+ * Maximum provider-billable input for one embedMany invocation. SDK item
+ * limits may split it into multiple requests; an unknown limit is bounded
+ * pessimistically by one request per input. Only provider-enforced ceilings,
+ * not the batching heuristic or UTF-8 byte length, bound the bill.
+ */
+export function embedRequestBudgetInputTokens(texts: readonly string[], recipe: Recipe, modelId: string, sdkLimit?: number | null): number | null {
+  const perInput = recipe.touchpoints.embedding?.max_input_tokens?.[modelId] ?? PUBLISHED_EMBED_INPUT_LIMITS[`${recipe.id}:${modelId}`];
+  const perRequest = recipe.id === 'voyage' ? 120_000 : recipe.id === 'openai' ? 300_000 : undefined;
+  const calls = sdkLimit === null ? 1
+    : typeof sdkLimit === 'number' && Number.isSafeInteger(sdkLimit) && sdkLimit > 0
+      ? Math.ceil(texts.length / sdkLimit) : texts.length;
+  const inputBound = perInput !== undefined && Number.isSafeInteger(perInput) && perInput > 0 ? perInput * texts.length : Infinity;
+  const requestBound = perRequest === undefined ? Infinity : perRequest * calls;
+  const bound = Math.min(inputBound, requestBound);
+  return Number.isSafeInteger(bound) ? bound : null;
+}
+
+/** Conservative preflight ceilings without SDK metadata; one provider request per input is the safe bound. */
+export function embedRequestBudgetCeilings(texts: ReadonlyArray<string>, modelStr: string, envMaxBatchTokens?: number): number[] | null {
+  const { parsed, recipe } = resolveRecipe(modelStr);
+  const truncated = truncateEmbedInputs(texts);
+  const sent = sendableEmbeddingInputs(truncated);
+  if (!sent.length) return [];
+  const safety = recipe.touchpoints?.embedding?.safety_factor ?? DEFAULT_SAFETY_FACTOR;
+  const batches = planEmbedRequests(sent.map(i => truncated[i]!), recipe, safety, envMaxBatchTokens);
+  const ceilings: number[] = [];
+  for (const batch of batches) {
+    const bound = embedRequestBudgetInputTokens(batch, recipe, parsed.modelId);
+    if (bound === null) return null;
+    ceilings.push(bound);
+  }
+  return ceilings;
+}
+
+/** Batching-estimate tokens per planned request (empty inputs are never sent, #4616). */
 export function embedRequestCeilings(texts: ReadonlyArray<string>, modelStr: string, envMaxBatchTokens?: number): number[] {
   const { parsed, recipe } = resolveRecipe(modelStr);
   const safety = recipe.touchpoints?.embedding?.safety_factor ?? DEFAULT_SAFETY_FACTOR;

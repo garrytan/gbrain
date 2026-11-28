@@ -127,12 +127,9 @@ line naming the cap, its source and how to remove it, e.g.
 `cap: $5.00 (default; change it with --max-usd <usd>, remove it with --max-usd off)`.
 
 - `0` is **not** "off". On `sync.cost_gate_min_usd`, `0` means "block on any nonzero
-  spend" (a real choice). On the backfill caps, `0` falls back to the default — and on
-  `embed.backfill_max_usd` specifically, any present-but-invalid value (`0`, a
-  negative, garbage text) is treated as a typo'd cap: the $10 default applies and is
-  **never dropped**, even for unpriced models (see "Default caps vs unpriced models"
-  below). Only the off tokens (`off`/`unlimited`/`none`, case-insensitive) remove
-  that ceiling.
+  spend". For `embed.backfill_max_usd`, an invalid present value (`0`, a negative,
+  or garbage text) refuses the run before provider calls; correct it or use
+  `off`/`unlimited`/`none` to remove this configured ceiling.
 - Internally "no limit" is the string `unlimited` in any printed/JSON output and "no
   cap" inside the budget tracker — never a raw `Infinity` (which would serialize to
   `null` in ledger rows).
@@ -143,7 +140,7 @@ line naming the cap, its source and how to remove it, e.g.
 |------|-----------|---------|---------|-----------|----------|
 | Sync inline-embed cost gate | `sync.cost_gate_min_usd` | `0.50` | TTY prompt / non-TTY auto-defer | `off` (or `0` = block-on-any) | informational |
 | Backfill 24h per-source spend cap | `embed.backfill_max_usd_per_source_24h` | `25` | refuses submission | `off` (`0` → default) | bypassed (still ledgered) |
-| Backfill per-job budget | `embed.backfill_max_usd` | `10` | caps the job's tracker | `off` (`0`/garbage → default, fail-closed) | uncapped (still ledgered) |
+| Embedding run budget | `embed.backfill_max_usd` | unset for general runs; `10` for `embed-backfill` jobs | caps foreground, background, and configured embedding-effect runs | `off` (invalid values refuse) | explicit cap remains; implicit job default is bypassed |
 | Backfill cooldown | `embed.backfill_cooldown_min` | `10` | skips re-submission inside window | — (latency knob, not spend) | **not** bypassed |
 | `reindex-code` cost gate | — (preview before re-embed) | — | TTY prompt / non-TTY refuse + exit 3 (`confirmation_required`) | `--max-cost off` | runs uncapped (still ledgered) |
 | `reindex --markdown` consent gate | — | — | TTY prompt / non-TTY exit 3; a queued job needs the approval stored at submit | `--dry-run`, `--no-embed` | derived cap |
@@ -537,24 +534,29 @@ Semantics:
 
 ### Default caps vs unpriced models (embed backfill)
 
-The `embed-backfill` job's per-job cap defaults to $10 — an IMPLICIT ceiling
-nobody chose. When the configured embedding model has no shipped pricing row
-and no `pricing.overrides` entry (the `isModelPriceable` contract), enforcing
-that implicit cap would fail-close every job for a model that may well be
-free or self-hosted. So the handler drops the DEFAULT cap and runs uncapped,
-with a stderr warning naming both fixes (register its price with `gbrain pricing set`, or
-set `embed.backfill_max_usd` to an explicit number). An EXPLICIT cap is a
-different contract: you chose a ceiling, so an unpriced model stays
-fail-closed (`no_pricing`) — register the model's rate with `gbrain pricing set`
-to proceed. Spend is ledgered by the tracker either way; only the ceiling
-changes.
+The `embed-backfill` job defaults to $10 when this setting is absent. If the
+model has no shipped price or `pricing.overrides` entry, the handler drops only
+that implicit default and warns. A numeric `embed.backfill_max_usd` is an
+explicit ceiling and applies even with `spend.posture=tokenmax`; an unpriced
+model is refused before the provider call. Register its rate with `gbrain
+pricing set` to proceed. An invalid value refuses the run, rather than
+silently removing the cap.
 
-A present-but-unparsable value is a third contract, and it is fail-closed:
-when `embed.backfill_max_usd` is SET but not a positive number (`"ten"`, `0`,
-a negative), the operator clearly intended a cap, so the $10 default applies
-and is NEVER dropped — even for unpriced models — with a stderr warning
-naming both fixes (correct the value, or set it to `off` to remove the
-ceiling). A typo must not silently degrade to uncapped spend.
+The explicit cap also bounds foreground and queued embedding drains, fact and
+contextual embedding, and each persistence effects drain. It composes with an
+approved run cap and an enclosing tracker: the lowest remaining limit wins.
+An explicitly submitted embedding job stores the approval on its trusted job
+row, so the worker retains it across retries rather than trusting job data.
+Previously committed page writes stay committed when their embedding effect
+stops; the effect is requeued for a later pass.
+
+For a priced text-embedding request, a capped run reserves the provider's
+enforced token maximum before dispatch, not a character estimate. Unknown
+provider ceilings refuse before dispatch. The SDK's hidden retries are disabled
+under a cap, and each retry or split is admitted separately. Reported usage
+settles the hold; missing usage or an ambiguous failure consumes the maximum.
+Consequently a very small cap can refuse even a short input when the provider's
+maximum request liability does not fit.
 
 ## Escape hatches at a glance
 

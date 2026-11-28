@@ -40,6 +40,9 @@ import { meterPageBatch, spendGrant } from './page-embedding-budget.ts';
 import { acquirePageEmbeddingLease, stillPendingChunks } from './page-embedding-lease.ts';
 import { chunkGenerationFilter, chunkVisibleFilter, currentTextProjectionFilter } from './search/safe-chunks.ts';
 import { embedSegmentedPage, embedSegmentedRows, readSegmentedEmbedPage, type SegmentedEmbedOpts } from './page-body/segmented-embedding.ts';
+import { withEmbeddingBudget } from './embedding-budget.ts';
+import { BudgetExhausted } from './budget/budget-tracker.ts';
+import { isAIInvocationPolicyError } from './ai/invocation-guard.ts';
 
 /**
  * W0 fix-wave (Tier-1 #3, CONFIRMED): the ONE carry-through field list for
@@ -238,7 +241,8 @@ export async function probeEmbedder(
     const dims = signature ? Number(signature.split(':').pop()) : NaN;
     if (Number.isFinite(dims) && dims > 0 && vec.length !== dims) return false;
     return true;
-  } catch {
+  } catch (error) {
+    if (error instanceof BudgetExhausted || isAIInvocationPolicyError(error)) throw error;
     return false;
   }
 }
@@ -290,15 +294,23 @@ async function embedSegmentedStaleRows(engine: BrainEngine, stale: readonly Stal
   return true;
 }
 
+interface EmbedStalePagesOpts {
+  signal?: AbortSignal;
+  embedFn?: (texts: string[], o: { abortSignal?: AbortSignal }) => Promise<Float32Array[]>;
+  embeddingSignature?: string;
+}
+
 export async function embedStalePages(
   engine: BrainEngine,
   slugs: string[],
   sourceId: string,
-  opts: {
-    signal?: AbortSignal;
-    embedFn?: (texts: string[], o: { abortSignal?: AbortSignal }) => Promise<Float32Array[]>;
-    embeddingSignature?: string;
-  } = {},
+  opts: EmbedStalePagesOpts = {},
+): Promise<{ embedded: number; pagesProcessed: number; aborted: boolean }> {
+  return withEmbeddingBudget(engine, () => embedStalePagesBudgeted(engine, slugs, sourceId, opts), { label: 'embed-pages' });
+}
+
+async function embedStalePagesBudgeted(
+  engine: BrainEngine, slugs: string[], sourceId: string, opts: EmbedStalePagesOpts,
 ): Promise<{ embedded: number; pagesProcessed: number; aborted: boolean }> {
   const embedFn = opts.embedFn ?? (async (texts: string[], fnOpts: { abortSignal?: AbortSignal }) =>
     embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }));
@@ -378,6 +390,7 @@ export async function embedStalePages(
       result.embedded += install.installed;
       result.pagesProcessed += 1;
     } catch (e) {
+      if (e instanceof BudgetExhausted || isAIInvocationPolicyError(e)) throw e;
       if (opts.signal?.aborted) {
         result.aborted = true;
         return result;
@@ -393,6 +406,10 @@ export async function embedStaleForSource(
   sourceId: string,
   opts: EmbedStaleOpts = {},
 ): Promise<EmbedStaleResult> {
+  return withEmbeddingBudget(engine, () => embedStaleForSourceBudgeted(engine, sourceId, opts), { label: 'embed-source' });
+}
+
+async function embedStaleForSourceBudgeted(engine: BrainEngine, sourceId: string, opts: EmbedStaleOpts): Promise<EmbedStaleResult> {
   const batchSize = opts.batchSize ?? 2000;
   const concurrency = opts.concurrency ?? resolveStaleEmbedConcurrency(engine);
   const signal = opts.signal;
@@ -485,7 +502,8 @@ export async function embedStaleForSource(
           );
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof BudgetExhausted || isAIInvocationPolicyError(error)) throw error;
       if (stopped()) return { ...result, aborted: true };
       await opts.assertOwned?.();
       // Non-fatal: fall through to the NULL-only stale loop.
@@ -636,6 +654,7 @@ export async function embedStaleForSource(
         result.embedded += install.installed;
         if (install.complete || install.installed > 0) result.pagesProcessed += 1;
       } catch (e: unknown) {
+        if (e instanceof BudgetExhausted || isAIInvocationPolicyError(e)) throw e;
         result.failures = (result.failures ?? 0) + stale.length;
         // Aborted mid-fetch is expected; treat as graceful exit.
         if (stopped()) return;

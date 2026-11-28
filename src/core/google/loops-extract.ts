@@ -37,6 +37,7 @@ import { deriveTrust } from '../trust/taint.ts';
 import { applyGateDecision, derivedGateConfig, derivedGateInput } from '../trust/derived-gate.ts';
 import { decideFactWrite } from '../write-gate-store.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
+import { withEmbeddingBudget } from '../embedding-budget.ts';
 
 export const LOOPS_EXTRACT_JOB = 'loops_extract';
 /** GST-2692: the managed write door ended the fact write on a passing database condition (its retries ran out), so nothing was published. */
@@ -504,6 +505,7 @@ export async function runLoopsExtract(
   const derivation = await deriveTrust(engine, [{ table: 'pages', id: page.id }], { channel: 'derive:loops' });
   const gateCfg = await derivedGateConfig(engine);
 
+  const persistCommitments = async () => {
   for (const c of extraction.commitments) {
     const loopType: LoopType =
       c.direction === 'owed_by_me' ? 'commitment_owed_by_me' : 'commitment_owed_to_me';
@@ -603,6 +605,8 @@ export async function runLoopsExtract(
       }
     }
   }
+  };
+  await withEmbeddingBudget(engine, persistCommitments, { label: 'loops-extract-embeddings' });
 
   for (const d of extraction.decisions_pending) {
     const dedupKey = await loopDedupKey(engine, payload.sourceId, threadId, 'decision_pending', 'decision', d.text, d.quote);

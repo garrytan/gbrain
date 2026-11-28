@@ -13,11 +13,9 @@
  * Contracts (locked by /plan-eng-review):
  *   - TX1: `record()` THROWS BudgetExhausted(reason:'cost') when cumulative
  *     spend > maxCostUsd. The cap is a real ceiling, not a suggestion.
- *   - TX2: When a USER cap is set (`capSource: 'user'`, the default for an
- *     explicit `maxCostUsd`) AND the model is not in the pricing maps,
- *     `reserve()` HARD-FAILS with BudgetExhausted(reason:'no_pricing') whose
- *     `fix` registers the rate. A `derived` or `default` cap (A4) warns once
- *     and runs the model unmetered; so does an unset cap (legacy warn-once).
+ *   - TX2: A capped embedding or a USER-capped model without a pricing row
+ *     is refused with BudgetExhausted(reason:'no_pricing'). Other derived or
+ *     default caps warn and run unpriced; an unset cap does the same.
  *   - A4: exhausting a `derived` cap logs `derived_cap_exhausted` to the
  *     agent-contract log; callers report it with consent.ts's
  *     derivedCapExhaustedError (checkpoint + resume command, exit 1).
@@ -138,13 +136,14 @@ export interface BudgetTrackerOpts {
    */
   providerRetries?: number;
   /**
-   * A4: where `maxCostUsd` came from. `user` (an explicit flag or configured
-   * cap; the default whenever `maxCostUsd` is set) hard-fails an unpriced
-   * model; `derived` (estimate x1.5 under `--yes`) and `default` warn and run.
+   * A4: where `maxCostUsd` came from. A user cap refuses an unpriced model;
+   * derived/default caps warn and run except for embeddings, which fail closed.
    */
   capSource?: CapSource;
   /** Caller's transport, for the no_pricing fix's actor (default `cli`). */
   transport?: Transport;
+  /** Enclosing ledger; each reservation and settlement must satisfy both scopes. */
+  parentTracker?: BudgetTracker;
 }
 
 /**
@@ -278,6 +277,7 @@ export class BudgetTracker {
   private outstandingUsd = 0;
   /** Unsettled projections by reservation id (eng I6: settle by identity, not FIFO-by-model). */
   private readonly outstanding = new Map<BudgetReservation, number>();
+  private readonly parentReservations = new Map<BudgetReservation, BudgetReservation | undefined>();
   private nextReservation = 0;
   private callsRecorded = 0;
   private readonly ledger = new ModelLedger();
@@ -291,9 +291,9 @@ export class BudgetTracker {
     this.auditPath = opts.auditPath ?? defaultAuditPath();
   }
 
-  /** The SDK retries each call under this tracker may make (BudgetTrackerOpts.providerRetries). */
+  /** The provider retry limit, inherited when this scope did not set one. */
   get providerRetries(): number | undefined {
-    return this.opts.providerRetries;
+    return this.opts.providerRetries ?? this.opts.parentTracker?.providerRetries;
   }
 
   /** Public read access. */
@@ -315,6 +315,28 @@ export class BudgetTracker {
   get capSource(): CapSource | undefined {
     if (this.opts.maxCostUsd === undefined) return undefined;
     return this.opts.capSource ?? 'user';
+  }
+
+  /** Whether this scope or any enclosing scope has a cost cap. */
+  get hasCostCap(): boolean {
+    return this.opts.maxCostUsd !== undefined || (this.opts.parentTracker?.hasCostCap ?? false);
+  }
+
+  /** Remaining admission room across this scope and its ancestors. */
+  getRemaining(): number {
+    const local = this.opts.maxCostUsd === undefined ? Infinity
+      : Math.max(0, this.opts.maxCostUsd - this.cumulativeUsd - this.outstandingUsd);
+    return Math.min(local, this.opts.parentTracker?.getRemaining() ?? Infinity);
+  }
+
+  isPriced(modelId: string, kind: BudgetKind): boolean {
+    return reservationCostUsd(modelId, kind, 1, 0, this.opts.pricingOverrides) !== null
+      && (this.opts.parentTracker?.isPriced(modelId, kind) ?? true);
+  }
+
+  hasZeroCost(modelId: string, kind: BudgetKind): boolean {
+    return reservationCostUsd(modelId, kind, 1, 0, this.opts.pricingOverrides) === 0
+      && (this.opts.parentTracker?.hasZeroCost(modelId, kind) ?? true);
   }
 
   /**
@@ -343,6 +365,22 @@ export class BudgetTracker {
    * The caller settles it with `record({ reservation })` or `release()`.
    */
   reserve(estimate: BudgetEstimate): BudgetReservation | undefined {
+    const local = this.reserveLocal(estimate);
+    const parent = this.opts.parentTracker;
+    if (!parent) return local;
+    let enclosing: BudgetReservation | undefined;
+    try {
+      enclosing = parent.reserve(estimate);
+    } catch (error) {
+      this.release(local);
+      throw error;
+    }
+    const id = local ?? `r${++this.nextReservation}` as BudgetReservation;
+    this.parentReservations.set(id, enclosing);
+    return id;
+  }
+
+  private reserveLocal(estimate: BudgetEstimate): BudgetReservation | undefined {
     this.assertRuntime(estimate.modelId);
 
     const projected = reservationCostUsd(
@@ -354,7 +392,7 @@ export class BudgetTracker {
     );
 
     if (projected === null) {
-      if (this.opts.maxCostUsd !== undefined && this.capSource === 'user') {
+      if (this.opts.maxCostUsd !== undefined && (this.capSource === 'user' || estimate.kind === 'embed')) {
         // TX2: hard-fail when a cap is set but pricing is missing — without
         // pricing we can't enforce the cap, and silently ignoring it would
         // void the contract. The refusal tells the agent to look the rate up
@@ -384,7 +422,7 @@ export class BudgetTracker {
           cap: this.opts.maxCostUsd,
           modelId: estimate.modelId,
           pricing,
-          capSource: 'user',
+          capSource: this.capSource,
           fix: noPricingFix(pricing, this.opts.transport),
         });
       }
@@ -472,6 +510,10 @@ export class BudgetTracker {
    * caller can release unconditionally in a `finally`.
    */
   release(reservation: BudgetReservation | undefined): void {
+    if (reservation && this.parentReservations.has(reservation)) {
+      this.opts.parentTracker?.release(this.parentReservations.get(reservation));
+      this.parentReservations.delete(reservation);
+    }
     if (!reservation || !this.settleReservation(reservation)) return;
     appendAuditLine(this.auditPath, {
       schema_version: 1,
@@ -493,6 +535,16 @@ export class BudgetTracker {
    * only metadata.
    */
   record(actual: BudgetActualUsage & { kind?: BudgetKind }): void {
+    const parentReservation = actual.reservation ? this.parentReservations.get(actual.reservation) : undefined;
+    if (actual.reservation) this.parentReservations.delete(actual.reservation);
+    try {
+      this.recordLocal(actual);
+    } finally {
+      this.opts.parentTracker?.record({ ...actual, reservation: parentReservation });
+    }
+  }
+
+  private recordLocal(actual: BudgetActualUsage & { kind?: BudgetKind }): void {
     this.callsRecorded++;
     const kind: BudgetKind = actual.kind ?? 'chat';
     const cost = usageCostUsd(
@@ -562,6 +614,8 @@ export class BudgetTracker {
       output_tokens: actual.outputTokens ?? 0,
       embedding_dims: actual.embeddingDims ?? null,
       actual_cost_usd: cost,
+      estimated: actual.estimated === true,
+      cost_basis: actual.estimated === true ? 'estimated' : 'measured',
       cumulative_cost_usd: this.cumulativeUsd,
       max_cost_usd: this.opts.maxCostUsd ?? null,
     });

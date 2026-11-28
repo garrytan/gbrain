@@ -35,6 +35,7 @@ import type { BrainEngine, NewFact, FactKind, FactAttribution } from '../engine.
 import { normalizeExtractedMetricLabel } from './extract-from-fence.ts';
 import { isNullLikeEntity } from './write-single.ts';
 import { isAIInvocationPolicyError } from '../ai/invocation-guard.ts';
+import { withEmbeddingBudget } from '../embedding-budget.ts';
 
 /**
  * v0.31 (D15): kill-switch for fact extraction.
@@ -785,6 +786,7 @@ export async function extractFactsFromTurnWithOutcome(
   // never has its fact text sent to the provider.
   const { factEmbeddingDisabled } = await import('../embedding-disabled.ts');
   const embedFacts = input.embedding !== null && (input.embedding !== undefined || !await factEmbeddingDisabled(input.engine));
+  const collectFacts = async () => {
   for (const candidate of parsedRaw.slice(0, cap)) {
     if (input.abortSignal?.aborted) {
       const e = new Error('aborted');
@@ -876,6 +878,9 @@ export async function extractFactsFromTurnWithOutcome(
       ...(variant.attribution && candidate.attributed_to ? { attributed_to: candidate.attributed_to } : {}),
     });
   }
+  };
+  if (embedFacts && input.engine) await withEmbeddingBudget(input.engine, collectFacts, { label: 'facts-extract-embeddings' });
+  else await collectFacts();
 
   if (junkSkipped > 0) {
     process.stderr.write(

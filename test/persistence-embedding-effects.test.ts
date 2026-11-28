@@ -17,6 +17,7 @@ import { installPageEmbeddings, installPageProjection, readProjectionSnapshot } 
 import { MAX_RATE_LIMIT_RETRIES } from '../src/core/embed-retry.ts';
 import { AIConfigError } from '../src/core/ai/errors.ts';
 import { invokeAI, isAIInvocationPolicyError, withAIInvocationGuard } from '../src/core/ai/invocation-guard.ts';
+import { configureGateway, resetGateway, embed, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -260,6 +261,24 @@ for (const kind of testBackends()) {
         invokeAI({ operation: 'embed', kind: 'embedding', model }, async () => { calls++; return vectors(); }, () => null)));
       expect(calls).toBe(0);
       expect(await state(f.effectId)).toMatchObject({ state: 'failed', attempts: 1, error_code: 'embedding_budget_refused' });
+    });
+
+    check('a configured run cap requeues a committed write without sending embeddings', async () => {
+      const f = await fixture();
+      let calls = 0;
+      configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'fake' } });
+      __setEmbedTransportForTests(async () => { calls++; throw new Error('unexpected provider call'); });
+      await engine.setConfig('embed.backfill_max_usd', '0.000001');
+      try {
+        await run(() => embed(['current']));
+        expect(calls).toBe(0);
+        expect(await state(f.effectId)).toMatchObject({ state: 'queued', attempts: 1, error_code: 'embedding_budget_refused' });
+        expect((await getWriteRequestById(engine, f.row.id))!.state).toBe('committed');
+      } finally {
+        await engine.unsetConfig('embed.backfill_max_usd');
+        __setEmbedTransportForTests(null);
+        resetGateway();
+      }
     });
 
     check('#7772 a stop signal that fires in the invocation preflight retries as embedding_aborted, not budget-refused', async () => {

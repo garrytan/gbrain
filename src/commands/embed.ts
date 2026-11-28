@@ -35,8 +35,9 @@ import { loadConfig, type GBrainConfig } from '../core/config.ts';
 import { slog, serr } from '../core/console-prefix.ts';
 import { embedBudgetStopVerdict, noteEmbedBudgetStop } from '../core/embed-budget-stop.ts';
 import { embedCostCap, embedCostStopVerdict, noteEmbedCostStop } from '../core/embed-cost-cap.ts';
-import type { Authorization } from '../core/consent.ts';
+import type { Authorization, CapSource } from '../core/consent.ts';
 import { loadPricingOverrides } from '../core/budget/budget-tracker.ts';
+import { configuredEmbeddingCapUsd, withEmbeddingBudget } from '../core/embedding-budget.ts';
 import { filterOutEmbedSkipped, isEmbedSkipped } from '../core/embed-skip.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
 import { isAborted, anySignal, AbortError } from '../core/abort-check.ts';
@@ -163,6 +164,9 @@ export interface EmbedOpts {
    * source_id is still threaded correctly per-page via Page.source_id).
    */
   sourceId?: string;
+  /** Explicit run cap, independent of the per-page embedding allowance. */
+  maxCostUsd?: number;
+  capSource?: CapSource;
   /**
    * Dry run: enumerate what WOULD be embedded (stale chunk counts)
    * without calling the embedding model or writing to the engine.
@@ -449,6 +453,11 @@ async function preflightDimMismatch(engine: BrainEngine, dryRun: boolean): Promi
 }
 
 export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promise<EmbedResult> {
+  return opts.dryRun ? runEmbedCoreBudgeted(engine, opts)
+    : withEmbeddingBudget(engine, () => runEmbedCoreBudgeted(engine, opts), { maxCostUsd: opts.maxCostUsd, capSource: opts.capSource, label: 'embed' });
+}
+
+async function runEmbedCoreBudgeted(engine: BrainEngine, opts: EmbedOpts): Promise<EmbedResult> {
   // v0.37.10.0 T7 (D9): refuse cleanly when init persisted the deferred-setup
   // sentinel. Skipped in dryRun mode so plan-mode introspection still works.
   if (!opts.dryRun) {
@@ -923,7 +932,12 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
     return 'argv' in held ? runEmbed(engine, held.argv, selectedConfig, consent) : held;
   }
   const authorization = consent?.authorization ?? null;
-  const costCap = args.includes('--dry-run') || args.includes('--background') || authorization?.cap_usd == null ? null : embedCostCap(authorization.cap_usd, authorization.cap_source, await loadPricingOverrides(engine));
+  const configuredCap = args.includes('--dry-run') || args.includes('--background') ? undefined : await configuredEmbeddingCapUsd(engine);
+  const approvedCap = authorization?.cap_usd ?? undefined;
+  const runCap = configuredCap === undefined ? approvedCap : Math.min(configuredCap, approvedCap ?? Infinity);
+  const capSource = configuredCap !== undefined && configuredCap <= (approvedCap ?? Infinity) ? 'user' : authorization?.cap_source;
+  const costCap = args.includes('--dry-run') || args.includes('--background') || runCap === undefined
+    ? null : embedCostCap(runCap, capSource, await loadPricingOverrides(engine));
   if (args.includes('--images')) return (await import('../core/embed-stale-images.ts')).runEmbedStaleImagesCli(engine, args, costCap); // lazy: keeps import-file out of embed's graph
   // v0.36+ T7: --background submits via Minion queue, returns job_id to
   // stdout, exits. Same semantics in TTY and cron (D9).

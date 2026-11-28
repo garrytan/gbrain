@@ -398,37 +398,18 @@ describe('embed-backfill handler — #4571 unpriced embedding models', () => {
     expect(drainRanToCompletion).toBe(false);
   });
 
-  // Garbage cannot be an operator's ceiling: parseUsdLimit falls back to the
-  // $10 default AND the value is classified as IMPLICIT (defaulted), so with
-  // an unpriced model the cap is dropped-with-warning rather than failing
-  // closed the way an explicit numeric cap does.
-  test("garbage cap value ('garbage') keeps the $10 default and stays FAIL-CLOSED for unpriced models", async () => {
-    // Adversarial review of #4571: a present-but-unparsable value means the
-    // operator INTENDED a cap — a typo must not silently degrade to uncapped
-    // spend (typo × unpriced model × auto-requeue = unbounded paid API).
+  test("a malformed cap is refused before the source lock or stale drain", async () => {
     configureUnpricedEmbeddingModel();
     await engine.setConfig('embed.backfill_max_usd', 'garbage');
-    let drainRanToCompletion = false;
+    let drainRan = false;
     const handler = makeEmbedBackfillHandler(engine, {
-      runStale: async () => {
-        const tracker = getCurrentBudgetTracker();
-        if (!tracker) throw new Error('missing BudgetTracker scope');
-        tracker.reserve({
-          modelId: 'openai:bge-m3',
-          estimatedInputTokens: 1_000_000,
-          maxOutputTokens: 0,
-          kind: 'embed',
-        });
-        tracker.record({ modelId: 'openai:bge-m3', inputTokens: 1_000_000, kind: 'embed' });
-        drainRanToCompletion = true;
-        return { ...drainBase, embedded: 1, chunksProcessed: 1 };
-      },
+      runStale: async () => { drainRan = true; return { ...drainBase, embedded: 0, chunksProcessed: 0 }; },
     });
-
-    const result = await handler(fakeJob({ sourceId: 'default' }));
-    expect(result.status).toBe('budget_exhausted');
-    expect(result.budgetCapUsd).toBe(10);
-    expect(drainRanToCompletion).toBe(false);
+    await expect(handler(fakeJob({ sourceId: 'default' }))).rejects.toThrow('embed.backfill_max_usd');
+    expect(drainRan).toBe(false);
+    const lock = await tryAcquireDbLock(engine, 'gbrain-embed-backfill:default', 5);
+    expect(lock).not.toBeNull();
+    await lock?.release();
   });
 
   test('stall watchdog covers the backfill lane: a wedged drain aborts and fails the job (refs #4599)', async () => {

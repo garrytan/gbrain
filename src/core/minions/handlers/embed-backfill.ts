@@ -43,7 +43,7 @@ import {
   type PricingOverrides,
 } from '../../budget/budget-tracker.ts';
 import { pricingSetCommand } from '../../budget/no-pricing.ts';
-import { getEmbeddingModel, withBudgetTracker } from '../../ai/gateway.ts';
+import { getCurrentBudgetTracker, getEmbeddingModel, withBudgetTracker } from '../../ai/gateway.ts';
 import { embedStaleForSource } from '../../embed-stale.ts';
 import type { ContentDriftSweepStatus } from '../../content-drift-sweep.ts';
 import { createEmbedStallWatchdog, resolveEmbedStallAbortSeconds } from '../../embed-stall.ts';
@@ -55,7 +55,8 @@ import { type DbPacer, createDbPacer, createNoopPacer } from '../../db-pacer.ts'
 import { resolvePaceMode, loadPaceModeConfig, readPaceEnv } from '../../pace-mode.ts';
 import type { BrainEngine } from '../../engine.ts';
 import type { MinionJobContext } from '../types.ts';
-import { parseUsdLimit, usdLimitToCap, resolveSpendPosture } from '../../spend-posture.ts';
+import { resolveSpendPosture } from '../../spend-posture.ts';
+import { configuredEmbeddingCapUsd } from '../../embedding-budget.ts';
 import { recordMinionJobSpend } from '../../minion-spend.ts';
 
 import { embedBackfillLockId, EMBED_BACKFILL_LOCK_TTL_MIN } from '../../embed-backfill-lock.ts';
@@ -132,48 +133,18 @@ async function resolveBackfillPacer(
   }
 }
 
-/**
- * Resolve the per-job budget cap (USD) for the BudgetTracker.
- *
- * v0.42.42.0 (#2139): returns `undefined` = "no cap" (which BudgetTracker
- * treats as cap-absent) when the config is `off`/`unlimited`/`none` OR when
- * `spend.posture=tokenmax`. NEVER returns Infinity (that would pass through as
- * a real ceiling and serialize to `null` in audit rows). Spend is still
- * ledgered by the tracker either way — posture removes the ceiling, not the
- * accounting. `0`/garbage fall back to the $10 default.
- */
+/** Explicit numeric limits survive tokenmax; only the implicit $10 default is bypassed. */
 interface BackfillBudgetCap {
   maxCostUsd: number | undefined;
   defaulted: boolean;
-  /**
-   * The config key was PRESENT but unparsable ("ten", "garbage"). The
-   * operator intended a cap, so the $10 default applies AND is never
-   * droppable for unpriced models — degrading a typo'd cap to uncapped
-   * would silently defeat explicit intent (adversarial review of #4571).
-   */
-  misconfigured: boolean;
-}
-
-function isExplicitFiniteUsdLimit(raw: unknown): boolean {
-  if (raw === null || raw === undefined) return false;
-  if (typeof raw === 'string' && raw.trim() === '') return false;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0;
 }
 
 async function readMaxUsd(engine: BrainEngine): Promise<BackfillBudgetCap> {
-  const posture = await resolveSpendPosture(engine);
-  if (posture === 'tokenmax') return { maxCostUsd: undefined, defaulted: false, misconfigured: false };
+  const configured = await configuredEmbeddingCapUsd(engine);
+  if (configured !== undefined) return { maxCostUsd: configured, defaulted: false };
   const raw = await engine.getConfig('embed.backfill_max_usd');
-  const parsed = parseUsdLimit(raw, DEFAULT_MAX_USD_PER_JOB);
-  const explicit = isExplicitFiniteUsdLimit(raw);
-  const present = !(raw === null || raw === undefined || (typeof raw === 'string' && raw.trim() === ''));
-  const isOff = typeof raw === 'string' && raw.trim().toLowerCase() === 'off';
-  return {
-    maxCostUsd: usdLimitToCap(parsed),
-    defaulted: parsed === DEFAULT_MAX_USD_PER_JOB && !explicit,
-    misconfigured: present && !explicit && !isOff,
-  };
+  if (raw?.trim() || await resolveSpendPosture(engine) === 'tokenmax') return { maxCostUsd: undefined, defaulted: false };
+  return { maxCostUsd: DEFAULT_MAX_USD_PER_JOB, defaulted: true };
 }
 
 function currentBackfillEmbeddingModel(): string | null {
@@ -190,16 +161,6 @@ function capForModel(
   pricingOverrides: PricingOverrides | undefined,
 ): number | undefined {
   if (cap.maxCostUsd === undefined) return undefined;
-  if (cap.misconfigured) {
-    // Present-but-garbage value: the operator INTENDED a cap. Keep the $10
-    // default and never drop it — a typo must not degrade to uncapped spend.
-    console.error(
-      `[embed-backfill] embed.backfill_max_usd is set but not a positive ` +
-        `number; keeping the $${DEFAULT_MAX_USD_PER_JOB} default cap (fail-closed). ` +
-        `Fix the value or set it to 'off' to remove the ceiling.`,
-    );
-    return cap.maxCostUsd;
-  }
   if (cap.defaulted && modelId && !isModelPriceable(modelId, 'embed', pricingOverrides)) {
     console.error(
       `[embed-backfill] model "${modelId}" is not in the pricing maps; ` +
@@ -244,6 +205,11 @@ export function makeEmbedBackfillHandler(
       return { status: 'skipped', outcome: 'embed_backfill_skipped', reason: 'embedding_disabled', sourceId, embedded: 0, chunksProcessed: 0,
         pagesProcessed: 0, invalidated: 0, spentUsd: 0, ...(keyless.notice ? { notice: reportKeylessNotice(keyless.notice) } : {}) };
     }
+    // Read and validate before taking the source lock so a bad cap cannot leak it.
+    const pricingOverrides = await loadPricingOverrides(engine);
+    const cap = await readMaxUsd(engine);
+    const capUsd = capForModel(cap, currentBackfillEmbeddingModel(), pricingOverrides);
+
 
     // D2: per-source lock at handler entry. The submit-side cooldown (D19)
     // prevents most contention but this is the run-side safety net.
@@ -264,13 +230,11 @@ export function makeEmbedBackfillHandler(
     // D6: budget-tracked execution. Gateway calls inside withBudgetTracker
     // auto-compose via AsyncLocalStorage; if pricing pushes cumulative spend
     // past the cap, gateway throws BudgetExhausted BEFORE the next API call.
-    const pricingOverrides = await loadPricingOverrides(engine);
-    const cap = await readMaxUsd(engine);
-    const capUsd = capForModel(cap, currentBackfillEmbeddingModel(), pricingOverrides);
     const tracker = new BudgetTracker({
       maxCostUsd: capUsd,
       label: `embed-backfill:${sourceId}`,
       pricingOverrides,
+      parentTracker: getCurrentBudgetTracker() ?? undefined,
     });
 
     // paced-backfill: resolve env > config > bundle (env = incident escape
