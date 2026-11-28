@@ -11,9 +11,10 @@
 //! - P-A on the single-writer store, driven by the `gbrain-sim` `Scheduler`: three client tasks and a snapshot reader take
 //!   seeded steps over `RedbKv`; the history passes `check_serializable` and the batch checker, and rebuilds the store.
 //! - P-H on both stores over `GBRAIN_SIM_SEEDS` seeds (default 200; the gate is 10,000 with
-//!   `GBRAIN_SIM_SEEDS=10000 cargo test -p gbrain-store --release --test multi_writer_sim -- --include-ignored p_h`; the
-//!   P-H twin with the commit log is named `crash_with_the_log_keeps_…` so that filter never selects it; it runs in the default
-//!   build): a simulated disk crashes (or fails an fsync) at a seeded point, the store reopens, and `check_recovery` plus the batch
+//!   `GBRAIN_SIM_SEEDS=10000 cargo test -p gbrain-store --release --test multi_writer_sim -- --include-ignored p_h`; that
+//!   filter also selects the P-H twin with multi-user mode and the commit log on, `p_h_with_the_log_…`, and
+//!   `the_crash_gate_filter_selects_every_crash_test_on_the_logged_store` fails if a crash test on that store is named so the
+//!   filter misses it): a simulated disk crashes (or fails an fsync) at a seeded point, the store reopens, and `check_recovery` plus the batch
 //!   checker judge it. Each test prints and asserts a non-zero count of executed histories, checked commits and checked
 //!   reads. The optimistic store runs on OS threads here (as `occ_history.rs` does), so its interleaving is not replayed
 //!   from the seed; its workload and crash point are.
@@ -1098,34 +1099,41 @@ fn open_store(disk: &SimDisk) -> Result<Store, StoreError> {
 }
 
 /// P-H with commit times, against the commit-log lane's real code: after a crash at a seeded point and a reopen (both opens with
-/// multi-user mode and the log on, asserted), the commit times in the log strictly rise in position order, the newest equals
-/// `last_commit_time()`, and every acknowledged request id is in the write ids of exactly one record. Named without `p_h` so the
-/// 10,000-seed gate (`... -- --include-ignored p_h`) does not select it; it runs in the default `cargo test`.
+/// multi-user mode and the log on, asserted), every acknowledged page reads back with the body it was acknowledged with, the
+/// commit times in the log strictly rise in position order, the newest equals `last_commit_time()`, and every acknowledged
+/// request id is in the write ids of exactly one record. Named with `p_h` so the 10,000-seed gate (`... -- --include-ignored
+/// p_h`) runs it; 50 seeds in the default `cargo test`.
 #[test]
-fn crash_with_the_log_keeps_commit_times_rising_and_equal_to_last_commit_time() {
-    let mut checked = 0;
+fn p_h_with_the_log_crash_keeps_acknowledged_pages_and_rising_commit_times() {
+    let started = std::time::Instant::now();
+    let (mut histories, mut records, mut pages, mut crashes) = (0usize, 0usize, 0usize, 0usize);
+    let mut lost: Vec<String> = Vec::new();
     for seed in seeds(50) {
         let disk = SimDisk::new(seed, FaultPlan::none());
         let store = Arc::new(open_store(&disk).unwrap());
         let setup = disk.stats().io_ops;
         disk.set_plan(crash_plan(seed, setup));
-        let acked: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        // (request id, slug, body) of every page mutation the store acknowledged as committed.
+        let acked: Mutex<Vec<(String, String, String)>> = Mutex::new(Vec::new());
         std::thread::scope(|s| {
             for thread in 0..4usize {
                 let (store, acked) = (&store, &acked);
                 s.spawn(move || {
                     for n in 0..12usize {
                         let request = format!("00000000-0000-4000-8000-{:012}", thread * 100 + n);
+                        let (slug, body) = (format!("p/{thread}-{n}"), format!("{thread} {n}"));
                         let mutation: gbrain_store::journal::PageMutation =
                             serde_json::from_value(serde_json::json!({
                                 "principal": {"kind": "local_cli", "id": format!("w{thread}")},
-                                "requestId": request, "slug": format!("p/{thread}-{n}"),
-                                "page": {"type": "note", "title": "t", "compiled_truth": format!("{thread} {n}")},
+                                "requestId": request, "slug": slug,
+                                "page": {"type": "note", "title": "t", "compiled_truth": body},
                                 "options": {},
                             }))
                             .unwrap();
                         match store.submit_page_mutation(&mutation, None) {
-                            Ok(r) if r["state"] == "committed" => acked.lock().unwrap().push(request),
+                            Ok(r) if r["state"] == "committed" => {
+                                acked.lock().unwrap().push((request, slug, body))
+                            }
                             _ => return,
                         }
                     }
@@ -1133,22 +1141,81 @@ fn crash_with_the_log_keeps_commit_times_rising_and_equal_to_last_commit_time() 
             }
         });
         let acked = acked.into_inner().unwrap();
+        crashes += usize::from(disk.is_crashed());
         disk.crash_now();
         drop(store);
         disk.reboot();
         disk.set_plan(FaultPlan::none());
         let store = open_store(&disk).unwrap();
+        for (request, slug, body) in &acked {
+            let page = store
+                .read_page_snapshot(slug, &gbrain_store::pages::ReadScope::default())
+                .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+            let kept = page
+                .as_ref()
+                .and_then(|p| p["page"]["compiled_truth"].as_str())
+                .map(str::to_string);
+            if kept.as_deref() != Some(body.as_str()) {
+                lost.push(format!(
+                    "seed {seed}: acknowledged request {request} wrote {slug} = {body:?}; after the reopen it reads {kept:?}"
+                ));
+            }
+        }
         let log = store
             .read_commit_log(None, usize::MAX)
             .unwrap_or_else(|e| panic!("{e}"));
         let last = store.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
+        let ids: Vec<String> = acked
+            .iter()
+            .map(|(request, _, _)| request.clone())
+            .collect();
         clock::replay_clock_checks(&log.records, last, None, &[])
-            .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
-        clock::request_ids_match_records(&acked, &log.records)
-            .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
-        checked += log.records.len();
+            .unwrap_or_else(|e| panic!("seed {seed}: {e}\nrepro: GBRAIN_SIM_SEED={seed}"));
+        clock::request_ids_match_records(&ids, &log.records)
+            .unwrap_or_else(|e| panic!("seed {seed}: {e}\nrepro: GBRAIN_SIM_SEED={seed}"));
+        histories += 1;
+        records += log.records.len();
+        pages += acked.len();
+        if !lost.is_empty() {
+            break;
+        }
     }
-    assert!(checked > 0, "no commit was checked");
+    eprintln!(
+        "P-H with the log: {histories} histories executed, {pages} acknowledged pages read back, {records} log records checked, {crashes} crashes hit, {:?}",
+        started.elapsed()
+    );
+    assert!(
+        lost.is_empty(),
+        "P-H with the log lost acknowledged data: {lost:#?}\nrepro: GBRAIN_SIM_SEED=<seed> cargo test -p gbrain-store --test multi_writer_sim p_h_with_the_log"
+    );
+    assert!(records > 0, "no commit was checked");
+    assert!(pages > 0, "no acknowledged page was read back");
+    assert!(crashes > 0, "no seed crashed mid-run");
+}
+
+/// The 10,000-seed crash gate selects its tests with the name filter `p_h`. Every test in this file that crashes the store
+/// opened with multi-user mode and the commit log on (`open_store`) must carry `p_h` in its name, or the gate never runs it.
+#[test]
+fn the_crash_gate_filter_selects_every_crash_test_on_the_logged_store() {
+    let source = include_str!("multi_writer_sim.rs");
+    // Built from parts so this test's own body does not match.
+    let opens = concat!("open_", "store(&disk)");
+    let mut found = 0;
+    // Each part is one test, from its name to the next `#[test]` (top level or inside a module).
+    for part in source.split("#[test]").skip(1) {
+        let Some(rest) = part.trim_start().strip_prefix("fn ") else {
+            continue;
+        };
+        let name = rest.split('(').next().unwrap_or_default();
+        if part.contains(opens) {
+            found += 1;
+            assert!(
+                name.contains("p_h"),
+                "{name} crashes the logged store but the gate filter `p_h` does not select it"
+            );
+        }
+    }
+    assert!(found > 0, "no crash test on the logged store was found");
 }
 
 // ---- the optimistic store under the seeded scheduler (through the `step_pipeline()` seam) ------------------------------------
