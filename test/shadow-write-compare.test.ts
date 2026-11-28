@@ -33,7 +33,7 @@ import { newMirrorCounters } from '../src/shadow/mirror.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
 import { faultsPath, readFaults } from '../src/shadow/ledger.ts';
 import { sampleWeight } from '../src/shadow/supervisor.ts';
-import { droppedWeight, ID_TARGET_WRITES, MAX_DROPPED, lostPath, movedOutsideFootprint, owedPath, PILOT_WRITES, pageRefs, readOwed, readWriteSnapshot, readWriteTally, recordLost, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { droppedWeight, ID_TARGET_WRITES, MAX_DROPPED, lostPath, movedOutsideFootprint, nothingToCompare, owedPath, PILOT_WRITES, pageRefs, readOwed, readWriteSnapshot, readWriteTally, recordLost, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -524,6 +524,28 @@ describe('the data fence and the scratch location (lane owner ruling)', () => {
     expect(movedOutsideFootprint('deletePage', ['a/x'], pre, { sources: [], pages: [B], links: [farther] })).toBe(false); // a link to a page that was never copied is not a change to the copy
     const jobs = { ...B, projection_job_revision: 'r1' };
     expect(movedOutsideFootprint('addLink', link, { ...pre, pages: [A, jobs] }, { sources: [], pages: [A, { ...jobs, projection_job_revision: 'r2' }], links: [L] })).toBe(false); // job-queue state is not an edit
+  });
+
+  test('removeLinksByPagesAndSource excuses only the links it removes: a typed-NER link it keeps that changes or goes marks the sample moved', () => {
+    const kept = R({ id: '20', from_page_id: '1', to_page_id: '2', link_type: 'mentions', link_source: 'ner', link_kind: 'typed_ner', context: 'old' });
+    const removed = R({ id: '21', from_page_id: '1', to_page_id: '2', link_type: 'knows', link_source: 'ner', context: 'c' });
+    const args = [[{ slug: 'a/x', source_id: 'default' }], { linkSource: 'ner', keepTypedNerPairs: [{ from_slug: 'a/x', from_source_id: 'default', to_slug: 'a/y', to_source_id: 'default' }] }];
+    const before = { sources: [], pages: [A, B], links: [kept, removed] };
+    const after = (links: Array<Record<string, string>>) => ({ sources: [], pages: [A, B], links });
+    expect(movedOutsideFootprint('removeLinksByPagesAndSource', args, before, after([kept]))).toBe(false); // it removed its link and kept the other
+    expect(movedOutsideFootprint('removeLinksByPagesAndSource', args, before, after([{ ...kept, context: 'edited elsewhere' }]))).toBe(true); // a kept link changed
+    expect(movedOutsideFootprint('removeLinksByPagesAndSource', args, before, after([]))).toBe(true); // a kept link is gone
+    const unkept = [args[0], { linkSource: 'ner' }];
+    expect(movedOutsideFootprint('removeLinksByPagesAndSource', unkept, before, after([]))).toBe(false); // with nothing kept, both are its own
+  });
+
+  test('a removeLink of a self-link names one page and is compared when the link is there', () => {
+    const self = R({ id: '30', from_page_id: '1', to_page_id: '1', link_type: 'knows' });
+    const args = ['a/x', 'a/x', 'knows'];
+    const targets = pageRefs('removeLink', args);
+    expect(targets).toEqual([{ source: 'default', slug: 'a/x' }]);
+    expect(nothingToCompare('removeLink', args, targets, { sources: [], pages: [A], links: [self] })).toBeNull();
+    expect(nothingToCompare('removeLink', args, targets, { sources: [], pages: [A], links: [] })).toBe('nothing_to_compare');
   });
 
   test('a link another process adds between the same two pages, with another type or source, is not the write\'s own (a type or source it leaves out matches any)', () => {

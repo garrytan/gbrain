@@ -77,14 +77,18 @@ export function pageRefs(op: string, args: any[]): PageRef[] {
 }
 
 /** What a pilot write itself changes: the pages it writes or deletes, and the links it adds or removes (from, to, and the type and source it names; one it leaves out matches any). An added link also names its origin page: `null` is no origin, which only a row with no origin matches; a removal leaves `origin` out and matches any. */
-export function footprint(op: string, args: any[], targets: PageRef[] = pageRefs(op, args)): { pages: PageRef[]; links: Array<{ from: PageRef; to: PageRef | null; type?: string; source?: string; origin?: PageRef | null }> } {
+export function footprint(op: string, args: any[], targets: PageRef[] = pageRefs(op, args)): { pages: PageRef[]; links: Array<{ from: PageRef; to: PageRef | null; type?: string; source?: string; origin?: PageRef | null; keep?: Array<{ from: PageRef; to: PageRef }> }> } {
   const o = (args[OPTS_AT[op] ?? 1] ?? {}) as Record<string, unknown>;
   const link = (from: PageRef | null, to: PageRef | null, type?: unknown, source?: unknown, origin?: PageRef | null) => (from && to ? [{ from, to, type: typeof type === 'string' ? type : undefined, source: typeof source === 'string' ? source : undefined, origin }] : []);
   if (op === 'addLinksBatch') return { pages: [], links: (args[0] as any[]).flatMap((l) => link(ref(l.from_slug, l.from_source_id), ref(l.to_slug, l.to_source_id), l.link_type, l.link_source, ref(l.origin_slug, l.origin_source_id))) };
   if (op === 'addLink') return { pages: [], links: link(ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), args[3], args[4], ref(args[5], o.originSourceId)) };
   if (op === 'removeLink') return { pages: [], links: link(ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), args[2], args[3]) };
-  // Every link from these pages with this link source, to any page (`to: null`): the typed-NER pairs it keeps are not changed, so they are not excused.
-  if (op === 'removeLinksByPagesAndSource') return { pages: [], links: targets.map((from) => ({ from, to: null, source: typeof (args[1] as { linkSource?: unknown } | undefined)?.linkSource === 'string' ? (args[1] as { linkSource: string }).linkSource : undefined })) };
+  // Every link from these pages with this link source, to any page (`to: null`), except a typed-NER link between a pair it keeps (`keep`): the write does not change those, so they are not excused.
+  if (op === 'removeLinksByPagesAndSource') {
+    const opts = (args[1] ?? {}) as { linkSource?: unknown; keepTypedNerPairs?: unknown };
+    const keep = items(opts.keepTypedNerPairs).flatMap((k) => { const [from, to] = [exact(k?.from_slug, k?.from_source_id), exact(k?.to_slug, k?.to_source_id)]; return from && to ? [{ from, to }] : []; });
+    return { pages: [], links: targets.map((from) => ({ from, to: null, source: typeof opts.linkSource === 'string' ? opts.linkSource : undefined, keep })) };
+  }
   return { pages: targets, links: [] };
 }
 
@@ -108,8 +112,9 @@ export function movedOutsideFootprint(op: string, args: any[], pre: PreImage, no
   const key = (r: PageRef): string => `${r.source}\0${r.slug}`;
   const ids = new Map<string, string | null>([...pre.pages, ...now.pages].map((p) => [`${p.source_id}\0${p.slug}`, p.id ?? null]));
   const ownPages = new Set(fp.pages.map((r) => ids.get(key(r))));
-  const own = fp.links.map((l) => ({ from: ids.get(key(l.from)), to: l.to === null ? ANY_PAGE : ids.get(key(l.to)), type: l.type, source: l.source, origin: l.origin === undefined ? undefined : l.origin ? ids.get(key(l.origin)) ?? null : null }));
-  const ownLink = (l: Row): boolean => own.some((w) => w.from === l.from_page_id && (w.to === ANY_PAGE || w.to === l.to_page_id) && (w.type === undefined || w.type === l.link_type) && (w.source === undefined || w.source === l.link_source) && (w.origin === undefined || w.origin === (l.origin_page_id ?? null)))
+  const own = fp.links.map((l) => ({ from: ids.get(key(l.from)), to: l.to === null ? ANY_PAGE : ids.get(key(l.to)), type: l.type, source: l.source, origin: l.origin === undefined ? undefined : l.origin ? ids.get(key(l.origin)) ?? null : null, keep: new Set((l.keep ?? []).map((k) => `${ids.get(key(k.from))}\0${ids.get(key(k.to))}`)) }));
+  const kept = (w: (typeof own)[number], l: Row): boolean => (l.link_kind ?? '') === 'typed_ner' && w.keep.has(`${l.from_page_id}\0${l.to_page_id}`);
+  const ownLink = (l: Row): boolean => own.some((w) => w.from === l.from_page_id && (w.to === ANY_PAGE || w.to === l.to_page_id) && (w.type === undefined || w.type === l.link_type) && (w.source === undefined || w.source === l.link_source) && (w.origin === undefined || w.origin === (l.origin_page_id ?? null)) && !kept(w, l))
     || (op === 'deletePage' && (ownPages.has(l.from_page_id) || ownPages.has(l.to_page_id)));
   const after = (rows: Row[]): Map<string | null, Row> => new Map(rows.map((r) => [r.id ?? null, r]));
   const pagesNow = after(now.pages); const linksNow = after(now.links);
@@ -160,7 +165,9 @@ export function nothingToCompare(op: string, args: any[], targets: PageRef[], pr
   const present = targets.filter((r) => idOf(r) !== null);
   if (op === 'removeLink' ? present.length < targets.length : present.length === 0) return 'target_absent';
   if (op === 'removeLink') {
-    const [from, to] = [idOf(targets[0]!), idOf(targets[1]!)];
+    const o = (args[OPTS_AT.removeLink!] ?? {}) as Record<string, unknown>;
+    const ends = [ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId)]; // from the arguments: the target list holds a self-link's one page once
+    const [from, to] = ends.map((r) => (r ? idOf(r) : null));
     const [type, source] = [args[2], args[3]];
     return pre.links.some((l) => l.from_page_id === from && l.to_page_id === to && (typeof type !== 'string' || l.link_type === type) && (typeof source !== 'string' || l.link_source === source)) ? null : 'nothing_to_compare';
   }

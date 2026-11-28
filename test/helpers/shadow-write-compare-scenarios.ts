@@ -300,6 +300,14 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(out.tally).toMatchObject({ comparable: 0, unexplained_difference: 0, uncomparable: 2, uncomparable_by_reason: { nothing_to_compare: 2 } });
     }, 120_000);
 
+    test('a link removal from a page to itself is replayed and counted comparable (one page, named twice)', async () => {
+      const out = await replay(async (e) => {
+        await primary().addLink('people/alice-example', 'people/alice-example', 'self', 'knows'); // not sampled: the primary, unwrapped
+        await e.removeLink('people/alice-example', 'people/alice-example', 'knows');
+      }, 1);
+      expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+    }, 120_000);
+
     // The nine members added to the comparison (B1): each is replayed on a scratch Rust store and compared (a real primary, the real addon), and a deliberate
     // difference in what the primary read back is detected, never counted comparable. The three stamps are tampered in their own new column only.
     const ALICE = { slug: 'people/alice-example', source_id: 'default' };
@@ -576,7 +584,8 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(inbox.map((e) => [e.op, e.outcome, e.reason, e.pre])).toEqual([['addLinksBatch', 'uncomparable', 'target_unresolved', undefined]]);
     }, 60_000);
 
-    test('a B1 member in the outermost transaction is compared after the commit; in a nested transaction it is uncomparable (in_transaction); an id-named one is uncomparable (target_unresolved)', async () => {
+    /** One B1 member in each transaction shape: the outermost (sampled after the commit), a nested one, and an id-named one. */
+    const b1InTransactions = async (): Promise<WriteEvent[]> => {
       await ctx.reset();
       await fillSeedFixture(primary());
       const { inbox, wrapped } = rig();
@@ -590,6 +599,15 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(inbox[0]).toMatchObject({ op: 'softDeletePage', moved: false });
       expect(inbox[0]!.pre).toBeDefined();
       expect(inbox.slice(1).map((e) => [e.op, e.outcome, e.reason, e.pre])).toEqual([['setPageEmbeddingSignature', 'uncomparable', 'in_transaction', undefined], ['stripStaleFrontmatterKeys', 'uncomparable', 'target_unresolved', undefined]]);
+      return inbox;
+    };
+
+    test('a B1 member in the outermost transaction is sampled after the commit; in a nested transaction it is uncomparable (in_transaction); an id-named one is uncomparable (target_unresolved)', async () => {
+      await b1InTransactions();
+    }, 60_000);
+
+    (ctx.addon ? test : test.skip)('and the scratch replay counts the outermost one comparable and the other two uncomparable', async () => {
+      const inbox = await b1InTransactions();
       const dir = ctx.tempDir(); const on = tallyOn(dir);
       await settle(createWriteComparer({ dir, tally: on.tally, alive: () => true, load: { ok: true, addon: addonOf() } as never, scratchRoot: ctx.tempDir() }), inbox);
       expect(on.counts()).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 2 });
