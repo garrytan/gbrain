@@ -235,11 +235,13 @@ The shadow follower has lag, a queue, or an invalid coverage watermark. Wait, up
 shadow status; then report.
 
 The plan's criterion 1 detail names why the watermark is invalid and the last seal decision, as `engine shadow status`
-does (`coverage watermark: invalid (<reason>)`, `seal: <outcome> (<reason>)`). A short serving session that wrote to
-the brain after its last full reconcile pass leaves `seal: not_sealed (writes_since_verified)`, and one that closed
-before any full pass finished leaves `not_sealed (no_verified_mark)`: the next session starts invalid and needs a full
-pass of its own. A brain served only by short writing sessions therefore reaches valid only after a session completes a
-full pass, so waiting does not help. Keep one serving session open until a full pass finishes (status shows the
+does (`coverage watermark: invalid (<reason>)`, `seal: <outcome> (<reason>)`). On Postgres a serving session seals
+over its own writes, so the next session confirms the seal and starts valid. Another client's write since the last
+full reconcile pass leaves `seal: not_sealed (writes_since_verified)`, and a session that closed before any full pass
+finished leaves `not_sealed (no_verified_mark)`: the next session starts invalid and needs a full pass of its own. A
+page save the follower cannot map (`invalid:unmapped_write:...`) and the session's own background table updates also
+need a full pass, so a session that closes before that pass ends can still leave the watermark invalid, and waiting
+does not help. Keep one serving session open until a full pass finishes (status shows the
 watermark valid), or stop the serving processes and run `gbrain engine shadow reconcile`, then plan again.
 
 <a id="digest_mismatch"></a>

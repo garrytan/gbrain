@@ -36,7 +36,7 @@ if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
 const SESSION_MS = 10_000;
 
 interface Pass { kind: string; started_at: string; finished_at?: string; repaired_rows?: number; error?: unknown }
-interface Snapshot { valid: boolean; reason: string | null; through: string | null; clean: number; passes: Pass[] }
+interface Snapshot { valid: boolean; reason: string | null; through: string | null; clean: number; passes: Pass[]; seal: { outcome: string; reason: string | null } | null }
 
 let home = '';
 let dir = '';
@@ -50,12 +50,12 @@ const cli = (args: string[], input?: string) => spawnSync('bun', ['--no-env-file
 function snapshot(): Snapshot {
   const r = cli(['engine', 'shadow', 'status', '--json']);
   expect(r.status).toBe(0);
-  const s = JSON.parse(r.stdout) as { directory: string; follower?: { coverage_watermark?: { valid: boolean; through: string | null; invalidated_reason: string | null } }; reconcile?: { consecutive_clean_full_passes?: number } };
+  const s = JSON.parse(r.stdout) as { directory: string; follower?: { coverage_watermark?: { valid: boolean; through: string | null; invalidated_reason: string | null }; seal?: { outcome: string; reason: string | null } }; reconcile?: { consecutive_clean_full_passes?: number } };
   dir = s.directory;
   let passes: Pass[] = [];
   try { passes = readFileSync(join(dir, 'reconcile', 'passes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Pass); } catch { /* no pass yet */ }
   const w = s.follower?.coverage_watermark;
-  return { valid: w?.valid === true, reason: w?.invalidated_reason ?? null, through: w?.through ?? null, clean: s.reconcile?.consecutive_clean_full_passes ?? 0, passes };
+  return { valid: w?.valid === true, reason: w?.invalidated_reason ?? null, through: w?.through ?? null, clean: s.reconcile?.consecutive_clean_full_passes ?? 0, passes, seal: s.follower?.seal ?? null };
 }
 
 /** Full passes that started inside [from, to]. */
@@ -79,24 +79,40 @@ async function childGone(): Promise<void> {
   throw new Error('the shadow child did not exit within 15 s of the serve session');
 }
 
-/** One MCP stdio serve session of about `ms`: connect, list pages (optionally write one), idle, close. */
-async function serve(tag: string, o: { write?: boolean; ms?: number } = {}): Promise<{ from: number; to: number }> {
+/**
+ * One MCP stdio serve session of about `ms`: connect, list pages (optionally save once, `writeAfterMs` in: a whole page,
+ * or a tag on `tagPage`; and optionally read status once, `peekAtMs` in), idle, close.
+ */
+async function serve(tag: string, o: { write?: boolean; ms?: number; writeAfterMs?: number; tagPage?: string; peekAtMs?: number } = {}): Promise<{ from: number; to: number; saveMs: number | null; peek: Snapshot | null }> {
   const log = openSync(join(home, `serve-${tag}.log`), 'a');
   const transport = new StdioClientTransport({ command: 'bun', args: ['--no-env-file', CLI, 'serve'], cwd: ROOT, env, stderr: log });
   const client = new Client({ name: 'short-sessions', version: '1.0.0' }, { capabilities: {} });
   const from = Date.now();
+  let saveMs: number | null = null;
+  let peek: Snapshot | null = null;
+  const at = async (ms: number): Promise<void> => { const wait = ms - (Date.now() - from); if (wait > 0) await Bun.sleep(wait); };
+  const save = async (): Promise<void> => {
+    await at(o.writeAfterMs ?? 0);
+    const t = performance.now();
+    const r = o.tagPage
+      ? await client.callTool({ name: 'add_tag', arguments: { slug: o.tagPage, tag } })
+      : await client.callTool({ name: 'put_page', arguments: { slug: `sessions/${tag}`, content: `---\ntitle: Session ${tag}\ntype: concept\n---\n\n# Session ${tag}\n\nbody\n` } });
+    expect(r.isError ?? false).toBe(false);
+    saveMs = Math.round(performance.now() - t);
+  };
+  const look = async (): Promise<void> => { await at(o.peekAtMs!); peek = snapshot(); };
   try {
     await client.connect(transport);
-    if (o.write) await client.callTool({ name: 'put_page', arguments: { slug: `sessions/${tag}`, content: `---\ntitle: Session ${tag}\ntype: concept\n---\n\n# Session ${tag}\n\nbody\n` } });
+    const steps = [...(o.write ? [{ ms: o.writeAfterMs ?? 0, run: save }] : []), ...(o.peekAtMs !== undefined ? [{ ms: o.peekAtMs, run: look }] : [])];
+    for (const step of steps.sort((a, b) => a.ms - b.ms)) await step.run();
     await client.callTool({ name: 'list_pages', arguments: {} });
-    const left = (o.ms ?? SESSION_MS) - (Date.now() - from);
-    if (left > 0) await Bun.sleep(left);
+    await at(o.ms ?? SESSION_MS);
   } finally {
     await client.close().catch(() => undefined);
     closeSync(log);
   }
   await childGone();
-  return { from, to: Date.now() };
+  return { from, to: Date.now(), saveMs, peek };
 }
 
 const describeIf = hasDatabase() && HAVE_ADDON ? describe : describe.skip;
@@ -181,4 +197,38 @@ describeIf('short MCP serve sessions on Postgres', () => {
     expect((passes[0] as Pass & { repaired_by_relation?: Record<string, number> }).repaired_by_relation?.page_aliases ?? 0).toBeGreaterThanOrEqual(1);
     expect(after.clean).toBe(0);
   }, 60_000);
+
+  /**
+   * The exact own-write count (seal.ts `countSealWrites`). Every serving session writes at start (its own config
+   * write), so a carried seal holds only when the next session's confirmation counts that write as its own. A session
+   * that only saved through itself after its verified point seals over its own writes, and the next session confirms it
+   * and starts valid with no fresh full pass. A tag is a write the follower mirrors; a whole page save is not yet
+   * (`unmapped_write:sealImportedPage`), so a session that saves a page runs a full pass of its own after the save and
+   * seals from that. Measured for the record: sessions run, how many end valid and sealed, full passes, the watermark
+   * lag at close and the time per save.
+   */
+  test('writing sessions in a row seal over their own writes: each next session confirms the carried seal, and every session ends valid and sealed', async () => {
+    if (!snapshot().valid) await serve('settle-3');
+    expect(snapshot().valid).toBe(true);
+    const plan: Array<{ tag: string; o: Parameters<typeof serve>[1] }> = [
+      { tag: 'page-save', o: { write: true, writeAfterMs: 0 } },
+      { tag: 'quiet-after-page', o: {} },
+      { tag: 'tag-save-0', o: { write: true, writeAfterMs: 7_000, tagPage: 'sessions/page-save' } },
+      { tag: 'tag-save-1', o: { write: true, writeAfterMs: 7_000, tagPage: 'sessions/page-save' } },
+      { tag: 'tag-save-2', o: { write: true, writeAfterMs: 0, tagPage: 'sessions/page-save' } },
+      { tag: 'quiet-after-tags', o: {} },
+    ];
+    const runs: Array<{ session: string; start: string; valid_at_4s: boolean; end: string; valid: boolean; full_passes: number; save_ms: number | null; lag_ms: number | null }> = [];
+    const outcome = (s: Snapshot | null): string => s?.seal ? `${s.seal.outcome}${s.seal.reason ? `:${s.seal.reason}` : ''}` : 'none';
+    for (const { tag, o } of plan) {
+      const s = await serve(tag, { ...o, peekAtMs: 4_000 });
+      const snap = snapshot();
+      runs.push({ session: tag, start: outcome(s.peek), valid_at_4s: s.peek?.valid === true, end: outcome(snap), valid: snap.valid, full_passes: fullPassesIn(snap, s.from, s.to).length, save_ms: s.saveMs, lag_ms: snap.through ? s.to - Date.parse(snap.through) : null });
+    }
+    console.log(`own-write seal measurement ${JSON.stringify(runs)}`);
+    // Each session confirmed the seal the one before it left, its own start-up write and early save included.
+    expect(runs.map((r) => r.start)).toEqual(plan.map(() => 'confirmed'));
+    expect(runs.map((r) => r.end)).toEqual(plan.map(() => 'sealed'));
+    expect(runs.map((r) => r.valid)).toEqual(plan.map(() => true));
+  }, 150_000);
 });

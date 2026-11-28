@@ -14,11 +14,12 @@ import { ShadowFollower } from './follower.ts';
 import { openReadSource, type ReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
 import { LOST_WRITE_UNRECORDED, lostWriteRecorder } from './follow-child.ts';
-import { confirmSeal, readBasis, sealMark, type SealConfirmOutcome, type SealDeps } from './seal.ts';
+import { confirmSeal, countSealWrites, readBasis, sealMark, type SealConfirmOutcome, type SealDeps } from './seal.ts';
 import { createLsnWatch, makeAskHandler, type LsnWatch } from './checks.ts';
 import { epochWatch, readEpoch } from './evidence-epoch.ts';
 import { hasCapability } from '../core/engine-capabilities.ts';
 import { readSeedRecord } from './seed.ts';
+import { readFollowerFile } from './follow-status.ts';
 import { MirrorQueue, zeroUsage } from './mirror.ts';
 import { SampleRegistry } from './samples.ts';
 import { readShadowState, writeSampleRate, type ShadowState } from './state.ts';
@@ -69,6 +70,11 @@ export interface AttachedShadow<E extends BrainEngine> {
   lsnWatch: LsnWatch;
 }
 
+/** The token of the seal on disk, if any; a file that cannot be read is no seal. */
+function readCarriedToken(dir: string): string | null {
+  try { const at = readFollowerFile(dir)?.seal?.db_at; return typeof at === 'string' && at ? at : null; } catch { return null; } // silent-read-ok: no token counts this process's writes only from the confirmation on, so they refuse
+}
+
 /** The child's argv for `dir`. */
 export function shadowChildArgv(dir: string, gbrainArgv?: string[]): string[] {
   const base = gbrainArgv ?? resolveServeGbrainCommand({ which: () => null });
@@ -76,6 +82,9 @@ export function shadowChildArgv(dir: string, gbrainArgv?: string[]): string[] {
 }
 
 export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string, state: ShadowState, deps: AttachShadowDeps = {}): AttachedShadow<E> {
+  // The seal the last close left, read before this process connects or starts a child: every write this process makes
+  // comes after it was on disk, so after the read that produced its token (seal.ts `countSealWrites`).
+  const carried = readCarriedToken(dir);
   const supervisor = new ShadowSupervisor({
     dir, argv: shadowChildArgv(dir, deps.gbrainArgv), onDirty: (relation) => reconciler?.markDirty(relation),
     onAsk: (ask) => asks(ask),
@@ -125,7 +134,22 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   watch = createLsnWatch(askReads);
   void watch.ready(); // the first freshness token, so a sample captured a moment later has one to be held to
   const asks = makeAskHandler({ engine, reads: askReads, dir, rpc, samples, watch, get follower() { return follower; } });
-  if (reads) sealDeps = { dir, reads, postgres: primaryTakesWriterHooks(state.primary_engine), primary: engine, rpc, revoking: (reason) => { revoking = reason; } };
+  if (reads) {
+    const d: SealDeps = { dir, reads, postgres: primaryTakesWriterHooks(state.primary_engine), primary: engine, rpc, revoking: (reason) => { revoking = reason; } };
+    sealDeps = d;
+    // This process's own writes are counted from the moment the engine is connected (seal.ts `countSealWrites`), so a
+    // close can seal over them, and the next start's confirmation over the writes this process made before it. The
+    // factory attaches before it connects: the count starts inside connect, before any caller can write; an engine
+    // attached once connected starts it at once.
+    if (d.postgres) {
+      const count = async (from: string | null): Promise<void> => { if (!d.own) { const own = await countSealWrites(d, from); if (own) d.own ??= own; } };
+      const connect = engine.connect.bind(engine);
+      engine.connect = async (...args: Parameters<BrainEngine['connect']>): Promise<void> => { await connect(...args); await count(carried); };
+      // Already connected, this process may have written before the seal on disk was read: its token is counted only
+      // from the confirmation on.
+      void count(null);
+    }
+  }
   const askConfirm = (): Promise<SealConfirmOutcome | void> => {
     if (!sealDeps) return Promise.resolve();
     if (!confirm) {

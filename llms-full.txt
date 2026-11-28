@@ -6283,10 +6283,13 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   (and `page_projection_jobs`), its oid, relfilenode and insert, update and delete counts. That token is the session's
   verified point, never a reading taken at close: the counters read just before a full pass started, which count only
   once that pass restored the watermark (a pass stopped at close leaves its own), or the token of a carried seal the
-  child committed. The close seals that point itself, and refuses when any counter moved since (`writes_since_verified`,
-  this process's own writes included: a session that writes after its last full pass does not seal, so a brain served
-  only by short writing sessions reaches valid only after a session completes a full pass) or when there is none
-  (`no_verified_mark`). The token is version 3; the version 2 token of an older build is refused once after an upgrade
+  child committed. The close seals that point plus the serving process's own committed writes since it, and refuses when
+  the counters moved by anything else (`writes_since_verified`) or when there is no verified point (`no_verified_mark`).
+  The own writes are an exact per-table count the primary keeps for this process (`PostgresEngine.countOwnWrites`,
+  `src/core/postgres-engine/own-writes.ts`): a connection name proves nothing, so a client that copies it is counted as
+  foreign. The next serving process counts its own writes from before it connects (it reads the seal on disk first), so
+  its start-up writes do not refuse the confirmation. A write the follower cannot map to a table (a page import) or a
+  relation this process marked dirty still needs a full pass, so a session shorter than that pass can still end invalid. The token is version 3; the version 2 token of an older build is refused once after an upgrade
   (`mark_unreadable`). Resetting one table's counters moves the statistics epoch and is refused
   (`stats_reset_changed`). The confirmation refuses any
   difference, a new coverage gap, a hook that is not working, a login role that can write a brain table with no way to

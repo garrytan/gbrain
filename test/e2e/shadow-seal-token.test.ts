@@ -179,14 +179,141 @@ d('the seal change token on Postgres', () => {
     expect(await sealAt(basis)).toEqual({ refused: 'writes_since_verified' });
   }, 60_000);
 
-  test('a write by this process after the verified point refuses the seal too (the cost of the strict rule)', async () => {
-    const basis = await readBasis();
+  /**
+   * Option A (exact own count): this process's own committed writes since the verified point are counted
+   * (postgres-engine/own-writes.ts), and the close seals the basis plus them. `countSealWrites` is reached through the
+   * module, so a build without it fails these tests on their assertions.
+   */
+  const counted = async (): Promise<ReturnType<typeof deps> & { own: NonNullable<Awaited<ReturnType<typeof sealModule.countSealWrites>>> }> => {
+    const fn = (sealModule as unknown as { countSealWrites?: typeof sealModule.countSealWrites }).countSealWrites;
+    expect(typeof fn).toBe('function');
+    const own = await fn!(deps());
+    expect(own).not.toBeNull();
+    return { ...deps(), own: own! };
+  };
+  const ownWrite = async (key: string): Promise<void> => {
+    await engine.executeRaw(`INSERT INTO config (key, value) VALUES ($1, '1')`, [key]);
     await engine.withReservedConnection(async (conn) => {
-      await conn.executeRaw(`INSERT INTO config (key, value) VALUES ('own-after-basis', '1')`);
-      await conn.executeRaw('SELECT pg_stat_force_next_flush()'); // its counters are flushed when it goes idle
+      await conn.executeRaw(`UPDATE config SET value = '2' WHERE key = $1`, [key]);
+    });
+  };
+  const sealOwn = (d: ReturnType<typeof deps>, basis: string | null) =>
+    (sealModule.sealMark as unknown as (d: ReturnType<typeof deps>, basis: string | null) => ReturnType<typeof sealMark>)(d, basis);
+  const appName = async (): Promise<string> => (await engine.executeRaw<{ app: string }>(`SELECT current_setting('application_name') AS app`))[0]!.app;
+
+  test('only this process wrote after the verified point: the seal holds, and the next start finds the token', async () => {
+    const d = await counted();
+    const basis = await readBasisNow(d);
+    expect(typeof basis).toBe('string');
+    await ownWrite('own-after-basis');
+    const mark = await sealOwn(d, basis);
+    expect(mark).toHaveProperty('token');
+    const token = (mark as { token: string }).token;
+    expect(token).not.toBe(basis!); // the token holds the own writes: the counters as they are at close
+    expect(await quietSince(deps(), token)).toEqual({ ok: true }); // the next session, with nothing of its own counted yet
+  }, 60_000);
+
+  test('an own write and a foreign write after the verified point: refused (writes_since_verified)', async () => {
+    const d = await counted();
+    const basis = await readBasisNow(d);
+    await ownWrite('own-with-foreign');
+    const sql = connection('psql-beside-own');
+    await sql`INSERT INTO config (key, value) VALUES ('foreign-beside-own', '1')`;
+    await finish(sql, 'psql-beside-own');
+    expect(await sealOwn(d, basis)).toEqual({ refused: 'writes_since_verified' });
+  }, 60_000);
+
+  test('a foreign write from a client that copies this process\'s connection name is not counted as own: refused (writes_since_verified)', async () => {
+    const d = await counted();
+    const basis = await readBasisNow(d);
+    await ownWrite('own-with-copycat');
+    const app = await appName();
+    expect(app.length).toBeGreaterThan(0);
+    const sql = connection(app);
+    const [{ pid }] = await sql<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+    await sql`INSERT INTO config (key, value) VALUES ('copycat-after-basis', '1')`;
+    await sql.end({ timeout: 5 });
+    sockets.splice(sockets.indexOf(sql), 1);
+    const alive = async (): Promise<boolean> => (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid = $1', [pid]))[0]!.n > 0;
+    for (let i = 0; i < 100 && await alive(); i++) await new Promise((r) => setTimeout(r, 100)); // gone, its counters flushed
+    expect(await alive()).toBe(false);
+    expect(await sealOwn(d, basis)).toEqual({ refused: 'writes_since_verified' });
+  }, 60_000);
+
+  test('a write by this process before its count started is not counted: refused (writes_since_verified)', async () => {
+    const basis = await readBasisNow(deps());
+    await engine.withReservedConnection(async (conn) => {
+      await conn.executeRaw(`INSERT INTO config (key, value) VALUES ('own-before-count', '1')`);
+      await conn.executeRaw('SELECT pg_stat_force_next_flush()'); // not counted, so nothing forced its flush: its counters are flushed when it goes idle
       await conn.executeRaw('SELECT 1');
     });
-    expect(await sealAt(basis)).toEqual({ refused: 'writes_since_verified' });
+    const d = await counted(); // the basis was read before the count: no own point for it, the strict rule
+    expect(await sealOwn(d, basis)).toEqual({ refused: 'writes_since_verified' });
+  }, 60_000);
+
+  test('the next session writes during its confirmation: counted from the carried token, confirmed, and its own close seals again', async () => {
+    const first = await counted();
+    const basis = await readBasisNow(first);
+    await ownWrite('first-session');
+    const token = ((await sealOwn(first, basis)) as { token: string }).token;
+    expect(typeof token).toBe('string');
+    const next = await counted();
+    const { calls, rpc } = fakeRpc(token, async () => { await ownWrite('next-session-confirm'); });
+    expect(await confirmSeal({ ...next, rpc })).toEqual({ doubt: null, basis: token });
+    expect(calls.map((c) => c.method)).toEqual(['state', 'confirmSeal', 'commitSeal']);
+    await ownWrite('next-session-later');
+    const closed = await sealOwn(next, token);
+    expect(closed).toHaveProperty('token');
+    expect(await quietSince(deps(), (closed as { token: string }).token)).toEqual({ ok: true });
+  }, 60_000);
+
+  /**
+   * A serving process writes at start-up (its config update) before it asks the child for the carried seal. The seal's
+   * token is read from disk before the process connects (attach.ts), so `countSealWrites(d, token)` counts those writes
+   * against it; without it they refuse the confirmation.
+   */
+  const carriedSeal = async (key: string): Promise<string> => {
+    const first = await counted();
+    const basis = await readBasisNow(first);
+    await ownWrite(key);
+    const mark = await sealOwn(first, basis);
+    expect(mark).toHaveProperty('token');
+    return (mark as { token: string }).token;
+  };
+  const countedFrom = async (carried: string): Promise<Awaited<ReturnType<typeof counted>>> => {
+    const own = await sealModule.countSealWrites(deps(), carried);
+    expect(own).not.toBeNull();
+    return { ...deps(), own: own! };
+  };
+
+  test('the next session writes at start-up, before it asks for the carried seal: counted from the token read at attach, confirmed', async () => {
+    const token = await carriedSeal('carried-first');
+    const next = await countedFrom(token);
+    await ownWrite('carried-start-up'); // before the 'state' call: the strict count from the confirmation on misses it
+    const { calls, rpc } = fakeRpc(token);
+    expect(await confirmSeal({ ...next, rpc })).toEqual({ doubt: null, basis: token });
+    expect(calls.map((c) => c.method)).toEqual(['state', 'confirmSeal', 'commitSeal']);
+  }, 60_000);
+
+  test('control: the same start-up write, counted only from the confirmation on, refuses (writes_since_seal)', async () => {
+    const token = await carriedSeal('uncarried-first');
+    const next = await counted();
+    await ownWrite('uncarried-start-up');
+    const { calls, rpc } = fakeRpc(token);
+    await confirmSeal({ ...next, rpc });
+    expect(calls.filter((c) => c.method === 'confirmSeal').map((c) => c.args)).toEqual([{ db_at: token, ok: false, reason: 'writes_since_seal' }]);
+  }, 60_000);
+
+  test('a foreign write beside the start-up write, counted from the carried token, still refuses (writes_since_seal)', async () => {
+    const token = await carriedSeal('carried-foreign-first');
+    const next = await countedFrom(token);
+    await ownWrite('carried-foreign-start-up');
+    const sql = connection('psql-at-start-up');
+    await sql`INSERT INTO config (key, value) VALUES ('foreign-at-start-up', '1')`;
+    await finish(sql, 'psql-at-start-up');
+    const { calls, rpc } = fakeRpc(token);
+    await confirmSeal({ ...next, rpc });
+    expect(calls.filter((c) => c.method === 'confirmSeal').map((c) => c.args)).toEqual([{ db_at: token, ok: false, reason: 'writes_since_seal' }]);
   }, 60_000);
 
   test('with no verified point the close does not seal (no_verified_mark)', async () => {
