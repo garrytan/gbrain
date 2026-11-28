@@ -1203,3 +1203,67 @@ describe('D3 round 3: a failed blocker lookup, a retired window, the anchor\'s o
     expect(snap.windowFiles).toBe(1); expect(snap.unstable).toBe(false); // was windowFiles 0, stable: measured
   });
 });
+
+describe('A cleanup pass that began in an older epoch cannot delete the newer epoch\'s lost-window blocker', () => {
+  // Protects: swap criterion 5 stays "missing" for a frozen 692d2614c9 reader (and write_window_lost stays visible) after a crash in a window books a loss in the NEWER epoch, even when a worker of the
+  // OLDER epoch is mid-pass when the manifest rotates. Fails if the stale-blocker cleanup (`removeStaleTomb`) deletes by the epoch it captured at the start of its pass instead of re-reading the manifest
+  // under the tally lock. No other test rotates the manifest between a pass's epoch check and its directory listing. No production seam: the listing is the real `readdirSync`, observed through a spy.
+  const SES = 'g1s';
+  const rotate = (dir: string): string => ensureEpoch(dir, { ...readEpoch(dir)!.inputs, rust_addon_sha256: 'e'.repeat(64) }, NOW.getTime() + 60_000).epoch_id;
+  const first = (dir: string, epoch: string): void => { const t = new WriteTally(dir, () => epoch, () => true, process.pid); t.note('comparable', undefined, 1000); }; // the epoch's first save: it runs no orphan pass
+  /** The files the frozen 692d2614c9 reader cannot read (it reads each one as an unsettled session, so its status is never measured and swap criterion 5 reads missing). */
+  const unreadableToOld = (dir: string): string[] => readdirSync(dir).filter((n) => /^write-owed\.[A-Za-z0-9_-]+\.json$/.test(n) && oldParseOwed(join(dir, n)) === 'unreadable');
+  /** Epoch E1 is current and a crashed session's open marker (3 owed, every pid dead) is on disk. */
+  function crashedInE1(): { dir: string; e1: string } {
+    const dir = tmp(); const { epoch: e1 } = tallyOn(dir); passing(dir, e1);
+    writeOwed(dir, { v: 2, session: SES, serving_pid: deadPid(), child_pid: deadPid(), owed: 3, closed: false, child_exited: false, open_until: 1 } as OwedRecord);
+    return { dir, e1 };
+  }
+  /** The manifest rotates to E2 and an E2 owner books the crashed session's window: the session file is gone and the E2 blocker is on disk. */
+  function e2Books(dir: string): string {
+    const e2 = rotate(dir); first(dir, e2);
+    expect(ownerPass(dir, e2)).toEqual({ receipt_orphaned: 2, write_window_lost: 1 });
+    expect(readOwed(dir, SES)).toBeNull();
+    return e2;
+  }
+
+  test('the E2 blocker survives an E1 pass that checked the manifest before the rotation and listed the directory after the E2 booking, and the frozen 692d2614c9 reader still reads criterion 5 as missing', () => {
+    const { dir, e1 } = crashedInE1();
+    const e1Worker = new WriteTally(dir, () => e1, () => true, process.pid); // the E1 owner worker: its epoch is fixed for its life
+    const realReaddir = fsm.readdirSync; let fired = false; let e2 = '';
+    const spy = spyOn(fsm, 'readdirSync').mockImplementation(((path: unknown, ...rest: unknown[]) => {
+      if (!fired && String(path) === dir && (new Error().stack ?? '').includes('obligations')) { // the E1 pass's own listing, after its manifest check passed
+        fired = true; expect(readEpoch(dir)!.epoch_id).toBe(e1); // the E1 pass did pass its manifest check
+        e2 = e2Books(dir);
+      }
+      return (realReaddir as (...a: unknown[]) => unknown)(path, ...rest);
+    }) as never);
+    try { e1Worker.save(); } finally { spy.mockRestore(); }
+    expect(fired).toBe(true); expect(readEpoch(dir)!.epoch_id).toBe(e2);
+    expect(blockerOf(dir, SES)).toMatchObject({ v: 2, booked_epoch: e2 }); // was null: the E1 pass deleted E2's blocker
+    expect(unreadableToOld(dir)).toEqual([`write-owed.window-lost-${SES}.json`]); // was []: nothing was left that the frozen reader cannot read, so it read E2 as measured and criterion 5 as pass
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', comparable: 1000, write_windows_lost: 1 });
+    expect(ownerPass(dir, e2)).toEqual({ receipt_orphaned: 2, write_window_lost: 1 }); // the window is still booked once
+    expect(unreadableToOld(dir)).toEqual([`write-owed.window-lost-${SES}.json`]);
+  });
+
+  test('control: the same E2 booking with no E1 pass in flight, and an E1 pass that starts after the rotation, leave the E2 blocker alone', () => {
+    const { dir, e1 } = crashedInE1();
+    const e2 = e2Books(dir);
+    const e1Worker = new WriteTally(dir, () => e1, () => true, process.pid); expect(e1Worker.save()).toBe(true); // starts after the rotation: its manifest check already names E2
+    expect(blockerOf(dir, SES)).toMatchObject({ v: 2, booked_epoch: e2 });
+    expect(unreadableToOld(dir)).toEqual([`write-owed.window-lost-${SES}.json`]);
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', write_windows_lost: 1 });
+  });
+
+  test('control: a pass of the current epoch still removes the blocker an older epoch left (the cleanup itself is not switched off)', () => {
+    const { dir, e1 } = crashedInE1();
+    expect(ownerPass(dir, e1)).toEqual({ receipt_orphaned: 2, write_window_lost: 1 });
+    expect(blockerOf(dir, SES)).toMatchObject({ v: 2, booked_epoch: e1 });
+    const e2 = rotate(dir); first(dir, e2);
+    ownerPass(dir, e2);
+    expect(blockerOf(dir, SES)).toBeNull(); // E1's loss does not follow the brain into E2
+    expect(unreadableToOld(dir)).toEqual([]);
+    expect(stat(dir)).toMatchObject({ state: 'measured' });
+  });
+});
