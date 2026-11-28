@@ -36,7 +36,7 @@ describe('GST-4037 CJK keyword follow-ups', () => {
     const q = '"東京大学" 研究 論文';
     expect(await slugs(q, { limit: 10 })).toEqual([]);
     expect(await slugs(q, { limit: 10, orFallback: true })).toEqual(['notes/phrase']);
-    const ctx: CjkKeywordCtx = { limit: 10, offset: 0, innerLimit: 50, sourceFactorCase: '1.0', hardExcludeClause: '', visibilityClause: '', detailFilter: '', opts: undefined, dedup: true };
+    const ctx: CjkKeywordCtx = { limit: 10, offset: 0, sourceFactorCase: '1.0', hardExcludeClause: '', visibilityClause: '', detailFilter: '', opts: undefined, dedup: true };
     const stage = buildCJKCandidateSql(q, ctx, { match: 'any', cap: 100 })!;
     const ids = (await engine.executeRaw<{ chunk_id: number }>(stage.sql, stage.params)).map(r => Number(r.chunk_id));
     const [phrase] = await engine.executeRaw<{ id: number }>("SELECT cc.id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = 'notes/phrase'");

@@ -78,8 +78,8 @@ import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { verifySchema } from './schema-verify.ts';
 import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, supportsHnswIterativeScan } from './vector-index.ts';
 import { searchIndexWalk, searchVectorPool, readVectorPool, remainingVectorBudget, type VectorPoolAttempt, POOL_MAX_SCAN_TUPLES } from './search/vector-pool.ts';
-import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_CHUNKS_SQL, SCOPE_CHUNKS_TOTAL_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, vectorStatementForms, type PageSourceStats, type ScopeChunkCount, type VectorSearchStatement } from './search/vector-statement.ts';
-import { VECTOR_SETTING_DEFAULTS, vectorScanSettings } from './search/vector-settings.ts';
+import { BRAIN_CHUNK_ESTIMATE_SQL, brainChunkEstimateLoader, buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_CHUNKS_SQL, SCOPE_CHUNKS_TOTAL_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, vectorStatementForms, type PageSourceStats, type ScopeChunkCount, type VectorSearchStatement } from './search/vector-statement.ts';
+import { VECTOR_SETTING_DEFAULTS, vectorAttemptFlags, vectorScanSettings } from './search/vector-settings.ts';
 import { guardSearchStatistics } from './search/projection-statistics.ts';
 import {
   vectorCastSuffix,
@@ -323,6 +323,7 @@ export class PostgresEngine implements BrainEngine {
   private keywordStatementTimeout?: Promise<string>;
   private keywordTimeouts = new KeywordTimeoutNegativeCache(Date.now, undefined, () => keywordRerunPoolIdle(enginePoolStats(this), this._disconnectPromise)); // #7082
   private readonly vectorScope = vectorScopeLoader(() => this.executeRaw<PageSourceStats>(PAGE_SOURCE_STATS_SQL), (ids, total) => this.executeRaw<ScopeChunkCount>(total ? SCOPE_CHUNKS_TOTAL_SQL : SCOPE_CHUNKS_SQL, [ids]));
+  private readonly brainChunkEstimate = brainChunkEstimateLoader(() => this.executeRaw<{ chunks: unknown }>(BRAIN_CHUNK_ESTIMATE_SQL));
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
   readonly kind = 'postgres' as const;
@@ -1511,7 +1512,7 @@ export class PostgresEngine implements BrainEngine {
     // shared term-by-term ILIKE fallback instead. ASCII path unchanged.
     if (hasCJK(query)) {
       return this._searchKeywordCJK(query, {
-        limit, offset, innerLimit, sourceFactorCase, hardExcludeClause,
+        limit, offset, sourceFactorCase, hardExcludeClause,
         visibilityClause: buildVisibilityClause('p', 's', { ...opts, chunkAlias: 'cc' }),
         detailFilter: detailLow ? `AND cc.chunk_source = 'compiled_truth'` : '',
         opts, dedup: true,
@@ -1725,7 +1726,6 @@ export class PostgresEngine implements BrainEngine {
     if (hasCJK(query)) {
       return this._searchKeywordCJK(query, {
         limit, offset,
-        innerLimit: 0,             // unused on chunk-grain (no inner CTE)
         sourceFactorCase, hardExcludeClause,
         visibilityClause: buildVisibilityClause('p', 's', { ...opts, chunkAlias: 'cc' }),
         detailFilter: detailLow ? `AND cc.chunk_source = 'compiled_truth'` : '',
@@ -1867,8 +1867,8 @@ export class PostgresEngine implements BrainEngine {
     // so the HNSW index stays usable; the outer stages re-rank by source
     // factor. Statement shape, freshness placement (#5824) and pool counts
     // live in search/vector-statement.ts, shared with PGLite and doctor.
-    const scope = await this.vectorScope(opts);
-    const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest }));
+    const [scope, brainChunks] = await Promise.all([this.vectorScope(opts), opts?.afterDate || opts?.beforeDate ? this.brainChunkEstimate() : undefined]);
+    const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, brainChunks }));
     const stmt = statementFor(true);
     const iterative = await this.vectorIterativeScanSupported();
     const walked = await searchIndexWalk(stmt, limit, async walk => readVectorPool(await this.runVectorAttempt(statementFor, walk, iterative, opts, (tx, sql, bound) => tx.unsafe(sql, bound))));
@@ -1900,8 +1900,8 @@ export class PostgresEngine implements BrainEngine {
    */
   async explainVectorSearch(embedding: Float32Array, opts?: SearchOpts): Promise<Record<string, unknown>> {
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
-    const scope = await this.vectorScope(opts);
-    const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest }));
+    const [scope, brainChunks] = await Promise.all([this.vectorScope(opts), opts?.afterDate || opts?.beforeDate ? this.brainChunkEstimate() : undefined]);
+    const statementFor = vectorStatementForms(chunkManifest => buildVectorSearchStatement({ dialect: 'postgres', embedding, limit, offset: opts?.offset || 0, opts, scope, chunkManifest, brainChunks }));
     const stmt = statementFor(true);
     const iterative = await this.vectorIterativeScanSupported();
     const attempt = { innerLimit: stmt.innerLimit, maxScanTuples: stmt.indexWalkSql || stmt.scopeScanSql ? Math.max(2_000, stmt.innerLimit * stmt.indexWalkOverfetch) : POOL_MAX_SCAN_TUPLES, remainingMs: 8_000, exact: false, indexWalk: !!stmt.indexWalkSql, scopeScan: !stmt.indexWalkSql && !!stmt.scopeScanSql };
@@ -1940,14 +1940,13 @@ export class PostgresEngine implements BrainEngine {
   ): Promise<Record<string, unknown>[]> {
     const deadline = performance.now() + remainingMs;
     const shape = statementFor(true);
-    const walk = indexWalk && !!shape.indexWalkSql;
-    const joined = !!shape.indexWalkSql && !walk && !(scopeScan && shape.scopeScanSql) && !exact;
+    const { walk, joined, materialOff } = vectorAttemptFlags(shape, { exact, indexWalk, scopeScan });
     return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async tx => {
       const stmt = statementFor(await chunkManifestReads(this, this.engineSqlOn(tx)));
       const bound = [...stmt.params];
       bound[stmt.innerLimitIdx] = exact ? null : innerLimit;
       return run(tx, (scopeScan && stmt.scopeScanSql) || (walk && stmt.indexWalkSql) || (exact ? stmt.exactSql : stmt.sql), bound as Parameters<typeof tx.unsafe>[1]);
-    }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? shape.indexWalkOverfetch : undefined, joined, joined) });
+    }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? shape.indexWalkOverfetch : undefined, materialOff, joined) });
   }
 
   async getEmbeddingsByChunkIds(ids: number[], column: string = 'embedding'): Promise<Map<number, Float32Array>> {

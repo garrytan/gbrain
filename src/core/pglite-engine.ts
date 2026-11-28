@@ -1816,7 +1816,7 @@ export class PGLiteEngine implements BrainEngine {
     // CJK characters. ASCII path stays exactly the same below.
     if (hasCJK(query)) {
       return this._searchKeywordCJK(query, {
-        limit, offset, innerLimit, sourceFactorCase,
+        limit, offset, sourceFactorCase,
         hardExcludeClause, visibilityClause, detailFilter, opts,
         dedup: true,
       }).finally(settle);
@@ -1969,7 +1969,6 @@ export class PGLiteEngine implements BrainEngine {
     ctx: {
       limit: number;
       offset: number;
-      innerLimit: number;
       sourceFactorCase: string;
       hardExcludeClause: string;
       visibilityClause: string;
@@ -2014,7 +2013,6 @@ export class PGLiteEngine implements BrainEngine {
     if (hasCJK(query)) {
       return this._searchKeywordCJK(query, {
         limit, offset,
-        innerLimit: 0,             // unused on chunk-grain (no inner CTE)
         sourceFactorCase,
         hardExcludeClause, visibilityClause, detailFilter, opts,
         dedup: false,

@@ -29,8 +29,6 @@ import { escapeLikePattern, cjkMatchAlternatives, cjkMatchTerms } from '../cjk.t
 export interface CjkKeywordCtx {
   limit: number;
   offset: number;
-  /** Dedup headroom for the inner CTE; unused when dedup=false. */
-  innerLimit: number;
   sourceFactorCase: string;
   hardExcludeClause: string;
   visibilityClause: string;
@@ -61,7 +59,7 @@ export interface CjkKeywordVariant {
 const MATCHED_TERM_WEIGHT = 1000;
 
 export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: CjkKeywordVariant = {}): CjkKeywordSql | null {
-  const { limit, offset, innerLimit, sourceFactorCase, hardExcludeClause, visibilityClause, detailFilter, opts, dedup } = ctx;
+  const { limit, offset, sourceFactorCase, hardExcludeClause, visibilityClause, detailFilter, opts, dedup } = ctx;
   const qRaw = query;
   if (qRaw.length === 0) return null;
   const terms = cjkMatchTerms(qRaw);
@@ -88,24 +86,10 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
   params.push(qRaw);
   const qRawIndex = params.length;
 
-  // Pagination limits & offset
-  let innerLimitIndex = 0;
-  let limitIndex = 0;
-  let offsetIndex = 0;
-
-  if (dedup) {
-    params.push(innerLimit);
-    innerLimitIndex = params.length;
-    params.push(limit);
-    limitIndex = params.length;
-    params.push(offset);
-    offsetIndex = params.length;
-  } else {
-    params.push(limit);
-    limitIndex = params.length;
-    params.push(offset);
-    offsetIndex = params.length;
-  }
+  params.push(limit);
+  const limitIndex = params.length;
+  params.push(offset);
+  const offsetIndex = params.length;
 
   const extraFilter = shapeFilters(opts, params);
   let fromClause = 'content_chunks cc';
@@ -127,7 +111,6 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
     : '';
 
   const positionExpr = `COALESCE(1.0 / NULLIF(POSITION($${qRawIndex} IN cc.chunk_text), 0)::real, 0.0)`;
-  const orderExpr = any ? `(${matchedExpr}) DESC, score DESC` : 'score DESC';
 
   // Term-frequency count: count occurrences of each term in chunk_text via
   // (length(chunk) - length(replace(chunk, term, ''))) / length(term),
@@ -140,11 +123,13 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
         + ${positionExpr})
       * ${sourceFactorCase})
     `;
-  // #10417: with OR alternatives the term-frequency part is held below one matched-term step, so a chunk satisfying an
-  // alternative outranks every partial chunk however often (or in however boosted a source) the partial repeats a term.
-  const tfPart = groups.length > 1 ? `LEAST(${tfScoreExpr}, ${MATCHED_TERM_WEIGHT - 1})` : tfScoreExpr;
-  const scoreExpr = any ? `(${MATCHED_TERM_WEIGHT} * (${matchedExpr}) + ${tfPart})` : tfScoreExpr;
-  return assemble({ dedup, fromClause, scoreExpr, orderExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, innerLimitIndex, limitIndex, offsetIndex, params });
+  // #10417: the term-frequency part is held below one matched-term step, so a chunk satisfying an alternative outranks
+  // every partial chunk however often (or in however boosted a source) the partial repeats a term, and `score DESC`
+  // orders by matched terms first. GST-4037: a multi-term strict pass scores the same way as its any-term retry, so the
+  // strict rows are exactly the retry's leading rows in the same order and an OFFSET page means the same rows whichever
+  // pass served it (hybrid search runs the retry only when the strict page comes back short).
+  const scoreExpr = terms.length > 1 ? `(${MATCHED_TERM_WEIGHT} * (${matchedExpr}) + LEAST(${tfScoreExpr}, ${MATCHED_TERM_WEIGHT - 1}))` : tfScoreExpr;
+  return assemble({ dedup, fromClause, scoreExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, limitIndex, offsetIndex, params });
 }
 
 /**
@@ -261,59 +246,60 @@ function shapeFilters(opts: SearchOpts | undefined, params: unknown[]): string {
   return extraFilter;
 }
 
-function assemble(a: {
-  dedup: boolean; fromClause: string; scoreExpr: string; orderExpr: string; whereLikeClause: string; detailFilter: string; extraFilter: string;
-  hardExcludeClause: string; visibilityClause: string; innerLimitIndex: number; limitIndex: number; offsetIndex: number; params: unknown[];
-}): CjkKeywordSql {
-  const { dedup, fromClause, scoreExpr, orderExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, innerLimitIndex, limitIndex, offsetIndex, params } = a;
-  if (dedup) {
-    return {
-      sql: `WITH ranked AS (
-           SELECT
-             p.slug, p.id as page_id, p.title, p.type, p.source_id,
-             p.effective_date, p.effective_date_source,
-             CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-               THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
-             CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-               THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
-             cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-             ${scoreExpr} AS score,
-             CASE WHEN p.updated_at < (
-               SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-             ) THEN true ELSE false END AS stale
-           FROM ${fromClause}
-           JOIN pages p ON p.id = cc.page_id
-           JOIN sources s ON s.id = p.source_id
-           WHERE ${whereLikeClause} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
-             AND cc.modality = 'text'
-           ORDER BY ${orderExpr}, page_id ASC, chunk_id ASC
-           LIMIT $${innerLimitIndex}
-         ),
-         ${buildBestPerPagePoolCte('ranked')}
-         SELECT * FROM best_per_page
-         ORDER BY score DESC, page_id ASC, chunk_id ASC
-         LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
-      params,
-    };
-  }
-  return {
-    sql: `SELECT
-           p.slug, p.id as page_id, p.title, p.type, p.source_id,
+const DISPLAY_COLUMNS = `p.slug, p.id as page_id, p.title, p.type, p.source_id,
            p.effective_date, p.effective_date_source,
            CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
              THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
            CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
              THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
-           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-           ${scoreExpr} AS score,
-           CASE WHEN p.updated_at < (
+           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source`;
+const STALE_COLUMN = `CASE WHEN p.updated_at < (
              SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-           ) THEN true ELSE false END AS stale
+           ) THEN true ELSE false END AS stale`;
+
+/**
+ * Page grain (GST-4037): every matching chunk is scored with ids only, the best chunk per page is kept, and LIMIT/OFFSET
+ * cut that page list, so the window is a slice of one fixed page order: a long page with many matching chunks can no
+ * longer fill a chunk pool and push other pages past a later OFFSET. Display columns and `stale` are read for the
+ * window's rows alone.
+ */
+function assemble(a: {
+  dedup: boolean; fromClause: string; scoreExpr: string; whereLikeClause: string; detailFilter: string; extraFilter: string;
+  hardExcludeClause: string; visibilityClause: string; limitIndex: number; offsetIndex: number; params: unknown[];
+}): CjkKeywordSql {
+  const { dedup, fromClause, scoreExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, limitIndex, offsetIndex, params } = a;
+  if (dedup) {
+    return {
+      // chunk-visibility-ok: the display join reads only the window's chunk ids, which `ranked` took through ctx.visibilityClause (buildVisibilityClause with chunkAlias 'cc')
+      sql: `WITH ranked AS (
+           SELECT p.slug, p.source_id, p.id AS page_id, cc.id AS chunk_id, ${scoreExpr} AS score
+           FROM ${fromClause}
+           JOIN pages p ON p.id = cc.page_id
+           JOIN sources s ON s.id = p.source_id
+           WHERE ${whereLikeClause} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+             AND cc.modality = 'text'
+         ),
+         ${buildBestPerPagePoolCte('ranked')},
+         page_window AS (
+           SELECT page_id, chunk_id, score FROM best_per_page
+           ORDER BY score DESC, page_id ASC, chunk_id ASC
+           LIMIT $${limitIndex} OFFSET $${offsetIndex}
+         )
+         SELECT ${DISPLAY_COLUMNS}, w.score, ${STALE_COLUMN}
+         FROM page_window w
+         JOIN content_chunks cc ON cc.id = w.chunk_id
+         JOIN pages p ON p.id = w.page_id
+         ORDER BY w.score DESC, w.page_id ASC, w.chunk_id ASC`,
+      params,
+    };
+  }
+  return {
+    sql: `SELECT ${DISPLAY_COLUMNS}, ${scoreExpr} AS score, ${STALE_COLUMN}
          FROM ${fromClause}
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
          WHERE ${whereLikeClause} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
-         ORDER BY ${orderExpr}, page_id ASC, chunk_id ASC
+         ORDER BY score DESC, page_id ASC, chunk_id ASC
          LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
     params,
   };

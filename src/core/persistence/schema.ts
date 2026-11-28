@@ -60,9 +60,26 @@ export const PERSISTENCE_REQUEST_REPLAY_ID_INDEX = { name: 'persistence_requests
 export const PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_slug_sequence
   ON persistence_requests(source_id,slug,sequence)`;
 export const PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX = { name: 'persistence_requests_slug_sequence', table: 'persistence_requests', sql: PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL } as const;
+/**
+ * #10605: the segmented-storage gate's evidence read (engine-sql/writer-versions.ts SEGMENTED_GATE_EVIDENCE_SQL, doctor and
+ * the maintenance tick) bounds its admitter arm on `created_at` and its consumer arm on `COALESCE(published_at, completed_at)`
+ * of committed receipts. No index led on either, so every read scanned the whole request table, TOAST included (about
+ * 270 MB per call at 200k receipts), and pushed search data out of a small database's cache. These two keep each arm to
+ * the receipts inside its window. The consumer index names `published_at`, which v178 adds, so it stays out of
+ * PERSISTENCE_SCHEMA_STATEMENTS (v151 replays that list before v178 runs); a fresh install replays every migration, so
+ * v344 builds both there too. Postgres builds them CONCURRENTLY in v344 (`transaction: false`); PGLite inline.
+ * `gbrain repair request-indexes` rebuilds either.
+ */
+export const PERSISTENCE_REQUEST_CREATED_INDEX = { name: 'persistence_requests_created', table: 'persistence_requests',
+  sql: `CREATE INDEX IF NOT EXISTS persistence_requests_created
+  ON persistence_requests(created_at)` } as const;
+export const PERSISTENCE_COMMITTED_SEEN_INDEX = { name: 'persistence_requests_committed_seen', table: 'persistence_requests',
+  sql: `CREATE INDEX IF NOT EXISTS persistence_requests_committed_seen
+  ON persistence_requests((COALESCE(published_at,completed_at))) WHERE state='committed'` } as const;
 /** Every request-table index built online (a migration, then `gbrain repair request-indexes` and doctor `persistence_request_indexes`). */
 export const PERSISTENCE_REQUEST_ONLINE_INDEXES = [...PERSISTENCE_SYNC_RUN_INDEXES, PERSISTENCE_REQUEST_SLUG_INTENT_INDEX, PERSISTENCE_REQUEST_ID_INDEX,
-  PERSISTENCE_FOREGROUND_COMMITTED_INDEX, PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX] as const;
+  PERSISTENCE_FOREGROUND_COMMITTED_INDEX, PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX,
+  PERSISTENCE_REQUEST_CREATED_INDEX, PERSISTENCE_COMMITTED_SEEN_INDEX] as const;
 /**
  * #6317: the movement watermark (the newest committed receipt of a worktree)
  * that `writer movement`, `data_moving` and doctor `managed_sync_not_moving`

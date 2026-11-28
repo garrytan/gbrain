@@ -79,6 +79,7 @@ test/capacity-bounded-read-6803.test.ts
 test/capture-consent-admission.test.ts
 test/capture-dispatch-provenance-6524.test.ts
 test/chronicle-backfill-max-usd.test.ts
+test/cjk-or-offset-paging-4037.test.ts
 test/claim-fifo-foreground-waiting.test.ts
 test/claim-lease-holder-only-6712.test.ts
 test/claude-cli-output-cap.test.ts
@@ -510,6 +511,7 @@ test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
+test/migration-persistence-request-window-indexes.test.ts
 test/mirror-keep-deleted.test.ts
 test/mirror-readonly-write-through-7098.test.ts
 test/moved-pages-gst2584.test.ts

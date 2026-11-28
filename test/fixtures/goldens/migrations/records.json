@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 338,
+    "count": 339,
     "gaps": [
       17,
       18,
@@ -40,12 +40,14 @@
       "PAGES_SOURCE_CREATED_INDEX": "33411b4d6fc2287ee8fa37b1ebf2cc36a076101dbd3f3f6ac492aed06288513a",
       "PAGES_TITLE_SEARCH_INDEX": "27e8e1a6c9a2069ee6c6af6fa99b9a7e9e9c118c7a933ffa80ba1864bf68baa3",
       "PAGE_TIMELINE_FTS_MAX_CHARS": "f7d29264f4144976bbe2e1ded0251095b638175f8e1d711c36f1e80d2263e172",
+      "PERSISTENCE_COMMITTED_SEEN_INDEX": "862acc1c7b18e7573e025d0a9f45809facb1e793b717f6b7b7f7f4df48863a8c",
       "PERSISTENCE_COMMITTED_WATERMARK_INDEX": "f472fa0acb542c1caebaaa3bc69fb2da1647e5e201239429fc02ccef0d669533",
       "PERSISTENCE_COMPACTABLE_INDEX": "25ee657878efb41ba9ea3a7624464ddcf66407d861659456c230366e57f230a0",
       "PERSISTENCE_DATABASE_PENDING_INDEX_SQL": "6e0f618be33d037454933ea4dea11438413d45aef35d3bd4f33e89624d6e199e",
       "PERSISTENCE_EFFECT_PARKED_INDEX_SQL": "0107863883415378d7c0dce7a0cbd5311c2c5a59fc0f81917cc8b767fd235cf2",
       "PERSISTENCE_FOREGROUND_COMMITTED_INDEX": "cb6bb9f8e9bcfd2524a04d05e5da865e92c69442bbcd438d8191d311f76d0663",
       "PERSISTENCE_OPEN_INDEX": "7760f2e16960b587e041b19e2eb0b2688831f4a7ca509968a1acc0ca710fcc9c",
+      "PERSISTENCE_REQUEST_CREATED_INDEX": "248a56f257819c710d999f84eb9d0a53d1886de3f326ce43e1238303023b118e",
       "PERSISTENCE_REQUEST_ID_INDEX": "2c5325e86cf395f617d93a39a45593931639cd8b14fd513b6d9e7d125f16c78f",
       "PERSISTENCE_REQUEST_REPLAY_ID_INDEX": "b9ee7e914c0a8370a9aee053c68d78cdd83a20ffe30c5513d81acf04a3a91761",
       "PERSISTENCE_REQUEST_SLUG_INTENT_INDEX": "5f2e4a3dde452e610fe7eaae949642c00d7c61a363b1cd344d7f0917db233aa5",
@@ -112,7 +114,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 343,
+    "latest": 344,
     "records": [
       {
         "handler": {
@@ -5587,6 +5589,36 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 343
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "PERSISTENCE_COMMITTED_SEEN_INDEX",
+            "PERSISTENCE_REQUEST_CREATED_INDEX",
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "tableRows"
+          ],
+          "sha256": "68968ce68037a45408f03bd78a1c4c799a5facb9e7d43ea707184b1bb28bfc7e"
+        },
+        "idempotent": true,
+        "name": "persistence_request_window_indexes",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 344
       }
     ],
     "versions": [
@@ -5927,7 +5959,8 @@
       340,
       341,
       342,
-      343
+      343,
+      344
     ]
   },
   "normalizer": "migrations-record-v1"
