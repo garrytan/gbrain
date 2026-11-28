@@ -19,6 +19,7 @@ import { closeAllOwedAtExit, OWED_WINDOW_MS, OWED_WINDOW_SAMPLES, ShadowSupervis
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { carriesKnownLoss, owedPath, readOwed, readWriteTally, WINDOW_LOST_REASON, writeOwed, writeTallyPath, WriteTally, type OwedRecord } from '../src/shadow/write-compare.ts';
 import { tallyOn } from './helpers/shadow-write-compare-scenarios.ts';
+import * as writeCompare from '../src/shadow/write-compare.ts';
 
 const NOW = new Date('2026-12-01T00:00:00Z');
 const dirs: string[] = [];
@@ -798,5 +799,38 @@ describe('OWC with the page-and-link split: the owed record states its page and 
   test('an owed_qualifying above owed is an unreadable record', () => {
     const dir = tmp(); marker(dir, 'qe', { owed: 2, owed_qualifying: 3 });
     expect(readOwed(dir, 'qe')).toBe('unreadable');
+  });
+});
+
+// ---- D3: the older-reader blocker (the booked window's record) is its own file, which only the owner pass writes and removes ----
+describe('D3: the blocker that keeps an older reader blocked is not the supervisor\'s owed file', () => {
+  /** What the frozen 692d2614c9 reader cannot read in the directory (it reads each such file as an unsettled session): the epoch each one names. */
+  const unreadableToOld = (dir: string): Array<string | undefined> => readdirSync(dir).filter((n) => /^write-owed\.[A-Za-z0-9_-]+\.json$/.test(n) && oldParseOwed(join(dir, n)) === 'unreadable').map((n) => (JSON.parse(readFileSync(join(dir, n), 'utf8')) as { booked_epoch?: string }).booked_epoch);
+
+  test('residual 1, the pid check in putOwed: the worker dies after the supervisor saw it running, another process books the window, THEN the supervisor\'s lock-free write lands: an older reader is still blocked, and the rest is booked once', () => {
+    const real = writeCompare.running; let booked = false; let fooled = true; let ctx: ReturnType<typeof rig> | undefined;
+    const r = ctx = rig({ writeOwed: (d: string, rec: OwedRecord) => { if (rec.v === 1 && !booked) { booked = true; fooled = false; ownerPass(d, ctx!.epoch); } writeOwed(d, rec); } }); // the first full record is the lock-free write; the other process books in the gap before it lands
+    const spy = spyOn(writeCompare, 'running').mockImplementation(((pid: number) => (fooled && pid === r.dead) || real(pid)) as never); // the supervisor's check answers "running" for the worker that has died by the time the write lands; from the gap on (`fooled` off) the owner pass reads the real answer
+    try {
+      for (let i = 0; i < 3; i++) expect(r.sup.send(sample(i))).toBe(true);
+      expect(r.internals.flushStaged()).toBe(true);
+      expect(booked).toBe(true); expect(readWriteTally(r.dir, r.epoch)!.uncomparable_by_reason).toEqual({ write_window_lost: 1 }); // the window was booked by the other process
+      expect(unreadableToOld(r.dir)).toEqual([r.epoch]); // was []: the lock-free write replaced the booked file, so an older reader read the epoch as settled
+      expect(ownerPass(r.dir, r.epoch)).toEqual({ receipt_orphaned: 2, write_window_lost: 1 }); // the rest, once
+      expect(unreadableToOld(r.dir)).toEqual([r.epoch]);
+    } finally { spy.mockRestore(); r.done(); }
+  });
+
+  test('residual 2, the epoch mark after a death: the child books its window and settles it, then dies before it can mark anything; the file an older reader cannot read names the epoch that booked it, and the next epoch does not inherit that window', () => {
+    const dir = tmp(); const { epoch: e1 } = tallyOn(dir); passing(dir, e1);
+    writeOwed(dir, { v: 2, session: 'w1', serving_pid: deadPid(), child_pid: deadPid(), owed: 3, closed: false, child_exited: false, open_until: 1 });
+    const child = new WriteTally(dir, () => e1, () => true, process.pid, 'w1');
+    child.missing(3, 0, 1); child.save(); // the child's end-of-input booking and final save; it dies here, before finish()
+    expect(readWriteTally(dir, e1)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
+    expect(unreadableToOld(dir)).toEqual([e1]); // was [undefined]: a settled marker with no epoch on it
+    const e2 = ensureEpoch(dir, { ...readEpoch(dir)!.inputs, rust_addon_sha256: 'b'.repeat(64) }, NOW.getTime() + 60_000).epoch_id; expect(e2).not.toBe(e1);
+    const next = new WriteTally(dir, () => e2, () => true, process.pid); next.note('comparable', undefined, 1000); next.save(); // the next epoch's owner pass
+    expect(stat(dir)).toMatchObject({ state: 'measured' }); expect(stat(dir).write_windows_lost).toBeUndefined(); // was capability_missing with 1 window lost: the pass stamped the window it never booked
+    expect(unreadableToOld(dir)).toEqual([]); // the old epoch's blocker goes with its epoch
   });
 });
