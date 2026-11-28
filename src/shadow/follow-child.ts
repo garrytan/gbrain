@@ -30,7 +30,7 @@ import { appendFileSync, closeSync, openSync, readSync, statSync, writeFileSync 
 import { join } from 'node:path';
 import type { RustStore } from '../core/rust-engine/store.ts';
 import { countFingerprintMismatches, PROBE_CORPUS, probeRecord, type FingerprintPair, type ProbeMeta } from './fingerprints.ts';
-import { lagBucket, NOT_RUN_PROBE, readFollowerFile, writeFollowerFile, type FollowerFile, type FollowerSeal, type Watermark } from './follow-status.ts';
+import { lagBucket, NOT_RUN_PROBE, PGLITE_NO_DB_CONTINUITY, readFollowerFile, writeFollowerFile, type FollowerFile, type FollowerSeal, type SealOutcome, type Watermark } from './follow-status.ts';
 import { readSeedRecord } from './seed.ts';
 import { readShadowState } from './state.ts';
 
@@ -64,7 +64,7 @@ export type FollowEvent = ApplyEvent
   | { t: 'watermark'; valid: false; reason: string; relation?: string }
   | { t: 'depth'; queued: number }
   | { t: 'rpc'; id: number; method: string; args: Record<string, unknown> }
-  | { t: 'seal'; db_at: string | null };
+  | { t: 'seal'; db_at: string | null; refused?: string };
 
 export interface FollowChildOptions {
   dir: string;
@@ -128,7 +128,11 @@ export class FollowChild {
     };
     delete this.file.seal; // only the owner start below may use it, and never twice
     if (!o.owner()) { delete this.file.continuity; return; }
-    if (keep && seal && this.takeSeal(keep, seal)) { this.syncEpoch(); return; }
+    // Why no seal is taken over, named in status: a close that would not seal left its own reason.
+    const prior = keep?.seal_outcome;
+    const refusal = !keep ? 'follower_state_reset' : !seal ? (prior?.outcome === 'not_sealed' && prior.reason ? prior.reason : 'no_seal') : this.takeSeal(keep, seal);
+    if (refusal === null) { this.syncEpoch(); return; }
+    this.outcome('refused', refusal);
     this.syncEpoch();
     // A new owner session proves nothing about the writes before it: only a full pass that starts after this settles it.
     this.invalidate(keep ? 'follower_session_start' : 'not_reconciled');
@@ -143,16 +147,23 @@ export class FollowChild {
    * invalidation line. The seal is removed from disk first, so it is used at most once. The session still holds a full
    * obligation of its own until `confirmSeal` (the primary saw no other writer since the seal) or a full pass settles it.
    */
-  private takeSeal(keep: FollowerFile, seal: FollowerSeal): boolean {
+  private takeSeal(keep: FollowerFile, seal: FollowerSeal): string | null {
     const file = this.file!;
-    if (seal.version !== 1 || seal.at !== keep.updated_at || typeof seal.continuity !== 'string' || !seal.continuity) return false;
-    if ((seal.evidence_epoch ?? null) !== (this.o.epochId ? this.o.epochId() : null)) return false;
+    if (seal.version !== 1) return 'seal_unreadable';
+    if (seal.at !== keep.updated_at) return 'seal_rewritten';
+    if (typeof seal.continuity !== 'string' || !seal.continuity) return 'seal_no_continuity';
+    // A seal with no database mark is what a PGLite close wrote: nothing proves the database was untouched since.
+    if (typeof seal.db_at !== 'string' || !seal.db_at) return PGLITE_NO_DB_CONTINUITY;
+    if ((seal.evidence_epoch ?? null) !== (this.o.epochId ? this.o.epochId() : null)) return 'evidence_epoch_changed';
     const state = readShadowState(this.o.dir);
-    if (state?.enabled !== true || state.started_at !== seal.state_started_at) return false;
+    if (state?.enabled !== true) return 'shadow_disabled';
+    if (state.started_at !== seal.state_started_at) return 'shadow_restarted';
     const size = foreignSize(this.o.dir);
-    if (size === null || size !== seal.foreign_size) return false;
+    if (size === null) return 'invalidations_unreadable';
+    if (size !== seal.foreign_size) return 'invalidation_after_seal';
     file.updated_at = new Date(this.now()).toISOString();
-    try { writeFollowerFile(this.o.dir, file); } catch { return false; }
+    this.outcome('taken', null);
+    try { writeFollowerFile(this.o.dir, file); } catch { return 'seal_consume_failed'; }
     this.foreignOffset = size;
     this.continuity = seal.continuity;
     this.fullAt = typeof seal.full_at === 'number' ? seal.full_at : null;
@@ -162,7 +173,12 @@ export class FollowChild {
     this.changes++;
     // Shown invalid until confirmed; a seal that was already invalid keeps its own first reason.
     file.watermark = seal.watermark?.valid === true ? { valid: false, through: null, invalidated_reason: 'follower_session_start' } : { ...file.watermark, valid: false, through: null };
-    return true;
+    return null;
+  }
+
+  /** Records the last seal decision for status (written with the file's next write). */
+  private outcome(outcome: SealOutcome['outcome'], reason: string | null): void {
+    if (this.file) this.file.seal_outcome = { outcome, reason, at: new Date(this.now()).toISOString() };
   }
 
   /**
@@ -240,7 +256,7 @@ export class FollowChild {
 
   private async run(event: FollowEvent): Promise<void> {
     this.syncEpoch();
-    if (event.t === 'seal') { this.sealNow(event.db_at ?? null); return; }
+    if (event.t === 'seal') { this.sealNow(event.db_at ?? null, event.refused); return; }
     this.seal = null; // anything after a seal (an apply, an invalidation, a reconcile call) voids it
     if (event.t === 'apply') await this.apply(event);
     else if (event.t === 'watermark') this.invalidate(event.reason, event.relation);
@@ -253,18 +269,22 @@ export class FollowChild {
    * owner session. Nothing is sealed while an invalidation line is unread (or the file cannot be read): that line names
    * a write this session holds no obligation for yet. A session start not yet confirmed is sealed as a full obligation.
    */
-  private sealNow(dbAt: string | null): void {
+  private sealNow(dbAt: string | null, refused?: string): void {
     const file = this.file;
     if (!file || !this.o.owner() || this.continuity === null) return;
+    const notSealed = (reason: string): void => { this.seal = null; this.outcome('not_sealed', reason); this.write(true); };
+    if (refused) { notSealed(typeof refused === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(refused) ? refused : 'refused'); return; }
     this.readForeign();
     const size = foreignSize(this.o.dir);
-    if (size === null || size !== this.foreignOffset) return;
+    if (size === null) { notSealed('invalidations_unreadable'); return; }
+    if (size !== this.foreignOffset) { notSealed('invalidation_unread'); return; }
     const fullAt = this.provisionalAt === null ? this.fullAt : Math.max(this.fullAt ?? 0, this.provisionalAt);
     this.seal = {
       version: 1, at: '', continuity: this.continuity, foreign_size: size, full_at: fullAt, dirty: Object.fromEntries(this.dirty),
       watermark: { ...file.watermark }, state_started_at: readShadowState(this.o.dir)?.started_at ?? null,
       evidence_epoch: this.o.epochId ? this.o.epochId() : null, db_at: dbAt,
     };
+    this.outcome('sealed', null);
     this.write(true);
   }
 
@@ -395,7 +415,7 @@ export class FollowChild {
     switch (method) {
       // `continuity` only once this session is known to continue the one before it (no seal waiting for its confirmation).
       case 'state': this.readForeign(); return { ...file.watermark, continuity: this.pendingSeal ? null : this.continuity, pending_seal: this.pendingSeal ? { db_at: this.pendingSeal.db_at } : null };
-      case 'confirmSeal': return this.confirmSeal((a.db_at ?? null) as string | null, a.ok === true);
+      case 'confirmSeal': return this.confirmSeal((a.db_at ?? null) as string | null, a.ok === true, typeof a.reason === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(a.reason) ? a.reason : 'refused');
       case 'barrier': return { stamp: this.barrier() };
       case 'seedPlan': return store.seedPlan();
       case 'relationDigest': return store.relationDigest(id, a.relation as string, lo, hi);
@@ -433,7 +453,7 @@ export class FollowChild {
    * session's own full obligation goes, and the sealed watermark is back when nothing else is owed. Refused, the seal is
    * dropped, the session draws a new continuity (a half-done pass cannot resume across it) and its obligation stays.
    */
-  private confirmSeal(dbAt: string | null, ok: boolean): Watermark & { confirmed: boolean } {
+  private confirmSeal(dbAt: string | null, ok: boolean, reason: string): Watermark & { confirmed: boolean } {
     const file = this.file!;
     this.readForeign();
     const pending = this.pendingSeal;
@@ -443,8 +463,10 @@ export class FollowChild {
     if (!ok) {
       this.continuity = randomUUID();
       file.continuity = this.continuity;
+      this.outcome('refused', reason);
       return { ...file.watermark, confirmed: false };
     }
+    this.outcome('confirmed', null);
     this.provisionalAt = null;
     if (this.fullAt === null && this.dirty.size === 0 && !file.watermark.valid && pending.watermark.valid) file.watermark = { ...pending.watermark };
     return { ...file.watermark, confirmed: true };

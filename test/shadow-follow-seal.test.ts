@@ -228,7 +228,7 @@ describe('every doubt about a seal leaves the watermark invalid', () => {
     expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, confirmed: true });
     const { dir: dir2 } = await sealed({ beforeSeal: (_s, d) => { rmSync(join(d, 'follower-invalidations.jsonl'), { force: true }); mkdirSync(join(d, 'follower-invalidations.jsonl')); } });
     expect(readFollowerFile(dir2)!.seal).toBeUndefined();
-    expect(sealShown(dir2)).toMatchObject({ outcome: 'not_sealed', reason: 'invalidations_unreadable' });
+    expect(sealShown(dir2)).toMatchObject({ outcome: 'not_sealed', reason: 'invalidation_unread' });
   });
 
   test('unknown writer: the serving process refuses the mark; the obligation stays and the continuity changes', async () => {

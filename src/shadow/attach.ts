@@ -156,11 +156,19 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
       // Seal: tell the child its store holds every write this process committed, so the next session can carry the
       // watermark on (follow-child.ts, seal.ts). Only when the follower finished, holds nothing, and no other writer may
       // be writing unrecorded; the child refuses too when its own checks fail.
+      // A close that does not seal tells the child why, so status names the reason.
       try {
-        if (settled && follower?.idle() && sealDeps && supervisor.active() && supervisor.childPid !== null) {
-          await Promise.race([askConfirm(), new Promise((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
-          const mark = await sealMark(sealDeps);
-          if (mark !== undefined && follower.idle()) supervisor.send(JSON.stringify({ t: 'seal', db_at: mark }) + '\n');
+        if (follower && sealDeps && supervisor.active() && supervisor.childPid !== null) {
+          let refused: string | null = !settled ? 'follower_not_settled' : !follower.idle() ? 'follower_not_idle' : null;
+          let token: string | null = null;
+          if (!refused) {
+            await Promise.race([askConfirm(), new Promise((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
+            const mark = await sealMark(sealDeps);
+            if ('refused' in mark) refused = mark.refused;
+            else if (!follower.idle()) refused = 'follower_not_idle';
+            else token = mark.token;
+          }
+          supervisor.send(JSON.stringify(refused ? { t: 'seal', db_at: null, refused } : { t: 'seal', db_at: token }) + '\n');
         }
       } catch { /* no seal: the next session starts with a full pass owed, as after a crash */ }
       await supervisor.drain(); // the CLI is about to exit and Bun drops what its pipe still holds: wait (bounded) for it to flush; stop() writes down how many samples were sent, so the child counts any it never got

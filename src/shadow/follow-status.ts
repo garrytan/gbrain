@@ -64,7 +64,18 @@ export interface FollowerFile {
   continuity?: string;
   /** What a clean close left for the next owner session (follow-child.ts); trusted only while `seal.at` equals `updated_at`. */
   seal?: FollowerSeal;
+  /** The last seal decision and its reason code (status `follower.seal`): every refusal is named, none is silent. */
+  seal_outcome?: SealOutcome;
 }
+
+/** The reason PGLite never takes a seal over: it has no proof of database continuity between sessions (seal.ts). */
+export const PGLITE_NO_DB_CONTINUITY = 'pglite_no_db_continuity';
+
+/**
+ * The last seal decision: `sealed` / `not_sealed` at a close, `taken` / `refused` at the next owner's start, `confirmed`
+ * / `refused` once its serving process checked the primary. `reason` is null for sealed, taken and confirmed.
+ */
+export interface SealOutcome { outcome: 'sealed' | 'not_sealed' | 'taken' | 'confirmed' | 'refused'; reason: string | null; at: string }
 
 /**
  * Written by an owner child when its serving process closed cleanly: every write it was handed is applied or held as an
@@ -159,6 +170,8 @@ export interface FollowStatus {
   follower: {
     state: 'not_seeded' | 'needs_reseed' | 'stopped' | 'invalid' | 'behind' | 'following'; action: string | null; lag_ms: number | null; lag_ms_p99_24h: number | null;
     lag_ms_p99_epoch: number | null; queue_depth: number; applied_rows: number; coverage_watermark: Watermark;
+    /** The last seal decision (follower.json `seal_outcome`), when one was made. */
+    seal?: SealOutcome;
   };
   reconcile: {
     state: 'never_run' | 'ok' | 'repaired' | 'error';
@@ -242,6 +255,7 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
     follower: {
       state: followerState, action: followerState === 'needs_reseed' ? RESEED_STEPS : null, lag_ms: live ? live.lag_ms : null, lag_ms_p99_24h: lagP99(last24), lag_ms_p99_epoch: lagP99(counted?.lag.epoch ?? []),
       queue_depth: queue, applied_rows: live?.applied_rows ?? 0, coverage_watermark: watermark,
+      ...(live?.seal_outcome ? { seal: live.seal_outcome } : {}),
     },
     reconcile: {
       state: !last ? 'never_run' : error ? 'error' : last.repaired_rows > 0 ? 'repaired' : 'ok',
@@ -275,6 +289,7 @@ export function renderFollowStatus(s: FollowStatus): string[] {
   const w = f.coverage_watermark;
   const lines = [f.action ? `  follower: this brain needs a reseed (its seed was written before follow existed, so nothing is followed): ${f.action}` : `  follower: ${f.state}; applied rows ${f.applied_rows}; queue ${f.queue_depth}; lag ${f.lag_ms ?? 'unknown'} ms (p99 24h ${f.lag_ms_p99_24h ?? '-'}, epoch ${f.lag_ms_p99_epoch ?? '-'})`];
   lines.push(`  coverage watermark: ${w.valid ? `valid through ${w.through ?? '-'}` : `invalid (${w.invalidated_reason ?? 'unknown'})`}`);
+  if (f.seal) lines.push(`  seal: ${f.seal.outcome}${f.seal.reason ? ` (${f.seal.reason})` : ''} at ${f.seal.at}`);
   const r = s.reconcile;
   lines.push(`  reconcile: ${r.state}; clean full passes in a row ${r.consecutive_clean_full_passes}; last clean full pass ${r.last_clean_full_pass_at ?? 'none'}; next full pass ${r.next_full_pass_due ?? 'when one runs'}`);
   if (r.last_pass) lines.push(`    last pass ${r.last_pass.kind} ${r.last_pass.finished_at}: repaired ${r.last_pass.repaired_rows}, follower misses ${r.last_pass.follower_misses}`);
