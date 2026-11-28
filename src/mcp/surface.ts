@@ -617,6 +617,8 @@ export function effectiveSurfaceForClient(opts: {
  */
 export interface StdioSurfaceState {
   surface: McpSurface;
+  /** The surface the session started at (its registration); `surface` moves on a widen, this never does. */
+  readonly registered: McpSurface;
   readonly source: SurfaceSource;
   readonly readOnly: boolean;
   /** `mcp.allow_session_widen` as last resolved (boot, then each request_tools call). */
@@ -637,6 +639,7 @@ export function createStdioSurfaceState(
   };
   const state: StdioSurfaceState = {
     source: init.source,
+    registered: init.surface,
     readOnly: init.readOnly,
     widenAllowed: true,
     ...compute(init.surface),

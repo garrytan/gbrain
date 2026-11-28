@@ -9,7 +9,7 @@
  *
  * Counts live in `write-comparisons.json`, written only through the locked tally below; `status` reads them.
  */
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { flushDirectory, flushFile } from '../core/fs-durable.ts';
@@ -508,9 +508,13 @@ export function unfoldedLines(dir: string, epoch: string | null, taken?: Record<
 }
 export function unfoldedLost(dir: string, epoch: string | null, taken?: Record<string, number>): number { return unfoldedLines(dir, epoch, taken).outcomes; }
 
-/** Identifies the published tally file (inode, size, modification time): a rename publishes a new one. */
+/**
+ * Identifies the published tally file (inode, size, modification time) and its bytes: a rename publishes a new one, but two saves inside one
+ * mtime tick (a 4 ms jiffy on ext4) can keep all three, an in-place write or a reused inode with the same length, and only the bytes tell them apart.
+ */
 function tallyIdentity(dir: string): string {
-  try { const s = statSync(writeTallyPath(dir), { bigint: true }); return `${s.ino}:${s.size}:${s.mtimeNs}`; } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? 'none' : 'error'; }
+  const path = writeTallyPath(dir);
+  try { const s = statSync(path, { bigint: true }); return `${s.ino}:${s.size}:${s.mtimeNs}:${createHash('sha256').update(readFileSync(path)).digest('hex')}`; } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? 'none' : 'error'; }
 }
 const SNAPSHOT_TRIES = 3;
 /**

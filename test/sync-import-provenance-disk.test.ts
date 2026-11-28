@@ -108,7 +108,11 @@ describe('managed-sync import provenance records the bytes on disk, the revision
     const record = await expectDisk(engine, f, 'people/fixable', 'people/fixable.md');
     expect(record.raw_sha256).toBe(sha256(fixable));
     expect(record.disk_sha256).not.toBe(record.raw_sha256);
-    expect(record.disk_blob_oid).not.toBe(git(f.root, 'rev-parse', 'HEAD:people/fixable.md'));
+    // The input is the seed commit's blob. HEAD is not: the durable checkout's Git effect commits the writeback on its own
+    // schedule, so HEAD names the input before it lands and the written-back file after.
+    expect(record.disk_blob_oid).not.toBe(git(f.root, 'rev-parse', `${f.head}:people/fixable.md`));
+    await settleManagedGitEffects(engine, f.id);
+    expect(record.disk_blob_oid).toBe(git(f.root, 'rev-parse', 'HEAD:people/fixable.md'));
   }), 120_000);
 
   test('disk bytes that differ from the pinned blob only by line endings are what the record hashes', async () => each(async engine => {

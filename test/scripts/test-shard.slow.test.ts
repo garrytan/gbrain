@@ -89,6 +89,19 @@ describe('test-shard.sh — exclusion contract', () => {
     expect(workflow.jobs['test-status'].needs).toContain('slow-entity-resolve-perf');
   });
 
+  it('runs the 100k-page owner-contact enrich gate in the perf job, outside the unit matrix', () => {
+    const allFiles = [1, 2, 3, 4].flatMap(s => dryRunList(s, 4));
+    expect(allFiles).not.toContain('test/enrich-owner-contact-perf.slow.test.ts');
+    const fs = require('fs');
+    const yaml = require('js-yaml');
+    const workflow = yaml.load(fs.readFileSync(resolve(REPO_ROOT, '.github/workflows/test.yml'), 'utf8'));
+    expect(workflow.jobs['slow-entity-resolve-perf'].steps.some((step: { run?: string }) =>
+      step.run?.includes('bun test test/enrich-owner-contact-perf.slow.test.ts'))).toBe(true);
+    const e2e = yaml.load(fs.readFileSync(resolve(REPO_ROOT, '.github/workflows/e2e.yml'), 'utf8'));
+    expect(e2e.jobs['coverage-full-slow'].steps.some((step: { run?: string }) =>
+      step.run?.includes('bun test test/enrich-owner-contact-perf.slow.test.ts'))).toBe(true);
+  });
+
   it('runs export-scale and reconcile-crash exactly once per event outside the unit matrix', () => {
     const allFiles = [1, 2, 3, 4].flatMap(s => dryRunList(s, 4));
     expect(allFiles).not.toContain('test/export-scale.slow.test.ts');

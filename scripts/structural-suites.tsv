@@ -406,7 +406,7 @@ test/scripts/stress-plan.test.ts	execution profiles	3	readFileSync
 test/scripts/stress-plan.test.ts	shards	5	readFileSync
 test/scripts/test-env-opt-ins-guard.test.ts	check-test-env-opt-ins	5	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — LPT balance contract	5	readFileSync
-test/scripts/test-shard.slow.test.ts	test-shard.sh — exclusion contract	7	readFileSync
+test/scripts/test-shard.slow.test.ts	test-shard.sh — exclusion contract	8	readFileSync
 test/scripts/tier2-openclaw-mcp.test.ts	Tier 2 OpenClaw MCP wiring (#8002)	9	readFileSync
 test/scripts/ubi-runner-run.test.ts	run leftover line	2	readFileSync
 test/scripts/ubicloud-typecheck-state.test.ts	(file-level)	3	readFileSync
@@ -418,7 +418,7 @@ test/serve-http-github-webhook.test.ts	handler wiring (source pin)	1	source-surf
 test/serve-http-mcp-transport-cleanup.test.ts	POST /mcp transport cleanup (#2844)	2	source-surface-helper
 test/serve-http-metrics.test.ts	serve-http.ts wiring (structural — the two defects of the original PR)	2	source-surface-helper
 test/serve-stdin-eof-drain.test.ts	serve-sync-runner stays off the boot path (#4409)	1	readFileSync
-test/setup-brain-layout.test.ts	setup --shape personal	9	readFileSync
+test/setup-brain-layout-personal.test.ts	setup --shape personal	9	readFileSync
 test/setup-household.test.ts	setup --shape household	3	readFileSync
 test/setup-migrations.test.ts	gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)	3	readFileSync
 test/setup-pi-skill-extension.test.ts	(file-level)	7	readFileSync

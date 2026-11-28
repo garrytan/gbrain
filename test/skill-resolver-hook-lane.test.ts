@@ -35,7 +35,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { runCli } from './helpers/cli-spawn.ts';
-import { CLAUDE_PLUGINS_CATALOG, LANE_DEADLINE_MS, LANE_WORKER_START_MS, projectCatalogPrefix, WORKER_SRC_PATH } from '../src/core/skills/resolver/hook-lane.ts';
+import { CLAUDE_PLUGINS_CATALOG, HERMES_HOOK_FIELDS, LANE_DEADLINE_MS, LANE_WORKER_START_MS, projectCatalogPrefix, WORKER_SRC_PATH } from '../src/core/skills/resolver/hook-lane.ts';
+import { cpuMsAsync } from './helpers/cpu-time.ts';
 import { HOOK_FIELD_CAP, readHookFields, readJsonFields } from '../src/core/skills/resolver/hook-input.ts';
 import { historyShrank, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { MESSAGE_CAP_BYTES } from '../src/core/skills/resolver/resolve.ts';
@@ -737,23 +738,27 @@ describe('skill-resolver lane: hermes', () => {
   test('a 5 MB conversation_history before and after user_message is read, never refused, and still delivers within a turn budget', async () => {
     const b = await hermesBox();
     const before = history(2.5e6), after = history(2.5e6);
-    const smallMs: number[] = [], bigMs: number[] = [];
-    for (let n = 0; n < 3; n++) {
-      const small = await hook(b, hermesCmd(b), { session_id: `h2a-${n}`, extra: { user_message: 'please deploy the widget to staging' } }, WIDE);
-      expect(JSON.parse(small.stdout).context).toContain('id: "deploy-widget"');
-      smallMs.push(laneLog(b).at(-1).ms);
-      const turn = { session_id: `h2-${n}`, extra: { conversation_history: before, user_message: 'please deploy the widget to staging', later_history: after } };
-      expect(JSON.stringify(turn).length).toBeGreaterThan(5e6);
-      const r = await hook(b, hermesCmd(b), turn, WIDE);
-      expect(r.exitCode).toBe(0);
-      expect(JSON.parse(r.stdout).context).toContain('id: "deploy-widget"');
-      const big = laneLog(b).at(-1);
-      expect(big).toMatchObject({ outcome: 'delivered' });
-      bigMs.push(big.ms);
-    }
-    // Reading 5 MB adds less than one lane deadline to a small turn; a buffering or quadratic reader would not.
-    // Each side's fastest of three runs, so one turn a busy machine descheduled cannot decide it.
-    expect(Math.min(...bigMs) - Math.min(...smallMs)).toBeLessThan(LANE_DEADLINE_MS);
+    const small = { session_id: 'h2a', extra: { user_message: 'please deploy the widget to staging' } };
+    const turn = { session_id: 'h2', extra: { conversation_history: before, user_message: 'please deploy the widget to staging', later_history: after } };
+    expect(JSON.stringify(turn).length).toBeGreaterThan(5e6);
+    const r = await hook(b, hermesCmd(b), turn, WIDE);
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout).context).toContain('id: "deploy-widget"');
+    expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'delivered' });
+    // Reading 5 MB adds less than one lane deadline of work to a small turn; a buffering or quadratic reader would not.
+    // The work is the lane's own read of the same bytes in pipe-sized chunks, timed in thread CPU (test/helpers/cpu-time.ts):
+    // a turn's wall time on a loaded runner also counts the time the process sat descheduled (51.8 ms against this bound
+    // on a GitHub shard, 91.6 ms beside 32 busy loops on 4 cores), and a process's CPU time counts the engine's JIT and GC
+    // threads, which moved a 5 MB turn by more than the bound from one run to the next. Each side's least of three.
+    const readCpuMs = async (payload: Record<string, unknown>) => {
+      const bytes = Buffer.from(JSON.stringify({ cwd: b.project, ...payload }));
+      const pipe = () => Readable.from(Array.from({ length: Math.ceil(bytes.length / 65_536) }, (_, i) => bytes.subarray(i * 65_536, (i + 1) * 65_536)));
+      const ms: number[] = [];
+      for (let n = 0; n < 3; n++) ms.push(await cpuMsAsync(async () => expect((await readHookFields(pipe(), HERMES_HOOK_FIELDS, HOOK_FIELD_CAP))?.strings['extra.user_message']).toBe('please deploy the widget to staging')));
+      return Math.min(...ms);
+    };
+    const [bigCpu, smallCpu] = [await readCpuMs(turn), await readCpuMs(small)];
+    expect(bigCpu - smallCpu).toBeLessThan(LANE_DEADLINE_MS);
   });
 
   test('a history still arriving down the pipe after the worker loaded does not spend the turn deadline (#10334)', async () => {

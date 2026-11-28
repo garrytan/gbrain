@@ -33,7 +33,7 @@ describe("computeMedian", () => {
     expect(computeMedian([])).toBe(0);
   });
   it("single value is itself", () => {
-    expect(computeMedian([42])).toBe(42);
+    expect(computeMedian([42])).toBe(42); // pregate-literal: UNIT_SHARDS=42 an arbitrary sample value, not the shard count
   });
   it("odd count: middle value", () => {
     expect(computeMedian([1, 5, 3])).toBe(3);
@@ -223,6 +223,39 @@ describe("partition — balance quality", () => {
     ]);
     const out = partition(files, weights, 2);
     expect(imbalanceRatio(out, weights, 0)).toBe(1.0);
+  });
+});
+
+describe("partition — spread", () => {
+  const files = Array.from({ length: 16 }, (_, i) => `f${String(i).padStart(2, "0")}.test.ts`);
+  const weights: WeightMap = new Map(files.map((f, i) => [f, 100 - i]));
+  const heavy = new Set([files[0]!, files[1]!, files[8]!, files[9]!]);
+  const groupsOf = (shards: string[][]) => [0, 1, 2, 3].map(g => [...shards[2 * g]!, ...shards[2 * g + 1]!].filter(f => heavy.has(f)).length);
+
+  it("time-only packing can put two of the files in one group of shards", () => {
+    expect(Math.max(...groupsOf(partition(files, weights, 8)))).toBe(2);
+  });
+
+  it("puts one file in each group before any group gets a second", () => {
+    const out = partition(files, weights, 8, { spread: { files: heavy, groupSize: 2 } });
+    expect(groupsOf(out)).toEqual([1, 1, 1, 1]);
+    expect(out.flat().sort()).toEqual([...files].sort());
+    for (const shard of out) expect(shard).toEqual([...shard].sort());
+    expect(partition(files, weights, 8, { spread: { files: heavy, groupSize: 2 } })).toEqual(out);
+  });
+
+  it("a last group smaller than groupSize still takes its turn", () => {
+    const out = partition(files, weights, 7, { spread: { files: heavy, groupSize: 2 } });
+    const groups = [0, 1, 2, 3].map(g => out.slice(2 * g, 2 * g + 2).flat().filter(f => heavy.has(f)).length);
+    expect(groups).toEqual([1, 1, 1, 1]);
+  });
+
+  it("without spread files the partition is unchanged", () => {
+    expect(partition(files, weights, 8, { spread: { files: new Set(), groupSize: 2 } })).toEqual(partition(files, weights, 8));
+  });
+
+  it("rejects a group size that is not a positive integer", () => {
+    expect(() => partition(files, weights, 8, { spread: { files: heavy, groupSize: 0 } })).toThrow(RangeError);
   });
 });
 

@@ -194,5 +194,16 @@ for (const kind of testBackends()) {
         expect((page.frontmatter as Record<string, any>).embed_skip?.reason).toBe('oversized');
       } finally { await brain.engine.unsetConfig('content_sanity.bytes_block'); }
     }, 300_000);
+
+    test('a reply still pending at its wait (a loaded runner) is replayed with its request_id until the fact is saved once', async () => {
+      const slug = 'people/erin-example';
+      expect(await brain.call('put_page', { slug, content: proseOf('Erin Example') })).toMatchObject({ state: 'committed' });
+      // A zero wait replies before the write runs, as a 5 s wait does when the runner is starved.
+      expect(await brain.call('remember', { fact: 'The page owner prefers tea', entity: slug, provenance: 'chat 2026-11-27' }, slug, { writeWaitMs: 0 }))
+        .toMatchObject({ status: 'inserted', entity_slug: slug });
+      const [saved] = await brain.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND fact=$3`,
+        [brain.sourceId, slug, 'The page owner prefers tea']);
+      expect(saved!.n).toBe(1);
+    }, 300_000);
   });
 }

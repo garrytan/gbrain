@@ -138,6 +138,8 @@ export const LANE_DEADLINE_MS = 50;
 export const LANE_ROUTER_MARGIN_MS = 100;
 export const LANE_WORKER_START_MS = 250;
 export const LANE_STDIN_CAP_BYTES = 256 * 1024;
+/** The fields a Hermes pre_llm_call turn is read for, in one streaming pass over a history of any size. */
+export const HERMES_HOOK_FIELDS = { strings: ['session_id', 'cwd', 'extra.user_message', 'extra.sender_id'], counts: ['extra.conversation_history'], flags: ['extra.is_first_turn'] };
 export const LANE_PAYLOAD_CHARS_DEFAULT = 4000;
 export const LANE_PAYLOAD_CHARS_MIN = 500;
 export const LANE_PAYLOAD_CHARS_MAX = 10_000;
@@ -274,7 +276,7 @@ const LANE_IO: Record<LaneHarness, HarnessIo> = {
   hermes: {
     read: async (stdin) => {
       const source = stdin ?? (process.stdin.isTTY ? process.stdin : Bun.stdin.stream());
-      const f = await readHookFields(source, { strings: ['session_id', 'cwd', 'extra.user_message', 'extra.sender_id'], counts: ['extra.conversation_history'], flags: ['extra.is_first_turn'] }, HOOK_FIELD_CAP);
+      const f = await readHookFields(source, HERMES_HOOK_FIELDS, HOOK_FIELD_CAP);
       return f && { prompt: f.strings['extra.user_message'] ?? '', sessionId: f.strings.session_id, cwd: f.strings.cwd, history: f.counts['extra.conversation_history'], firstTurn: f.flags['extra.is_first_turn'], senderId: f.strings['extra.sender_id'] ?? '' };
     },
     render: (block) => JSON.stringify({ context: block }),

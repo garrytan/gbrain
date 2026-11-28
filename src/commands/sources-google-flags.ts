@@ -21,6 +21,7 @@ export interface GoogleAddTuning {
   loopsExcludeLabels?: string[];
   gbrainioCommand?: string;
   privateSendersFile?: string;
+  ingestTiers?: boolean;
 }
 
 export const defaultGoogleAddTuning = (): GoogleAddTuning => ({ historyDays: 90, calendarId: DEFAULT_CALENDAR_ID });
@@ -78,6 +79,15 @@ export function parseGoogleAddFlag(flag: string, value: string | undefined, tuni
     default:
       return false;
   }
+}
+
+/** Consumes `--ingest-tiers` or `--no-ingest-tiers` (no value) into `tuning`; false for any other flag. Both together refuse. */
+export function parseGoogleIngestTiersFlag(flag: string, tuning: GoogleAddTuning): boolean {
+  if (flag !== '--ingest-tiers' && flag !== '--no-ingest-tiers') return false;
+  const on = flag === '--ingest-tiers';
+  if (tuning.ingestTiers === !on) refuse('Pass --ingest-tiers or --no-ingest-tiers, not both.');
+  tuning.ingestTiers = on;
+  return true;
 }
 
 /**

@@ -7,7 +7,15 @@
  * Several --run values, in any order, give each file its median over those runs: one run's
  * timings carry that run's runner speeds (whole runs differ by 0.75-1.3x and
  * two-shard jobs within one run by 0.7-1.7x), so a lone fast run under-predicts
- * every shard.
+ * every shard. --latest N picks the newest N completed master runs whose lane
+ * jobs all succeeded, whatever the rest of the workflow concluded (the nightly
+ * turns red on a weight-coverage failure after its unit jobs passed), paging
+ * past runs that skipped the lane (a push that reused an earlier full run of its
+ * tree) or ran it only in part, so the usual refresh is a median without
+ * collecting run IDs by hand.
+ * --coverage-only keeps every existing weight and adds only files the map lacks:
+ * a refresh whose full replacement would push shards over their budget can still
+ * give new files a measured weight.
  * Every mode drops entries for files git no longer tracks, so a deleted or
  * renamed test leaves the map whatever the runs measured.
  * Refresh after large test additions or sustained shard imbalance.
@@ -25,6 +33,10 @@ const ROOT = process.env.GBRAIN_MINE_ROOT ?? resolve(dirname(fileURLToPath(impor
 export type Lane = "unit" | "serial" | "e2e";
 type E2EProfile = "selected" | "full";
 const OUTPUTS = { unit: "test-weights", serial: "serial-weights", e2e: "e2e-weights" };
+/** --latest reads at most this many pages of 100 completed master runs before it gives up. */
+const LATEST_PAGES = 5;
+/** A full-profile map's provenance; a coverage-only merge keeps it under `baseline`, since the merged map is no longer that one run's. */
+const FULL_PROVENANCE = ["e2eProfile", "attempt", "jobs", "logSha256", "corpusSha256"];
 interface TimingEvent { job: string; timestampMs: number; file: string; summaryCount?: number; failures?: number }
 interface LogLine { job: string; step: string; timestampMs: number; text: string }
 function logLines(raw: string): LogLine[] {
@@ -251,18 +263,24 @@ export function sourceE2ECorpus(commit: string): string[] {
     return files;
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
+/** The workflow and events whose successful master runs carry a lane's timings. */
+function laneSource(lane: Lane, e2eProfile: E2EProfile): { workflow: string; events: string[] } {
+  if (lane !== "e2e") return { workflow: "test.yml", events: ["push", "schedule"] };
+  return e2eProfile === "full" ? { workflow: "e2e.yml", events: ["schedule"] } : { workflow: "e2e.yml", events: ["push"] };
+}
 async function main(): Promise<void> {
-  let lane: Lane = "unit", input: string | undefined, out: string | undefined;
+  let lane: Lane = "unit", input: string | undefined, out: string | undefined, latest: number | undefined, coverageOnly = false;
   const runs: string[] = [];
   let e2eProfile: E2EProfile = "selected";
   const argv = process.argv.slice(2);
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--help" || arg === "-h") {
-      console.log("usage: bun run weights:mine [--lane unit|serial|e2e] [--e2e-profile selected|full] [--run ID [--run ID ...] | --from-file PATH | <stdin>] [--out PATH]\nseveral --run values (any order) give each file its median over those runs; files git no longer tracks are dropped\nfull E2E requires --lane e2e, exactly one --run and a matching source checkout");
+      console.log("usage: bun run weights:mine [--lane unit|serial|e2e] [--e2e-profile selected|full] [--run ID [--run ID ...] | --latest N | --from-file PATH | <stdin>] [--coverage-only] [--out PATH]\nseveral --run values (any order) give each file its median over those runs; --latest N takes the newest N completed master runs whose lane jobs all succeeded; files git no longer tracks are dropped\n--coverage-only keeps every existing weight and adds only the files the map lacks\nfull E2E requires --lane e2e, exactly one run and a matching source checkout");
       return;
     }
-    if (!["--lane", "--e2e-profile", "--run", "--run-id", "--from-file", "--out"].includes(arg) || !argv[i + 1] || argv[i + 1]!.startsWith("--")) throw new Error(`unknown/incomplete option: ${arg}`);
+    if (arg === "--coverage-only") { coverageOnly = true; continue; }
+    if (!["--lane", "--e2e-profile", "--run", "--run-id", "--latest", "--from-file", "--out"].includes(arg) || !argv[i + 1] || argv[i + 1]!.startsWith("--")) throw new Error(`unknown/incomplete option: ${arg}`);
     const value = argv[++i]!;
     if (arg === "--lane") {
       if (!["unit", "serial", "e2e"].includes(value)) throw new Error(`invalid lane: ${value}`);
@@ -271,20 +289,30 @@ async function main(): Promise<void> {
       if (value !== "selected" && value !== "full") throw new Error(`invalid E2E profile: ${value}`);
       e2eProfile = value;
     } else if (arg === "--run" || arg === "--run-id") runs.push(value);
-    else if (arg === "--from-file") input = value;
+    else if (arg === "--latest") {
+      if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 20) throw new Error(`--latest takes a run count from 1 to 20: ${value}`);
+      latest = Number(value);
+    } else if (arg === "--from-file") input = value;
     else out = resolve(value);
   }
-  if (runs.length && input) throw new Error("choose --run or --from-file, not both");
+  if ([runs.length > 0, latest !== undefined, input !== undefined].filter(Boolean).length > 1) throw new Error("choose one of --run, --latest or --from-file");
   if (new Set(runs).size !== runs.length) throw new Error("each --run may be given once");
   const full = e2eProfile === "full";
-  if (full && (lane !== "e2e" || runs.length !== 1)) throw new Error("full E2E requires --lane e2e and exactly one --run for verified source provenance");
+  if (full && (lane !== "e2e" || (runs.length || latest) !== 1)) throw new Error("full E2E requires --lane e2e and exactly one run (--run or --latest 1) for verified source provenance");
+  if (full && coverageOnly) throw new Error("--coverage-only adds to an existing map; a full E2E profile replaces it");
   out ??= resolve(ROOT, `scripts/${OUTPUTS[lane]}.json`);
   type Mined = { run: string | null; commit: string | null; measured: Map<string, number>; attempt?: number; jobs: Array<{ name: string; databaseId: number }>; expectedFiles?: string[]; raw: string };
-  const mineRun = (run: string): Mined => {
-    const info = JSON.parse(gh(["run", "view", run, "--json", full ? "attempt,conclusion,headSha,jobs" : "conclusion,headSha,jobs"]));
-    if (info.conclusion !== "success") throw new Error(`run ${run} is not successful`);
+  const viewRun = (run: string) => JSON.parse(gh(["run", "view", run, "--json", full ? "attempt,conclusion,headSha,jobs" : "conclusion,headSha,jobs"]));
+  type RunJobs = { jobs: Array<{ name: string; conclusion: string }> };
+  const laneSucceeded = (info: RunJobs) => {
+    const jobs = info.jobs.filter(j => isJob(j.name, lane, e2eProfile));
+    return jobs.length > 0 && jobs.every(j => j.conclusion === "success");
+  };
+  const mineRun = (run: string, info = viewRun(run)): Mined => {
+    // The lane's own jobs decide; a full-profile corpus also needs the whole run green for its source provenance.
+    if (!info.conclusion || (full && info.conclusion !== "success")) throw new Error(`run ${run} is not ${full ? "successful" : "complete"}`);
     const jobs = info.jobs.filter((j: { name: string }) => isJob(j.name, lane, e2eProfile));
-    if (!jobs.length || jobs.some((j: { conclusion: string }) => j.conclusion !== "success")) throw new Error(`run ${run} has no complete ${lane} lane`);
+    if (!laneSucceeded(info)) throw new Error(`run ${run} has no complete ${lane} lane`);
     // A packed unit job captured each of its shards as job `test (N)`.
     const expectedJobs: string[] = lane === "unit" ? jobs.flatMap((j: { name: string }) => unitJobShards(j.name)!.map(shard => `test (${shard})`))
       : jobs.map((j: { name: string }) => j.name);
@@ -306,8 +334,31 @@ async function main(): Promise<void> {
     return { run, commit: info.headSha, measured, attempt, jobs: full ? identified : [], expectedFiles, raw };
   };
   let mined: Mined[];
-  if (runs.length) mined = runs.map(mineRun);
-  else {
+  if (runs.length) mined = runs.map(run => mineRun(run));
+  else if (latest) {
+    const { workflow, events } = laneSource(lane, e2eProfile);
+    mined = [];
+    const seen = new Set<string>();
+    for (let page = 1; page <= LATEST_PAGES && mined.length < latest; page++) {
+      const listed = gh(["api", `repos/{owner}/{repo}/actions/workflows/${workflow}/runs?branch=master&status=completed&per_page=100&page=${page}`,
+        "--jq", ".workflow_runs[] | [.id, .event] | @tsv"]).split("\n").filter(Boolean).map(line => line.split("\t"));
+      for (const [run, event] of listed) {
+        if (mined.length === latest) break;
+        // A run that finished while the miner read page one shifts the list, so page two can repeat its last run.
+        if (seen.has(run!)) continue;
+        seen.add(run!);
+        if (!events.includes(event!)) continue;
+        const info = viewRun(run!);
+        // A push that reused a full run of its tree skipped the lane; a run that cancelled or failed part of it has no
+        // complete set; a full-profile corpus also needs the whole run green.
+        if (!laneSucceeded(info) || (full && info.conclusion !== "success")) continue;
+        mined.push(mineRun(run!, info));
+        runs.push(run!);
+      }
+      if (listed.length < 100) break;
+    }
+    if (mined.length < latest) throw new Error(`--latest ${latest}: only ${mined.length} of the newest ${seen.size} completed ${workflow} master runs ran the ${lane} lane to success`);
+  } else {
     const raw = input ? readFileSync(input, "utf8") : await new Response(Bun.stdin.stream()).text();
     mined = [{ run: null, commit: null, jobs: [], raw, measured: mineWeights(raw, lane, { e2eProfile }) }];
   }
@@ -320,18 +371,29 @@ async function main(): Promise<void> {
   // the checkout's tracked files decide what stays, whatever the --run order.
   const tracked = new Set(git(["ls-files"]).split("\n"));
   const measured = new Map([...medianWeights(mined.map(m => m.measured))].filter(([file]) => tracked.has(file)));
-  const weights = new Map([...(mergeExisting && existsSync(out) ? loadWeights(out) : [])].filter(([file]) => tracked.has(file)));
-  for (const [file, duration] of measured) weights.set(file, duration);
-  const metadata = { lane, unit: lane === "serial" ? "seconds" : "milliseconds", run: run ?? null, commit, source: run ? "github" : input ? "file" : "stdin",
-    ...(mined.length > 1 ? { runs, commits: mined.map(m => m.commit) } : {}), measuredFiles: measured.size, totalFiles: weights.size, mergeExisting,
-    ...(full ? { e2eProfile, attempt, jobs: fullJobs, logSha256: createHash("sha256").update(raw).digest("hex"), corpusSha256: createHash("sha256").update([...expectedFiles!].sort().join("\n") + "\n").digest("hex") } : {}),
-  };
+  const weights = new Map([...((mergeExisting || coverageOnly) && existsSync(out) ? loadWeights(out) : [])].filter(([file]) => tracked.has(file)));
+  const added = [...measured].filter(([file]) => !weights.has(file));
+  for (const [file, duration] of coverageOnly ? added : measured) weights.set(file, duration);
+  const metadataPath = out.endsWith(".json") ? out.replace(/\.json$/, ".metadata.json") : `${out}.metadata.json`;
+  const several = mined.length > 1 ? { runs, commits: mined.map(m => m.commit) } : {};
+  // Coverage-only keeps the provenance of the weights it kept and appends one batch per run that added files.
+  const batch = { addedFiles: added.length, run: run ?? null, commit, ...several };
+  const prior = coverageOnly && existsSync(metadataPath) ? JSON.parse(readFileSync(metadataPath, "utf8")) : undefined;
+  const baseline = prior ? Object.fromEntries(FULL_PROVENANCE.filter(key => key in prior).map(key => [key, prior[key]])) : {};
+  const metadata: Record<string, any> = prior
+    ? { ...Object.fromEntries(Object.entries(prior).filter(([key]) => !FULL_PROVENANCE.includes(key))), ...(Object.keys(baseline).length ? { baseline } : {}),
+      mergeExisting: true, totalFiles: weights.size, coverageOnly: [...[prior.coverageOnly ?? []].flat(), ...(added.length ? [batch] : [])] }
+    : { lane, unit: lane === "serial" ? "seconds" : "milliseconds", run: run ?? null, commit, source: run ? "github" : input ? "file" : "stdin",
+      ...several, measuredFiles: coverageOnly ? added.length : measured.size, totalFiles: weights.size, mergeExisting: mergeExisting || coverageOnly,
+      ...(coverageOnly ? { coverageOnly: [batch] } : {}),
+      ...(full ? { e2eProfile, attempt, jobs: fullJobs, logSha256: createHash("sha256").update(raw).digest("hex"), corpusSha256: createHash("sha256").update([...expectedFiles!].sort().join("\n") + "\n").digest("hex") } : {}),
+    };
   const temp = `${out}.${process.pid}.tmp`;
   try {
     writeFileSync(temp, serializeWeights(weights));
     renameSync(temp, out);
-    writeFileSync(out.endsWith(".json") ? out.replace(/\.json$/, ".metadata.json") : `${out}.metadata.json`, JSON.stringify(metadata, null, 2) + "\n");
+    writeFileSync(metadataPath, JSON.stringify(metadata, null, 2) + "\n");
   } finally { rmSync(temp, { force: true }); }
-  console.error(`[weights:mine] ${lane}: ${measured.size} measured${mined.length > 1 ? ` (median of ${mined.length} runs)` : ""}, ${weights.size} total (${metadata.unit}); ${out}`);
+  console.error(`[weights:mine] ${lane}: ${measured.size} measured${mined.length > 1 ? ` (median of ${mined.length} runs)` : ""}${coverageOnly ? `, ${added.length} added (coverage only)` : ""}, ${weights.size} total (${metadata.unit}); ${out}`);
 }
 if (import.meta.main) main().catch(error => { console.error(`weights:mine: ${error.message}`); process.exitCode = 1; });

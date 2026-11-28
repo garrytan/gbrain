@@ -71,8 +71,9 @@ async function rpc(bearer: string, method: string, params?: unknown): Promise<an
   });
   expect(res.status).toBe(200);
   const text = await res.text();
-  const data = text.split('\n').find(l => l.startsWith('data:'));
-  return JSON.parse(data ? data.slice('data:'.length) : text).result;
+  // A widening call streams tools/list_changed before its answer; the answer is the message that carries the request id.
+  const messages = text.split('\n').filter(l => l.startsWith('data:')).map(l => JSON.parse(l.slice('data:'.length)));
+  return (messages.length ? messages.find(m => m.id === 1) : JSON.parse(text))?.result;
 }
 
 const listed = async (bearer: string) => (await rpc(bearer, 'tools/list')).tools.map((t: { name: string }) => t.name).sort();
@@ -117,4 +118,44 @@ describe('install-default grants list the memory verbs over HTTP', () => {
     expect(resolvePreset({ ...base, preset: 'coding-agent' } as any).surfaceSetBy).toBe(INSTALL_SURFACE_SET_BY);
     expect(resolvePreset({ ...base, preset: 'daily-driver', surface: 'full' } as any).surfaceSetBy).toBeUndefined();
   });
+});
+
+describe('GST-4055: request_tools {surface} reaches every later stateless session of the same OAuth client, and only that client', () => {
+  test('widen in one request, then each new request lists and calls the wider surface; another client and an anonymous caller do not', async () => {
+    const make = (name: string) => withEnv({ GBRAIN_HOME: home }, () => provisionHarnessGrant(engine, { name, harness: 'generic', url: `${base}/mcp`, profile: 'memory-writer' }, 'test'));
+    const widening = await make('stateless-widen-example');
+    const bystander = await make('stateless-bystander-example');
+    const bearer = await token(widening.grant.clientId, widening.credentials!.client_secret!);
+    const other = await token(bystander.grant.clientId, bystander.credentials!.client_secret!);
+    await engine.executeRaw("UPDATE oauth_clients SET surface='starter', surface_set_by='self' WHERE client_id=$1", [widening.grant.clientId]);
+    const before = await listed(bearer);
+    const fullOnly = filterOpsForSurface(operations, 'full').map(o => o.name).filter(n => !before.includes(n));
+    const unknown = (r: { content: Array<{ text: string }> }) => r.content[0]!.text.includes('"code": "unknown_tool"');
+
+    const widened = JSON.parse((await rpc(bearer, 'tools/call', { name: 'request_tools', arguments: { surface: 'full' } })).content[0].text);
+    expect(widened).toMatchObject({ persisted: true, surface: 'full' });
+    const after = await listed(bearer);
+    const gained = after.filter((n: string) => !before.includes(n));
+    expect(gained.length).toBeGreaterThan(0);
+    expect(gained.every((n: string) => fullOnly.includes(n))).toBe(true);
+    const tool = gained.find((n: string) => n === 'list_pages') ?? gained[0]!;
+    await engine.executeRaw("UPDATE oauth_clients SET surface='starter', surface_set_by='self' WHERE client_id=$1", [widening.grant.clientId]);
+    expect(unknown(await rpc(bearer, 'tools/call', { name: tool, arguments: {} }))).toBe(true);
+    await rpc(bearer, 'tools/call', { name: 'request_tools', arguments: { surface: 'full' } });
+    for (let i = 0; i < 2; i++) {
+      expect(await listed(bearer)).toEqual(after);
+      expect(unknown(await rpc(bearer, 'tools/call', { name: tool, arguments: {} }))).toBe(false);
+    }
+    expect(await listed(other)).toEqual(VERBS_LISTING);
+    expect((await readClientGrant(engine, bystander.grant.clientId)).surfaceSetBy).toBe(INSTALL_SURFACE_SET_BY);
+    const anonymous = await fetch(`${base}/mcp`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) });
+    expect(anonymous.status).toBe(401);
+
+    await provider.rescopeClient(bystander.grant.clientId, { surface: 'starter' });
+    const pinned = await rpc(other, 'tools/call', { name: 'request_tools', arguments: { surface: 'full' } });
+    expect(pinned.isError).toBe(true);
+    expect(pinned.content[0].text).toContain('operator-pinned');
+    expect((await readClientGrant(engine, bystander.grant.clientId)).surface).toBe('starter');
+  }, 60_000);
 });

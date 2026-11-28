@@ -95,9 +95,11 @@ async function routeSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResul
   if (opts.repoPath) assertNotOwnedRoot(opts.repoPath, 'gbrain sync refuses the root');
   const plainRoot = await plainDirectorySyncRoot(engine, opts, managed);
   if (plainRoot) assertNotOwnedRoot(plainRoot, 'gbrain sync refuses the root');
-  if (plainRoot) return finish(await performPlainDirectorySync(engine, opts, plainRoot, managed), true);
+  // #8362: a plain-directory import takes the same source lease as a Git sync (a dry run only reads, so it takes none).
+  if (plainRoot && (opts.dryRun || managed)) return finish(opts.dryRun ? await performPlainDirectorySync(engine, opts, plainRoot, managed)
+    : await performManagedPlainDirectorySync(engine, opts, plainRoot), true);
   if (managed) return performManagedBranch(engine, opts);
-  const filesystemRoot = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
+  const filesystemRoot = plainRoot || opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
   if (filesystemRoot) assertNotOwnedRoot(filesystemRoot, 'gbrain sync refuses the root');
   if (filesystemRoot && !hasSourceFilesystemLock(filesystemRoot)) {
     let entered = false;
@@ -120,8 +122,9 @@ async function routeSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResul
   }
   // Per-source leases protect the commit/bookmark window. A caller may
   // skip this lease only when its broader scope already serializes the work.
+  const work = (options: SyncOpts) => plainRoot ? performPlainDirectorySync(engine, options, plainRoot, false) : performSyncInner(engine, options);
   if (opts.skipLock) {
-    return finish(await performSyncInner(engine, opts), true);
+    return finish(await work(opts), true);
   }
 
   const lockKey = opts.lockId ?? syncLockId(opts.sourceId ?? 'default');
@@ -129,13 +132,33 @@ async function routeSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResul
   // Renewal loss aborts the import loop and prevents a successful bookmark
   // result, including callers that did not supply their own cancellation.
   try {
-    return finish(await withRefreshingLock(engine, lockKey, signal => performSyncInner(engine, {
+    return finish(await withRefreshingLock(engine, lockKey, signal => work({
       ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, signal]) : signal,
     })), true);
   } catch (err) {
     if (err instanceof LockUnavailableError) {
       throw new SyncLockBusyError(await formatLockBusyMessage(engine, lockKey), lockKey);
     }
+    throw err;
+  }
+}
+
+/**
+ * #8362: a managed plain-directory import under the source's drain lease, the lease a managed Git sync drains under, so an
+ * autopilot sync and a manual one never import the same directory at once. The lease is reentrant, so a caller that already
+ * drains this source (a worktree refresh) runs the import inside its own lease; a busy lease refuses as the Git branch does.
+ */
+async function performManagedPlainDirectorySync(engine: BrainEngine, opts: SyncOpts, root: string): Promise<SyncResult> {
+  const sourceId = opts.sourceId ?? 'default';
+  const { withDrainLease } = await import('../../core/persistence/sync-lease.ts');
+  try {
+    return await withDrainLease(engine, sourceId, {
+      holder: opts.drainHolder ?? { kind: 'cli', id: null }, remote: currentSubmissionAuthority()?.kind === 'remote_generic',
+      ...(opts.followDrainLease ? { follow: { signal: opts.signal, deadlineAtMs: opts.deadlineAtMs } } : {}),
+    }, signal => performPlainDirectorySync(engine, signal ? { ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, signal]) : signal } : opts, root, true));
+  } catch (err) {
+    const lockKey = syncLockId(sourceId);
+    if (err instanceof LockUnavailableError && err.lockId === lockKey) throw new SyncLockBusyError(await formatLockBusyMessage(engine, lockKey), lockKey);
     throw err;
   }
 }
