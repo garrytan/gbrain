@@ -296,6 +296,7 @@ test/engine-parity/fact-purge-ledger.test.ts
 test/engine-parity/fact-purge-members.test.ts
 test/engine-parity/fact-purge-probes.test.ts
 test/engine-parity/fact-purge-receipt-e2e.test.ts
+test/engine-parity/fact-purge-rerun.test.ts
 test/engine-parity/fact-purge-sites.test.ts
 test/engine-parity/fact-recall-pool-widening.test.ts
 test/engine-parity/fact-relink-attempts.test.ts

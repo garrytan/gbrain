@@ -913,7 +913,10 @@ id, recorded time), so reading them leaks nothing.
    line with no `committed` line may belong to a purge that rolled back, so
    it is not replayed automatically: restore reports it as `unverified`,
    with the same warning, and the doctor finding asks the user whether to
-   run that purge again. No other
+   run that purge again. A purge transaction that runs again (a write
+   conflict, a serialization retry) leaves one intent line per run; a line
+   whose request_id, source, incarnation, scope, epoch and targets equal a
+   committed line's is covered by it and not reported. No other
    process can reach the restored database before the root is published, so
    the replay needs no page key locks; it bumps `purge_epoch` like any purge.
 3. When no newer purge events can be read, restore still succeeds but

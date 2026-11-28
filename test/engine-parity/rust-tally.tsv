@@ -134,6 +134,7 @@ test/engine-parity/fact-purge-ledger.test.ts	3	0
 test/engine-parity/fact-purge-members.test.ts	14	1
 test/engine-parity/fact-purge-probes.test.ts	4	0
 test/engine-parity/fact-purge-receipt-e2e.test.ts	2	0
+test/engine-parity/fact-purge-rerun.test.ts	2	0
 test/engine-parity/fact-purge-sites.test.ts	13	2
 test/engine-parity/fact-recall-pool-widening.test.ts	2	0
 test/engine-parity/fact-relink-attempts.test.ts	3	0
