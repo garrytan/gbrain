@@ -46,7 +46,7 @@ A regex is **earned**, not assumed:
    Read the actual data. Make the judgments yourself.
 2. **Notice a tell that is genuinely mechanical** — a pattern that holds 100%
    across the sample, with no judgment in the loop, that you can state
-   precisely. ("Every message from that system is `noreply@acme-example.com`."
+   precisely. ("Every message from that system is `noreply@example.com`."
    "Every transcript segment line starts with `**[mm:ss]**`.")
 3. **THEN write the regex** to compress that confirmed-deterministic step — to
    save tokens on the rote part, NOT to make the judgment.
@@ -142,7 +142,7 @@ upstream.
 
 The earned tells in that same pipeline prove the rule by contrast: calendar
 `Accepted:`/`Declined:` prefixes (the calendar system emits them verbatim),
-exact machine senders (`noreply@acme-example.com`), a bot's fixed message
+exact machine senders (`noreply@example.com`), a bot's fixed message
 template, unsubscribe-URL/token shapes. Every one is a string a *machine*
 emitted in *one* shape — not a phrase a human (or an attacker) could write a
 hundred ways.
