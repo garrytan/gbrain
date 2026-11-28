@@ -14,7 +14,7 @@ import { rowDigest, sortKey } from '../../src/shadow/follow-digest.ts';
 import { nextGeneration } from '../../src/shadow/follower.ts';
 import type { ShadowState } from '../../src/shadow/state.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
-import { Reconciler } from '../../src/shadow/reconcile.ts';
+import { fullPassDue, Reconciler } from '../../src/shadow/reconcile.ts';
 import { planAsWrittenSource } from '../../src/shadow/writer-coverage.ts';
 import { openFollowRig, type FollowRig } from './follow-rig.ts';
 import { snapshotPersistence, snapshotTree } from './primary-snapshot.ts';
@@ -314,46 +314,80 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
       } finally { await base.close(); await r.close(); }
     }, 90_000);
 
-    test('a process stopped right after the last interval of a relation repaired a row keeps that repair: the resumed pass reports it and is not clean', async () => {
+    // A full pass that repaired a row in the last interval of a relation (no interval checkpoint follows it) and is
+    // stopped right after the store took the repair, before the reconciler reads again. The store now holds the repaired
+    // row, so any later scan finds nothing: the repair must be on record at once, outside the resume point.
+    const stopAfterTailRepair = async (r: FollowRig, base: ReturnType<typeof openReadSource>) => {
+      const [{ n }] = await ctx.primary().executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages`);
+      const size = Number(n) + 1; // one interval larger than the page count: all of pages is one short last interval
+      await ctx.primary().executeRaw(`UPDATE pages SET title = 'Changed In The Last Interval' WHERE id = (SELECT max(id) FROM pages)`);
+      let small: Reconciler;
+      let cutAt: number | null = null;
+      const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+        const out = await r.rpc<T>(method, args);
+        if (method === 'replaceInterval' && args?.relation === 'pages' && args?.hi === null && cutAt === null) { cutAt = Date.now(); small.stop(); }
+        return out;
+      };
+      small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: size });
+      const stopped = await small.run('full', undefined, { resume: true });
+      expect(cutAt).not.toBeNull();
+      expect(stopped.error).toBe('stopped');
+      expect(stopped.repaired_by_relation).toEqual({ pages: 1 });
+      return { stopped, size };
+    };
+    // The repair is on record: the clean streak ends, criterion 1 has no clean pass, and writer coverage counts the
+    // path the plan as written did not account for.
+    const expectRepairOnRecord = (r: FollowRig, stoppedId: string, since: Date, unknownBefore: number) => {
+      const rows = readPasses(r.dir).filter((p) => p.id === stoppedId);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.repaired_rows).toBeGreaterThanOrEqual(1);
+      expect(rows[0]!.error).toBe('stopped');
+      expect(planAsWrittenSource(r.dir).unknownPaths(since)).toBe(unknownBefore + 1);
+    };
+
+    test('a process stopped right after the last interval of a relation repaired a row puts that repair on record at once, and a fresh full pass afterwards does not erase it', async () => {
       const r = await rig();
       const base = openReadSource(ctx.primary(), { pauseMs: 0 });
       try {
         expect(status(r).reconcile.consecutive_clean_full_passes).toBeGreaterThanOrEqual(1);
         const since = new Date(Date.now() - 1_000);
         const unknownBefore = planAsWrittenSource(r.dir).unknownPaths(since);
-        // One interval larger than the page count: all of pages is one short interval, its last, which no interval
-        // checkpoint follows. The drifted row is in it.
-        const [{ n }] = await ctx.primary().executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages`);
-        const size = Number(n) + 1;
-        await ctx.primary().executeRaw(`UPDATE pages SET title = 'Changed In The Last Interval' WHERE id = (SELECT max(id) FROM pages)`);
-        let small: Reconciler;
-        let cutAt: number | null = null;
-        const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
-          const out = await r.rpc<T>(method, args);
-          // The cut: the store already took the repair, and the reconciler has not read again.
-          if (method === 'replaceInterval' && args?.relation === 'pages' && args?.hi === null && cutAt === null) { cutAt = Date.now(); small.stop(); }
-          return out;
-        };
-        small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: size });
-        const stopped = await small.run('full', undefined, { resume: true });
-        expect(cutAt).not.toBeNull();
-        expect(stopped.error).toBe('stopped');
-        expect(stopped.repaired_by_relation).toEqual({ pages: 1 });
-        // The store holds the repaired row now, so a pass that reads that interval again finds nothing to repair.
-        const resumed = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full', undefined, { resume: true });
-        expect(resumed.error).toBeUndefined();
-        expect(resumed.id).toBe(stopped.id);
-        expect(resumed.repaired_rows).toBeGreaterThanOrEqual(1);
-        expect(resumed.repaired_by_relation.pages).toBeGreaterThanOrEqual(1);
-        expect(resumed.follower_misses).toBeGreaterThanOrEqual(1);
-        const passes = readPasses(r.dir).filter((p) => p.id === stopped.id);
-        expect(passes).toHaveLength(1);
-        expect(passes[0]!.repaired_rows).toBeGreaterThanOrEqual(1);
-        // A repaired pass ends the clean streak, and criterion 1 has no clean pass to read until the next one.
+        const { stopped, size } = await stopAfterTailRepair(r, base);
+        // Right after the stop, before any other pass runs.
         expect(status(r).reconcile.consecutive_clean_full_passes).toBe(0);
         expect(status(r).reconcile.last_clean_full_pass_at).toBeNull();
-        // The repair is writer-coverage evidence: a path the plan as written did not account for.
-        expect(planAsWrittenSource(r.dir).unknownPaths(since)).toBe(unknownBefore + 1);
+        expectRepairOnRecord(r, stopped.id, since, unknownBefore);
+        // A stopped full pass did not finish, so a full pass is due at the next check whatever its age.
+        expect(fullPassDue(readPasses(r.dir).filter((p) => p.kind === 'full').at(-1))).toBe(true);
+        // A fresh full pass (what `engine shadow reconcile` and the nightly tick run) reads the healed rows clean. It is
+        // a new pass, it counts as one clean pass, and the stopped pass's repair stays on record.
+        const fresh = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full');
+        expect(fresh.error).toBeUndefined();
+        expect(fresh.id).not.toBe(stopped.id);
+        expect(fresh.repaired_rows).toBe(0);
+        expectRepairOnRecord(r, stopped.id, since, unknownBefore);
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBe(1);
+        expect(status(r).reconcile.last_clean_full_pass_at).toBe(fresh.finished_at);
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
+    test('a repair put on record by a stopped pass survives the next owner drawing another continuity', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      try {
+        const since = new Date(Date.now() - 1_000);
+        const unknownBefore = planAsWrittenSource(r.dir).unknownPaths(since);
+        const { stopped, size } = await stopAfterTailRepair(r, base);
+        // The next owner took no seal, so its child answers under another continuity: no resume point is admitted.
+        const otherOwner = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+          const out = await r.rpc<T>(method, args);
+          return (method === 'state' ? { ...(out as Record<string, unknown>), continuity: 'another-owner-continuity' } : out) as T;
+        };
+        const next = await new Reconciler({ dir: r.dir, reads: base, rpc: otherOwner, follower: r.follower, intervalRows: size }).run('full', undefined, { resume: true });
+        expect(next.error).toBeUndefined();
+        expect(next.id).not.toBe(stopped.id);
+        expectRepairOnRecord(r, stopped.id, since, unknownBefore);
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBe(1);
       } finally { await base.close(); await r.close(); }
     }, 90_000);
 
