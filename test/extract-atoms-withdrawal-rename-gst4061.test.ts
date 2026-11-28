@@ -260,7 +260,8 @@ describe('GST-4061 managed extract_atoms after withdrawals and renames', () => {
     await engine.initSchema();
     // Every page is written before the brain is managed; later writes go through `unmanaged`.
     const pages = [`${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN), fact(2, RETAINED)])}`,
-      `${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN)])}`, PROSE('canaryrename4061')];
+      `${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN)])}`, PROSE('canaryrename4061'),
+      `${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN), fact(2, RETAINED)])}`];
     for (const [i, body] of pages.entries()) {
       await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [`gst4061-managed-${i + 1}`]);
       await put(engine, `gst4061-managed-${i + 1}`, body);
@@ -300,6 +301,22 @@ describe('GST-4061 managed extract_atoms after withdrawals and renames', () => {
     const text = await atomText(engine, sourceId);
     expect(text).not.toContain('canarywithdrawn4061');
     expect(text).toContain('canaryretained4061');
+    expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(0);
+  }), 120_000);
+
+  test('case 2 race: a world withdrawal recorded during the managed model call still offers the page again', () => managed(4, async sourceId => {
+    const inner = copyingChat();
+    let first = true;
+    const chat = async (opts: ChatOpts) => {
+      if (first) { first = false; await withdraw(engine, sourceId, WITHDRAWN); }
+      return inner.chat(opts);
+    };
+    await run(engine, sourceId, chat);
+    expect(inner.prompts[0]).toContain('canarywithdrawn4061');
+    expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(1);
+    await run(engine, sourceId, inner.chat);
+    expect(inner.prompts.length).toBe(2);
+    expect(await atomText(engine, sourceId)).not.toContain('canarywithdrawn4061');
     expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(0);
   }), 120_000);
 

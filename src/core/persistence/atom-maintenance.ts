@@ -44,6 +44,8 @@ export interface AtomOrigin {
   partialInputChars?: number;
   /** GST-4061: the newest world withdrawal of the page's claims when the input was read; a later one is a new input. */
   withdrawnAt?: string;
+  /** GST-4061: when the page's content was read; its completed scan is stamped at it, so a withdrawal during the model call counts. */
+  readAt?: string;
 }
 export interface ManagedAtomSession {
   sourceId: string;
@@ -203,7 +205,7 @@ export async function managedAtomSession(engine: BrainEngine, sourceId: string, 
 }
 
 export async function readAtomOrigin(engine: BrainEngine, session: ManagedAtomSession,
-  item: { kind: 'page'; slug: string; content: string; contentHash: string } | { kind: 'transcript'; filePath: string; content: string; contentHash: string }): Promise<AtomOrigin> {
+  item: { kind: 'page'; slug: string; content: string; contentHash: string; readAt?: string } | { kind: 'transcript'; filePath: string; content: string; contentHash: string }): Promise<AtomOrigin> {
   if (item.kind === 'transcript') {
     if (sha256(readFileSync(item.filePath)) !== sha256(item.content)) throw opError('source_changed', 'The atom transcript changed before extraction.',
       `The transcript was edited while source ${session.sourceId}'s atom extraction read it; nothing was extracted from it. Run the drain again to extract the current file.`,
@@ -219,10 +221,11 @@ export async function readAtomOrigin(engine: BrainEngine, session: ManagedAtomSe
   }
   const generation = await atomGeneration(engine, snapshot.page.id, item.contentHash);
   const [withdrawn] = await engine.executeRaw<{ at: string | null }>(
-    `SELECT to_json(max(withdrawn_at))#>>'{}' AS at FROM fact_withdrawals WHERE source_id=$1 AND visibility='world' AND subject IN ('*', $2)`, [session.sourceId, item.slug]);
+    `SELECT to_json(max(withdrawn_at))#>>'{}' AS at FROM fact_withdrawals WHERE source_id=$1 AND visibility='world' AND subject IN ('*', $2)
+       AND ($3::timestamptz IS NULL OR withdrawn_at <= $3::timestamptz)`, [session.sourceId, item.slug, item.readAt ?? null]);
   return { kind: item.kind, locator: item.slug, contentHash: item.contentHash, textHash: sha256(item.content), pageId: snapshot.page.id,
     revision: snapshot.revision, visibility: effectiveVisibility({ kind: 'page', page: await withFolderRestricted(engine, snapshot.page) }), ...(generation > 0 ? { generation } : {}),
-    ...(withdrawn?.at ? { withdrawnAt: withdrawn.at } : {}) };
+    ...(withdrawn?.at ? { withdrawnAt: withdrawn.at } : {}), ...(item.readAt ? { readAt: item.readAt } : {}) };
 }
 
 export const ATOM_GENERATION_OP = 'managed-atoms-generation';
@@ -804,13 +807,13 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
         // #6503: a partial batch stamps nothing; its checkpoint below carries the disposition.
         if (p.failure || !p.origin.partialInputChars) await writeAtomPageState(tx, row.source_id, { slug: p.origin.locator, content: snapshot.page.compiled_truth,
           contentHash: p.origin.contentHash, identity: { pageId: p.origin.pageId!, sourceIncarnation: row.source_incarnation,
-            revision: p.origin.revision! } }, p.failure ? 'failure' : 'complete');
+            revision: p.origin.revision! }, readAt: p.origin.readAt }, p.failure ? 'failure' : 'complete');
       }
       // #6325: one strike per completed failure of this content, counted on the checkpoint it advances.
       const prior = Array.isArray(p.expectedCheckpoint) ? p.expectedCheckpoint[0] as AtomCheckpoint | undefined : undefined;
       const attempts = p.attempts ?? (prior?.failure ? Number(prior.attempts ?? 1) : 0) + 1;
       const checkpoint = JSON.stringify([{ sourceId: row.source_id, incarnation: row.source_incarnation, requestId: row.request_id,
-        kind: p.origin.kind, locator: p.origin.locator, pageId: p.origin.pageId, contentHash: p.origin.contentHash,
+        kind: p.origin.kind, locator: p.origin.locator, pageId: p.origin.pageId, contentHash: p.origin.contentHash, withdrawnAt: p.origin.withdrawnAt ?? null,
         ...(p.failure ? { failure: p.failure, attempts, ...(attempts >= MAX_DETERMINISTIC_FAILURES ? { held: true } : {}) }
           : p.origin.partialInputChars ? { partial: p.origin.partialInputChars } : {}) }]);
       await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-atoms',$1,$2::text::jsonb)
@@ -886,14 +889,16 @@ export function managedAtomCompletedSql(page: { sourceId: string; pageId: string
 /**
  * #6325: discovery and the backlog skip a page whose current content completed or is held after repeated failures.
  * #7391: given the current input cap, a partial checkpoint recorded below it (one `releasePartialDispositions` clears) is not skipped.
- * GST-4061: a completion settles the page only while no world withdrawal of its claims (subject the page or '*') was
- * recorded after it: the extraction read a claim since withdrawn, and the content hash does not change.
+ * GST-4061: a completion settles the page only while no world withdrawal of its claims (subject the page or '*') is newer
+ * than the newest one its run read (`withdrawnAt`, null when it read none), so a withdrawal recorded during the model call
+ * still counts; the content hash does not change. A checkpoint written before that key existed compares its write time.
  */
 export function managedAtomDiscoverySql(maxInputChars?: string): string {
   return `AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac
   WHERE ${managedAtomIdentitySql({ sourceId: 'p.source_id', pageId: 'p.id', contentHash: 'p.content_hash' })}
     AND ((ac.completed_keys->0->>'failure' IS NULL AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=p.source_id
-        AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > ac.updated_at))
+        AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > CASE WHEN ac.completed_keys->0->'withdrawnAt' IS NOT NULL
+          THEN COALESCE((ac.completed_keys->0->>'withdrawnAt')::timestamptz, '-infinity'::timestamptz) ELSE ac.updated_at END))
       OR ac.completed_keys->0->>'held'='true')${maxInputChars ? `
     AND (ac.completed_keys->0->>'partial' IS NULL OR (ac.completed_keys->0->>'partial')::integer >= ${maxInputChars})` : ''})`;
 }
