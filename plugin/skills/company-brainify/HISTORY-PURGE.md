@@ -20,13 +20,27 @@ cd "$WORK/shared"
 [ "$(git rev-parse --show-toplevel)" != "$PERSONAL" ] \
   || { echo "target IS sync.repo_path (personal brain) — ABORT"; exit 1; }
 
+# $STAGING holds the pages as they stood at $STAGING.base. Copying it over a
+# page a teammate changed, added or deleted since then would silently revert
+# their commit, so list every such page and stop. Reconcile: bring those
+# commits into your sanitized checkout (gbrain git commit-push --pull; a page
+# it reports lagging is one you also edited, so merge the teammate's change
+# into your sanitized version by hand), give each listed page the full read
+# and the Phase 4 checks, re-run the SKILL.md staging block for a new $STAGING,
+# then restart Step 1 in a new $WORK.
+BASE=$(cat "$STAGING.base" 2>/dev/null)
+[ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null \
+  || { echo "staging base ${BASE:-missing} is not a commit on the shared repo — ABORT, re-stage from a pushed checkout"; exit 1; }
+moved=$(git -c core.quotePath=false diff --no-renames --name-only "$BASE" HEAD -- people meetings daily companies projects analysis)
+[ -z "$moved" ] || { printf 'changed on the shared repo after staging, never copied over — ABORT, reconcile and re-stage:\n%s\n' "$moved"; exit 1; }
+
 # Commit the sanitized tree BEFORE the mirror clone: a mirror captures
 # committed state only, and pushing it stops the remote serving the sensitive
 # current versions even if the purge is declined. Commit only the sanitized
 # dirs. Non-zero exit: retry once on commit_lock_busy; on integrate_conflict
 # ask the user before going on.
 for d in people meetings daily companies projects analysis; do
-  [ -d "$STAGING/$d" ] && rsync -a "$STAGING/$d/" "./$d/"   # or sanitize in place here
+  [ -d "$STAGING/$d" ] && rsync -a "$STAGING/$d/" "./$d/"
 done
 # Nothing unread may stay: an earlier whole-folder export can have left pages
 # here that never got the read. List them and stop; the user removes each one
@@ -38,7 +52,12 @@ unread=$(for d in people meetings daily companies projects analysis; do [ -d "$d
 [ -z "$unread" ] || { printf 'not on the export list, never read — ABORT:\n%s\n' "$unread"; exit 1; }
 SANITIZED=""
 for d in people meetings daily companies projects analysis; do [ -d "$d" ] && SANITIZED="$SANITIZED $d"; done
+OURS=$({ git -c core.quotePath=false diff --no-renames --name-only HEAD -- $SANITIZED; git -c core.quotePath=false ls-files --others --exclude-standard -- $SANITIZED; } | LC_ALL=C sort -u)
 gbrain git commit-push -m "Sanitize: strip sensitive content before history purge" -- $SANITIZED
+# A teammate push to these folders that commit-push merged in is a page nobody
+# read: stop and reconcile it as above.
+[ "$(git -c core.quotePath=false diff --no-renames --name-only "$BASE" HEAD -- $SANITIZED | LC_ALL=C sort -u)" = "$OURS" ] \
+  || { echo "a teammate pushed to the sanitized folders during the sanitize push — ABORT, reconcile and re-stage"; exit 1; }
 
 # Pin the remote NOW: every branch and tag as it stands right after the
 # sanitize push. Step 3 pushes with a lease on each recorded sha (main's is

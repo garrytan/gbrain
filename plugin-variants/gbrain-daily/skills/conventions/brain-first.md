@@ -62,7 +62,7 @@ something, so taking it files strangers onto known contacts. Use the exact
 lookup:
 
 ```bash
-gbrain whois alice@acme-example.com --source-id __all__ --json   # an email address
+gbrain whois alice@example.com --source-id __all__ --json        # an email address
 gbrain whois "Alice Example" --source-id __all__ --json          # a display name
 ```
 

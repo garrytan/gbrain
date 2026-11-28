@@ -100,10 +100,13 @@ describe('company-brainify export: only files that got the read ship', () => {
     write(checkout, 'people/bob-example.md', 'Never flagged by a scan.\n');
     write(checkout, 'meetings/staff-sync.md', 'Payments review.\n');
     write(checkout, 'conversations/chat.md', 'Outside the purged folders.\n');
+    git(dir, 'init', '-q', checkout); user(checkout);
+    git(checkout, 'add', '.'); git(checkout, 'commit', '-q', '-m', 'shared');
     const run = bash(block + '\necho "STAGING=$STAGING"', checkout, { HOME: join(dir, 'home') });
     expect(run.status).toBe(0);
     const staging = run.stdout.match(/STAGING=(.*)/)![1];
     expect(readFileSync(`${staging}.export-list`, 'utf8')).toBe('meetings/staff-sync.md\npeople/alice-example.md\npeople/bob-example.md\n');
+    expect(readFileSync(`${staging}.base`, 'utf8').trim()).toBe(git(checkout, 'rev-parse', 'HEAD'));
     const clone = join(dir, 'clone');
     write(clone, 'people/alice-example.md', 'Staff engineer. Salary 200k.\n');
     write(clone, 'people/bob-example.md', 'Never flagged by a scan.\n');
@@ -141,6 +144,100 @@ describe('company-brainify export: only files that got the read ship', () => {
     expect(noList.status).toBe(1);
     expect(noList.stdout).toContain('no export list');
     expect(readFileSync(join(shared, 'people/alice-example.md'), 'utf8')).toBe('Staff engineer.\n');
+  });
+
+  /**
+   * GST-4108: a shared repo, a checkout sanitized in place and staged with the re-audit block, then a teammate push.
+   * The purge clones the remote fresh and must never copy the staged tree over a page the teammate changed after staging.
+   */
+  function reaudit(teammate: (seed: string) => void) {
+    const dir = tmp();
+    const remote = join(dir, 'remote.git');
+    git(dir, 'init', '--bare', '-q', '-b', 'main', remote);
+    const seed = join(dir, 'seed');
+    git(dir, 'init', '-q', '-b', 'main', seed); user(seed);
+    write(seed, 'people/alice-example.md', 'Staff engineer. Salary 200k.\n');
+    write(seed, 'people/bob-example.md', 'Staff engineer.\n');
+    write(seed, 'meetings/staff-sync.md', 'Payments review.\n');
+    write(seed, 'README.md', 'Team brain.\n');
+    git(seed, 'add', '.'); git(seed, 'commit', '-q', '-m', 'shared');
+    git(seed, 'remote', 'add', 'origin', remote);
+    git(seed, 'push', '-q', 'origin', 'main');
+    const checkout = join(dir, 'checkout');
+    git(dir, 'clone', '-q', remote, checkout); user(checkout);
+    write(checkout, 'people/alice-example.md', 'Staff engineer.\n');
+    const staged = bash(fenceContaining('brainify-reaudit-') + '\necho "STAGING=$STAGING"', checkout, { HOME: join(dir, 'home') });
+    expect(staged.status).toBe(0);
+    const staging = staged.stdout.match(/STAGING=(.*)/)![1];
+    teammate(seed);
+    git(seed, 'push', '-q', 'origin', 'main');
+    const shared = join(dir, 'shared');
+    git(dir, 'clone', '-q', remote, shared); user(shared);
+    return { dir, remote, seed, checkout, stageDir: staging, shared };
+  }
+  function step1(from: string, to: string): string {
+    const block = fenceContaining('Sanitize: strip sensitive content before history purge');
+    const start = block.indexOf(from);
+    const end = block.indexOf(to);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    return block.slice(start, end);
+  }
+  const overlay = () => step1('BASE=$(cat "$STAGING.base"', 'SANITIZED=""');
+
+  test('the purge copies the staged tree when the shared repo moved only outside the sanitized folders', () => {
+    const r = reaudit(seed => { write(seed, 'README.md', 'Team brain, v2.\n'); git(seed, 'commit', '-q', '-am', 'readme'); });
+    const run = bash(overlay(), r.shared, { STAGING: r.stageDir });
+    expect(run.stdout).not.toContain('ABORT');
+    expect(run.status).toBe(0);
+    expect(readFileSync(join(r.shared, 'people/alice-example.md'), 'utf8')).toBe('Staff engineer.\n');
+  });
+
+  test("a teammate's page changed, added or deleted after staging is never overwritten: the purge lists it and stops", () => {
+    for (const [change, page] of [
+      [(seed: string) => { write(seed, 'people/bob-example.md', 'Now leads payments.\n'); git(seed, 'commit', '-q', '-am', 'bob'); }, 'people/bob-example.md'],
+      [(seed: string) => { write(seed, 'people/new-hire-example.md', 'Joined.\n'); git(seed, 'add', 'people'); git(seed, 'commit', '-q', '-m', 'hire'); }, 'people/new-hire-example.md'],
+      [(seed: string) => { git(seed, 'rm', '-q', 'meetings/staff-sync.md'); git(seed, 'commit', '-q', '-m', 'drop'); }, 'meetings/staff-sync.md'],
+    ] as const) {
+      const r = reaudit(change);
+      const before = git(r.shared, 'status', '--porcelain');
+      const run = bash(overlay(), r.shared, { STAGING: r.stageDir });
+      expect(run.status).toBe(1);
+      expect(run.stdout).toContain('changed on the shared repo after staging');
+      expect(run.stdout).toContain(page);
+      expect(run.stdout).not.toContain('people/alice-example.md');
+      expect(git(r.shared, 'status', '--porcelain')).toBe(before);
+      expect(readFileSync(join(r.shared, 'people/alice-example.md'), 'utf8')).toBe('Staff engineer. Salary 200k.\n');
+    }
+  });
+
+  test('the purge stops when the staging base is missing or not on the shared repo', () => {
+    const r = reaudit(() => {});
+    writeFileSync(`${r.stageDir}.base`, git(r.checkout, 'commit-tree', '-m', 'local only', git(r.checkout, 'write-tree')) + '\n');
+    const unpushed = bash(overlay(), r.shared, { STAGING: r.stageDir });
+    expect(unpushed.status).toBe(1);
+    expect(unpushed.stdout).toContain('is not a commit on the shared repo');
+    rmSync(`${r.stageDir}.base`);
+    const missing = bash(overlay(), r.shared, { STAGING: r.stageDir });
+    expect(missing.status).toBe(1);
+    expect(missing.stdout).toContain('staging base missing');
+    expect(readFileSync(join(r.shared, 'people/alice-example.md'), 'utf8')).toBe('Staff engineer. Salary 200k.\n');
+  });
+
+  test('a teammate push to the sanitized folders that the sanitize push merged in stops the purge', () => {
+    const commit = step1('OURS=$(', '# Pin the remote NOW');
+    const stub = 'gbrain() { shift 5; git add -- "$@" && git commit -q -m sanitize && git pull -q --no-rebase --no-edit origin main; }\n';
+    for (const [path, stops] of [['people/bob-example.md', true], ['README.md', false]] as const) {
+      const r = reaudit(() => {});
+      const base = readFileSync(`${r.stageDir}.base`, 'utf8').trim();
+      write(r.seed, path, 'Changed during the sanitize push.\n');
+      git(r.seed, 'commit', '-q', '-am', 'teammate');
+      git(r.seed, 'push', '-q', 'origin', 'main');
+      write(r.shared, 'people/alice-example.md', 'Staff engineer.\n');
+      const run = bash(stub + commit, r.shared, { BASE: base, SANITIZED: ' people meetings' });
+      expect(run.status).toBe(stops ? 1 : 0);
+      expect(run.stdout.includes('a teammate pushed to the sanitized folders')).toBe(stops);
+    }
   });
 
   test('Phase 4 greps look for personal data across every scanned folder', () => {
