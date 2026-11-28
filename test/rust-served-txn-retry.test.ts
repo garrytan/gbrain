@@ -21,14 +21,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { BrainEngine } from '../src/core/engine.ts';
+import type { BrainEngine, TransactionOptions } from '../src/core/engine.ts';
 import { serveOwnerEngine, type OwnerEngineServer } from '../src/core/rust-engine/owner-ipc/server.ts';
 import { listenServed, type ServedListener } from '../src/core/rust-engine/served/listener.ts';
 import { connectServedEngine } from '../src/core/rust-engine/served/engine.ts';
 import { OWNER_TOKEN_IDS_CONFIG_KEY } from '../src/core/rust-engine/served/auth.ts';
 import type { ServedServerOptions } from '../src/core/rust-engine/served/session.ts';
 import { connectServed } from '../src/core/rust-engine/served/client.ts';
-import { claimTransactionRerun, OPTIMISTIC_TRANSACTION_RETRIES } from '../src/core/rust-engine/optimistic-transaction.ts';
+import { OPTIMISTIC_TRANSACTION_RETRIES, transactionRerunOf } from '../src/core/rust-engine/optimistic-transaction.ts';
 
 const TOKEN = 'gbrain_txn_retry_owner_token';
 const ownerInfo = { principal: { kind: 'legacy_token', id: 'tok-1' }, scopes: ['read', 'write', 'admin'], sourceId: 'default', hasSourceGrant: false, member: null, mayActFor: null, attest: null };
@@ -53,9 +53,9 @@ const fake = {
   getPage: async (slug: unknown) => ({ slug }),
   logIngest: async (entry: { source_ref?: unknown }) => { outside.push(String(entry?.source_ref)); },
   // The optimistic engine on a lost commit: nothing of the run is kept, and the callback runs again (at most 8 more).
-  transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+  transaction: async (fn: (tx: unknown) => Promise<unknown>, opts?: TransactionOptions) => {
     // As the optimistic engine does: start from the rerun state the server carries in, keep the first run's age.
-    const rerun = claimTransactionRerun();
+    const rerun = transactionRerunOf(opts);
     started.push({ age: rerun.age.value ?? nextAge + 1, keys: [...rerun.keys].sort() });
     rerun.age.value ??= ++nextAge;
     for (let attempt = 1; ; attempt++) {

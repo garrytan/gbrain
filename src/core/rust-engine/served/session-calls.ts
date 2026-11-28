@@ -210,9 +210,9 @@ export function sessionCalls(ctx: SessionCallsContext) {
       if (rerunOf !== undefined) reruns.delete(rerunOf);
       const losses = kept?.losses ?? 0;
       const rerun = parentRef === undefined ? kept?.state ?? newTransactionRerun() : null;
-      if (rerun) rerun.claimed = false;
       const carried: CarriedRerun | undefined = rerun ? { state: rerun, lostInCall: false } : txns.get(parentRef!)?.rerun;
-      const begin = () => parent.transaction(async tx => {
+      const readOnly = frame.read_only === true ? { readOnly: true } : undefined;
+      const settled = parent.transaction(async tx => {
         // A second run means the first run's commit was lost and the engine would run the callback again. The callback
         // here only waits for the client, so a second run would commit nothing and answer success: end it, and the
         // client runs its own callback again (served/engine.ts runTransaction).
@@ -225,8 +225,7 @@ export function sessionCalls(ctx: SessionCallsContext) {
         answered = true;
         writeFrame({ t: 'result', id, ok: true, value: ref });
         try { await ended; } finally { clearTimeout(timer); txns.delete(ref); }
-      }, frame.read_only === true ? { readOnly: true } : undefined);
-      const settled = rerun ? withTransactionRerun(rerun, begin) : begin();
+      }, rerun ? withTransactionRerun(readOnly, rerun) : readOnly);
       // A lost commit (the engine would run the callback again): keep what its runs learned for the client's rerun.
       if (rerun) settled.catch((error: unknown) => {
         if ((error as { reason?: unknown } | null)?.reason !== SERVED_TXN_CONFLICT_REASON && !carried?.lostInCall) return;
