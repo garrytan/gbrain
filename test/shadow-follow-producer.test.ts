@@ -13,6 +13,9 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { PostgresEngine } from '../src/core/postgres-engine.ts';
+import { JOURNAL_BOOKKEEPING_MEMBERS, journalItems, journalWriteItems } from '../src/shadow/follow.ts';
+import { JOURNAL_MEMBER_STATEMENTS } from '../src/shadow/write-capture.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { busyPreReadIsRelationLevel, driverWriteSurvivesFailedPreRead, nestedThatWaitsForALaterCallMatchesShadowOff, pgliteTemplateWriteIsSeen, writesKeepOrderBesideNestedTransaction, nestedFollowedWritesStayInTheirSavepoint, finishedNestedIsNotBusy, heldCallKeepsItsContext, heldCallRollsBackWithItsTransaction, outerWriteSurvivesNestedRollback, sampledSiblingDoesNotWaitForItself, unawaitedFollowedWriteCommits, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from './helpers/follow-producer.ts';
 import { mergeItems, type Invalidation } from '../src/shadow/invalidations.ts';
@@ -201,6 +204,65 @@ describe('raw SQL and unmapped writes', () => {
     const h = followHarness(fake as never);
     expect(await (h.engine as unknown as { mysteryMutate(): Promise<string> }).mysteryMutate()).toBe('done');
     expect(h.batches[0]!.items).toEqual([{ kind: 'invalid', reason: 'unmapped_write:mysteryMutate' }]);
+  });
+});
+
+describe('persistence-journal bookkeeping', () => {
+  // The exemption is an explicit list. Changing it is a decision: this literal is the only other place it is written.
+  const LISTED = ['declarePersistence', 'lockPersistenceCounters', 'completeWriteRow', 'insertPublicationEffects', 'completeEffectRow', 'setEffectTransactionLimits', 'lockEffectGuard', 'lockEffectClaimRow'];
+  const call = async (name: string) => {
+    const fake = { kind: 'pglite', [name]: async () => 'done', registerBeforeDisconnect() {} };
+    const h = followHarness(fake as never);
+    expect(await (h.engine as unknown as Record<string, () => Promise<string>>)[name]!()).toBe('done');
+    return h.batches.flatMap((b) => b.items);
+  };
+
+  test('the exempt members are exactly the named list; every other member the map does not cover still publishes invalid', async () => {
+    expect([...JOURNAL_BOOKKEEPING_MEMBERS].sort()).toEqual([...LISTED].sort());
+    const candidates = new Set<string>([...UNMAPPED_WRITE_MEMBERS, ...JOURNAL_MEMBER_STATEMENTS.keys(), 'upsertWriteGateReceipt', 'mysteryMutate']);
+    for (let p: object | null = PostgresEngine.prototype; p && p !== Object.prototype; p = Object.getPrototypeOf(p)) for (const key of Object.getOwnPropertyNames(p)) candidates.add(key);
+    for (let p: object | null = PGLiteEngine.prototype; p && p !== Object.prototype; p = Object.getPrototypeOf(p)) for (const key of Object.getOwnPropertyNames(p)) candidates.add(key);
+    expect([...candidates].filter((name) => journalItems(name) !== null).sort()).toEqual([...LISTED].sort());
+    for (const name of UNMAPPED_WRITE_MEMBERS) {
+      const items = await call(name);
+      if (LISTED.includes(name)) expect(items.filter((i) => i.kind === 'invalid')).toEqual([]);
+      else expect(items).toEqual([{ kind: 'invalid', reason: `unmapped_write:${name}` }]);
+    }
+  });
+
+  test('each listed member publishes the tables its statements write as relation items, and the lock-only ones nothing', async () => {
+    const relations = (items: Invalidation[]) => items.map((i) => (i.kind === 'relation' ? i.relation : `${i.kind}`)).sort();
+    expect(await call('declarePersistence')).toEqual([]);
+    for (const name of ['setEffectTransactionLimits', 'lockEffectGuard', 'lockEffectClaimRow']) expect(await call(name)).toEqual([]);
+    expect(relations(await call('lockPersistenceCounters'))).toEqual(['persistence_counters']);
+    expect(relations(await call('completeWriteRow'))).toEqual(['config', 'persistence_counters', 'persistence_requests']);
+    expect(relations(await call('insertPublicationEffects'))).toEqual(['persistence_effects']);
+    expect(relations(await call('completeEffectRow'))).toEqual(['persistence_effects']);
+  });
+
+  test('a listed member whose statements write a page, link, chunk, alias or tag table makes that relation dirty; one the parser cannot read is invalid', () => {
+    for (const relation of ['pages', 'links', 'content_chunks', 'page_aliases', 'tags']) {
+      expect(journalWriteItems([`UPDATE ${relation} SET id = id WHERE false`])).toEqual([{ kind: 'relation', relation, reason: 'journal_bookkeeping' }]);
+    }
+    expect(journalWriteItems(['this is not sql'])).toBeNull();
+    expect(journalWriteItems([])).toBeNull();
+    expect(journalWriteItems(undefined)).toBeNull();
+    expect(journalItems('upsertWriteGateReceipt')).toBeNull();
+  });
+
+  test('a real page, link, chunk, alias and tag write still publishes its rows', async () => {
+    const h = followHarness(engine);
+    await h.engine.putPage('people/alice-example', PAGE('Alice Example'));
+    await h.engine.putPage('companies/delta', PAGE('Delta'));
+    await h.engine.addLink('people/alice-example', 'companies/delta', 'ctx', 'works_at');
+    await h.engine.upsertChunks('people/alice-example', [{ chunk_index: 0, chunk_text: 'Alice Example text', chunk_source: 'compiled_truth' }]);
+    await h.engine.setPageAliases('people/alice-example', 'default', ['alice e']);
+    await h.engine.addTag('people/alice-example', 'team');
+    const items = h.batches.flatMap((b) => b.items);
+    for (const relation of ['pages', 'links', 'content_chunks', 'page_aliases', 'tags']) {
+      expect(items.some((i) => (i.kind === 'rows' || i.kind === 'relation') && i.relation === relation)).toBe(true);
+    }
+    expect(items.filter((i) => i.kind === 'invalid')).toEqual([]);
   });
 });
 
@@ -409,9 +471,9 @@ describe('members that write more than their arguments name', () => {
 });
 
 describe('write map coverage', () => {
-  const protoMembers = (): string[] => {
+  const protoMembers = (proto: object = PGLiteEngine.prototype): string[] => {
     const names = new Set<string>();
-    for (let p: object | null = PGLiteEngine.prototype; p && p !== Object.prototype; p = Object.getPrototypeOf(p)) {
+    for (let p: object | null = proto; p && p !== Object.prototype; p = Object.getPrototypeOf(p)) {
       for (const key of Object.getOwnPropertyNames(p)) {
         if (key === 'constructor') continue;
         const d = Object.getOwnPropertyDescriptor(p, key)!;
@@ -436,8 +498,8 @@ describe('write map coverage', () => {
     }
   });
 
-  test('every mapped, ignored, raw, schema and read-named-write entry names a real engine member', () => {
-    const real = new Set(protoMembers());
+  test('every mapped, ignored, raw, schema and read-named-write entry names a real engine member (of PGLite or Postgres)', () => {
+    const real = new Set([...protoMembers(), ...protoMembers(PostgresEngine.prototype)]);
     const listed = [...Object.keys(WRITE_MAP), ...IGNORED_MEMBERS, ...RAW_MEMBERS, ...SCHEMA_MEMBERS, ...READ_ONLY_MEMBERS, ...UNMAPPED_WRITE_MEMBERS, 'withReservedConnection'];
     expect(listed.filter((name) => !real.has(name))).toEqual([]);
   });
