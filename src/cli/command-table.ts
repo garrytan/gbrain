@@ -432,6 +432,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: Apple Contacts writes through GBrain Helper (commands/apple-contacts.ts HELP), docs/guides/apple-contacts.md. Thin client:
   // refused, because the owner signing key and the helper route live on the brain host, never behind a remote brain.
   { name: 'apple-contacts', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/apple-contacts.ts') },
+  // selfHelp: whitelist-gated local macOS WhatsApp Desktop & LinkedIn export collectors (owner host-local only).
+  { name: 'whatsapp', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/whatsapp.ts') },
+  { name: 'linkedin', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/linkedin.ts') },
   // selfHelp: Wakeshift report-back switch (commands/wakeshift.ts HELP), docs/guides/wakeshift.md. Thin client: only
   // `watch` routes (watch_job / watch_write_request / watch_cron over MCP); the rest writes the host file plane and key.
   { name: 'wakeshift', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true, load: () => import('./commands/wakeshift.ts') },
