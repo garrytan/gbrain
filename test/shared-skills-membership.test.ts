@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
@@ -7,6 +7,7 @@ import { SHARED_SKILLS_SCHEMA_STATEMENTS } from '../src/core/shared-skills/schem
 import { SHARED_SKILLS_MEMBERSHIP_SCHEMA_STATEMENTS } from '../src/core/shared-skills/membership-schema.ts';
 import { joinBrain, syncBrain, leaveBrain } from '../src/core/shared-skills/membership.ts';
 import { listSharedSkills } from '../src/core/shared-skills/catalog.ts';
+import { stableJson } from '../src/core/persistence/digest.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { SHARED_SKILLS_DELIVERY_LIMITS, type MembershipSnapshot } from '../src/core/shared-skills/membership-types.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -156,6 +157,90 @@ test('requirement, policy and source incarnation changes require renewed approva
   await engine.executeRaw('INSERT INTO shared_skill_policies(source_id,source_incarnation,epoch,policy) VALUES($1,$2::uuid,$3::uuid,$4::text::jsonb)', ['default', incarnation, policyEpoch, JSON.stringify(policy)]);
   await publish();
   blocked = await syncBrain(ctx, params(first)); expect(blocked.skills).toEqual([]); expect(blocked.blocked_skills[0].source_incarnation).toBe(nextIncarnation);
+});
+
+// Value: protects=explicit approved refresh of a stale policy binding; fails_when=active join leaves skills blocked;
+// why_new=the existing policy-change test stops at refusal; seam=synthetic canonical catalog; no_claim=native activation.
+test('#6797 approved active rejoin refreshes policy pins and fences old delivery acknowledgments', async () => {
+  const ctx = await context(), first = await join(ctx);
+  expect((await syncBrain(ctx, ack(first))).delivery.installation).toBe('self_reported');
+  policyEpoch = randomUUID();
+  await engine.executeRaw('UPDATE shared_skill_policies SET epoch=$1::uuid', [policyEpoch]);
+  await projectFixture('UPDATE shared_skill_heads SET policy_epoch=$1', [policyEpoch]);
+  expect((await syncBrain(ctx, params(first))).status).toBe('requirements_changed');
+
+  const refreshed = await join(ctx);
+  expect(refreshed.status).toBe('catalog_visible');
+  expect(refreshed.installation_id).toBe(first.installation_id);
+  expect(refreshed.enrollment_epoch).toBe(first.enrollment_epoch + 1);
+  expect(refreshed.skills.map(skill => skill.name)).toEqual(['fixture']);
+  expect(refreshed.delivery.installation).toBe('unverified');
+  await expect(syncBrain(ctx, ack(first))).rejects.toMatchObject({ code: 'membership_inactive' });
+  await expect(leaveBrain(ctx, params(first))).rejects.toMatchObject({ code: 'membership_inactive' });
+  expect((await syncBrain(ctx, ack(refreshed))).delivery.installation).toBe('self_reported');
+  const repeated = await join(ctx);
+  expect(repeated.enrollment_epoch).toBe(refreshed.enrollment_epoch);
+  expect(repeated.batch_token).toBe(refreshed.batch_token);
+});
+
+test('#6797 active approval preserves source narrowing and refuses widening or implicit consent', async () => {
+  const ctx = await context();
+  const first = await joinBrain(ctx, { adapter: 'codex', follow_policy: { approved: true, source_ids: ['default'] } });
+  // @ts-expect-error Exercise unapproved wire input, which the public type excludes.
+  await expect(joinBrain(ctx, { adapter: 'codex', follow_policy: { approved: false, source_ids: ['default'] } })).rejects.toMatchObject({ code: 'follow_approval_required' });
+  await expect(join(ctx)).rejects.toMatchObject({ code: 'follow_approval_required' });
+  const unchanged = await syncBrain(ctx, params(first));
+  expect(unchanged.batch_token).toBe(first.batch_token);
+  const narrowed = await joinBrain(ctx, { adapter: 'codex', follow_policy: { approved: true, source_ids: [] } });
+  expect(narrowed.enrollment_epoch).toBe(first.enrollment_epoch + 1);
+  expect(narrowed.skills).toEqual([]);
+  expect((await syncBrain(ctx, ack(narrowed))).delivery.installation).toBe('self_reported');
+  await expect(joinBrain(ctx, { adapter: 'codex', follow_policy: { approved: true, source_ids: ['default'] } })).rejects.toMatchObject({ code: 'follow_approval_required' });
+});
+
+// Value: protects=the one-time re-issue when a view stored before #6797 (PostgreSQL bigint epoch, written as a string) meets the normalised digest;
+// fails_when=the digest is not normalised, or the transition moves the epoch or loses replay; why_new=no test starts from a pre-fix view;
+// seam=direct rewrite of view_token/desired_view rows; no_claim=how PGLite types BIGINT.
+test('#6797 a batch stored under the pre-fix view format is re-issued once at the same epoch', async () => {
+  const legacy = async (ctx: OperationContext, snapshot: MembershipSnapshot) => {
+    const [row] = await engine.executeRaw<{ follow_policy: unknown }>('SELECT follow_policy FROM shared_skill_members WHERE installation_id=$1::uuid', [snapshot.installation_id]);
+    const catalogView = (await listSharedSkills(ctx)).view_token;
+    const view = (epoch: unknown) => createHash('sha256').update(stableJson([catalogView, epoch, row.follow_policy])).digest('hex');
+    expect(view(snapshot.enrollment_epoch)).toBe(snapshot.view_token);
+    const old = view(String(snapshot.enrollment_epoch));
+    await engine.executeRaw('UPDATE shared_skill_delivery_batches SET view_token=$2 WHERE token=$1::uuid', [snapshot.batch_token, old]);
+    await engine.executeRaw('UPDATE shared_skill_members SET desired_view=$2, acknowledged_view=CASE WHEN acknowledged_view IS NULL THEN NULL ELSE $2 END WHERE installation_id=$1::uuid', [snapshot.installation_id, old]);
+    return old;
+  };
+  const withView = (snapshot: MembershipSnapshot, view: string) => ({ ...ack(snapshot), acknowledgment: { ...ack(snapshot).acknowledgment, view_token: view } });
+
+  // The replacement batch is issued once: its acknowledgment and a later plain sync keep it.
+  const settled = async (ctx: OperationContext, before: MembershipSnapshot, replacement: MembershipSnapshot) => {
+    expect(replacement.enrollment_epoch).toBe(before.enrollment_epoch);
+    expect(replacement.batch_token).not.toBe(before.batch_token);
+    expect(replacement.sequence).toBe(before.sequence + 1);
+    expect(replacement.delivery.installation).toBe('unverified');
+    const renewed = await syncBrain(ctx, ack(replacement));
+    expect(renewed.acknowledgment).toBe('recorded'); expect(renewed.delivery.installation).toBe('self_reported');
+    const plain = await syncBrain(ctx, params(replacement));
+    for (const snapshot of [renewed, plain]) {
+      expect(snapshot.enrollment_epoch).toBe(replacement.enrollment_epoch);
+      expect(snapshot.batch_token).toBe(replacement.batch_token);
+      expect(snapshot.sequence).toBe(replacement.sequence);
+    }
+    expect(plain.delivery.installation).toBe('self_reported');
+  };
+
+  const pendingCtx = await context(), pending = await join(pendingCtx);
+  const late = await syncBrain(pendingCtx, withView(pending, await legacy(pendingCtx, pending)));
+  expect(late.acknowledgment).toBe('historical');
+  await settled(pendingCtx, pending, late);
+
+  const doneCtx = await context(), done = await join(doneCtx);
+  expect((await syncBrain(doneCtx, ack(done))).acknowledgment).toBe('recorded');
+  const replay = await syncBrain(doneCtx, withView(done, await legacy(doneCtx, done)));
+  expect(replay.acknowledgment).toBe('replayed');
+  await settled(doneCtx, done, replay);
 });
 
 test('concurrent leave and acknowledgment cannot reactivate an enrollment', async () => {

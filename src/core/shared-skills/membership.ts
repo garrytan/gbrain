@@ -141,7 +141,7 @@ async function issue(ctx: OperationContext, member: Member, authorityDigest: str
     `This brain now has identity ${snapshot.brain_id}, not the ${member.brain_id} installation ${member.installation_id} enrolled with. Leave locally, then join again after the user approves following this brain.`,
     { docs: 'docs/guides/shared-brain-skills.md#recover-the-same-brain-identity' });
   const { accepted, blocked } = filtered(member, snapshot.skills);
-  const view = digest([snapshot.view_token, member.epoch, member.follow_policy]);
+  const view = digest([snapshot.view_token, Number(member.epoch), member.follow_policy]);
   const revisions = accepted.map(revisionKey).sort();
   await ctx.engine.executeRaw(`DELETE FROM shared_skill_delivery_batches WHERE installation_id=$1::uuid
     AND (epoch<>$2 OR issued_at < now()-interval '24 hours')`, [member.installation_id, member.epoch]);
@@ -193,8 +193,11 @@ export async function joinBrain(ctx: OperationContext, params: { adapter: string
       const prior = member.follow_policy.source_ids;
       if (prior && (!sourceIds || sourceIds.some(s => !prior.includes(s)))) fail('follow_approval_required', 'An active membership can only narrow its follow policy; leave and approve a new enrollment to widen it.',
         `Installation ${member.installation_id} follows only ${prior.join(', ')}. To follow more, ask the user to approve the wider policy, then leave_brain and join_brain again with it.`);
-      if (JSON.stringify(prior) !== JSON.stringify(sourceIds)) {
-        member.follow_policy = { ...member.follow_policy, source_ids: sourceIds };
+      // An explicitly approved join also renews source-incarnation and policy pins (#6797).
+      // Ordinary sync never grants this approval; unchanged joins retain their delivery epoch.
+      const policy = await bindPolicy(authority.ctx, sourceIds);
+      if (stableJson(member.follow_policy) !== stableJson(policy)) {
+        member.follow_policy = policy;
         member.epoch = Number(member.epoch) + 1;
         member.issued_sequence = 0; member.acknowledged_sequence = 0;
         await engine.executeRaw(`UPDATE shared_skill_members SET follow_policy=$2::text::jsonb,epoch=$3,issued_sequence=0,acknowledged_sequence=0,desired_view=NULL,acknowledged_view=NULL WHERE installation_id=$1::uuid`, [member.installation_id, JSON.stringify(member.follow_policy), member.epoch]);
@@ -257,7 +260,7 @@ export async function syncBrain(ctx: OperationContext, params: { installation_id
           `This batch already has a ${String(batch.evidence?.stage)} acknowledgment. Resend that evidence unchanged, or sync again for a new batch.`,
           { fix: syncFix(member.installation_id, Number(member.epoch)) });
         await engine.executeRaw('UPDATE shared_skill_delivery_batches SET acknowledged_at=now(),evidence=$2::text::jsonb WHERE token=$1::uuid', [batch.token, JSON.stringify(ack.evidence)]);
-        const currentView = digest([snapshot.view_token, member.epoch, member.follow_policy]);
+        const currentView = digest([snapshot.view_token, Number(member.epoch), member.follow_policy]);
         acknowledgment = batch.view_token === currentView && Number(batch.sequence) === Number(member.issued_sequence) ? 'recorded' : 'historical';
         if (ack.evidence.stage === 'installed' && acknowledgment === 'recorded') {
           await engine.executeRaw(`UPDATE shared_skill_members SET acknowledged_sequence=GREATEST(acknowledged_sequence,$2),acknowledged_view=$3 WHERE installation_id=$1::uuid`, [member.installation_id, batch.sequence, batch.view_token]);
