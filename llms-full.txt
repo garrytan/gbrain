@@ -6283,14 +6283,21 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   (and `page_projection_jobs`), its oid, relfilenode and insert, update and delete counts. The confirmation refuses any
   difference, a new coverage gap, a hook that is not working, a login role that can write a brain table with no way to
   record evidence, `track_counts` off, a server older than PostgreSQL 15, a prepared transaction, another connection
-  with a write open, and any other connection that is not idle (or went idle under a minute ago, or cannot be seen),
-  because counters show only what the server has flushed. No seal is written under the same conditions, and not while a
+  with a write open, and any other connection of a role that can write a copied relation that is not idle, went idle
+  under a minute ago, or cannot be seen by the reading role (without superuser or `pg_read_all_stats` another role's
+  `pg_stat_activity` row has NULL state, transaction id and backend type), because counters show only what the server
+  has flushed. A connection of a read-only role, such as a monitoring agent, is never waited on. No seal is written under the same conditions, and not while a
   connection the writer hooks recorded is still connected, whatever the age of its row: a writer still connected during
   the seal check is refused until it commits or disconnects. After the child took a confirmation the check reads once
   more, and a failure withdraws it (`revokeSeal`: invalid again, full obligation). PGLite never seals or confirms
   (`pglite_no_db_continuity`). Any doubt, a failed read or a timeout leaves the watermark invalid until a full pass. A
   write published after the follower closed, or one the child would not take, leaves an invalidation line, which
-  voids the seal. The named persistence-journal members (`JOURNAL_BOOKKEEPING_MEMBERS` in `src/shadow/follow.ts`)
+  voids the seal; write capture stays on through the close, so a write a later before-disconnect callback makes is
+  recorded too. A line that cannot be written is retried, told to a live child, and blocks the seal while unrecorded
+  (`lost_write_unrecorded`). Any event after a seal removes it from `follower.json` before the next event, and taking
+  a seal over removes it in the same first write that shows the watermark invalid; when either write fails, a line in
+  `follower-invalidations.jsonl` makes the seal stale. Each decision is named in `follower.json` `seal_outcome` and in
+  `engine shadow status` (`seal: <outcome> (<reason>)`). The named persistence-journal members (`JOURNAL_BOOKKEEPING_MEMBERS` in `src/shadow/follow.ts`)
   publish the tables their statements write instead of invalidating the watermark; every other member the write map
   does not cover still invalidates it. A relation marked dirty
   is settled by a pass for that relation that started after the mark. Only the process that owns the Rust store
