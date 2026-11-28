@@ -250,7 +250,9 @@ export class Reconciler {
     let lastCursor: PassProgress['cursor'] = null;
     let countsSaved = true;
     let saveCounts: () => boolean = () => false;
-    let keepProgress = false;
+    // Whether this pass took the resume point on disk over (continued it, or put what it owed on record and removed it).
+    // A pass that did not never removes it: it may be another pass's only record of a repair (`unrecordedStoppedPass`).
+    let owns = false;
     try {
       await this.o.follower?.settle();
       const barrier = await this.o.rpc<StateReply>('state', {}, 30_000);
@@ -278,6 +280,7 @@ export class Reconciler {
           for (const relation of prior.done) done.add(relation);
           cursor = prior.cursor;
           lastCursor = prior.cursor;
+          owns = true;
         } else {
           // A resume point that is not continued but holds a repair or miss no record carries (its stopped record could
           // not be appended) is that pass's only evidence: it goes on record first, stamped now. A pass that cannot put
@@ -287,10 +290,10 @@ export class Reconciler {
             owed = unrecordedStoppedPass(this.o.dir);
             if (owed) appendPass(this.o.dir, { ...owed, finished_at: new Date().toISOString() });
           } catch (error) {
-            keepProgress = true;
             throw Object.assign(new Error(`a stopped pass's repair could not be put on record: ${error instanceof Error ? error.message.slice(0, 120) : 'failed'}`), { code: 'pending_repair_unrecorded' });
           }
           clearProgress(this.o.dir);
+          owns = true;
         }
         if (continuity) {
           progress = {
@@ -360,13 +363,12 @@ export class Reconciler {
         if (rec.repaired_rows > 0 || rec.follower_misses > 0) {
           let recorded = false;
           try { appendPass(this.o.dir, rec); recorded = true; } catch { /* kept in the resume point below */ } // silent-read-ok: the counts stay in the resume point, and the next full pass is due (a stopped pass did not finish)
-          if (recorded) clearProgress(this.o.dir);
-          else if (resumable) saveCounts();
+          if (recorded) { if (owns) clearProgress(this.o.dir); } else if (resumable) this.keepCounts(rec, saveCounts);
           return rec;
         }
         if (resumable && saveCounts()) return rec;
         if (!countsSaved) {
-          clearProgress(this.o.dir);
+          if (owns) clearProgress(this.o.dir);
           try { appendPass(this.o.dir, rec); } catch { /* a full disk loses the record */ } // silent-read-ok: nothing else can hold it; the next full pass is due anyway (the watermark was not restored)
         }
         return rec;
@@ -378,11 +380,32 @@ export class Reconciler {
     }
     // Allocator and full-pass probe failures are reported but do not decide whether the rows are covered; a failed probe of a dirty
     // pass for facts or purge tombstones does, because those rows are what it checks.
-    if (resumable && !keepProgress) clearProgress(this.o.dir);
     if (!repairFailed && !probeFailed) await this.restore(kind, passStart, verified, settled);
     rec.finished_at = new Date().toISOString();
-    try { appendPass(this.o.dir, rec); } catch { /* a full disk loses the record, never the pass */ }
+    // The record first, then the resume point: removed only once the record landed. A record that could not be
+    // appended and holds a repair or miss (its own, or one it continued) leaves the counts in the resume point instead,
+    // counted from there until a later pass records them (`unrecordedStoppedPass`).
+    let recorded = false;
+    try { appendPass(this.o.dir, rec); recorded = true; } catch { /* the counts are kept below; a pass without any loses only its record */ } // silent-read-ok: a repair or miss stays in the resume point; a clean pass loses only its record, never the pass
+    if (resumable && owns) {
+      if (recorded || (rec.repaired_rows <= 0 && rec.follower_misses <= 0)) clearProgress(this.o.dir);
+      else this.keepCounts(rec, saveCounts);
+    }
     return rec;
+  }
+
+  /**
+   * Keeps a pass's repair and miss counts on disk when its record could not be appended: in its own resume point, or,
+   * when it has none (no continuity) or that save fails, in a resume point that names no continuity, so it is never
+   * continued and only counted and put on record by a later pass.
+   */
+  private keepCounts(rec: PassRecord, saveCounts: () => boolean): void {
+    if (saveCounts()) return;
+    writeProgress(this.o.dir, {
+      version: 1, id: rec.id, started_at: rec.started_at, pass_start: Date.parse(rec.started_at), valid_at_start: false, continuity: '',
+      seed_id: null, epoch_id: readEpoch(this.o.dir)?.epoch_id ?? null, verified: false, settled: [], maxima: {},
+      repaired_rows: rec.repaired_rows, repaired_by_relation: { ...rec.repaired_by_relation }, follower_misses: rec.follower_misses, done: [], cursor: null,
+    });
   }
 
   private async restore(kind: 'full' | 'dirty', passStart: number, verified: boolean, relations: string[]): Promise<void> {
