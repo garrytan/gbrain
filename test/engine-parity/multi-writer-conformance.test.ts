@@ -1168,6 +1168,9 @@ describe('engine parity: multi-writer conformance', () => {
     expect(violations, `the stress run lost or duplicated work, or did not contend${states.length ? `; unclaimed stored jobs: ${states.join('; ')}` : ''}`).toEqual([]);
     const jobs = [...jobIdsByKey.values()].flat();
     const claimedIds = [...reports.flatMap(r => r.results).map(o => o.job).filter((id): id is number => id !== null), ...drained];
+    // What the checks above counted, so a pass shows the children's RESULT lines were read, not skipped.
+    console.log(`[C18 ${backend}${mode === 'off' ? '' : ` ${mode}`}] RESULT lines ${reports.length - 1} of ${children.length}; writers ${reports.flatMap(r => r.results).length}; `
+      + `pages ${pageBodies.size} of 128; request keys ${jobIdsByKey.size} of 64; jobs ${jobs.length}; claimed ${claimedIds.length - drained.length} by writers + ${drained.length} drained`);
     return { processes: 8, writers: 64, pages: 128, jobs: jobs.length, claimed: claimedIds.length, twice: 0, busy: 0, overlapped: true };
   });
 
