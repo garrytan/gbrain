@@ -43,6 +43,7 @@ export const PAGES_MEMBERS = {
   readStoredPageTier: 'pages',
   readPageIndexingState: 'pages',
   readPageHiddenFromCaller: 'pages',
+  readPageWorldVisible: 'pages',
   readCallerPageAccess: 'pages',
   readWriteVisibilityProbe: 'pages',
   readPagePrivacyHidden: 'pages',

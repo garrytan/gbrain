@@ -197,7 +197,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readOauthClient', 'readOldestVersionAttribution', 'readOldestWaitingAge', 'readOpCheckpointKeys',
   'readOwnerOnlySourceConfig', 'readOwnerOnlySourcesPresent', 'readPageAliasRows', 'readPageEmbeddingBudget',
   'readPageExtractionReceipt', 'readPageExtractionWatermark',
-  'readPageFileOrigin', 'readPageHiddenFromCaller', 'readPageIdInSource', 'readPageIndexingState', 'readPageOrigin',
+  'readPageFileOrigin', 'readPageHiddenFromCaller', 'readPageWorldVisible', 'readPageIdInSource', 'readPageIndexingState', 'readPageOrigin',
   'readPageRevisionAttribution', 'readPageRevisions', 'readPageTierRef', 'readPageTierRows', 'readPageTitle',
   'readPageTrustRows', 'readPageVersionEdition', 'readPagesForVersionHistory', 'readPairFactRow',
   'readPendingProposalSummary', 'readPendingWriteReceipt', 'readPlainSyncSource', 'readPrincipalCounters',
