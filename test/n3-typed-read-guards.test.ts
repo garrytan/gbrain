@@ -47,6 +47,8 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   readWedgeSignals: (e) => e.readWedgeSignals('default', ['sync']),
   readOldestWaitingAge: (e) => e.readOldestWaitingAge('default'),
   listStuckActiveJobsByName: (e) => e.listStuckActiveJobsByName(),
+  hasPendingFactsExtraction: (e) => e.hasPendingFactsExtraction(1, ['waiting']),
+  hasCompletedFactsExtraction: (e) => e.hasCompletedFactsExtraction(1),
 };
 /** The members a doctor check reaches. */
 const DOCTOR = ['listCoveredSources', 'listExportWithdrawals', 'readExportWithdrawalLedgerBytes', 'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth', 'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName'];
@@ -92,6 +94,8 @@ test('every engineRead member has a case, and the bounded sets list the members 
   expect(members.sort()).toEqual(Object.keys(CALLS).sort());
   for (const member of DOCTOR) expect(BOUNDED_TYPED_READS.has(member), member).toBe(true);
   for (const member of PREPARATION) expect(TYPED_PREPARATION_READS.has(member), member).toBe(true);
+  // The write's facts backstop probes, also a preparation's reads (persistence/facts-backstop.ts).
+  for (const member of ['hasPendingFactsExtraction', 'hasCompletedFactsExtraction']) expect(TYPED_PREPARATION_READS.has(member), member).toBe(true);
 });
 
 for (const [member, call] of Object.entries(CALLS)) {
