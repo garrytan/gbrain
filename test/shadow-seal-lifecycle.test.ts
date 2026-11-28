@@ -9,7 +9,7 @@
  * supervisor stopped) left no trace, so the restart carried the watermark on; a close sealed while a lost-write line was
  * still unrecorded.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,8 +34,17 @@ async function brain(): Promise<{ dir: string; dataDir: string }> {
   return { dir, dataDir };
 }
 
+// Each session opens its own engine on the brain's data dir, one after the other (a restart is a new engine). They are
+// made up front and every one is disconnected after the file; disconnecting one a session already closed does nothing.
+const ENGINES_NEEDED = 6;
+const engines: PGLiteEngine[] = [];
+let nextEngine = 0;
+beforeAll(() => { for (let i = 0; i < ENGINES_NEEDED; i++) engines.push(new PGLiteEngine()); });
+afterAll(async () => { for (const engine of engines) await engine.disconnect(); });
+
 async function open(dataDir: string, init = false): Promise<PGLiteEngine> {
-  const engine = new PGLiteEngine();
+  const engine = engines[nextEngine++];
+  if (!engine) throw new Error(`more than ${ENGINES_NEEDED} sessions in this file: raise ENGINES_NEEDED`);
   await engine.connect({ engine: 'pglite', database_path: dataDir } as never);
   if (init) await engine.initSchema();
   return engine;
