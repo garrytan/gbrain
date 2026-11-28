@@ -39,6 +39,10 @@ export type FollowStore = Pick<RustStore, 'replaceRelationRows' | 'replaceInterv
 
 export const FOLLOW_CHILD_QUEUE_BOUND = 1024;
 const WRITE_EVERY_MS = 1_000;
+/** The watermark reason while a confirmed seal waits for its commit (seal.ts reads the primary a second time first). */
+export const SEAL_CONFIRM_PENDING = 'seal_confirm_pending';
+/** A commit for another mark, or with no confirmation waiting: the seal is dropped. */
+export const SEAL_COMMIT_MISMATCH = 'seal_commit_mismatch';
 const FOREIGN_FILE = 'follower-invalidations.jsonl';
 const FOREIGN_LEASE_MS = 1_000;
 
@@ -158,6 +162,11 @@ export class FollowChild {
   private provisionalAt: number | null = null;
   /** The seal this session took over and has not confirmed yet. */
   private pendingSeal: { db_at: string | null; watermark: Watermark } | null = null;
+  /**
+   * The seal the serving process confirmed after its first read, waiting for `commitSeal` (sent only after its second
+   * read was quiet too), with the reason the watermark showed before. Held invalid until then (`seal_confirm_pending`).
+   */
+  private confirmedPending: { seal: { db_at: string | null; watermark: Watermark }; reason: string | null } | null = null;
   /** The seal this session wrote; dropped by anything that happens after it. */
   private seal: FollowerSeal | null = null;
 
@@ -388,7 +397,8 @@ export class FollowChild {
     if (!this.o.owner()) { this.noteForeign(reason); return; }
     if (relation) this.dirty.set(relation, Math.max(this.dirty.get(relation) ?? 0, until));
     else this.fullAt = Math.max(this.fullAt ?? 0, until);
-    if (!w.valid) return;
+    // The first reason is kept, except a confirmation waiting for its commit: what invalidated it is the reason then.
+    if (!w.valid && w.invalidated_reason !== SEAL_CONFIRM_PENDING) return;
     w.valid = false; w.through = null; w.invalidated_reason = reason;
   }
 
@@ -444,7 +454,7 @@ export class FollowChild {
     const file = this.file!;
     this.changes++;
     if (!relations && this.fullAt !== null && this.fullAt < since) this.fullAt = null;
-    if (!relations && this.provisionalAt !== null && this.provisionalAt < since) { this.provisionalAt = null; this.pendingSeal = null; }
+    if (!relations && this.provisionalAt !== null && this.provisionalAt < since) { this.provisionalAt = null; this.pendingSeal = null; this.confirmedPending = null; }
     for (const [relation, at] of this.dirty) if (at < since && (!relations || relations.includes(relation))) this.dirty.delete(relation);
     if (this.fullAt === null && this.provisionalAt === null && this.dirty.size === 0 && !file.watermark.valid) {
       file.watermark = { valid: true, through: new Date(since).toISOString(), invalidated_reason: null };
@@ -507,6 +517,7 @@ export class FollowChild {
       // `continuity` only once this session is known to continue the one before it (no seal waiting for its confirmation).
       case 'state': this.readForeign(); return { ...file.watermark, continuity: this.pendingSeal ? null : this.continuity, pending_seal: this.pendingSeal ? { db_at: this.pendingSeal.db_at } : null };
       case 'confirmSeal': return this.confirmSeal((a.db_at ?? null) as string | null, a.ok === true, typeof a.reason === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(a.reason) ? a.reason : 'refused');
+      case 'commitSeal': return this.commitSeal((a.db_at ?? null) as string | null);
       case 'revokeSeal': return this.withdrawConfirmation(typeof a.reason === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(a.reason) ? a.reason : 'refused');
       case 'barrier': return { stamp: this.barrier() };
       case 'seedPlan': return store.seedPlan();
@@ -541,27 +552,61 @@ export class FollowChild {
   }
 
   /**
-   * The serving process checked the primary for writers since the seal this session took over (seal.ts). Confirmed, the
-   * session's own full obligation goes, and the sealed watermark is back when nothing else is owed. Refused, the seal is
-   * dropped, the session draws a new continuity (a half-done pass cannot resume across it) and its obligation stays.
+   * The serving process checked the primary for writers since the seal this session took over (seal.ts), first read.
+   * Refused, the seal is dropped, the session draws a new continuity (a half-done pass cannot resume across it) and its
+   * obligation stays. Confirmed, nothing is published yet: the session stays invalid (`seal_confirm_pending`), with no
+   * continuity and its own full obligation, until `commitSeal`, which the serving process sends only after a second
+   * read found the primary still quiet. A heartbeat, a forced write or a status read in between shows it invalid.
    */
   private confirmSeal(dbAt: string | null, ok: boolean, reason: string): Watermark & { confirmed: boolean } {
     const file = this.file!;
     this.readForeign();
     const pending = this.pendingSeal;
-    if (!pending || pending.db_at !== dbAt) return { ...file.watermark, confirmed: false };
-    this.pendingSeal = null;
+    if (!pending || pending.db_at !== dbAt || this.confirmedPending) return { ...file.watermark, confirmed: false };
     this.changes++;
     if (!ok) {
-      this.continuity = randomUUID();
-      file.continuity = this.continuity;
-      this.outcome('refused', reason);
+      this.dropPendingSeal(reason);
       return { ...file.watermark, confirmed: false };
     }
-    this.outcome('confirmed', null);
-    this.provisionalAt = null;
-    if (this.fullAt === null && this.dirty.size === 0 && !file.watermark.valid && pending.watermark.valid) file.watermark = { ...pending.watermark };
+    this.confirmedPending = { seal: pending, reason: file.watermark.invalidated_reason };
+    if (!file.watermark.valid && pending.watermark.valid) file.watermark = { valid: false, through: null, invalidated_reason: SEAL_CONFIRM_PENDING };
     return { ...file.watermark, confirmed: true };
+  }
+
+  /**
+   * The second phase: the serving process read the primary again after the confirmation and it was still quiet. Only
+   * now does the session's own full obligation go, the sealed watermark come back when nothing else is owed, and the
+   * continuity become visible (so a half-done pass can resume). Written at once. A commit for another mark, or with no
+   * confirmation waiting, drops the seal like a refusal (`seal_commit_mismatch`).
+   */
+  private commitSeal(dbAt: string | null): Watermark & { confirmed: boolean } {
+    const file = this.file!;
+    this.readForeign();
+    const held = this.confirmedPending;
+    if (!held || held.seal !== this.pendingSeal || held.seal.db_at !== dbAt) {
+      if (this.pendingSeal || held) { this.changes++; this.dropPendingSeal(SEAL_COMMIT_MISMATCH); this.write(true); }
+      return { ...file.watermark, confirmed: false };
+    }
+    this.pendingSeal = null;
+    this.confirmedPending = null;
+    this.provisionalAt = null;
+    this.changes++;
+    this.outcome('confirmed', null);
+    if (this.fullAt === null && this.dirty.size === 0 && !file.watermark.valid && held.seal.watermark.valid) file.watermark = { ...held.seal.watermark };
+    else if (!file.watermark.valid && file.watermark.invalidated_reason === SEAL_CONFIRM_PENDING) file.watermark = { ...file.watermark, invalidated_reason: held.reason };
+    this.write(true);
+    return { ...file.watermark, confirmed: true };
+  }
+
+  /** A seal refused (or a commit that does not match): dropped, a new continuity drawn, the obligation kept, the reason shown. */
+  private dropPendingSeal(reason: string): void {
+    const file = this.file!;
+    this.pendingSeal = null;
+    if (this.confirmedPending && file.watermark.invalidated_reason === SEAL_CONFIRM_PENDING) file.watermark = { ...file.watermark, invalidated_reason: this.confirmedPending.reason };
+    this.confirmedPending = null;
+    this.continuity = randomUUID();
+    file.continuity = this.continuity;
+    this.outcome('refused', reason);
   }
 
   /**
@@ -571,6 +616,7 @@ export class FollowChild {
   private withdrawConfirmation(reason: string): Watermark {
     this.readForeign();
     this.pendingSeal = null;
+    this.confirmedPending = null;
     this.invalidate('seal_revoked');
     this.continuity = randomUUID();
     this.file!.continuity = this.continuity;

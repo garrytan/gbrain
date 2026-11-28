@@ -14,7 +14,7 @@ import { ShadowFollower } from './follower.ts';
 import { openReadSource, type ReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
 import { LOST_WRITE_UNRECORDED, lostWriteRecorder } from './follow-child.ts';
-import { confirmSeal, sealMark, type SealConfirmOutcome, type SealDeps } from './seal.ts';
+import { confirmSeal, readBasis, sealMark, type SealConfirmOutcome, type SealDeps } from './seal.ts';
 import { createLsnWatch, makeAskHandler, type LsnWatch } from './checks.ts';
 import { epochWatch, readEpoch } from './evidence-epoch.ts';
 import { hasCapability } from '../core/engine-capabilities.ts';
@@ -80,12 +80,16 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     dir, argv: shadowChildArgv(dir, deps.gbrainArgv), onDirty: (relation) => reconciler?.markDirty(relation),
     onAsk: (ask) => asks(ask),
     // Each new child is asked once whether the last session's seal holds; deferred, as start() runs inside a send.
-    onStart: () => { confirm = undefined; revoking = null; setImmediate(() => { if (sealDeps) confirm ??= (deps.sealChecks?.confirm ?? confirmSeal)(sealDeps); }); },
+    onStart: () => { confirm = undefined; revoking = null; basis = null; setImmediate(() => { if (sealDeps) askConfirm(); }); },
     ...deps.supervisor,
   });
   let confirm: Promise<SealConfirmOutcome> | undefined; // the running child's seal confirmation (seal.ts), once asked
   let revoking: string | null = null; // a revocation of that confirmation not yet acknowledged (seal.ts): a close does not seal then
   let sealDeps: SealDeps | undefined; // set once the brain is seeded and has a read source
+  // The session's verified point (seal.ts): the counters the follower's state is proven from, set by a committed carried
+  // seal or by a full pass whose restore the child acknowledged. A close seals with it, never with a fresh reading.
+  // A new child starts with none.
+  let basis: string | null = null;
   const samples = new SampleRegistry();
   let generation: () => number | undefined = () => undefined; // the follower's write count, set once it exists
   let watch: LsnWatch | undefined; // the primary's freshness token, set once the child's read source exists
@@ -121,8 +125,16 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   watch = createLsnWatch(askReads);
   void watch.ready(); // the first freshness token, so a sample captured a moment later has one to be held to
   const asks = makeAskHandler({ engine, reads: askReads, dir, rpc, samples, watch, get follower() { return follower; } });
-  if (reads) sealDeps = { dir, reads, postgres: primaryTakesWriterHooks(state.primary_engine), rpc, revoking: (reason) => { revoking = reason; } };
-  const askConfirm = (): Promise<SealConfirmOutcome | void> => (sealDeps ? (confirm ??= (deps.sealChecks?.confirm ?? confirmSeal)(sealDeps)) : Promise.resolve());
+  if (reads) sealDeps = { dir, reads, postgres: primaryTakesWriterHooks(state.primary_engine), primary: engine, rpc, revoking: (reason) => { revoking = reason; } };
+  const askConfirm = (): Promise<SealConfirmOutcome | void> => {
+    if (!sealDeps) return Promise.resolve();
+    if (!confirm) {
+      const asked: Promise<SealConfirmOutcome> = (deps.sealChecks?.confirm ?? confirmSeal)(sealDeps);
+      confirm = asked;
+      void asked.then((o) => { if (confirm === asked && !o.doubt && typeof o.basis === 'string') basis = o.basis; }, () => undefined);
+    }
+    return confirm;
+  };
   // A write the child will never hear of leaves a line for whichever process owns the store next (follow-child.ts), so no
   // seal is trusted over it. One line a second is enough: the owner reads any line as "a write was lost".
   // A line that cannot be written is retried, and a live child is told at once (which revokes a seal it holds).
@@ -137,7 +149,11 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     onLost: (reason) => lost.note(reason),
   }) : undefined;
   generation = () => follower?.published;
-  const reconciler = reads ? new Reconciler({ dir, reads, rpc, follower, ready: askConfirm }) : undefined;
+  const reconciler = reads ? new Reconciler({
+    dir, reads, rpc, follower, ready: askConfirm,
+    basis: () => (sealDeps ? readBasis(sealDeps) : Promise.resolve(null)),
+    onBasis: (token) => { basis = token; },
+  }) : undefined;
   reconciler?.startNightly();
   const observer = new WriterObserver({
     primary: engine, dir, identity: () => writerIdentity(engine),
@@ -173,7 +189,8 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
           if (!refused) {
             const pending = Symbol('pending');
             const confirmed = await Promise.race([askConfirm(), new Promise<typeof pending>((resolve) => { setTimeout(() => resolve(pending), 2_000).unref?.(); })]);
-            const mark = await (deps.sealChecks?.mark ?? sealMark)(sealDeps);
+            // The mark is the verified point (or the basis of the pass stopped at close), checked against the database now.
+            const mark = await (deps.sealChecks?.mark ?? sealMark)(sealDeps, basis ?? reconciler?.inProgressBasis() ?? null);
             // A confirmation left in doubt, or a revoke of it not yet acknowledged, is never sealed over. Nor is one still
             // running: its second read (seal.ts) is what catches another writer that began after its first, and a mark
             // taken now would include that write, so the next session's check would match it.

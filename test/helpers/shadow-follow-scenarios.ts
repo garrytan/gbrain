@@ -316,6 +316,66 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
       } finally { await base.close(); await r.close(); }
     }, 90_000);
 
+    // Hole 1 (strict basis): a full pass reads the basis (the counters the follower's state will be proven from) before it
+    // starts, keeps it in its resume point, and hands it to the serving process only once its watermark is restored. The
+    // options are passed untyped, so a build without them fails on the assertions.
+    for (const variant of ['resumed with its basis', 'resumed from a point an older build wrote'] as const) test(`a fresh full pass reads its basis before it starts and keeps it in its resume point; it is handed over only after the watermark restore (${variant})`, async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      try {
+        let asked = 0;
+        const askedAt: number[] = [];
+        const basis = async (): Promise<string | null> => { askedAt.push(Date.now()); return `basis-${++asked}`; };
+        const handed: Array<{ token: string; at: number }> = [];
+        let restoredAt = 0;
+        const onBasis = (token: string): void => { handed.push({ token, at: Date.now() }); };
+        let digests = 0;
+        let small: Reconciler;
+        const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+          const out = await r.rpc<T>(method, args);
+          if (method === 'relationDigest' && ++digests === 3) small.stop();
+          return out;
+        };
+        small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: 2, basis, onBasis } as never);
+        const stopped = await small.run('full', undefined, { resume: true });
+        expect(stopped.error).toBe('stopped');
+        const file = join(r.dir, 'reconcile', 'progress.json');
+        const progress = JSON.parse(readFileSync(file, 'utf8')) as { id: string; pass_start: number; db_at?: string | null };
+        expect(progress.db_at).toBe('basis-1');
+        expect(askedAt).toHaveLength(1);
+        expect(askedAt[0]!).toBeLessThanOrEqual(progress.pass_start); // read before the pass started
+        expect(handed).toEqual([]); // a stopped pass restores nothing and hands nothing over
+        expect((small as unknown as { inProgressBasis?: () => string | null }).inProgressBasis?.()).toBe('basis-1'); // what a close seals with
+        if (variant === 'resumed from a point an older build wrote') {
+          const { db_at: _dropped, ...older } = progress;
+          writeFileSync(file, JSON.stringify(older));
+        }
+        const watching = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+          const out = await r.rpc<T>(method, args);
+          if (method === 'watermark') restoredAt = Date.now();
+          return out;
+        };
+        const next = new Reconciler({ dir: r.dir, reads: base, rpc: watching, follower: r.follower, intervalRows: 2, basis, onBasis } as never);
+        const resumed = await next.run('full', undefined, { resume: true });
+        expect(resumed.error).toBeUndefined();
+        expect(resumed.id).toBe(stopped.id);
+        expect(restoredAt).toBeGreaterThan(0);
+        if (variant === 'resumed with its basis') {
+          // The basis of the pass it continued, not a new reading: the state is proven from that pass's start.
+          expect(handed.map((h) => h.token)).toEqual(['basis-1']);
+          expect(handed[0]!.at).toBeGreaterThanOrEqual(restoredAt);
+        } else {
+          expect(handed).toEqual([]); // no basis on record: this session cannot seal
+        }
+        expect((next as unknown as { inProgressBasis?: () => string | null }).inProgressBasis?.()).toBeNull(); // finished: nothing in progress
+        // A fresh pass reads a new basis and hands it over after its own restore.
+        const fresh = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: 2, basis, onBasis } as never).run('full');
+        expect(fresh.error).toBeUndefined();
+        expect(handed.at(-1)?.token).toBe(`basis-${asked}`);
+        expect(asked).toBeGreaterThanOrEqual(2);
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
     // A full pass that repaired a row in the last interval of a relation (no interval checkpoint follows it) and is
     // stopped right after the store took the repair, before the reconciler reads again. The store now holds the repaired
     // row, so any later scan finds nothing: the repair must be on record at once, outside the resume point.
@@ -601,12 +661,14 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
           next.handle({ t: 'rpc', id: n, method, args });
         });
         expect(await nextRpc('state')).toMatchObject({ valid: false, pending_seal: { db_at: 'mark-1' } });
-        // Applied in the child; the answer is what was lost.
-        expect(await nextRpc('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: true, confirmed: true });
+        // Both phases applied in the child (the confirmation is held invalid until the commit); the commit's answer is what was lost.
+        expect(await nextRpc('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, invalidated_reason: 'seal_confirm_pending', confirmed: true });
+        expect(await nextRpc('state')).toMatchObject({ valid: false, continuity: null });
+        expect(await nextRpc('commitSeal', { db_at: 'mark-1' })).toMatchObject({ valid: true, confirmed: true });
         expect(await nextRpc('state')).toMatchObject({ valid: true, continuity: progress.continuity });
         await ctx.primary().executeRaw(`UPDATE pages SET title = 'Changed While The Confirmation Was In Doubt' WHERE id = (SELECT min(id) FROM pages)`);
         const before = readPasses(r.dir).length;
-        const checked = new Reconciler({ dir: r.dir, reads: base, rpc: nextRpc, intervalRows: 2, ready: async () => ({ doubt: 'seal_confirm_unacknowledged' }) });
+        const checked = new Reconciler({ dir: r.dir, reads: base, rpc: nextRpc, intervalRows: 2, ready: async () => ({ doubt: 'seal_commit_unacknowledged' }) });
         // The real first check (startNightly runs it FIRST_CHECK_MS after the start) with the real pass.
         await (checked as unknown as { firstRun(): Promise<void> }).firstRun();
         const added = readPasses(r.dir).slice(before);
