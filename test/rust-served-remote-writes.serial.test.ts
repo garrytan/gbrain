@@ -43,6 +43,9 @@ import { OWNER_RUN_OPERATION } from '../src/core/rust-engine/owner-ipc/forwarded
 import { REMOTE_CONTEXT_KEYS, remoteOperationContext } from '../src/core/rust-engine/served/remote-whole-ops.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { withRemoteCaller } from '../src/core/remote-caller.ts';
+import { withMemberClaim } from '../src/core/member-claim.ts';
+import { drainFeedbackQueue, mintAnswerId, recordAnswer } from '../src/core/feedback/record.ts';
+import { _resetFeedbackSettingsCacheForTests } from '../src/core/feedback/settings.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { loadRustArmAddon, rustArmAddonPath } from './engine-parity/rust-arm.ts';
@@ -262,5 +265,99 @@ describeAddon('remote writes over the served wire', () => {
       readOnly: await send({}, {}, { clientId: 'c', scopes: ['read'] }),
     }).toEqual({ purge: 'permission_denied', retention: 'invalid_params', readOnly: 'permission_denied' });
     expect((await owner.getPage('notes/stays'))?.compiled_truth).toBe('Not purged.');
+  });
+
+  describe('the retrieval event a remote caller stores', () => {
+    const claimOf = (clientId: string) => ({ clientId, sourceId: 'default', allowedSources: null });
+    const eventOf = (id: string, clientId: string, op: string, slugs: string[]) => ({
+      id, client_id: clientId, op,
+      pages: slugs.map((slug, rank) => ({ source_id: 'default', slug, content_hash: null, rank, cited: false })),
+      links: [] as unknown[],
+    });
+    /** A raw call frame, as the claim's caller (null: no claim) with the world's read scope, on the connection or inside `txn`. */
+    const send = (claim: ReturnType<typeof claimOf> | null, events: unknown[], txn?: string) => {
+      const conn = servedConnectionOf(client) as unknown as Conn;
+      const run = () => worldOnly(() => conn.request('call', 'insertRetrievalEvents', [events], txn ? { txn } : {}));
+      return codeOf(claim ? withMemberClaim(claim, run) : run());
+    };
+    const inTxn = async (claim: ReturnType<typeof claimOf> | null, events: unknown[]) => {
+      const conn = servedConnectionOf(client) as unknown as Conn;
+      const ref = String(await conn.txn('begin', {}));
+      let code = '';
+      try { code = await send(claim, events, ref); } finally { await conn.txn('commit', { txn: ref }).catch(() => conn.txn('rollback', { txn: ref }).catch(() => undefined)); }
+      return code;
+    };
+    const stored = async (id: string) => {
+      const e = await owner.readRetrievalEvent(id);
+      return e ? { client_id: e.client_id, op: e.op, pages: e.pages.map(p => p.slug).sort() } : null;
+    };
+
+    beforeAll(async () => {
+      await owner.putPage('notes/other', NOTE('Other', 'Also open.'));
+    });
+
+    test('a claimed event for an open page is stored under the claimed client, on a plain call and inside a transaction', async () => {
+      const plain = mintAnswerId();
+      const held = mintAnswerId();
+      expect(await send(claimOf('client-a'), [eventOf(plain, 'client-a', 'search', ['notes/open'])])).toBe('ok');
+      expect(await inTxn(claimOf('client-a'), [eventOf(held, 'client-a', 'recall', ['notes/open'])])).toBe('ok');
+      expect(await stored(plain)).toEqual({ client_id: 'client-a', op: 'search', pages: ['notes/open'] });
+      expect(await stored(held)).toEqual({ client_id: 'client-a', op: 'recall', pages: ['notes/open'] });
+    });
+
+    test('an event naming another client than its claim, or no claim at all, is refused and stores nothing, on a plain call and inside a transaction', async () => {
+      const ids = [mintAnswerId(), mintAnswerId(), mintAnswerId(), mintAnswerId()];
+      const forged = (id: string) => [eventOf(id, 'victim', 'search', ['notes/open'])];
+      expect({
+        forgedPlain: await send(claimOf('client-a'), forged(ids[0]!)),
+        forgedTxn: await inTxn(claimOf('client-a'), forged(ids[1]!)),
+        noClaimPlain: await send(null, [eventOf(ids[2]!, 'client-a', 'search', ['notes/open'])]),
+        noClaimTxn: await inTxn(null, [eventOf(ids[3]!, 'client-a', 'search', ['notes/open'])]),
+      }).toEqual({ forgedPlain: 'permission_denied', forgedTxn: 'permission_denied', noClaimPlain: 'permission_denied', noClaimTxn: 'permission_denied' });
+      expect(await Promise.all(ids.map(stored))).toEqual([null, null, null, null]);
+    });
+
+    test('an event naming a page the caller may not read refuses the whole batch: the readable event beside it is not stored either', async () => {
+      const good = mintAnswerId();
+      const bad = mintAnswerId();
+      const code = await send(claimOf('client-a'), [eventOf(good, 'client-a', 'search', ['notes/open']), eventOf(bad, 'client-a', 'search', ['notes/open', 'notes/secret'])]);
+      expect(code).toBe('permission_denied');
+      expect(await Promise.all([stored(good), stored(bad)])).toEqual([null, null]);
+    });
+
+    test('another client cannot add pages to a stored answer by reusing its id; the same client\'s exact retry stores nothing more', async () => {
+      const id = mintAnswerId();
+      expect(await send(claimOf('client-a'), [eventOf(id, 'client-a', 'search', ['notes/open'])])).toBe('ok');
+      expect({
+        otherClient: await send(claimOf('client-b'), [eventOf(id, 'client-b', 'search', ['notes/open', 'notes/other'])]),
+        otherOp: await send(claimOf('client-a'), [eventOf(id, 'client-a', 'think', ['notes/open', 'notes/other'])]),
+        retry: await send(claimOf('client-a'), [eventOf(id, 'client-a', 'search', ['notes/open', 'notes/other'])]),
+        retryInTxn: await inTxn(claimOf('client-a'), [eventOf(id, 'client-a', 'search', ['notes/open', 'notes/other'])]),
+      }).toEqual({ otherClient: 'permission_denied', otherOp: 'permission_denied', retry: 'ok', retryInTxn: 'ok' });
+      expect(await stored(id)).toEqual({ client_id: 'client-a', op: 'search', pages: ['notes/open'] });
+    });
+
+    test('an id repeated inside one batch is refused and stores nothing', async () => {
+      const id = mintAnswerId();
+      expect(await send(claimOf('client-a'), [eventOf(id, 'client-a', 'search', ['notes/open']), eventOf(id, 'client-a', 'search', ['notes/other'])])).toBe('permission_denied');
+      expect(await stored(id)).toBeNull();
+    });
+
+    test('answers of two remote callers that share the drain loop are each stored under their own client id and read scope', async () => {
+      await owner.setConfig('feedback.enabled', 'true');
+      _resetFeedbackSettingsCacheForTests();
+      const ctxOf = (clientId: string) => ({ engine: client, config: {}, remote: true, transport: 'http', sourceId: 'default', logger: console,
+        auth: { token: `t-${clientId}`, clientId, scopes: ['read', 'write'], sourceId: 'default' } }) as never;
+      const answer = (clientId: string, slug: string) => withRemoteCaller(true, () => withCallerAccess({ identity: [], audience: null, audienceIdentities: [] },
+        () => recordAnswer(ctxOf(clientId), { op: 'search', pages: [{ source_id: 'default', slug }] })));
+      const [a, b] = await Promise.all([answer('client-a', 'notes/open'), answer('client-b', 'notes/other')]);
+      expect((await drainFeedbackQueue(30_000)).unfinished).toBe(0);
+      expect([await stored(a!.answer_id!), await stored(b!.answer_id!)]).toEqual([
+        { client_id: 'client-a', op: 'search', pages: ['notes/open'] },
+        { client_id: 'client-b', op: 'search', pages: ['notes/other'] },
+      ]);
+      await owner.setConfig('feedback.enabled', 'false');
+      _resetFeedbackSettingsCacheForTests();
+    });
   });
 });
