@@ -120,7 +120,7 @@ export const CLI_COMMAND_CLASSES: Readonly<Record<string, EnforcedClass | Enforc
     'transcripts', 'models', 'takes', 'onboard', 'founder', 'profile', 'think', 'notability-eval', 'waiting', 'loops', 'household',
     'questions', 'edge-proposals', 'memory-proposals', 'core', 'connectors', 'wakeshift', 'pages', 'quarantine', 'beliefs',
     'trust', 'guests', 'dedupe', 'watch', 'storage', 'code-def', 'code-refs', 'reindex-code', 'reindex-search-vector', 'reindex-frontmatter',
-    'backfill', 'code-callers', 'code-callees', 'repos', 'secrets', 'apple-contacts', 'policy', 'claims', 'ledger', 'onboarding', 'value', 'correct', 'rules', 'propose', 'telemetry',
+    'backfill', 'code-callers', 'code-callees', 'repos', 'secrets', 'apple-contacts', 'whatsapp', 'linkedin', 'policy', 'claims', 'ledger', 'onboarding', 'value', 'correct', 'rules', 'propose', 'telemetry',
   ].map(n => [n, 'refused' as const])),
 };
 

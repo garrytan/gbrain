@@ -134,6 +134,8 @@ TOOLS
         [--budget N] [--check]       file (claude-code | codex | openclaw)
   decide <status|probe|enable|...>   System One decision support (Jev); every slot off by default
   apple-contacts <write|status>      Change Apple Contacts through GBrain Helper; writes off by default
+  whatsapp <list|whitelist|sync>     Whitelist-gated local macOS WhatsApp Desktop CRM collector
+  linkedin <import-export|list|...>  Whitelist-gated LinkedIn export CRM & verbatim posts collector
   memory-proposals list|show|approve|deny  QM's proposed timeline entries and links awaiting your decision
   policy init|show|allow|ask|deny|edit|accept|check  When agents may send, spend, delete or sign up for you (advisory)
   ledger [add|confirm|digest]        What your agents did outside the brain, with evidence and totals
