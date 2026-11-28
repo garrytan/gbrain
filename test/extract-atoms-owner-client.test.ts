@@ -54,8 +54,16 @@ async function clientOf(socketPath: string): Promise<{ engine: BrainEngine; clos
   return { engine, close };
 }
 
+/** What a refused run reports, and whether the owner process itself still extracts afterwards. */
+interface Refusal { member: string; reason: string; via: string | null; ownerExtracts: boolean }
+
+/** PGLite owner: the client's state gate refuses over the socket (transactions do not cross); the owner extracts. */
+const PGLITE_OWNER: Refusal = { member: 'assertAtomStateStore', reason: 'transactions', via: 'owner_ipc', ownerExtracts: true };
+/** Rust owner: discovery is refused before the state gate (the store keeps no sync-21 discovery state), for everyone. */
+const RUST_OWNER: Refusal = { member: 'listExtractablePages', reason: 'health', via: null, ownerExtracts: false };
+
 /** Runs the phase twice from a client: each run must refuse by name and make no model call. */
-async function expectClientRefusesBeforeTheModel(socketPath: string, owner: BrainEngine) {
+async function expectClientRefusesBeforeTheModel(socketPath: string, owner: BrainEngine, expected: Refusal) {
   await owner.putPage('meetings/example', { type: 'meeting', title: 'Example', compiled_truth: BODY, timeline: '', frontmatter: {} } as never);
   const { engine, close } = await clientOf(socketPath);
   let calls = 0;
@@ -67,18 +75,29 @@ async function expectClientRefusesBeforeTheModel(socketPath: string, owner: Brai
       const error = (outcome as { error: unknown }).error;
       expect(error).toBeInstanceOf(OperationError);
       expect((error as OperationError).code).toBe('engine_capability_missing');
-      expect((error as OperationError).detail).toContain('member=assertAtomStateStore');
-      expect((error as OperationError).detail).toContain('via=owner_ipc');
-      expect((error as OperationError).reason).toBe('transactions');
+      expect((error as OperationError).detail).toContain(`member=${expected.member}`);
+      if (expected.via) expect((error as OperationError).detail).toContain(`via=${expected.via}`);
+      expect((error as OperationError).reason).toBe(expected.reason);
     }
     expect(calls).toBe(0);
     expect(await owner.listPages({ type: 'atom' } as never)).toEqual([]);
   } finally { close(); }
-  // The owner process itself still extracts and stores the atoms.
-  const result = await runPhaseExtractAtoms(owner, { _transcripts: [], _chat: async () => { calls++; return atoms(['First claim']); } });
-  expect(result.status).toBe('ok');
-  expect(calls).toBe(1);
-  expect((await owner.listPages({ type: 'atom' } as never)).length).toBe(1);
+  if (expected.ownerExtracts) {
+    // The owner process itself still extracts and stores the atoms.
+    const result = await runPhaseExtractAtoms(owner, { _transcripts: [], _chat: async () => { calls++; return atoms(['First claim']); } });
+    expect(result.status).toBe('ok');
+    expect(calls).toBe(1);
+    expect((await owner.listPages({ type: 'atom' } as never)).length).toBe(1);
+    return;
+  }
+  // The Rust owner refuses the same way: no model call, nothing stored.
+  const ownerRun = await runPhaseExtractAtoms(owner, { _transcripts: [], _chat: async () => { calls++; return atoms(['First claim']); } })
+    .then(() => null, (error: unknown) => error);
+  expect(ownerRun).toBeInstanceOf(OperationError);
+  expect((ownerRun as OperationError).code).toBe('engine_capability_missing');
+  expect((ownerRun as OperationError).detail).toContain(`member=${expected.member}`);
+  expect(calls).toBe(0);
+  expect(await owner.listPages({ type: 'atom' } as never)).toEqual([]);
 }
 
 describe('extract_atoms from an owner-socket client, owner on PGLite', () => {
@@ -102,7 +121,7 @@ describe('extract_atoms from an owner-socket client, owner on PGLite', () => {
 
   test('the phase refuses by name before the model call, on every run, and the owner still extracts', async () => {
     expect(role.role).toBe('owner');
-    await expectClientRefusesBeforeTheModel(ownerSocketPath(join(dir, 'brain.rust')), owner);
+    await expectClientRefusesBeforeTheModel(ownerSocketPath(join(dir, 'brain.rust')), owner, PGLITE_OWNER);
   }, 120_000);
 });
 
@@ -127,7 +146,7 @@ describe.skipIf(!HAVE_ADDON)('extract_atoms from an owner-socket client, owner o
     rmSync(dir, { recursive: true, force: true });
   }, 60_000);
 
-  test('the phase refuses by name before the model call, on every run, and the owner still extracts', async () => {
-    await expectClientRefusesBeforeTheModel(ownerSocketPath(db), owner as unknown as BrainEngine);
+  test('the phase refuses by name before the model call, on every run, for the client and the owner', async () => {
+    await expectClientRefusesBeforeTheModel(ownerSocketPath(db), owner as unknown as BrainEngine, RUST_OWNER);
   }, 120_000);
 });
