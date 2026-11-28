@@ -209,7 +209,14 @@ async function savepoint<T>(engine: BoundEngine, brain: StoreBrain, fn: Transact
         await brain.applyWriteTrust([...TRUST_SETTINGS], trust.map((value) => value ?? '')).catch(() => undefined);
         throw error;
       }
-      await storeCall({ member: 'transaction' }, () => brain.releaseSavepoint(depth));
+      try {
+        await storeCall({ member: 'transaction' }, () => brain.releaseSavepoint(depth));
+      } catch (releaseError) {
+        // A refused release (a nested savepoint is still open, for one) leaves this savepoint's writes in the transaction
+        // with its caller told it failed: the transaction must not commit them.
+        scope.savepointRollbackFailed ??= releaseError;
+        throw releaseError;
+      }
       return value;
     });
   } finally {

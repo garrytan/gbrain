@@ -95,7 +95,8 @@ export interface RustTransactionScope {
   live: boolean;
   ended: boolean;
   /**
-   * Set when a savepoint inside the transaction failed and could not be rolled back (store-members/transactions.ts):
+   * Set when a savepoint inside the transaction failed and could not be rolled back, or could not be released
+   * (store-members/transactions.ts):
    * the transaction then rolls back instead of committing, so the failed savepoint's writes are never kept.
    */
   savepointRollbackFailed?: unknown;
@@ -472,8 +473,8 @@ export class RustEngine implements BrainEngine {
       let value: T;
       try {
         value = await transactionContext.run([scope, ...(transactionContext.getStore() ?? [])], () => run(scope));
-        // A nested transaction that failed and could not be rolled back alone leaves its writes in this one: it rolls
-        // back (the catch below) instead of committing them.
+        // A nested transaction that failed and could not be rolled back alone, or whose release was refused, leaves its
+        // writes in this one: it rolls back (the catch below) instead of committing them.
         if (scope.savepointRollbackFailed !== undefined) {
           throw opError('internal_error', 'A nested transaction failed and its writes could not be rolled back on their own, so the whole transaction was rolled back; nothing was written.',
             'Let every nested transaction(fn) finish before its parent ends, then retry.', { reason: 'savepoint_rollback_failed', detail: 'member=transaction' });

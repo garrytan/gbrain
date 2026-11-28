@@ -10,8 +10,9 @@
  *  - Served reads never wait for an open transaction, including the reads whose names do not start with a read verb.
  *    Before the fix the gate decided by name, and those reads waited for the writer.
  *  - Writes admitted before a transaction finish before it takes the writer: test/rust-engine-write-drain.test.ts.
- *  - A nested transaction that fails while its own nested transaction is still open cannot be rolled back alone; the
- *    whole transaction then rolls back instead of committing. Before the fix its writes were committed.
+ *  - A nested transaction that fails while its own nested transaction is still open cannot be rolled back alone, and
+ *    one that returns while its nested one is open cannot be released; the whole transaction then rolls back instead of
+ *    committing. Before the fixes their writes were committed.
  *  - A transaction that waits for the open one rejects `cancelled` as soon as its signal aborts, even when the abort
  *    came before its wait began. When an abort comes while it waits and no transaction is left, it still opens nothing
  *    and its callback never runs.
@@ -197,5 +198,33 @@ describe('Rust engine writer gate', () => {
     hold();
     for (const slug of ['sp/outer', 'sp/parent', 'sp/desc']) expect(await brain.engine.getPage(slug)).toBeNull();
     expect(await within(brain.engine.putPage('sp/after', NOTE), 5_000)).toBe('resolved');
+  }, 60_000);
+
+  withAddon('a nested transaction whose release is refused rolls back the whole transaction', async () => {
+    const brain = await openRustBrain();
+    brains.push(brain);
+    let hold!: () => void;
+    const held = new Promise<void>((resolve) => { hold = resolve; });
+    releases.push(hold);
+    let ready!: () => void;
+    const grandchildOpen = new Promise<void>((resolve) => { ready = resolve; });
+    let caught: unknown = null;
+    const outer = brain.engine.transaction(async (tx) => {
+      await tx.putPage('rel/outer', NOTE);
+      try {
+        await tx.transaction(async (child) => {
+          await child.putPage('rel/child', NOTE);
+          const grandchild = child.transaction(async (g) => { await g.putPage('rel/grand', NOTE); ready(); await held; });
+          grandchild.catch(() => undefined);
+          await grandchildOpen; // the child returns while its own nested transaction is still open
+        });
+      } catch (error) { caught = error; /* the caller believes the failed nested transaction wrote nothing */ }
+    });
+    outer.catch(() => undefined);
+    expect(await within(outer, 10_000)).toBe('rejected:internal_error');
+    hold();
+    expect(caught).not.toBeNull();
+    for (const slug of ['rel/outer', 'rel/child', 'rel/grand']) expect(await brain.engine.getPage(slug)).toBeNull();
+    expect(await within(brain.engine.putPage('rel/after', NOTE), 5_000)).toBe('resolved');
   }, 60_000);
 });
