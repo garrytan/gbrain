@@ -52,8 +52,11 @@ export function elapsed(at: string | undefined, ms: number, now = Date.now()): b
   return !Number.isFinite(age) || age < 0 || age >= ms;
 }
 
-/** The one rule for "a full pass is due by age", shared by the first check and the 15-minute tick. */
-export const fullPassDue = (lastFull: PassRecord | undefined, now = Date.now()): boolean => elapsed(lastFull?.finished_at, NIGHTLY_MS, now);
+/**
+ * The one rule for "a full pass is due", shared by the first check and the 15-minute tick: by age, or because the
+ * last full pass was stopped (it did not finish, so the next one is due whatever its age).
+ */
+export const fullPassDue = (lastFull: PassRecord | undefined, now = Date.now()): boolean => lastFull?.error === 'stopped' || elapsed(lastFull?.finished_at, NIGHTLY_MS, now);
 /**
  * A process that has run this long after it started checks whether its watermark needs a full pass. Short: an MCP
  * client keeps a stdio serve session for seconds, and a pass that cannot finish in one resumes in the next.
@@ -307,10 +310,19 @@ export class Reconciler {
       if (this.stopped) {
         rec.error = 'stopped'; rec.finished_at = new Date().toISOString();
         // Rows this pass repaired are evidence the store had drifted, and the store now holds the repair: a pass that
-        // reads them again finds nothing. They must reach disk, in the resume point or, failing that, as a stopped pass
-        // (not clean, so the clean streak ends) with no resume point left to continue it as if clean.
+        // reads them again finds nothing. So a stopped pass that saw any repair or miss goes on record at once, as a
+        // stopped pass (not clean, so the clean streak ends, and counted by writer coverage), and its resume point is
+        // removed only after that record landed: a resume point alone is dropped by any fresh pass or new continuity.
+        // A stopped pass that saw nothing keeps only its resume point, and the next process finishes it.
+        if (rec.repaired_rows > 0 || rec.follower_misses > 0) {
+          let recorded = false;
+          try { appendPass(this.o.dir, rec); recorded = true; } catch { /* kept in the resume point below */ } // silent-read-ok: the counts stay in the resume point, and the next full pass is due (a stopped pass did not finish)
+          if (recorded) clearProgress(this.o.dir);
+          else if (resumable) saveCounts();
+          return rec;
+        }
         if (resumable && saveCounts()) return rec;
-        if (!countsSaved || (!progress && (rec.repaired_rows > 0 || rec.follower_misses > 0))) {
+        if (!countsSaved) {
           clearProgress(this.o.dir);
           try { appendPass(this.o.dir, rec); } catch { /* a full disk loses the record */ } // silent-read-ok: nothing else can hold it; the next full pass is due anyway (the watermark was not restored)
         }
