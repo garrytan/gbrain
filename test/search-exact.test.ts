@@ -179,6 +179,7 @@ describe('search_exact remote visibility', () => {
   test('a page that times out alone is named in the gap report only when the caller may read it', async () => {
     await page('notes/open-gap', 'open gap marker text');
     await page('notes/private-gap', 'private gap marker text', { frontmatter: 'visibility: private\n' });
+    await page('notes/foreign-gap', 'foreign gap marker text', { sourceId: 'source-b' });
     // Every batch statement times out, so the scan steps one page at a time through nextLivePageAfter and records each as scan_timeout.
     const timingOut = new Proxy(engine as any, {
       get(target, prop, receiver) {
@@ -191,10 +192,11 @@ describe('search_exact remote visibility', () => {
     expect(viaRemote.unreadable.sample.map(s => s.slug)).toEqual(['notes/open-gap']);
     expect(viaRemote.unreadable.total).toBe(1);
     expect(JSON.stringify(viaRemote)).not.toContain('notes/private-gap');
+    expect(JSON.stringify(viaRemote)).not.toContain('notes/foreign-gap');
     // The cursor still passes the hidden page: the scan ends complete of pages, not stuck at the first one.
     expect(viaRemote.resume_after).toBeNull();
     const viaLocal = await exact(ctxOf({ engine: timingOut }), { phrase: 'gap marker' });
-    expect(viaLocal.unreadable.sample.map(s => s.slug)).toEqual(['notes/open-gap', 'notes/private-gap']);
+    expect(viaLocal.unreadable.sample.map(s => s.slug)).toEqual(expect.arrayContaining(['notes/open-gap', 'notes/private-gap']));
   });
 
   test('a source outside the grant is refused', async () => {

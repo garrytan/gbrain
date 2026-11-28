@@ -171,8 +171,21 @@ SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.type, pp.matching_chunks
   return { sql, params };
 }
 
+/** Whether `sourceId` is inside the sources the scan was asked to cover (no source option: every source). */
+function inCallerScope(opts: ExactScanOpts, sourceId: string): boolean {
+  if (opts.sourceIds?.length) return opts.sourceIds.includes(sourceId);
+  return !opts.sourceId || opts.sourceId === sourceId;
+}
+
+/** Whether the remote caller, under the caller record this call runs in, may read the page (the get_page read policy). */
+async function callerMayRead(engine: BrainEngine, page: { slug: string; source_id: string }): Promise<boolean> {
+  const { remotePageAccess } = await import('../persistence/page-visibility.ts');
+  const { readable } = await remotePageAccess(engine, [{ source_id: page.source_id, slug: page.slug }]);
+  return readable.has(`${page.source_id}\u0000${page.slug}`);
+}
+
 /** Runs the scan from `afterPageId` until the scope ends, the limit fills or the deadline passes. */
-export async function runExactScan(engine: Pick<BrainEngine, 'scanExactBatch' | 'nextLivePageAfter'>, opts: ExactScanOpts): Promise<ExactScanResult> {
+export async function runExactScan(engine: BrainEngine, opts: ExactScanOpts): Promise<ExactScanResult> {
   const matches: ExactMatch[] = [];
   const gaps: Array<{ page_id: number; slug: string; source_id: string; reason: ExactGapReason }> = [];
   let after = opts.afterPageId ?? 0;
@@ -192,8 +205,11 @@ export async function runExactScan(engine: Pick<BrainEngine, 'scanExactBatch' | 
       if (batch > 1) { batch = Math.max(1, Math.floor(batch / 2)); continue; }
       const next = await engine.nextLivePageAfter(after);
       if (!next) { done = true; break; }
-      gaps.push({ page_id: Number(next.id), slug: next.slug, source_id: next.source_id, reason: 'scan_timeout' });
       after = Number(next.id);
+      // nextLivePageAfter answers the next page in any source, readable or not: a remote caller's gap report names only a
+      // page of the call's source scope that it may read. The cursor still moves past a hidden page, which is neither reported nor counted as scanned.
+      if (opts.remote && !(inCallerScope(opts, next.source_id) && await callerMayRead(engine, next))) continue;
+      gaps.push({ page_id: Number(next.id), slug: next.slug, source_id: next.source_id, reason: 'scan_timeout' });
       pagesScanned++;
       continue;
     }
