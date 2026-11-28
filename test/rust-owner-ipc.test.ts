@@ -859,7 +859,65 @@ describe('an owner that exits', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
-  test.todo('multi-writer (C06): a client reaches the new primary on its next call with no restart, and the old primary writes are refused by its lease token', () => {});
+  test.skipIf(!HAVE_ADDON)('multi-writer (C06): a client reaches the new primary on its next call with no restart, and the old primary writes are refused by its lease token', async () => {
+    const { processOrigin, startHostRegistration } = await import('../src/core/persistence/host-registration.ts');
+    const { rustLeases } = await import('../src/core/rust-engine/store-members/leases.ts');
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-c06-handoff-'));
+    const db = join(dir, 'brain.rust');
+    const host = 'c06-host';
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ADDON_BUILT } });
+      // The old primary: a child that owns the real store and holds the host lease (test/helpers/rust-owner-child.ts).
+      const child = spawn(process.execPath, [join(import.meta.dir, 'helpers', 'rust-owner-child.ts'), 'mixed', db, '0'],
+        { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, GBRAIN_RUST_ENGINE_ADDON: ADDON_BUILT, GBRAIN_TEST_OWNER_HOST_ID: host } });
+      const ready = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        let buf = '';
+        child.stdout!.on('data', chunk => { buf += chunk; if (buf.includes('\n')) resolve(JSON.parse(buf.split('\n')[0]!)); });
+        child.on('close', code => reject(new Error(`owner exited ${code}`)));
+      });
+      const rust = openRustEngine({ addon, databasePath: db, ownerWaitMs: 5_000 });
+      let next: RustEngine | undefined;
+      let registration: { first: Promise<{ name: string; epoch: number; token: string } | null>; stop(): Promise<void> } | undefined;
+      try {
+        expect(ready.role).toBe('owner');
+        const old = ready.fence as { name: string; epoch: number; token: string };
+        expect(old.name).toBe(`consumer:${host}`);
+        await rust.connect({ engine: 'pglite', database_path: db } as never);
+        expect(rust.ownerRole).toBe('client');
+        await rust.putPage('c06/before', { type: 'note', title: 'Before', compiled_truth: 'x' });
+        child.kill('SIGKILL');
+        await once(child, 'close');
+        // The new primary opens the brain and takes the dead holder's lease over at a higher epoch.
+        next = openRustEngine({ addon, databasePath: db, ownerWaitMs: 5_000 });
+        await next.connect({ engine: 'pglite', database_path: db } as never);
+        expect(next.ownerRole).toBe('owner');
+        registration = startHostRegistration(next, { hostId: host, origin: processOrigin(host, 'local_consumer:test'), everyMs: 600_000 });
+        const fence = await registration.first;
+        expect(fence?.name).toBe(old.name);
+        expect(fence!.epoch).toBeGreaterThan(old.epoch);
+        // The client's next call reaches the new primary, with no restart.
+        await rust.putPage('c06/after', { type: 'note', title: 'After', compiled_truth: 'y' });
+        expect(rust.ownerRole).toBe('client');
+        expect(rust.connected).toBe(true);
+        expect((await next.getPage('c06/after'))?.title).toBe('After');
+        expect((await rust.getPage('c06/before'))?.title).toBe('Before');
+        // A write of the old primary, under its lease token, is refused: its renew and the commit check of every protected write.
+        const leases = rustLeases(next);
+        await leases.assert(fence!);
+        for (const call of [() => leases.renew(old, 60_000), () => leases.assert(old)]) {
+          const refused = (await call().then(() => null, e => e)) as OperationError | null;
+          expect(refused?.code).toBe('lease_lost');
+          expect(refused?.reason).toBe('epoch_moved');
+        }
+      } finally {
+        child.kill('SIGKILL');
+        await registration?.stop();
+        await rust.disconnect().catch(() => undefined);
+        await next?.disconnect().catch(() => undefined);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }, 60_000);
 
   test('embedded, one owner: with no other owner, a Rust engine client becomes the owner on its next call and serves it from its store', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-takeover-'));
@@ -892,7 +950,63 @@ describe('an owner that exits', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
-  test.todo('multi-writer (C06): after a takeover the calls of every client share one election and the new primary holds a higher epoch', () => {});
+  test.skipIf(!HAVE_ADDON)('multi-writer (C06): after a takeover the calls of every client share one election and the new primary holds a higher epoch', async () => {
+    const { processOrigin, startHostRegistration } = await import('../src/core/persistence/host-registration.ts');
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-ipc-c06-election-'));
+    const db = join(dir, 'brain.rust');
+    const host = 'c06-host';
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const real = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ADDON_BUILT } }) as unknown as { Brain: new (...args: never[]) => { open(...args: unknown[]): Promise<unknown> } };
+      // The real store, counting its opens: one election for every client's calls shows as one open.
+      const opened = { n: 0 };
+      const addon = { ...real, Brain: class extends real.Brain { async open(...args: unknown[]) { opened.n++; return super.open(...args); } } } as never;
+      const child = spawn(process.execPath, [join(import.meta.dir, 'helpers', 'rust-owner-child.ts'), 'mixed', db, '0'],
+        { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, GBRAIN_RUST_ENGINE_ADDON: ADDON_BUILT, GBRAIN_TEST_OWNER_HOST_ID: host } });
+      const ready = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        let buf = '';
+        child.stdout!.on('data', chunk => { buf += chunk; if (buf.includes('\n')) resolve(JSON.parse(buf.split('\n')[0]!)); });
+        child.on('close', code => reject(new Error(`owner exited ${code}`)));
+      });
+      const clients = [0, 1].map(() => openRustEngine({ addon, databasePath: db, ownerWaitMs: 5_000 }));
+      const registrations: Array<{ first: Promise<{ name: string; epoch: number; token: string } | null>; stop(): Promise<void> }> = [];
+      try {
+        expect(ready.role).toBe('owner');
+        const old = ready.fence as { name: string; epoch: number; token: string };
+        for (const c of clients) await c.connect({ engine: 'pglite', database_path: db } as never);
+        expect(clients.map(c => c.ownerRole)).toEqual(['client', 'client']);
+        expect(opened.n).toBe(0);
+        const olds = clients.map(c => ownerConnectionFor(c)!);
+        child.kill('SIGKILL');
+        await once(child, 'close');
+        for (let i = 0; i < 200 && olds.some(o => !o.closed); i++) await Bun.sleep(10);
+        // Every client calls at once: one election opens the store once, and every call lands.
+        const calls = clients.flatMap((c, i) => [
+          c.putPage(`c06/e${i}-0`, { type: 'note', title: `E${i}`, compiled_truth: 'x' }),
+          c.getConfig('version'),
+          c.putPage(`c06/e${i}-1`, { type: 'note', title: `E${i}`, compiled_truth: 'y' }),
+        ]);
+        await Promise.all(calls);
+        expect(opened.n).toBe(1);
+        expect(clients.map(c => c.ownerRole).sort()).toEqual(['client', 'owner']);
+        const primary = clients.find(c => c.ownerRole === 'owner')!;
+        for (const i of [0, 1]) for (const n of [0, 1]) expect((await primary.getPage(`c06/e${i}-${n}`))?.title).toBe(`E${i}`);
+        // The new primary, and only it, holds the host lease, at a higher epoch than the old primary's.
+        const both = clients.map(c => startHostRegistration(c, { hostId: host, origin: processOrigin(host, 'local_consumer:test'), everyMs: 600_000 }));
+        registrations.push(...both);
+        const fences = await Promise.all(both.map(r => r.first));
+        const held = fences.filter(f => f !== null);
+        expect(held).toHaveLength(1);
+        expect(fences[clients.indexOf(primary)]).toEqual(held[0]!);
+        expect(held[0]!.name).toBe(old.name);
+        expect(held[0]!.epoch).toBeGreaterThan(old.epoch);
+      } finally {
+        child.kill('SIGKILL');
+        for (const r of registrations) await r.stop();
+        for (const c of clients) await c.disconnect().catch(() => undefined);
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }, 60_000);
 
   describe('the first ordinary member call after the owner dies', () => {
     /** The owner has gone and this engine's client connection has seen it close, with no other call made yet. */

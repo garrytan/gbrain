@@ -11,9 +11,13 @@
  * - `mixed`: prints `{ready, role}`, waits for a line on stdin, then runs `count` operations, alternating a putPage of
  *   `mix/w<worker>-<n>` with a getPage of a page it already wrote. It prints `{done, latencies, errors}` with every
  *   operation's latency in ms and every error's code, then disconnects.
+ *
+ * With GBRAIN_TEST_OWNER_HOST_ID set, a child that is the owner first registers that host (host-registration.ts, the
+ * lease a multi-user Rust brain's resident consumer holds) and prints its fence in the ready line as `fence`.
  */
 import { loadRustAddon } from '../../src/core/rust-engine/addon-loader.ts';
 import { openRustEngine } from '../../src/core/rust-engine.ts';
+import { processOrigin, startHostRegistration } from '../../src/core/persistence/host-registration.ts';
 
 const [mode, databasePath, workerText, countText] = process.argv.slice(2);
 const worker = Number(workerText ?? 0);
@@ -27,7 +31,11 @@ async function main(): Promise<void> {
   const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: process.env.GBRAIN_RUST_ENGINE_ADDON } });
   const engine = openRustEngine({ addon, databasePath: databasePath! });
   await engine.connect({ engine: 'pglite', database_path: databasePath } as never);
-  say({ ready: true, role: engine.ownerRole, pid: process.pid });
+  const hostId = process.env.GBRAIN_TEST_OWNER_HOST_ID;
+  const fence = hostId && engine.ownerRole === 'owner'
+    ? await startHostRegistration(engine, { hostId, origin: processOrigin(hostId, 'local_consumer:test') }).first
+    : undefined;
+  say({ ready: true, role: engine.ownerRole, pid: process.pid, ...(fence !== undefined ? { fence } : {}) });
 
   if (mode === 'writer') {
     for (let n = 0; ; n++) {
