@@ -193,7 +193,10 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
       await publishConnectorPage(ctx, { relPath, markdown: connectorRender(markdown, { path: relPath, [APPLE_CONTACT_ID_KEY]: id }),
         commitMessage: `apple-contacts(${sourceId}): ${relPath}`, privateMessage: `apple-contacts(${sourceId}): ${relPath} is private; database only`,
         retireReason: 'the contact changed in Apple Contacts' });
+      // A skipped import may be a purge refusal rather than an unchanged page.
+      if (await ownerOf(relPath) !== id) return null;
       onWrite(relPath);
+      return slugifyPath(relPath);
     },
     remove: removePage,
     skippedHandAuthored: (relPath: string) => log(`[apple-contacts] skipping hand-authored ${relPath}`),
@@ -224,7 +227,8 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
     }
     pending.delete(contact.id);
     let written: string | null = null;
-    await applyContactPage(contact.id, false, io(contact.id, render, relPath => { written = relPath; }));
+    const applied = await applyContactPage(contact.id, false, io(contact.id, render, relPath => { written = relPath; }));
+    if (!applied) return;
     touched.add(contact.id);
     const slug = written !== null ? slugifyPath(written) : null;
     if (slug) await decideIdentity(contact.id, slug, render.data.emails, render.data.phones, { company: contact.organization, jobTitle: contact.jobTitle, groups: contact.groups });

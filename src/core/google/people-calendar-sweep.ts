@@ -198,8 +198,9 @@ async function applyContact(deps: GoogleSyncDeps, c: ContactData,
       contactsDir,
     ),
     write: async (relPath, markdown) => {
-      await importRendered(deps, relPath, markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
-      sweep.touched.add(slugifyPath(relPath));
+      const slug = await importRendered(deps, relPath, markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
+      if (slug !== null) sweep.touched.add(slug);
+      return slug;
     },
     remove: async (relPath) => {
       await unlinkGoogleContactPage(deps.engine, deps.sourceId, slugifyPath(relPath));

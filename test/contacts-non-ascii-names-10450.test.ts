@@ -6,12 +6,18 @@
  * written or retired, and a hand-authored page there is left alone.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { applyContactPage, type ContactPageIO } from '../src/core/contact-page-apply.ts';
 import { classifyConnectorError } from '../src/core/connectors/item-holds.ts';
 import { contactIdSlug, personSlugFromContact, renderPersonPage } from '../src/core/google/google-render.ts';
 import type { ContactData } from '../src/core/google/types.ts';
 import { appleBaseSlug, appleContactRender, appleTombstoneSlugs, renderAppleContactPage } from '../src/core/apple-contacts/render.ts';
+import { parseAppleContactsSourceConfig } from '../src/core/apple-contacts/source-config.ts';
+import { runAppleContactsSync } from '../src/core/apple-contacts/apple-contacts-source.ts';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { ContactsStub, STUB_TOKEN } from './helpers/apple-contacts-stub.ts';
 import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/google-source.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -72,7 +78,7 @@ function directory(provider: 'google' | 'apple', id: string, name = '张三') {
     baseSlug: () => provider === 'google' ? personSlugFromContact(data, false, DIR) : appleBaseSlug(apple, DIR),
     tombstoneSlugs: () => provider === 'google' ? [contactIdSlug(id, DIR)] : appleTombstoneSlugs(id, DIR),
     render,
-    write: async (relPath, body) => { writes.push(relPath); pages.set(relPath, { owner: id, body }); },
+    write: async (relPath, body) => { writes.push(relPath); pages.set(relPath, { owner: id, body }); return relPath.replace(/\.md$/, ''); },
     remove: async (relPath) => { removes.push(relPath); pages.delete(relPath); },
     skippedHandAuthored: (relPath) => { skipped.push(relPath); },
     applied: () => {},
@@ -94,6 +100,27 @@ for (const provider of ['google', 'apple'] as const) {
       expect(d.pages.size).toBe(1);
       await applyContactPage(id, true, d.io);
       expect(d.pages.size).toBe(0);
+    });
+
+    test('a skipped replacement keeps the old page and does not report an applied contact', async () => {
+      const d = directory(provider, id);
+      d.pages.set(`${DIR}/old-name.md`, { owner: id, body: 'old' });
+      let applied = false;
+      d.io.write = async () => null;
+      d.io.applied = () => { applied = true; };
+      expect(await applyContactPage(id, false, d.io)).toBe(false);
+      expect([...d.pages.keys()]).toEqual([`${DIR}/old-name.md`]);
+      expect(d.removes).toEqual([]);
+      expect(applied).toBe(false);
+    });
+
+    test('a replacement that retains the old slug cannot delete that page', async () => {
+      const d = directory(provider, id);
+      d.pages.set(`${DIR}/old-name.md`, { owner: id, body: 'old' });
+      d.io.write = async () => `${DIR}/old-name`;
+      expect(await applyContactPage(id, false, d.io)).toBe(true);
+      expect([...d.pages.keys()]).toEqual([`${DIR}/old-name.md`]);
+      expect(d.removes).toEqual([]);
     });
 
     test('refuses a path another contact owns before writing or retiring anything', async () => {
@@ -197,5 +224,44 @@ describe('the managed contacts sweep imports non-ASCII names (#10450)', () => {
         { slug: contactIdSlug('people/c2', DIR), title: '李四' },
       ].sort((a, b) => a.title < b.title ? -1 : 1));
     }
+  }), 120_000);
+});
+
+describe('managed Apple contact replacements', () => {
+  const { home, engines, env, source, setup, teardown } = createConnectorFixture();
+  beforeAll(setup, 120_000);
+  afterAll(teardown);
+
+  test('a purged replacement keeps the contact page it would replace', async () => withEnv(env, async () => {
+    const helper = new ContactsStub().start();
+    try {
+      const tokenFile = join(home, 'contacts-token.json');
+      writeFileSync(tokenFile, JSON.stringify({ accessToken: STUB_TOKEN }), { mode: 0o600 });
+      const config = { kind: 'apple-contacts', ac_helper_host: '127.0.0.1', ac_helper_port: helper.port,
+        ac_token_file: tokenFile, owner_only: true, federated: false };
+      const alice = { given_name: 'Alice', family_name: 'Example', emails: [{ label: null, value: 'alice@example.invalid' }] };
+      for (const engine of engines) {
+        const f = await source(engine, config);
+        const cfg = parseAppleContactsSourceConfig(config);
+        const run = () => runAppleContactsSync(engine, f.id, cfg, options, { log() {} });
+        const pages = async () => engine.executeRaw<{ slug: string }>(
+          'SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL ORDER BY slug', [f.id]);
+        helper.upsert('c1', alice);
+        await run();
+        const [original] = await pages();
+        expect(original).toBeDefined();
+        const snapshot = (await engine.readPageSnapshot(original!.slug, { sourceId: f.id }))!;
+        const ctx = { engine, sourceId: f.id, config: { engine: engine.kind }, remote: false, dryRun: false,
+          logger: { info() {}, warn() {}, error() {} } };
+        await submitPageMutation(ctx as never, { operation: 'delete_page', params: { slug: original!.slug, purge: true, expected_revision: snapshot.revision } });
+        helper.upsert('c1', { ...alice, given_name: 'Bob' });
+        await run();
+        const [renamed] = await pages();
+        expect(renamed?.slug).not.toBe(original!.slug);
+        helper.upsert('c1', alice);
+        await run();
+        expect(await pages()).toEqual([renamed!]);
+      }
+    } finally { helper.stop(); }
   }), 120_000);
 });

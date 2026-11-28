@@ -14,6 +14,7 @@
  *     between leaves the contact with a page rather than none.
  */
 import { opError } from './ops/contract.ts';
+import { slugifyPath } from './sync.ts';
 
 export interface ContactPageIO {
   /** The source_path of the live page this contact owns, or null. */
@@ -25,13 +26,14 @@ export interface ContactPageIO {
   /** Slugs a deleted contact may own when no page is found by id. */
   tombstoneSlugs(): Array<string | null>;
   render(disambiguate: boolean): { relPath: string; markdown: string } | null;
-  write(relPath: string, markdown: string): Promise<void>;
+  /** The landed page's slug, or null when the import was skipped without a page. */
+  write(relPath: string, markdown: string): Promise<string | null>;
   remove(relPath: string): Promise<void>;
   skippedHandAuthored(relPath: string): void;
   applied(): void;
 }
 
-export async function applyContactPage(contactId: string, deleted: boolean, io: ContactPageIO): Promise<void> {
+export async function applyContactPage(contactId: string, deleted: boolean, io: ContactPageIO): Promise<boolean> {
   const existingPath = await io.existingPath();
   if (deleted) {
     if (existingPath && await io.owner(existingPath) === contactId) {
@@ -41,26 +43,28 @@ export async function applyContactPage(contactId: string, deleted: boolean, io: 
         if (slug && await io.owner(`${slug}.md`) === contactId) await io.remove(`${slug}.md`);
       }
     }
-    return;
+    return true;
   }
   const baseSlug = io.baseSlug();
-  if (!baseSlug) return;
+  if (!baseSlug) return false;
   const baseOwner = await io.owner(`${baseSlug}.md`);
   const collides = baseOwner !== null && baseOwner !== 'hand-authored' && baseOwner !== contactId;
   const rendered = io.render(collides);
-  if (!rendered) return;
+  if (!rendered) return false;
   const owner = await io.owner(rendered.relPath);
   if (owner === 'hand-authored') {
     io.skippedHandAuthored(rendered.relPath);
-    return;
+    return false;
   }
   if (owner !== null && owner !== contactId) {
     throw opError('contact_page_owned', `Contact page ${rendered.relPath} belongs to another contact.`,
       `Contact ${contactId} was not written and its existing page was kept; it is retried on the next sync and held after repeated refusals. Rename one of the two contacts, or remove the other page, to clear it.`);
   }
-  await io.write(rendered.relPath, rendered.markdown);
-  if (existingPath && existingPath !== rendered.relPath && await io.owner(existingPath) === contactId) {
+  const landed = await io.write(rendered.relPath, rendered.markdown);
+  if (landed === null) return false;
+  if (existingPath && existingPath !== rendered.relPath && landed !== slugifyPath(existingPath) && await io.owner(existingPath) === contactId) {
     await io.remove(existingPath);
   }
   io.applied();
+  return true;
 }

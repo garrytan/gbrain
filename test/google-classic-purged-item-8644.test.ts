@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { SyncResult } from '../src/commands/sync.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { parseGoogleSourceConfig, readGoogleState, runGoogleSync } from '../src/core/google/google-source.ts';
 import type { GoogleSourceState } from '../src/core/google/types.ts';
@@ -32,7 +33,7 @@ const CONFIG = { kind: 'google', g_account: 'owner@example.invalid', g_services:
 const ctx = (engine: BrainEngine, sourceId = SOURCE) => ({ engine, sourceId, config: { engine: engine.kind }, remote: false, dryRun: false,
   logger: { info() {}, warn() {}, error() {} } });
 
-interface Brain { engine: BrainEngine; root: string; path: string; render: string; sync(): ReturnType<typeof runGoogleSync> }
+interface Brain { engine: BrainEngine; root: string; path: string; render: string; sync(): Promise<SyncResult>; rename(name: string): void }
 
 async function withPurgedPage(databaseUrl: string | undefined, run: (b: Brain) => Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'gbrain-8644-'));
@@ -44,9 +45,10 @@ async function withPurgedPage(databaseUrl: string | undefined, run: (b: Brain) =
         await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
         const dir = join(root, 'google');
         await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)', [SOURCE, dir, JSON.stringify(CONFIG)]);
+        let name = 'Alice Example';
         const fetch = withGoogleAccount(async (url: string) => {
           if (new URL(url).pathname === '/v1/people/me/connections') return json({ connections: [
-            { ...contact('c1', 'Alice Example'), organizations: [{ name: 'Acme Example' }] }], nextSyncToken: 'token-1' });
+            { ...contact('c1', name), organizations: [{ name: 'Acme Example' }] }], nextSyncToken: 'token-1' });
           throw new Error(`Unexpected Google fixture route: ${url}`);
         }, CONFIG.g_account);
         const cfg = parseGoogleSourceConfig(CONFIG, dir);
@@ -57,7 +59,7 @@ async function withPurgedPage(databaseUrl: string | undefined, run: (b: Brain) =
         const snapshot = await engine.readPageSnapshot(SLUG, { sourceId: SOURCE });
         await submitPageMutation(ctx(engine), { operation: 'delete_page', params: { slug: SLUG, purge: true, expected_revision: snapshot!.revision } });
         expect(await engine.getPage(SLUG, { sourceId: SOURCE })).toBeNull();
-        await run({ engine, root, path, render, sync });
+        await run({ engine, root, path, render, sync, rename: value => { name = value; } });
       } finally { await close(); }
     });
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -87,6 +89,21 @@ for (const backend of testBackends()) describe(`[${backend}] #8644: a purged ite
     expect(holds(b.root)['contact:people/c1']).toBeUndefined();
     expect(existsSync(b.path)).toBe(false);
     expect(existsSync(`${b.path}.tmp`)).toBe(false);
+    expect(await pageRows(b.engine)).toBe(0);
+  }), 180_000);
+
+  test('a renamed contact keeps its live page when the replacement matches a purge tombstone', async () => withPurgedPage(databaseUrl, async b => {
+    b.rename('Bob Example');
+    expect((await b.sync()).failedFiles ?? 0).toBe(0);
+    const slug = 'people/bob-example';
+    const path = join(b.root, 'google', `${slug}.md`);
+    expect(await b.engine.getPage(slug, { sourceId: SOURCE })).not.toBeNull();
+    expect(existsSync(path)).toBe(true);
+
+    b.rename('Alice Example');
+    expect((await b.sync()).failedFiles ?? 0).toBe(0);
+    expect(await b.engine.getPage(slug, { sourceId: SOURCE })).not.toBeNull();
+    expect(existsSync(path)).toBe(true);
     expect(await pageRows(b.engine)).toBe(0);
   }), 180_000);
 
