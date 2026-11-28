@@ -259,7 +259,7 @@ test/engine-parity/op-checkpoint.test.ts	2	0
 test/engine-parity/open-loops.test.ts	7	0
 test/engine-parity/open-pages.test.ts	5	0
 test/engine-parity/orphan-lifetimes.test.ts	1	0
-test/engine-parity/owner-fact-reads.test.ts	1	0
+test/engine-parity/owner-fact-reads.test.ts	2	0
 test/engine-parity/owner-only-marks.test.ts	1	1
 test/engine-parity/owner-only-reads.test.ts	4	0
 test/engine-parity/owner-only-row-delete-marks.test.ts	2	0
