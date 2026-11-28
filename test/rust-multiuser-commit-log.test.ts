@@ -40,6 +40,13 @@ async function open(): Promise<{ engine: RustEngine; dir: string }> {
   return { engine, dir };
 }
 
+/** The commit log format, as the addon exports it (format::LOG_FORMAT_VERSION; pinned only in tests/format_registry.rs). */
+function logFormatVersion(): number {
+  const exported = (addon as { logFormatVersion?: unknown } | undefined)?.logFormatVersion;
+  expect(typeof exported, 'the addon does not export logFormatVersion').toBe('number');
+  return exported as number;
+}
+
 afterEach(async () => {
   for (const engine of engines.splice(0)) await engine.disconnect().catch(() => undefined);
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -57,7 +64,7 @@ describe('Rust multi-user commit log', () => {
       expect(engine.openStore('test').multiuser).toBe(false);
       const format = JSON.parse(readFileSync(join(dir, 'FORMAT'), 'utf8'));
       expect(format.log).toBeUndefined();
-      expect(format.format_version).not.toBe(16);
+      expect(format.format_version, 'a brain opened with the mode off is not on the log format').not.toBe(logFormatVersion());
     });
   });
 
@@ -66,7 +73,7 @@ describe('Rust multi-user commit log', () => {
       const { engine, dir } = await open();
       expect(engine.capabilities.has('commit_log')).toBe(true);
       const format = JSON.parse(readFileSync(join(dir, 'FORMAT'), 'utf8'));
-      expect(format.format_version).toBe(16);
+      expect(format.format_version).toBe(logFormatVersion());
       expect(format.log.since).toEqual({ sequence: expect.any(Number), index: 0 });
       // The engine's transaction returns the callback's value, never a position.
       expect(await engine.transaction(async () => 'value')).toBe('value');

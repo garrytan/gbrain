@@ -855,7 +855,7 @@ describe('engine parity: multi-writer conformance', () => {
 
   // C16: a format upgrade runs once under concurrent openers; each sees the whole brain, old or new, never a partial one.
   // The upgrade this case drives is the one an older brain gets when it is first opened in multi-user mode with the commit log
-  // on (the store enables the log, upgrades the format to 16, the commit log's own, and logs its own upkeep): so it runs on the `rust-mu` view only.
+  // on (the store enables the log, upgrades the format to the commit log's own, LOG_FORMAT_VERSION, and logs its own upkeep): so it runs on the `rust-mu` view only.
   // A brain is made in plain mode (log off, older format), closed, and then five engines open it at once with the mode on:
   // the one that wins the owner lock upgrades it, and the others become clients of that owner (never an error, never a
   // second upgrade). The proof of "exactly once" is a control: the upgrade writes records to the commit log, and a brain that
