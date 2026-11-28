@@ -7,7 +7,7 @@
 //! (`chunks::visible_chunks`, PGLite's `chunkGenerationFilter`). The text hash is sha256 where PGLite
 //! keeps md5; both answer "the text has not changed since the vector was computed".
 
-use crate::chunks::{read_chunks, visible_chunks};
+use crate::chunks::{embedding_dimensions, read_chunks, visible_chunks};
 use crate::embeddings::{put_chunk_vector, read_signature, text_hash};
 use crate::error::StoreError;
 use crate::pages::read_page_by_id;
@@ -75,10 +75,20 @@ impl Store {
     /// `installChunkEmbeddings(pageId, rows)`: stores each row's vector on the page's chunk with
     /// that id, only while the chunk still holds the row's text; any other row is skipped. The
     /// chunk is stamped embedded now, from its current text, with the row's input hash; a row with
-    /// no model keeps the chunk's old one.
+    /// no model keeps the chunk's old one. Every row's vector must have the width upsertChunks takes
+    /// (`embedding_dimensions`, 1536 when unset), skipped rows too, as PGLite casts the whole batch:
+    /// one of another width refuses the batch before anything is written, so the store never holds
+    /// two widths that vector search cannot compare.
     pub fn install_chunk_embeddings(&self, page_id: u64, rows: &[InstallRow]) -> Result<()> {
         let now = self.env.now_micros();
         self.write(|tx| {
+            let width = embedding_dimensions(&*tx)?;
+            if let Some(row) = rows.iter().find(|row| row.embedding.len() != width) {
+                return Err(StoreError::invalid(format!(
+                    "expected {width} dimensions, not {}",
+                    row.embedding.len()
+                )));
+            }
             let mut chunks = read_chunks(&*tx, page_id)?;
             for row in rows {
                 let Some(chunk) = chunks

@@ -128,10 +128,10 @@ and `src/core/page-state/projections.ts`).
 The store has one vector column, `embedding`, of 32-bit floats, and no image vectors. The members refuse another column, an
 image row and a row with no vector, so a vector never lands in the wrong space. `installChunkEmbeddings` also
 refuses (`engine_capability_missing`, before any write) a `halfvec` descriptor (Postgres rounds to half precision; the
-store keeps float32) and any row whose vector length differs from the width the store keeps (`readChunkVectorColumn`:
-the first stored vector, else the config `embedding_dimensions`); with no width known yet, a batch whose rows differ in
-length from each other. The descriptor's `dimensions` is not compared (see Known edges). A refused batch writes nothing,
-so no chunk is ever marked complete from a short vector. The store keeps a sha256
+store keeps float32). The store refuses the whole batch (`invalid_argument`, as upsertChunks) when any row's vector
+length differs from the width upsertChunks takes (the config `embedding_dimensions`, 1536 when unset), so the two
+writes never leave the store with two widths that vector search cannot compare. The descriptor's `dimensions` is not
+compared (see Known edges). A refused batch writes nothing, so no chunk is ever marked complete from a short vector. The store keeps a sha256
 text hash where PGLite keeps md5; both answer "the text has not changed since the vector was computed".
 `readEmbeddingCompletion` receives only the column's name, so it checks the name alone; it writes nothing.
 
@@ -174,7 +174,6 @@ is still refused on write.
 - `moveDisplacedChunksAndPrune` (PGLite's re-index of displaced chunks) is not done.
 - The default `embedding` descriptor carries the placeholder `dimensions: 1536` on every brain (`normalizeEngineColumn`:
   the SQL engines cast with a bare `::vector`, which never reads it), so `installChunkEmbeddings` does not compare the
-  descriptor's `dimensions`; the store's own width is the check. On a brain with no stored vector and no
-  `embedding_dimensions`, the first batch fixes the width, so a first batch of the wrong width installs consistently.
+  descriptor's `dimensions`; the configured width (1536 when unset) is the check, as for upsertChunks.
 - The install path's zero-norm chunk update (`page-state/projections.ts`) is still raw SQL, so a Rust brain
   refuses a page with a zero-norm vector (`engine_capability_missing`).
