@@ -186,7 +186,7 @@ export function epochWatch(dir: string, now: () => number = Date.now, ttlMs = 1_
  * 20: the write comparison covers nine more page and link writes (write-compare.ts PILOT_WRITES) and reads three more page columns; the adapter files are unchanged, and
  * the new epoch keeps no `comparable` an older epoch counted under the old rules. (13 to 19 are taken by other branches.)
  */
-export const SHADOW_ADAPTER_VERSION = 20;
+export const SHADOW_ADAPTER_VERSION = 26;
 
 /** The adapter identity an epoch records: the adapter version, the engine ABI and the addon's catalog version. */
 export function adapterIdentity(abi: number, catalog: string, adapterVersion: number = SHADOW_ADAPTER_VERSION): string {
