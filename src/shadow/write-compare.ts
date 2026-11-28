@@ -742,7 +742,7 @@ export class WriteTally {
    * The obligations and receipts of sessions that are gone, settled by an owner worker (one with an epoch). A session's owed file is orphaned when its child was seen to exit, its child pid is not running, it was closed more than 10 minutes ago, or its serving pid is gone and it is older than
    * that. What it never settled (`owed` less `settled` and the lines no tally has folded yet) becomes `uncomparable` `receipt_orphaned` lines tagged with the session, and the file is removed only once a tally read back from disk shows the session settled: a closed file
    * whose samples are all settled is removed whoever settled them. A worker whose own epoch is no longer the manifest's settles nothing (what it booked would be another epoch's lines, and what it removed would be gone). Write receipts of older versions are settled the same way, by
-   * their whole sent count. Cost: one listing of the shadow directory per call (at start, at each save and every 10 s), and up to two reads per owed file found (one to judge its child before the journals are read).
+   * their whole sent count. Cost: one listing of the shadow directory per call (at start, at each save and every 10 s), and up to two reads per owed file found (one to judge it before the journals are read).
    */
   private obligations(): void {
     const epoch = this.epoch();
@@ -752,11 +752,14 @@ export class WriteTally {
       const pending = listPending(this.dir); if (pending.failed) return; // a marker that cannot be listed settles nothing
       let booked = false; const removable: string[] = []; const stale: string[] = [];
       let tally: WriteTallyFile | null = null; try { tally = loadTally(this.dir); } catch { return; } // silent-read-ok: a tally that cannot be read settles nothing now
-      const gone = new Set<string>(); // children seen exited before the journals are read: a child that exits later may have journalled after the read, so it waits for the next pass
+      const gone = new Set<string>(); // sessions judged orphaned before the journals are read (child seen exited, or a marker over 10 minutes old that was closed or whose serving process is gone): one judged later may have journalled after the read, so it waits for the next pass
       for (const name of names) {
         const key = OWED_NAME.exec(name)?.[1]; if (key === undefined || isBlockerKey(key)) continue;
-        const rec = parseOwed(join(this.dir, name));
-        if (rec !== null && rec !== 'unreadable' && (rec.child_exited || (rec.child_pid !== undefined && rec.child_pid > 1 && !running(rec.child_pid)))) gone.add(key);
+        const path = join(this.dir, name); const rec = parseOwed(path);
+        if (rec === null || rec === 'unreadable') continue;
+        if (rec.child_exited || (rec.child_pid !== undefined && rec.child_pid > 1 && !running(rec.child_pid))) { gone.add(key); continue; }
+        let age: number; try { age = Date.now() - statSync(path).mtimeMs; } catch { continue; } // silent-read-ok: a marker removed since the listing is judged on the next pass
+        if (age > STALE_RECEIPT_MS && (rec.closed || (rec.serving_pid > 1 && !running(rec.serving_pid)))) gone.add(key);
       }
       const lines = unfoldedLines(this.dir, epoch, tally?.lost_applied, tally?.line_seq);
       if (lines.unreadable) return; // a journal that cannot be read settles nothing now (booking from the rest would count its samples twice); the pass is retried
@@ -772,8 +775,7 @@ export class WriteTally {
           if (more > 0 && this.bookOrphan(rec, key, more, epoch, (tally?.settled_qualifying?.[key] ?? 0) + (lines.qualifyingBySession[key] ?? 0), 0)) booked = true;
           continue;
         }
-        const age = Date.now() - statSync(path).mtimeMs;
-        const orphaned = gone.has(key) || (rec.closed && age > STALE_RECEIPT_MS) || (rec.serving_pid > 1 && !running(rec.serving_pid) && age > STALE_RECEIPT_MS);
+        const orphaned = gone.has(key); // judged before the journals were read
         if (!orphaned && !rec.closed) continue;
         const prior = parseOwed(blockerPath(this.dir, key)); if (prior === 'unreadable') continue; // the window blocker of this session, of whatever epoch: its credit anchor settles the session either way, and a window it booked is that epoch's, never this one's
         const settled = settledOf(tally?.settled?.[key] ?? 0, lines.bySession[key] ?? 0, anchorOf(tally, prior, key)); // the credit banked before the entry restarted outlives the tally's own entry
