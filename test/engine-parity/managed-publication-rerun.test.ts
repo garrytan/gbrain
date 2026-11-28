@@ -16,6 +16,10 @@
  *    on a multi-user Rust engine it throws `write_conflict`, so the engine's own optimistic retry runs the body again;
  *    on the other arms it rolls the run back and runs the body again in a new transaction, as that retry does.
  *    Real engines, real Git checkouts.
+ *  - The grouped cases pin the same contract for a managed file import, which the owner publishes as one group
+ *    (group-publish.ts publishGroup). Their files hold text the import rewrites to canonical form, so a rerun after the
+ *    files were written meets its own new bytes: the group rolls back, restores the files and requeues its members, and
+ *    each member then commits on its own.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -35,6 +39,7 @@ import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts
 import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
 import { readLocalWriter } from '../../src/core/persistence/identity.ts';
 import { resetWriteSwitches } from '../../src/core/persistence/switches.ts';
+import { importManagedFiles } from '../../src/core/persistence/import-mutations.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -136,6 +141,34 @@ async function putWithRerun(engine: BrainEngine, backend: ParityBackend, root: s
 // Two publications: the run that lost, then the run that committed.
 const COMMITTED: Awaited<ReturnType<typeof putWithRerun>> = { forced: 1, publications: 2, thrown: null, state: 'committed', error_code: null, recovery: null, title: 'Bob Example', file: true };
 
+const IMPORTS = ['notes/gus-example', 'notes/hope-example', 'notes/ivan-example'];
+
+/** A managed import of three files whose publication transaction loses once at `at`, and what it left. */
+async function importWithRerun(engine: BrainEngine, backend: ParityBackend, root: string, at: 'after_publication' | 'body_end') {
+  // Quoted titles and no trailing newline: the import publishes each file in canonical form, so publication changes the bytes.
+  const written = IMPORTS.map(slug => {
+    const text = `---\ntitle: "${slug.split('/')[1]}"\n---\n${BODY}`;
+    writeFileSync(join(root, `${slug}.md`), text);
+    return text;
+  });
+  const { seen, multiuser, restore } = forceRerun(engine, at);
+  let settled: Awaited<ReturnType<typeof importManagedFiles>>;
+  try {
+    settled = await importManagedFiles(engine, IMPORTS.map(slug => ({ filePath: join(root, `${slug}.md`), sourcePath: `${slug}.md` })),
+      { sourceId: 'work', noEmbed: true });
+  } finally { restore(); }
+  expect(multiuser).toBe(backend === 'rust' && rustArmMultiuser() !== 'off');
+  const files = IMPORTS.map(slug => readFileSync(join(root, `${slug}.md`), 'utf8'));
+  return { forced: seen.forced, publications: seen.publications,
+    import: settled.map(result => result.status === 'fulfilled' ? 'fulfilled' : `rejected:${(result.reason as { code?: string })?.code}`),
+    titles: await Promise.all(IMPORTS.map(async slug => (await engine.getPage(slug, { sourceId: 'work' }))?.title ?? null)),
+    rewritten: files.map((text, i) => text !== written[i]), body: files.map(text => text.includes(BODY)) };
+}
+
+// The group publishes once (one file, or all three), rolls back on the rerun, then each member publishes on its own.
+const IMPORTED = { forced: 1, import: ['fulfilled', 'fulfilled', 'fulfilled'], titles: ['gus-example', 'hope-example', 'ivan-example'],
+  rewritten: [true, true, true], body: [true, true, true] };
+
 describe('engine parity: a managed publication whose transaction runs again after it wrote the file', () => {
   parityTest('a publication that loses right after writing its file commits once on the next run: committed, page and file', {
     methods: ['worktreeClaimStore', 'getPage', 'readWriteRequest'],
@@ -152,6 +185,24 @@ describe('engine parity: a managed publication whose transaction runs again afte
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (root) => {
     const out = await putWithRerun(engine, backend, root, 'body_end');
     expect(out).toEqual(COMMITTED);
+    return out;
+  }));
+
+  parityTest('a grouped import whose publication loses right after writing a file commits every member: committed pages and files', {
+    methods: ['worktreeClaimStore', 'getPage'],
+    timeout: 180_000,
+  }, async (engine, backend) => withClaimedCheckout(engine, backend, async (root) => {
+    const out = await importWithRerun(engine, backend, root, 'after_publication');
+    expect(out).toMatchObject({ ...IMPORTED, publications: 1 + IMPORTS.length });
+    return out;
+  }));
+
+  parityTest('a grouped import whose commit loses after its whole body ran commits every member: committed pages and files', {
+    methods: ['worktreeClaimStore', 'getPage'],
+    timeout: 180_000,
+  }, async (engine, backend) => withClaimedCheckout(engine, backend, async (root) => {
+    const out = await importWithRerun(engine, backend, root, 'body_end');
+    expect(out).toMatchObject({ ...IMPORTED, publications: 2 * IMPORTS.length });
     return out;
   }));
 });
