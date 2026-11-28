@@ -12,3 +12,14 @@ export function noteJsonDocumentDelegated(): void {
 export function jsonDocumentDelegated(): boolean {
   return delegated;
 }
+
+/** #10548: the EPIPE handlers (process-cleanup) record that the reader closed the pipe, so the exit 0 that follows is not a command that printed no document. */
+let readerClosedPipe = false;
+
+export function noteJsonReaderClosedPipe(): void {
+  readerClosedPipe = true;
+}
+
+export function jsonReaderClosedPipe(): boolean {
+  return readerClosedPipe;
+}

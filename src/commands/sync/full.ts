@@ -13,6 +13,7 @@ import {
   unsyncableReason,
   matchesAnyGlob,
   loadSyncFailures,
+  clearFailures,
   formatCodeBreakdown,
   formatFailedFileList,
   applySyncFailureGate,
@@ -209,6 +210,9 @@ export async function performFullSync(
   // clear-then-verify-restore semantics.
   await sweepOrphanedRenameSentinels(engine, fullSourceId, fullFailureSet);
   if (!fullGate.advanced) return withReasonNotices(await reportBlockedFullSync(engine, opts, anchorPath, headCommit, result, fullGate), reasons, opts.sourceId);
+  // #10454: the source is now re-anchored at headCommit, so an open `<head>` (history rewrite) sentinel is resolved, as
+  // the incremental path resolves it once pin ancestry verifies (#2734). Only after the advance: a blocked run keeps it.
+  if (loadSyncFailures().some(e => e.source_id === fullSourceId && e.path === '<head>')) clearFailures(fullSourceId, ['<head>']);
   if (fullGate.acknowledged > 0) {
     serr(`  Acknowledged ${fullGate.acknowledged} failure(s) and advanced past them.`);
   }
