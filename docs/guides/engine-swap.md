@@ -145,6 +145,10 @@ never a pass. With no shadow running, every criterion is `missing`.
    Named loss: on any brain, preparing the links of one written page reads the whole sources table to find that page's source (fetchSource), one read per page, sized by the number of sources; on Postgres that read also runs outside the write's preparation deadline. A lookup by source id is a lane E follow-up due Wed Dec 9.
 
    Named loss: on a Rust brain, every page read (get_page) checks for sync holds by reading the state of every source, one after another, and every sync-hold record in the brain before it keeps the ones for that page, so one read costs one store call per source plus one scan of all hold records. A hold lookup keyed by page is a lane E follow-up due Wed Dec 9.
+
+   Named loss: on a Rust brain, a partial page read refuses engine_capability_missing instead of answering: gbrain get with --body none, --lines or --around-chunk-id (get_page with body, lines or around_chunk_id). A full gbrain get of the same page answers.
+
+   Named loss: on a Rust brain that holds a page stored under a slug with capitals, deleted or not (a seeded or migrated brain; gbrain put stores slugs in lowercase), a page read by that exact spelling refuses engine_capability_missing, even when a live page with the lowercase slug exists; read the page by its lowercase slug.
 6. Zero `privacy_diverged` events (the field is absent, not zero, while any privacy check of the last 7 days is unsettled, so criterion 6 has no evidence until it settles).
 7. Zero fingerprint mismatches, a passed fingerprint probe and a passed allocator verification.
 8. Speed: paired bench samples. **Reported, not gating.** D23 (the maintainer's C1 ruling of 2026-11-19) makes the
