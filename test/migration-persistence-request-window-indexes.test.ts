@@ -27,6 +27,7 @@ describe('#10605 the request window index migration module', () => {
   test('is registered once, in the online-index shape', () => {
     expect(MIGRATIONS.filter(m => m.name === 'persistence_request_window_indexes')).toHaveLength(1);
     expect(migration).toMatchObject({ idempotent: true, transaction: false, sql: '' });
+    // pregate-literal: LATEST_SCHEMA_VERSION=343 master's latest before this migration, so a renumber stays above it
     expect(migration!.version).toBeGreaterThan(343);
     expect(migration!.version).toBeLessThanOrEqual(LATEST_SCHEMA_VERSION);
     expect(typeof migration!.handler).toBe('function');
