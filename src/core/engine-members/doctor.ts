@@ -23,6 +23,37 @@ import type * as ProjectionBacklogSql from '../engine-sql/projection-backlog.ts'
 import type * as DoctorJoinSql from '../engine-sql/doctor-join.ts';
 import type * as SlugSpellingRepairSql from '../engine-sql/slug-spelling-repair.ts';
 
+/** The state record of the Rust store's keyword index (rust/docs/store/keyword.md, "Doctor"). */
+export interface DerivedIndexState { version: number; complete: boolean; cursor: number | null }
+
+/** The posting comparison of a complete keyword index: the first `pages` pages' postings against their records. */
+export interface DerivedIndexVerify {
+  state: DerivedIndexState | null; pages: number; expected: number; missing: number; changed: number;
+  /** Postings of no checked page; null when the comparison stopped at its page bound. */
+  orphan: number | null; ok: boolean;
+}
+
+/** What `checkDerivedIndexes` found about the Rust store's keyword index (the `R` records); the core term postings are not checked. */
+export interface DerivedIndexHealth {
+  index: 'keyword';
+  status: 'ok' | 'mismatch' | 'building' | 'stalled' | 'unreadable' | 'absent' | 'other_layout';
+  state: DerivedIndexState | null;
+  /** The parse error of an unreadable state record. */
+  state_error: string | null;
+  /** Whether keyword reads use the postings now (false while they scan the records). */
+  served: boolean;
+  /** The open store's background build: never started, running, finished or failed. */
+  builder: 'none' | 'running' | 'finished' | 'failed';
+  builder_error: string | null;
+  verify: DerivedIndexVerify | null;
+}
+
+/** The receipt of `rebuildDerivedIndexes`: the keyword index rebuilt from the records; `record_writes` is always 0. */
+export interface DerivedIndexRebuild {
+  index: 'keyword'; transactions: number; index_puts: number; index_deletes: number; record_writes: number;
+  state: DerivedIndexState | null;
+}
+
 export interface DoctorMembers {
   // The legacy_slug_spellings check and gbrain repair slug-spelling (engine-sql/slug-spelling-repair.ts).
   /** The tables of `tables` that row-level security applies to for the running role, in name order. */
@@ -419,4 +450,10 @@ export interface DoctorMembers {
   readFenceTrendRecords(op: string, sourceIds: readonly string[], fromDay: string): Promise<FenceCensusSql.FenceTrendRecord[]>;
   countSegmentedFencePages(sourceIds: readonly string[], walkedSourceIds: readonly string[]): Promise<number>;
   readBudgetLedgerDay(scope: string, resolver: string, day: string): Promise<FenceCensusSql.BudgetLedgerDayRow | null>;
+  // The Rust store's derived keyword index (rust/docs/store/keyword.md, "Doctor"). Only the Rust engine defines them;
+  // the SQL engines keep their indexes in the database, which doctor checks through its other reads.
+  /** The keyword index's health; `maxPages` bounds the posting comparison (absent: every page). Writes nothing. */
+  checkDerivedIndexes?(opts?: { maxPages?: number }): Promise<DerivedIndexHealth>;
+  /** Rebuilds the keyword index from the records to a complete state; writes only index records. */
+  rebuildDerivedIndexes?(): Promise<DerivedIndexRebuild>;
 }

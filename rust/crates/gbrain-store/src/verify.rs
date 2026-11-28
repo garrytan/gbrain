@@ -179,13 +179,25 @@ fn read_records(kv: &RedbReadOnlyKv, report: &mut VerifyReport) -> Result<()> {
 }
 
 fn check_index(read: &dyn KvRead) -> Result<IndexCheck> {
-    let Some(state) = keyword::read_index_state(read)? else {
-        return Ok(IndexCheck {
-            state: "absent",
-            cursor: None,
-            pages_checked: 0,
-            ok: true,
-        });
+    let state = match keyword::read_index_state_record(read)? {
+        keyword::StateRecord::Present(state) => state,
+        keyword::StateRecord::Absent => {
+            return Ok(IndexCheck {
+                state: "absent",
+                cursor: None,
+                pages_checked: 0,
+                ok: true,
+            });
+        }
+        // The postings serve nothing until `gbrain doctor --fix` rebuilds them.
+        keyword::StateRecord::Unreadable(_) => {
+            return Ok(IndexCheck {
+                state: "unreadable",
+                cursor: None,
+                pages_checked: 0,
+                ok: false,
+            });
+        }
     };
     if state.complete {
         let report = keyword::verify_index(read, None)?;

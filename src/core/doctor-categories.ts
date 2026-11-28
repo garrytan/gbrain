@@ -485,6 +485,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'rust_engine_addon',
   // db-availability loop: engine-fit + repair-recurrence signals.
   'pglite_scale',
+  // The Rust store's keyword index: parse, completeness and postings against the records; --fix rebuilds it (doctor/checks/rust-derived-indexes.ts).
+  'rust_derived_indexes',
   'db_repair_recurrence',
   'pglite_leftovers',
   // Engine graduation (PGLite -> Postgres) interrupted / split brain.

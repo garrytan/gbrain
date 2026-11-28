@@ -56,6 +56,7 @@ mod filters;
 mod frontmatter_ids;
 mod index;
 mod index_build;
+mod index_health;
 mod index_writer;
 mod page_search;
 pub(crate) mod parser;
@@ -72,12 +73,16 @@ mod walk;
 pub use cjk::{CjkBound, CjkKeywordResult, CjkRun, CjkTerm};
 pub use filters::{AfterKey, DateBound, KeywordOptions};
 pub(crate) use filters::{DateWindow, frontmatter_holds, parse_trust_floor};
-pub(crate) use index::read_state as read_index_state;
+pub(crate) use index::{
+    StateRecord, read_state as read_index_state, read_state_record as read_index_state_record,
+};
 pub(crate) use index_build::{
     Builder, build_batch, open_index, reset as reset_index, seed_complete as seed_complete_index,
     verify as verify_index,
 };
 pub use index_build::{KeywordIndexReport, KeywordIndexState};
+pub use index_health::{KeywordIndexHealth, KeywordIndexRebuild};
+pub(crate) use index_health::{check as check_index_health, rebuild as rebuild_index};
 pub(crate) use index_writer::IndexingWriter;
 pub use titles::{TitleAttempt, TitleAttemptKind};
 pub(crate) use titles::{check_page_vector, check_sealed_page_vector};

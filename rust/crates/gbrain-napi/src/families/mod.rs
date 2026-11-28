@@ -107,6 +107,7 @@ mod contradictions;
 mod cycle_reads;
 mod decide_store;
 mod derivation_trust;
+mod derived_index;
 mod dream;
 mod dream_config;
 mod dream_cycle;

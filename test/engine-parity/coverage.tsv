@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2517/2549
+# covered: 2517/2551
 # lifecycle: 21/22
 # pages: 141/142
 # search: 8/8
@@ -120,6 +120,7 @@
 # doctor_facts_trust: 7/7
 # doctor_sources: 5/5
 # session_state: 7/7
+# derived_index: 0/2
 # doctor_join: 6/6
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 connect	lifecycle	yes	3	yes	yes	yes	serves
@@ -2665,6 +2666,8 @@ readCheckpointManifestRow	session_state	yes	3	no	yes	yes	serves
 writeCheckpointManifest	session_state	yes	3	no	yes	yes	serves
 ageOutSessionState	session_state	yes	2	no	yes	yes	serves
 capSessionStatePerClient	session_state	yes	5	no	yes	yes	serves
+checkDerivedIndexes	derived_index	no	0	no	-	-	-
+rebuildDerivedIndexes	derived_index	no	0	no	-	-	-
 listAccessMemberStatuses	doctor_join	yes	1	no	yes	yes	serves
 listAccessGroupMemberships	doctor_join	yes	2	no	yes	yes	serves
 listPagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves

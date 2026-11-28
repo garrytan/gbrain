@@ -180,4 +180,7 @@ export const DOCTOR_MEMBERS = {
   readFenceTrendRecords: 'persistence_journal',
   countSegmentedFencePages: 'pages',
   readBudgetLedgerDay: 'persistence_journal',
+  // The keyword index's doctor check and rebuild (rust/docs/store/keyword.md, "Doctor").
+  checkDerivedIndexes: 'health',
+  rebuildDerivedIndexes: 'health',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

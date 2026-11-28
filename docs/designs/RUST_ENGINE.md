@@ -156,22 +156,23 @@ The TypeScript wrapper sits beside `pglite-engine.ts` and `postgres-engine.ts`, 
 
 ```
 ~/.gbrain/brain.rust/                         database_path (a directory)
-  FORMAT                                      JSON: format_version, engine_abi, catalog_version,
-                                              schema_version (the TS config.version ledger it matches), created_by
-  records.<ext>                               record store: relations, secondary indexes, counters, outbox
-  text/                                       derived keyword index; records the outbox generation it reflects
-  vectors/<relation>.<column>/                derived ANN graph; records its generation
+  FORMAT                                      JSON: format_version, engine_abi, catalog_version, schema_version
+                                              (the TS config.version ledger it matches), brain_id, created_by
+  records.redb                                the one record file (redb): relations, secondary indexes, counters,
+                                              stored embeddings and the keyword index (`R` records)
   .gbrain-owner.sock                          Rust owner socket (src/core/rust-engine/owner-ipc/protocol.ts)
 ~/.gbrain/brain.rust.gbrain-owner.lock        kernel lock sibling (existing rule, src/core/pglite-lock.ts); it decides
                                               which process hosts the store, never a lock a caller waits on (D20)
 ```
 
+As built, there is no `text/` or `vectors/` directory and no outbox: everything lives in `records.redb`.
+
 - Record keys are order-preserving encodings of each relation's primary key. Values carry catalog column ids plus typed values, so adding a nullable column needs no rewrite.
 - `rust/catalog/relations.json` is generated from the live PGLite catalog at a pinned schema version (the same way `src/core/persistence/graduation-inventory.ts` reads the catalog): relation names, columns, types, keys, uniques and FKs, plus the secondary indexes the Rust engine keeps. Keeping Postgres relation names and columns lets the graduation inventory, digests and verification be reused through an engine-neutral adapter ("Migration and rollback"); the current helpers issue catalog and sequence SQL and cannot run on Rust unchanged.
-- One commit point. A write commits records and outbox entries in one store transaction (allocator reservations are durable separately and survive an abort, see the sequences row), then applies the outbox to the text and vector indexes, in generation order, before the call returns. A search issued after a write returns sees it, as today. If the process dies between commit and apply, the open catches the indexes up before serving reads.
-- Snapshot contract for search. Every search pins one record snapshot generation N. Text postings and vector entries carry the generation range in which they are valid, and the search uses only entries valid at N, so a reader at N never sees content, scores or permissions from N+1. Superseded entries are reclaimed only after the oldest open reader has passed their generation. As a backstop, each candidate's indexed revision is checked against the record at N, and deleted, withdrawn and visibility state is re-checked there before ranking; a mismatch drops the candidate and the search continues with the exact path for that arm, reporting the existing `vector_candidates_incomplete` reason when it cannot fill the page.
-- Failure after commit. If applying the outbox fails while the process stays alive (disk full, an index error, cancellation), the write is still committed: the call reports it as committed through its receipt and never as rolled back. The relation is marked behind at that generation; searches that touch it use the exact path for the affected arm until replay succeeds; replay retries in generation order and is idempotent; `gbrain engine status` and doctor report the lag.
-- The store refuses a newer `format_version` and backs up before upgrading an older one. `gbrain doctor --fix` rebuilds derived indexes from records without re-embedding and never writes records.
+- One commit point. A write commits its records and the keyword index postings it changes in one redb transaction (`keyword/index_writer.rs`; allocator reservations are durable separately and survive an abort, see the sequences row). There is no outbox and no apply step after commit, so the open replays nothing: a crash leaves the store before the write or after it, index included. Vector search is an exact scan over the stored embeddings (`rust/docs/store/vectors.md`) and keeps no derived graph.
+- Snapshot contract for search. Every read, search included, runs on one redb read snapshot, so the postings and the records it reads are of the same commit and a reader never sees content, scores or permissions of a later one.
+- The keyword index can still go wrong: its records can be damaged, its state record can stop parsing, or its background build (a store upgraded from a format without postings, or a rebuild) can stop. A state that does not parse does not stop the open: keyword members scan the records, which gives the same results more slowly (about 7-8 s a query at 50k pages / 200k chunks). `gbrain doctor` reports the index as `rust_derived_indexes` (missing or changed postings fail; an unreadable, stalled or building index warns) and `gbrain doctor --fix` rebuilds it from the records in index-only transactions that never write a record (`rust/docs/store/keyword.md`, "Doctor"). The core term postings (`keys::POSTING`, `T`) are not checked or rebuilt.
+- The store refuses a newer `format_version` and backs up before upgrading an older one.
 
 ### Process model
 
@@ -283,7 +284,7 @@ fails when a row names a case that no longer exists.
 - Caught panics: `gbrain-napi` installs its own panic hook, because the default hook prints the payload to stderr. The hook writes a sanitized trace (no row content, no argument values) to `<gbrain home>/engines/rust/diagnostics/<id>.txt` with mode 0600 and the call returns `internal_error` naming the operation, with `detail.diagnostic_id` and `detail.outcome`. A panic inside a write transaction aborts it; the wrapper then closes and reopens the store, which runs open-time recovery, before the next call. Over HTTP MCP only the diagnostic id is returned.
 - A cancellation that arrives after commit reports the write as committed through its receipt, never as cancelled.
 - Faults that end the process (segfaults, aborts) cannot be caught. The next open records that the previous owner ended without closing the store, and doctor `rust_engine_available` reports it with the `engine_build` and the recovery result.
-- Maintenance path: `gbrain doctor` and `doctor --fix` on a Rust brain send their work to the running owner as an administration request; when no owner runs, they take the owner role themselves. Either way they read `FORMAT` and the records without opening the derived indexes, so a corrupt index or a failed open-time replay can still be inspected and rebuilt. `--fix` rebuilds derived state only and never writes records.
+- Maintenance path: as built, `gbrain doctor` and `doctor --fix` on a Rust brain run their checks through the running owner (each a member forwarded over the owner socket); when no owner runs, they take the owner role and open the store themselves. A keyword index whose postings are damaged or whose state does not parse does not stop that open, so doctor can report it (`rust_derived_indexes`) and `--fix` can rebuild it from the records; the rebuild writes only index records. A record file that will not open (`rust_store_unreadable`) leaves doctor with its filesystem checks.
 - Human output keeps the shared renderer (`Error [code]`, `Fix:`, `Why:`, `Docs:`); agents read `fix` from the `--json` document.
 - The reasons added here (`fetch_failed`, `verification_failed`, `newer_format`, `unreadable`, `upgrade_failed`) are part of decision D2.
 
@@ -571,7 +572,7 @@ For swap criterion 10, the E1 to E3 results are one file, `eval-gates.json`, tha
 - `cargo deny` and `cargo audit` in the Rust lane.
 - Drills on darwin-arm64 and linux-x64-glibc before the preview: full-store `backup create` and `backup restore` into an empty home with per-relation digests equal; addon upgrade online, offline and with an interrupted fetch, each ending with the brain working or refusing with `engine_unavailable` and no data touched.
 - Time-to-first-query drill on both preview targets, in a clean home with the 10k-page engine-graduation fixture: from `gbrain engine install rust` to the first search answered on Rust, following the PR 23 quickstart verbatim. Target: 5 minutes. The measured time is written in the preview docs. The PR 1 contributor quickstart is timed the same way (first build reported; edit, build and test loop under 1 minute).
-- Failure drills: a corrupt derived index and a failed open-time replay are repaired by `doctor --fix` through the maintenance path; a newer `FORMAT` gives `newer_format` with no write; an injected panic inside a write transaction returns `internal_error` with a diagnostic id, rolls back, and the next call succeeds; each `engine install` failure state leaves the active addon unchanged.
+- Failure drills: a keyword index with deleted chunk postings and one whose state does not parse are reported by `gbrain doctor` and repaired by `doctor --fix`, with and without a running owner, writing no record (`test/rust-doctor-derived-index.serial.test.ts`); a newer `FORMAT` gives `newer_format` with no write; an injected panic inside a write transaction returns `internal_error` with a diagnostic id, rolls back, and the next call succeeds; each `engine install` failure state leaves the active addon unchanged.
 - Error rows: one test per code and reason checks the registry row, the rendered `fix`, the `detail` context, and that no environment variable value and no absolute home path appears in the envelope or the diagnostic file.
 
 ### Shadow mode tests

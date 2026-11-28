@@ -194,6 +194,7 @@ import * as accessGrants from './access-grants.ts';
 import * as accessMembers from './access-members.ts';
 import * as sharedSkillMembers from './shared-skill-members.ts';
 import * as doctorDerived from './doctor-derived.ts';
+import * as derivedIndex from './derived-index.ts';
 import * as doctorPersistence from './doctor-persistence.ts';
 import * as sourceMovement from './source-movement.ts';
 import * as doctorPages from './doctor-pages.ts';
@@ -393,6 +394,8 @@ export const STORE_MEMBERS = {
   // The statements doctor checks ran through executeRaw (rust/docs/store/cli-reads-doctor.md).
   // The second doctor set: served, answered empty where the store keeps no writer, or left out to refuse (rust/docs/store/cli-reads-doctor-derived.md).
   ...doctorDerived,
+  // The keyword index's doctor check and rebuild (rust/docs/store/keyword.md, "Doctor").
+  ...derivedIndex,
   // The persistence checks' request journal and counter reads (rust/docs/store/cli-reads-doctor-per.md).
   ...doctorPersistence,
   ...sourceMovement,

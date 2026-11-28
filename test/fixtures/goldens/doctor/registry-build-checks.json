@@ -806,6 +806,10 @@
         "name": "integrity"
       },
       {
+        "category": "ops",
+        "name": "rust_derived_indexes"
+      },
+      {
         "category": "brain",
         "name": "jsonb_integrity"
       },

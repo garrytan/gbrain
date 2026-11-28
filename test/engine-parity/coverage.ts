@@ -533,6 +533,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   doctor_facts_trust: ['countConversationPipelinePages', 'listPersistentWriterContention', 'countRowTrustTiers', 'countLegacyUnknownBySource', 'listTrustColumns', 'listTrustClaimTargets', 'countClaimLiftedRows'],
   doctor_sources: ['readDoctorSources', 'listGuestSourceRows', 'listCheckoutRoots', 'listPendingRoster', 'countDefaultSourceFiles'],
   session_state: ['upsertSessionState', 'readSessionCursor', 'readDeltaSessionRow', 'readCheckpointManifestRow', 'writeCheckpointManifest', 'ageOutSessionState', 'capSessionStatePerClient'],
+  derived_index: ['checkDerivedIndexes', 'rebuildDerivedIndexes'],
   doctor_join: ['listAccessMemberStatuses', 'listAccessGroupMemberships', 'listPagesReadByNobody', 'listRulePagesReadByNobody', 'listGoogleSourceMembers', 'listOwnerMemberLinks'],
 };
 

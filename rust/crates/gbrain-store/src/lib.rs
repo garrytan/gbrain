@@ -584,6 +584,35 @@ impl Store {
         Ok(())
     }
 
+    /// The keyword index's health for `gbrain doctor` (`keyword/index_health.rs`): its state, how
+    /// this handle's background build ended, and for a complete index the postings of the first
+    /// `max_pages` pages (every page when `None`) compared with their records. Reads one
+    /// snapshot; writes nothing.
+    pub fn derived_index_check(
+        &self,
+        max_pages: Option<u64>,
+    ) -> Result<keyword::KeywordIndexHealth> {
+        let builder = {
+            let slot = self.builder.lock().unwrap_or_else(|e| e.into_inner());
+            match slot.as_ref() {
+                None => ("none", None),
+                Some(b) => match b.failure() {
+                    Some(error) => ("failed", Some(error)),
+                    None if b.finished() => ("finished", None),
+                    None => ("running", None),
+                },
+            }
+        };
+        keyword::check_index_health(&*self.read()?, builder, max_pages)
+    }
+
+    /// Rebuilds the keyword index from the records to a complete state before it returns, for
+    /// `gbrain doctor --fix` (`keyword/index_health.rs`). Writes only `R` records; the receipt
+    /// counts them.
+    pub fn derived_index_rebuild(&self) -> Result<keyword::KeywordIndexRebuild> {
+        keyword::rebuild_index(self)
+    }
+
     /// A store on the same brain whose reads and writes run inside `tx` (`transactions.rs`).
     pub(crate) fn bound_to(&self, tx: Arc<transactions::Transaction>) -> Store {
         Store {

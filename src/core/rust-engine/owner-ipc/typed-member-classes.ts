@@ -25,6 +25,8 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readBackupEntryHold', 'listSecretHoldingPages', 'countUnreferencedSecretEntries', 'readRestorePageHit', 'readPageRedactionRow',
   'readPageRedactionRows', 'listTimelineDedupRows', 'listVersionBodiesForRedaction', 'countPageVersionRows', 'listChunkTextsForRedaction',
   'readRawDataValue',
+  // The keyword index's doctor check (store keyword/index_health.rs `check`: one `self.read` snapshot).
+  'checkDerivedIndexes',
   // repair-rust batch 9: the segmented-mirror, fence bookkeeping and last-job reads
   'listGlobalPurgeWithdrawals', 'listSourceCheckpointRecords', 'readOldestSyncHoldAt', 'readLastFinishedJobAt', 'readRemirrorEffects',
   // The page-list, slug-source, access and source-add reads that moved off raw SQL together: plain SELECTs.
@@ -460,6 +462,8 @@ const nothingLock = 'nothing: the lock is released when the call ends, so runnin
 
 /** Typed writes and the read that confirms each. */
 export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> = {
+  // The keyword index rebuild resets and rebuilds the index from the records, so running it again ends in the same index.
+  rebuildDerivedIndexes: 'checkDerivedIndexes (gbrain doctor --json, rust_derived_indexes)',
   invalidateQueryCacheRows: 'nothing: the delete removes cached search results only, so running it again deletes none of what the first run removed',
   // repair-rust batches 6b and 6c: the twin merge's moves, the rename alias, the segmented chunk retire, the code edge clear, the secret store writes and
   // the secret-spans page rewrites. Each is one store write (`self.write`).

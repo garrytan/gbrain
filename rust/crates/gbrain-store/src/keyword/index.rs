@@ -5,7 +5,8 @@
 //!
 //! - `R 0x00`: the index state ([`IndexState`], JSON). While it exists every `Store::write`
 //!   keeps the postings in step (`index_writer.rs`); only a complete state of this
-//!   [`INDEX_VERSION`] serves queries.
+//!   [`INDEX_VERSION`] serves queries. A record that does not parse serves nothing: the members
+//!   scan and the open goes on ([`StateRecord::Unreadable`]).
 //! - `R 0x01 len(2) lexeme page_id chunk_index`: a chunk vector's entry for one lexeme. The value
 //!   is the entry's `WordEntryPos` list, two bytes each (empty: a lexeme without positions).
 //! - `R 0x02 len(2) lexeme page_id`: the same for the page vector (`titles.rs`).
@@ -62,6 +63,27 @@ pub(crate) fn read_state(read: &dyn KvRead) -> Result<Option<IndexState>> {
     get_json(read, &keys::keyword_index_state())
 }
 
+/// What the `R 0x00` record holds, with a record that does not parse kept apart from a read
+/// error: an unreadable state turns the postings off (every member scans) instead of failing the
+/// open, until `gbrain doctor --fix` rebuilds the index (`index_health.rs`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StateRecord {
+    Absent,
+    Present(IndexState),
+    /// The record exists but is not an [`IndexState`]; the parse error.
+    Unreadable(String),
+}
+
+pub(crate) fn read_state_record(read: &dyn KvRead) -> Result<StateRecord> {
+    Ok(match read.get(&keys::keyword_index_state())? {
+        None => StateRecord::Absent,
+        Some(bytes) => match serde_json::from_slice::<IndexState>(&bytes) {
+            Ok(state) => StateRecord::Present(state),
+            Err(e) => StateRecord::Unreadable(e.to_string()),
+        },
+    })
+}
+
 /// `GBRAIN_RUST_KEYWORD_SCAN=1` forces every keyword member to scan (the parity suite's second
 /// run, and the bench's correctness mode).
 fn scan_forced() -> bool {
@@ -78,7 +100,10 @@ pub(crate) fn serves(read: &dyn KvRead) -> Result<bool> {
     if scan_forced() {
         return Ok(false);
     }
-    Ok(read_state(read)?.is_some_and(|s| s.complete && s.version == INDEX_VERSION))
+    Ok(matches!(
+        read_state_record(read)?,
+        StateRecord::Present(s) if s.complete && s.version == INDEX_VERSION
+    ))
 }
 
 /// One posting a document owns: its kind byte, its text and its value.

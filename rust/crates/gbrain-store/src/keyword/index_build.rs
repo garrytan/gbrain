@@ -17,15 +17,16 @@
 //!
 //! [`verify`] compares the stored records with the records rebuilt from the pages and chunks.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
 
 use super::index::{
-    INDEX_VERSION, IndexState, expected_records, read_state, reindex_page_and_chunks,
+    INDEX_VERSION, IndexState, StateRecord, expected_records, read_state, read_state_record,
+    reindex_page_and_chunks,
 };
 use crate::error::{FORMAT_UNKNOWN, Result, StoreError};
 use crate::keys;
@@ -82,23 +83,24 @@ pub(crate) struct IndexOpen {
 
 /// Run by every open, after the format upgrade: refuses an index of a newer layout, writes an
 /// incomplete state when a format-4 brain has none (a self-heal; the build fills it) and resets an
-/// index of an older layout.
+/// index of an older layout. A state record that does not parse is left as it is, with no build:
+/// the members scan, and `gbrain doctor` reports it until `--fix` rebuilds the index
+/// (`index_health.rs`).
 pub(crate) fn open_index(kv: &dyn Kv) -> Result<IndexOpen> {
-    let state = check_state(&*kv.snapshot()?)?;
-    if state
-        .as_ref()
-        .is_some_and(|s| s.version == INDEX_VERSION && s.complete)
-    {
-        return Ok(IndexOpen { needs_build: false });
-    }
-    if state.as_ref().is_some_and(|s| s.version == INDEX_VERSION) {
-        return Ok(IndexOpen { needs_build: true });
+    match check_state(&*kv.snapshot()?)? {
+        StateRecord::Unreadable(_) => return Ok(IndexOpen { needs_build: false }),
+        StateRecord::Present(s) if s.version == INDEX_VERSION => {
+            return Ok(IndexOpen {
+                needs_build: !s.complete,
+            });
+        }
+        _ => {}
     }
     let mut tx = kv.begin_write_exclusive()?;
     // Another handle may have repaired it first; judge the state again inside the transaction.
-    let state = check_state(&*tx)?;
-    let needs_build = match state {
-        Some(s) if s.version == INDEX_VERSION => !s.complete,
+    let needs_build = match check_state(&*tx)? {
+        StateRecord::Present(s) if s.version == INDEX_VERSION => !s.complete,
+        StateRecord::Unreadable(_) => false,
         _ => {
             reset(&mut *tx)?;
             true
@@ -109,9 +111,9 @@ pub(crate) fn open_index(kv: &dyn Kv) -> Result<IndexOpen> {
 }
 
 /// Refuses a state written by a build with a newer index layout, before anything is written.
-pub(crate) fn check_state(read: &dyn KvRead) -> Result<Option<IndexState>> {
-    let state = read_state(read)?;
-    if let Some(s) = &state
+pub(crate) fn check_state(read: &dyn KvRead) -> Result<StateRecord> {
+    let state = read_state_record(read)?;
+    if let StateRecord::Present(s) = &state
         && s.version > INDEX_VERSION
     {
         return Err(StoreError::new(
@@ -206,7 +208,11 @@ impl From<IndexState> for KeywordIndexState {
 /// when its value differs, and orphan when no page's rebuild has it (counted only when the walk
 /// covered every page: stored records minus the expected ones found).
 pub(crate) fn verify(read: &dyn KvRead, max_pages: Option<u64>) -> Result<KeywordIndexReport> {
-    let state = read_state(read)?;
+    // An unreadable state reports as none; the postings are compared all the same.
+    let state = match read_state_record(read)? {
+        StateRecord::Present(s) => Some(s),
+        StateRecord::Absent | StateRecord::Unreadable(_) => None,
+    };
     let (mut pages, mut expected, mut missing, mut changed) = (0u64, 0u64, 0u64, 0u64);
     let mut complete_walk = true;
     let mut ids = Vec::new();
@@ -259,26 +265,40 @@ pub(crate) fn verify(read: &dyn KvRead, max_pages: Option<u64>) -> Result<Keywor
 pub(crate) struct Builder {
     stop: Arc<AtomicBool>,
     done: Receiver<()>,
+    /// The error that ended the build, when a batch failed (`index_health.rs` reports it).
+    failure: Arc<Mutex<Option<String>>>,
 }
 
 impl Builder {
     /// Runs batches on `store` (a handle on the same records) until the index is complete, a batch
-    /// fails (the next open resumes) or the builder is dropped.
+    /// fails (the error is kept for `gbrain doctor`; the next open resumes) or the builder is
+    /// dropped.
     pub(crate) fn start(store: Store) -> Builder {
         let stop = Arc::new(AtomicBool::new(false));
+        let failure = Arc::new(Mutex::new(None));
         let (tx, done) = channel();
         let flag = stop.clone();
+        let failed = failure.clone();
         std::thread::spawn(move || {
             while !flag.load(Ordering::SeqCst) {
                 match store.write(|w| build_batch(w, BATCH_PAGES)) {
                     Ok(Some(state)) if !state.complete => std::thread::yield_now(),
-                    _ => break,
+                    Ok(_) => break,
+                    Err(e) => {
+                        *failed.lock().unwrap_or_else(|p| p.into_inner()) =
+                            Some(format!("{}: {}", e.code, e.message));
+                        break;
+                    }
                 }
             }
             drop(store);
             let _ = tx.send(());
         });
-        Builder { stop, done }
+        Builder {
+            stop,
+            done,
+            failure,
+        }
     }
 
     /// True once the thread has ended.
@@ -287,6 +307,14 @@ impl Builder {
             self.done.try_recv(),
             Err(std::sync::mpsc::TryRecvError::Empty)
         )
+    }
+
+    /// The error that ended the build, if a batch failed.
+    pub(crate) fn failure(&self) -> Option<String> {
+        self.failure
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 }
 

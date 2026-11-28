@@ -44,6 +44,7 @@ import {
 } from './checks/db-connection.ts';
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
 import { rustEngineAddonEntry } from './checks/rust-engine-addon.ts';
+import { rustDerivedIndexesEntry } from './checks/rust-derived-indexes.ts';
 import { functionSearchPathEntry } from './checks/function-search-path.ts';
 import { guardLedgerChecksEntry } from './checks/guard-ledger-checks.ts';
 import { ownerOnlyMarksTriggersEntry } from './checks/owner-only-marks-triggers.ts';
@@ -313,6 +314,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   timelineHistoryEntry,
   extractionDateGroundingEntry,
   integrityEntry,
+  // The Rust store's keyword index (Rust brains only; no row on the SQL engines).
+  rustDerivedIndexesEntry,
   jsonbIntegrityEntry,
   whoknowsEntry,
   crossModalEntry,

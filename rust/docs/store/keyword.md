@@ -176,7 +176,8 @@ current and a page ahead is rebuilt by its batch. Dropping the `Store` stops the
 | `keyword_index_verify(max_pages)` | rebuilds the expected records of the first `max_pages` pages (all when `None`) and counts the `missing` and `changed` ones; `orphan` counts stored records no page's rebuild has, only after a walk of every page |
 | `keyword_index_rebuild()` | deletes every `R` record and writes an incomplete state in one transaction, then starts the build |
 
-The binding and `gbrain doctor` do not expose `verify` or `rebuild` yet.
+`gbrain doctor` reads the index through `derived_index_check` and `--fix` rebuilds it through
+`derived_index_rebuild` (below, "Doctor"); the binding exposes no other index member.
 
 `Store::open_dir_read_only(dir)` opens an existing brain only to read, for checks such as `keyword_index_verify`
 that must not change the store they check. It opens the record file through redb's read-only database
@@ -187,6 +188,45 @@ would have to write: no records yet, a format before 5 (the upgrade) or an index
 a missing record file or one not closed cleanly (redb repairs only on a writable open); `store_locked` means a
 writable handle has the brain open. Pinned by `tests/read_only.rs` (the record file and `FORMAT` keep every byte
 across a keyword search and `keyword_index_verify`) and the format-1 case in `tests/lifecycle.rs`.
+
+A state record that does not parse does not stop the open: `open_index` writes nothing, the postings do not serve and
+every member scans (`StateRecord::Unreadable` in `keyword/index.rs`), until `gbrain doctor --fix` rebuilds the index.
+A builder that ends with an error keeps it (`Builder::failure`), and the check reports it.
+
+### Doctor
+
+`gbrain doctor` on a Rust brain has a `rust_derived_indexes` row (`src/commands/doctor/checks/rust-derived-indexes.ts`;
+the PGLite and Postgres engines have none, so their doctor output does not change). It calls
+`checkDerivedIndexes` (`Store::derived_index_check`, `keyword/index_health.rs` `check`), which reads one snapshot and
+writes nothing, through the running owner when there is one:
+
+| Index status | Doctor | What it means |
+|---|---|---|
+| `ok` | ok | the state is complete and the checked postings equal the postings the records give |
+| `mismatch` | fail | a checked posting is missing, changed or orphan: keyword results can be wrong |
+| `building` | warn, no automatic fix | the state is incomplete and this handle's build is running; members scan until it ends |
+| `stalled` | warn | the state is incomplete and no build runs here; `builder_error` names a failed build |
+| `unreadable` | warn | the state record does not parse (`state_error`); members scan |
+| `absent`, `other_layout` | warn | no state record, or one of another `INDEX_VERSION` |
+
+While members scan, keyword search gives the same results more slowly: about 7-8 s a query at 50k pages and 200k
+chunks. The comparison (`verify`) reads the first 2,000 pages under the standard tier and every page under
+`--tier deep` (about 21 s and 1.0 GiB RSS at 50k pages); `orphan` is counted only after a walk of every page.
+
+`gbrain doctor --fix` (fix argv `gbrain doctor --fix --only rust_derived_indexes --json`) calls
+`rebuildDerivedIndexes` (`Store::derived_index_rebuild`, `index_health.rs` `rebuild`) for every status but `ok` and
+`building`, then checks again. The rebuild resets the index and runs build batches of 256 pages until the state is
+complete, each in its own write transaction, through a handle (`IndexOnly`) that refuses any write outside the `R`
+tag. Its receipt (`details.rebuild`) counts the transactions and the index puts and deletes; `record_writes` is
+always 0. A background build may run batches at the same time; both write the same postings from the same records.
+
+Not checked or rebuilt: the core term postings (`keys::POSTING`, the `T` records).
+
+The development-only cargo example `examples/derived_fault.rs` damages an index for drills and tests
+(`drop-chunk-postings`, `garbage-state`; `show` and `digest` print the records per tag). It opens `records.redb`
+directly and must run while no process holds the brain; nothing in the addon reaches it. Pinned by
+`keyword/index_health/tests.rs` and `test/rust-doctor-derived-index.serial.test.ts` (both damages, with and without
+a running owner, and a digest that shows `--fix` changes only `R` records).
 
 ### Scale
 

@@ -75,6 +75,9 @@ const LOCK_ONLY_READS: readonly string[] = [
 const UNRESOLVED_OK: Readonly<Record<string, string>> = {
   // Only the Rust store implements it; the SQL engines answer the same rows with the one SELECT in search/dedup.ts
   // `segmentRegions`, so no engine-sql function of that name exists. The Rust store function is scanned by the test below.
+  // Only the Rust store implements it (the SQL engines keep no derived keyword index); its store function
+  // (keyword/index_health.rs `check`) reads one snapshot and is scanned by the test below.
+  checkDerivedIndexes: 'a Rust-store-only member; the SQL engines have no derived keyword index to check',
   readSegmentRegions: 'a Rust-store-only member; the SQL engines run the caller\'s SELECT in search/dedup.ts, which writes nothing',
   // Store members that read through the Snapshot helper of store-members/managed-sync-orphans.ts (one read-only snapshot of the
   // source list and the checkpoint rows: brain.listSourceRecords, brain.readSourceIncarnation, the checkpoint row reads); hand-read.
