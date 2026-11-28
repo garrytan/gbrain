@@ -344,10 +344,15 @@ d('the seal change token on Postgres', () => {
     } finally { await open.release(); }
   }, 60_000);
 
-  test('a visible client that sets the sealing process\'s connection name and wrote moments ago is refused at the seal (other_backend_recent)', async () => {
+  test('a visible client that sets the sealing process\'s connection name and wrote moments ago is refused at the seal (other_writer_live: the hooks recorded it and it is still connected)', async () => {
     const app = (JSON.parse(await sealed()) as { app: string }).app;
     const sql = connection(app);
     await sql`INSERT INTO config (key, value) VALUES ('same-name-recent', '1')`;
+    expect(await sealMark(deps())).toEqual({ refused: 'other_writer_live' });
+    await sql`SELECT 1`; // a read only, moments ago, by a client that never wrote through the hooks: recent
+    const reader = connection(app);
+    await reader`SELECT 1`;
+    await engine.executeRaw(`DELETE FROM engine_writer_sessions WHERE application_name = $1`, [app]); // its row gone: judged on its state alone
     expect(await sealMark(deps())).toEqual({ refused: 'other_backend_recent' });
   }, 60_000);
 

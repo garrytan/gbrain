@@ -395,7 +395,7 @@ describe('every doubt about a seal leaves the watermark invalid', () => {
 });
 
 type Rows = Record<string, unknown>;
-interface FakeOptions { facts?: Rows | null; act?: Rows | null; rels?: Rows[]; uncovered?: number; tables?: string[]; hooked?: string[]; fail?: boolean; failFrom?: number; hang?: boolean }
+interface FakeOptions { facts?: Rows | null; act?: Rows | null; rels?: Rows[]; uncovered?: number; tables?: string[]; hooked?: string[]; fail?: boolean; failFrom?: number; hang?: boolean; named?: number[] }
 /**
  * A fake Postgres read source: answers the seal's queries by what they ask (server facts, activity, relations), the
  * writer evidence read (five parameters) with `uncovered` roles, and the hook catalog with `hooked` of `tables`.
@@ -418,6 +418,7 @@ function fakeReads(o: FakeOptions = {}): ReadSource & { sql: string[]; activityP
     if (q.includes('pg_prepared_xacts')) return o.act === null ? [] : [{ ...ACTIVITY, ...o.act }];
     if (q.includes('server_version_num')) return o.facts === null ? [] : [{ ...FACTS, ...o.facts }];
     if (q.includes('pg_stat_user_tables')) return o.rels ?? RELS;
+    if (q.includes('/* own backends */')) return (o.named ?? []).map((pid) => ({ pid }));
     throw new Error(`unexpected query: ${q.slice(0, 40)}`);
   };
   return {
@@ -488,15 +489,52 @@ describe('seal.ts: the primary\'s change token', () => {
     expect(await refusedFor({ hang: true })).toEqual({ refused: 'read_timeout' });
   });
 
-  test('the open-write check leaves out the sealing process\'s connection at the seal and only this backend at the check; the other checks leave out the sealing process and this one', async () => {
+  /** A primary whose pool hands out connections with these backend pids, in order, and counts what is still reserved. */
+  const fakePrimary = (pids: number[], o: { max?: number; fail?: boolean } = {}) => {
+    const state = { reserved: 0, asked: 0 };
+    const sql = {
+      options: { max: o.max ?? pids.length },
+      reserve: async () => {
+        if (o.fail) throw new Error('pool ended');
+        const pid = pids[state.asked++];
+        state.reserved++;
+        let released = false;
+        return Object.assign(async () => [{ pid }], { release: () => { if (!released) { released = true; state.reserved--; } } });
+      },
+    };
+    return { primary: { sql } as never, state };
+  };
+
+  test('no connection is left out by its name: only pool connections proven the sealing process\'s own (reserved, asked for their pid, held through the read) are, the open-write check only at the seal', async () => {
     const dir = hooked();
-    const atSeal = fakeReads();
+    // No primary to prove anything with: nothing is left out, whatever the connections are called.
+    const atSeal = fakeReads({ named: [41, 42] });
     await sealMark({ dir, reads: atSeal, postgres: true });
-    expect(atSeal.activityParams.map((p) => p.slice(0, 2))).toEqual([[['gbrain-1-abc'], ['gbrain-1-abc']]]);
+    expect(atSeal.activityParams.map((p) => p.slice(0, 2))).toEqual([[[], []]]);
     expect(atSeal.activityParams[0]![2]).toContain('page_projection_jobs'); // the relations whose writers are waited on
-    const atCheck = fakeReads({ facts: { app: 'gbrain-2-def' } });
+    const atCheck = fakeReads({ facts: { app: 'gbrain-2-def' }, named: [41] });
     await quietSince({ dir, reads: atCheck, postgres: true }, mark);
-    expect(atCheck.activityParams.map((p) => p.slice(0, 2))).toEqual([[[], ['gbrain-2-def', 'gbrain-1-abc']]]);
+    expect(atCheck.activityParams.map((p) => p.slice(0, 2))).toEqual([[[], []]]); // the previous sealing process's name leaves nothing out either
+    // A primary whose idle pool connections are 41 and 42: both proven, then released after the read.
+    const own = fakePrimary([42, 41]);
+    const proven = fakeReads({ named: [41, 42] });
+    expect(await sealMark({ dir, reads: proven, postgres: true, primary: own.primary })).toHaveProperty('token');
+    expect(proven.activityParams.map((p) => p.slice(0, 2))).toEqual([[[42, 41], [42, 41]]]);
+    expect(own.state.reserved).toBe(0);
+    const checked = fakePrimary([41]);
+    const atCheck2 = fakeReads({ named: [41] });
+    expect(await quietSince({ dir, reads: atCheck2, postgres: true, primary: checked.primary }, mark)).toEqual({ ok: true });
+    expect(atCheck2.activityParams.map((p) => p.slice(0, 2))).toEqual([[[], [41]]]); // at the check an open write is never left out
+    // A named connection that is not ours (another client set the name): the pool hands out a new connection (77), so
+    // proving stops; the stranger is judged on its state like anyone else.
+    const stranger = fakePrimary([41, 77, 78]);
+    const judged = fakeReads({ named: [41, 99] });
+    await sealMark({ dir, reads: judged, postgres: true, primary: stranger.primary });
+    expect(judged.activityParams.map((p) => p.slice(0, 2))).toEqual([[[41, 77], [41, 77]]]);
+    expect(stranger.state).toEqual({ reserved: 0, asked: 2 });
+    // Proving fails: refused, never read as quiet.
+    expect(await sealMark({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([], { fail: true }).primary })).toEqual({ refused: 'own_backends_unproven' });
+    expect(await quietSince({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([], { fail: true }).primary }, mark)).toEqual({ ok: false, reason: 'own_backends_unproven' });
   });
 
   test('not quiet when the database shows a write, an epoch change or a changed relation, each with its reason', async () => {

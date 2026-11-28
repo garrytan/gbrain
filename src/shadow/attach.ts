@@ -121,7 +121,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   watch = createLsnWatch(askReads);
   void watch.ready(); // the first freshness token, so a sample captured a moment later has one to be held to
   const asks = makeAskHandler({ engine, reads: askReads, dir, rpc, samples, watch, get follower() { return follower; } });
-  if (reads) sealDeps = { dir, reads, postgres: primaryTakesWriterHooks(state.primary_engine), rpc, revoking: (reason) => { revoking = reason; } };
+  if (reads) sealDeps = { dir, reads, postgres: primaryTakesWriterHooks(state.primary_engine), primary: engine, rpc, revoking: (reason) => { revoking = reason; } };
   const askConfirm = (): Promise<SealConfirmOutcome | void> => (sealDeps ? (confirm ??= (deps.sealChecks?.confirm ?? confirmSeal)(sealDeps)) : Promise.resolve());
   // A write the child will never hear of leaves a line for whichever process owns the store next (follow-child.ts), so no
   // seal is trusted over it. One line a second is enough: the owner reads any line as "a write was lost".
