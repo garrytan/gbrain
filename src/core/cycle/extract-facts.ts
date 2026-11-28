@@ -85,7 +85,7 @@ import { fenceUnfencedFacts, isFenceHold, planUnfencedFacts } from '../facts/unf
 import { heldMoveIncomplete, moveHeldFacts } from '../facts/held-fact-move.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { factsFenceView } from '../facts-fence.ts';
-import { fenceReadOf, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
+import { clearFenceHold, fenceOwnerKey, fenceReadOf, listFenceHolds, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
 import { factsFenceHeld, moveKeptRows } from '../generations/fence-evidence.ts';
 import { factFenceItems, factPreimages, factRetireItem } from '../generations/adapters/fact-rows.ts';
 import { incrementalFactsFence, segmentedBodyMatchesFile } from '../page-body/segment-facts.ts';
@@ -141,6 +141,22 @@ function timeOf(value: Date | string | null | undefined): number | null {
   return value == null ? null : new Date(value).getTime();
 }
 
+/** A stored instant as its fence cell renders it, to the second (#10055: `remember` stores a sub-second valid_from). */
+function wholeSecond(value: Date | string | null | undefined): number | null {
+  const time = timeOf(value);
+  return time == null ? null : Math.floor(time / 1000) * 1000;
+}
+
+/**
+ * #10055: a superseded row's fence cell reads back as the generated `superseded by #N` marker, so while the row stays
+ * retired it keeps the context it was written with; any other note in the cell is the owner's and replaces it.
+ */
+function reconciledContext(stored: ExistingPageFact, desired: FenceExtractedFact): string | null {
+  const marker = stored.expired_at != null && desired.expired_at != null && stored.superseded_by != null
+    && /^superseded by #\d+$/i.test(desired.context ?? '');
+  return marker ? stored.context ?? null : desired.context ?? null;
+}
+
 function numbersDiffer(stored: number | string | null, desired: number | null | undefined): boolean {
   if (stored == null || desired == null) return (stored == null) !== (desired == null);
   const a = Number(stored);
@@ -161,14 +177,14 @@ function factCellsDiffer(stored: ExistingPageFact, desired: FenceExtractedFact):
   return stored.kind !== (desired.kind ?? 'fact')
     || stored.visibility !== (desired.visibility ?? 'private')
     || stored.notability !== (desired.notability ?? 'medium')
-    || (stored.context ?? null) !== (desired.context ?? null)
+    || (stored.context ?? null) !== reconciledContext(stored, desired)
     || stored.source !== desired.source
     || numbersDiffer(stored.confidence, desired.confidence ?? 1.0)
     || (stored.claim_metric ?? null) !== (desired.claim_metric ?? null)
     || numbersDiffer(stored.claim_value, desired.claim_value)
     || (stored.claim_unit ?? null) !== (desired.claim_unit ?? null)
     || (stored.claim_period ?? null) !== (desired.claim_period ?? null)
-    || (desired.valid_from != null && timeOf(stored.valid_from) !== desired.valid_from.getTime())
+    || (desired.valid_from != null && timeOf(stored.valid_from) !== desired.valid_from.getTime() && wholeSecond(stored.valid_from) !== desired.valid_from.getTime())
     || (stored.expired_at == null) !== desiredActive
     || (desiredActive && timeOf(stored.valid_until) !== timeOf(desired.valid_until));
 }
@@ -500,6 +516,14 @@ function reconcileWrites(plan: FenceReconcilePlan, embeddingDeferred = false) {
 }
 
 /** One page's reconcile writes, inside a transaction that holds the page key. */
+/**
+ * #10067: an in-sync plan writes nothing and never reaches the generation primitive, so a fence that parses again
+ * answers a held `fence_absent` (or `no_proof`) generation here, as publishFenceGeneration does for a fence with writes.
+ */
+async function answerFenceHold(db: BrainEngine, sourceId: string, slug: string, plan: FenceReconcilePlan): Promise<void> {
+  if (plan.read.state === 'parsed') await clearFenceHold(db, { kind: FACT_FENCE_KIND, sourceId, ownerKey: fenceOwnerKey(slug) });
+}
+
 async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: string, plan: FenceReconcilePlan,
   writes: ReturnType<typeof reconcileWrites>, signal?: AbortSignal): Promise<{ inserted: number; updated: number; deleted: number; held?: true; warnings: string[]; write_gate?: GateTally }> {
   // GBRA-161 PR 2: the fact generation decides before any row changes. A fence that is absent or not read whole holds
@@ -523,7 +547,7 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
   }
   for (const f of plan.updates) {
     await tx.updateFenceFactCells(sourceId, plan.matched.get(f.row_num)!.id, {
-      kind: f.kind ?? 'fact', visibility: f.visibility ?? 'private', notability: f.notability ?? 'medium', context: f.context ?? null,
+      kind: f.kind ?? 'fact', visibility: f.visibility ?? 'private', notability: f.notability ?? 'medium', context: reconciledContext(plan.matched.get(f.row_num)!, f),
       validFrom: f.valid_from?.toISOString() ?? null, setValidUntil: f.expired_at == null,
       validUntil: f.valid_until?.toISOString() ?? null, expiredAt: f.expired_at?.toISOString() ?? null, source: f.source, confidence: f.confidence ?? 1.0,
       claimMetric: f.claim_metric ?? null, claimValue: f.claim_value ?? null, claimUnit: f.claim_unit ?? null, claimPeriod: f.claim_period ?? null,
@@ -591,6 +615,7 @@ export async function prepareFenceFactsReconcile(engine: BrainEngine, row: Write
       const current = await tx.getPage(row.slug, { sourceId: row.source_id });
       const warnings: string[] = [];
       const plan = current ? await planFenceReconcile(tx, current, row.slug, row.source_id, warnings, true) : null;
+      if (plan?.inSync) await answerFenceHold(tx, row.source_id, row.slug, plan);
       if (!plan || plan.inSync) return { status: 'completed', inserted: 0, updated: 0, deleted: 0, deferred: false, warnings };
       const signature = await resolveManagedFactsEmbedding(tx, config, true);
       const vectors = new Map((intent?.embeddings ?? [])
@@ -972,6 +997,8 @@ export async function runExtractFacts(
   // stamped and 'complete' was stamped inside the write transaction.
   type PageOutcome = FactsReconcileOutcome | 'unchanged' | 'skipped' | 'stop';
   let revision: string | null | undefined;
+  // #10067: an in-sync page answers a fence hold, so the walk reads the source's held fact fences once.
+  const heldFences = new Set(opts.dryRun ? [] : (await listFenceHolds(engine, [sourceId])).filter(hold => hold.kind === FACT_FENCE_KIND).map(hold => hold.slug));
   const reconcilePage = async (slug: string): Promise<PageOutcome> => {
     const page = await engine.getPage(slug, { sourceId });
     if (!page) {
@@ -986,7 +1013,15 @@ export async function runExtractFacts(
     if (!plan) return 'invalid';
     if (plan.fenceRows > 0) result.pagesWithFacts += 1;
     if (opts.dryRun) return 'skipped';
-    if (plan.inSync) return 'unchanged';
+    if (plan.inSync) {
+      if (plan.read.state !== 'parsed' || !heldFences.has(slug)) return 'unchanged';
+      await engine.transaction(async tx => {
+        await tx.lockPageKeys([{ sourceId, slug }]);
+        const current = await tx.getPage(slug, { sourceId });
+        if (current && sameBody(current, page)) await answerFenceHold(tx, sourceId, slug, plan);
+      });
+      return 'unchanged';
+    }
     const { toInsert } = plan;
 
     // v0.35.4 (D-CDX-3) — batch-embed new rows before insert so

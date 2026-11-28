@@ -39,10 +39,9 @@ an update from the stored tier and origin, and stores `unknown` as no tier.
 
 Rust guesses and gaps (1x parity):
 
-- The guest-source rules of the trigger are not built: `source_writer_restricted`, `guest_attribution_missing`,
-  `guest_page_immutable`, the per-source tier ceiling and the `writer_coordinator_required` refusal of a role
-  that cannot read `guest_sources`. The Rust store has no `guest_sources` table, so every source reads as a
-  non-guest source.
+- The guest-source rules of the trigger are built in `guest_sources.rs` (`guard_page`, `guard_row`, `cap_at`) and run
+  by the page, fact, take and timeline writers ([guest_sources.md](guest_sources.md)). The `writer_coordinator_required`
+  refusal of a role that cannot read `guest_sources` is not reachable: the store has no row-level security.
 - A refusal carries the trigger's message without the `trust_raise_refused: ` prefix (the code holds it) and
   without the trigger's DETAIL JSON (`op`, `writer`, `from`, `to`, `backfill`).
 - A stored tier that names no tier reads as `unknown` (`TrustTier::stored`, as `storedTrustTier`); PGLite's
@@ -144,7 +143,7 @@ Rust guesses and gaps (1x parity):
 - A move back to `pending` that another pending proposal already holds refuses with `constraint_violation`, where
   Postgres raises a unique violation; a status, action or table the CHECK constraints refuse refuses with
   `invalid_argument`. A source that does not exist refuses as the foreign key does.
-- The guest-source rules are not modelled (there is no `guest_sources` table).
+- The guest-source rules run in the writers, not in `stamp` itself: `stamp` reads no records ([guest_sources.md](guest_sources.md)).
 
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
 (the store keeps that table now, rust/docs/store/facts.md "The fact purge ledger", but these reads do not read it yet:
@@ -224,9 +223,20 @@ Postgres, so a source or page delete leaves these rows, and the Rust store does 
 | `getWriteGateHoldRow` | `get_write_gate_hold_row`: a point read | `… WHERE id = $1` |
 | `decideWriteGateHold` | `decide_write_gate_hold`: only a `held` hold moves to `released` or `dropped` | `UPDATE … WHERE id = $1 AND status = 'held'` |
 
-`listTrustAllowRuleRows` (the owner's allow rules, `trust_allow_rules`) answers `[]` without a store call: the store
-keeps no allow rule, because `trust allow` writes one through `executeRaw`, which the Rust engine refuses. So
-`trust review` and the write gate's allow check read an empty rule set on Rust instead of a refusal.
+The owner's allow rules (`trust_allow_rules`, `trust/allow_rules.rs`; `gbrain trust allow add|remove|list`):
+
+| Member | Store | Mirrors |
+| --- | --- | --- |
+| `addTrustAllowRule` | `add_trust_allow_rule`: `{ source_active: false }` and nothing written when the source is missing or archived; else the rule inserted (`created: true`), or the active rule already holding (source, prefix or '', family or '') returned unchanged (`created: false`), which still uses up one id as the sequence does. The table's CHECKs (prefix 1 to 2048 characters, a known reason family, a reason up to 500 characters) refuse with `constraint_violation` and take no id (a known difference: Postgres' sequence uses one up) | `SELECT id FROM sources … NOT archived`, then `INSERT … ON CONFLICT DO NOTHING RETURNING *`, then the active row `ORDER BY id LIMIT 1` |
+| `removeTrustAllowRule` | `remove_trust_allow_rule`: an active rule gets `removed_at` and `removed_by` and frees its active key; the row stays as the receipt. Null for a removed or unknown id | `UPDATE … SET removed_at = now() … WHERE id = $1 AND removed_at IS NULL RETURNING *` |
+| `readTrustAllowRule` | `read_trust_allow_rule`: a point read, active or removed | `SELECT * … WHERE id = $1` |
+| `listTrustAllowRuleRows` | `list_trust_allow_rules`: by id; active only unless `includeRemoved`; an empty source list reads every source | `… ORDER BY id` |
+
+Keys: `t 0x0f id` (8-byte big-endian) holds every rule; `t 0x10 source \0 uri_prefix \0 reason_family` holds the active
+rule's id (the partial unique index `trust_allow_rules_active_unique`). Ids come from the `trust_allow_rules` counter. A
+source delete removes the source's rules (`ON DELETE CASCADE`). The TypeScript member answers a rule id that is not a
+whole number with Postgres' bigint error (22P02) and a whole id below 1 with null. The shadow seed copies the rules and
+the follow keeps them (`rust/docs/store/seed.md`). The family came in without a format bump (`format.md`).
 
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the purge paths (`purge.ts`,
 `page-purge.ts`, `purge-slug-stores.ts`, `source-delete.ts`), `owner-actions.ts`, `release-publish.ts`, the
@@ -285,11 +295,14 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
   not an integer; the trust scan reads pages, facts, takes and timeline entries. The store refuses any other
   table and a NUL byte with `invalid_argument`.
 - The belief history reads (`readBeliefHistoryRows`, `listVisibleBeliefLifetimes`) are store members over the
-  ledger's rows (`trust::belief_history`, "The belief ledger", below). Their members refuse only a labelled-only
-  caller, whose floor the page policy cannot carry.
-- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and a caller
-  whose remote floor is not the page policy of no readers (a labelled-only caller); any other caller reads the floor
-  (`test/engine-parity/valid-time-member-reads.test.ts`). A failure is an error: the old read answered an empty list for any failure.
+  ledger's rows (`trust::belief_history`, "The belief ledger", below). Their members serve supported remote page-floor
+  renderings, including labelled-only callers and ordinary callers with pending folder coverage; the matched floor
+  carries its labelled-only terms and pending prefixes to the store. Unsupported renderings still refuse.
+- `listAmendmentsNotApplied` refuses a date that is not `YYYY-MM-DD`, a non-integer page id or limit and an
+  unsupported remote page-floor rendering. Under `excludePrivate`, its floor goes through `storePageTextPolicy`, which
+  serves supported labelled-only callers and ordinary callers carrying pending prefixes when the SQL text matches a
+  fresh reference rendering. A failure is an error: the old read answered an empty list for any failure.
+  Parity: `test/engine-parity/valid-time-member-reads.test.ts`.
 - `pickValidTimeEdition` also refuses a date that is not `YYYY-MM-DD`. It reads the history the store keeps after its
   version prune (`pages.md`, "Version prune"). `reason` is a version's stored change reason and `introduced_because`
   the reason of the edition before, unless that edition's successor was pruned; under `excludePrivate` a reason reads
@@ -439,9 +452,47 @@ The store serves the purge statements of src/core/engine-sql/belief-purge.ts
   hash. It skips one already released to that hash and one whose redacted text has that hash, and answers the purge
   request of each released row, in id order.
 - `replayPagePurges` and `countPagePurgeTombstones` live with the page purge ledger (`facts.md`, `facts/page_purges.rs`).
+- `listBeliefEventsForPurgeProbe` is the purge receipt's read of recorded history (`ledgerReports` in
+  src/core/facts/purge-verify.ts): the source's events with a recorded value and an id above `after`, the lowest 1000
+  across every incarnation, in id order. Each incarnation is a seek under `t 0x09 0x00 source \0 incarnation \0` to the
+  id after the cursor; a NaN cursor, or one past the last id, answers none. The member serves one statement of
+  engine-sql/facts-purge.ts, so it keeps the `facts` refusal class there; its case is in `belief-purge-probes.test.ts`.
 - `readPurgeReplaySchema` makes no store call: the store always has the live schema, so it answers every listed store
   and every probed table and column as present.
 - Pinned by `test/engine-parity/belief-purge-probes.test.ts` on every arm and by the unit tests in each module.
+
+## The belief-ledger half of a purge (`trust::belief_purge_ledger`)
+
+The store serves the statements of src/core/engine-sql/belief-purge-ledger.ts
+(src/core/rust-engine/store-members/belief-purge-ledger.ts): the steps belief/purge.ts and belief/preimages.ts run for a
+fact purge, a page purge and the restore replay on a source that records belief events. They keep no keys of their own.
+The statements read an event by id and events by lifetime alone; the store reads within the source the caller names
+(an event and a lifetime belong to one source). A keyset read gathers every incarnation of the source under
+`t 0x09 0x00 source \0`, sorts by id and answers at most 1000 rows after its cursor; a NaN cursor answers none.
+
+- `listDerivedStreamSlugs`: `facts:<id>` with the fact's fence page, else its entity (a fact with neither is left out),
+  `takes:<id>` with its page's slug and `pages:<id>` with its slug, rows of the source only.
+- `listMissingPreimages`: the 1-based position of each (page, revision) pair no version of the page holds. A revision that
+  is not a UUID refuses, as its `::uuid` cast does.
+- `redactPurgedBeliefKeys`: the source's fact and take events with one of the fingerprints, and every event of the
+  lifetimes, lose value, value hash and prior hash and are marked purged, unless already so; it answers how many it
+  marked. `legacyClaims` (claims that may have a pre-v341 Postgres fingerprint) matches nothing: the store has always
+  folded the one explicit list, as `readLegacyClaimFingerprints` answers none.
+- `listBeliefCarrierEvents`, `readBeliefEventValue`, `rewriteBeliefEventFields`, `rechainBeliefPriorHash`: the
+  carrying-field redaction. A rewrite keeps the event's prior hash only while an earlier event of the same subject key
+  (any kind, through the `t 0x09 0x03` subject index) has it as value hash; the re-chain moves the subject's later events
+  chained to the old hash. `value->>'field'` is the field's text, or its jsonb text when it is not a string.
+- `listBeliefQuotingRows`: unexpired facts with a context (the `BY_SOURCE` index, id order), takes with a resolution
+  source whose page is in the source, and links with a context whose origin page's source, else from page's, is the
+  source.
+- `listPageBeliefLifetimes`, `listPagePurgeLiveClaims`, `listPageVersionFenceBodies`, `listLifetimeClaimEvents`: the page
+  purge's lifetimes and claim inventory. The live claims carry the store's `gbrain_fact_fingerprint`.
+- `listPurgeCarrierVersions`: the versions among the ids whose page is in the source, with whether the page passes the
+  no-caller page policy (`privatePagesFilterFragment('p')`, sent as its flags).
+- `listKnownBeliefSubjectKeys`: the keys with an event of any kind in the source, in key order.
+- The redaction writes run in one `Store::write` each, so the member-access flag wrap applies. Pinned by
+  `test/engine-parity/belief-purge-ledger.test.ts` and `fact-purge-receipt-e2e.test.ts` on every arm, the statements by
+  `test/belief-purge-ledger-sql-pin.test.ts`, and the module's unit tests.
 
 ## Tier-only row changes (`trust::row_tier`)
 

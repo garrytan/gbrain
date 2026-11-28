@@ -13,9 +13,9 @@ import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, writeFi
 import { dirname } from 'node:path';
 import { gbrainPath } from '../config.ts';
 
-export type SessionStartSectionName = 'first_session' | 'nightly_learning';
-/** Priority order: earlier names win the shared budget and print first. */
-export const SESSION_START_SECTION_ORDER: readonly SessionStartSectionName[] = ['first_session', 'nightly_learning'];
+export type SessionStartSectionName = 'first_session' | 'nightly_learning' | 'standing_rules';
+/** Priority order: earlier names win the shared budget and print first. standing_rules (C2) renders only when rules.session_start is on. */
+export const SESSION_START_SECTION_ORDER: readonly SessionStartSectionName[] = ['first_session', 'nightly_learning', 'standing_rules'];
 /** One byte budget shared by every named section. */
 export const SESSION_START_SECTIONS_MAX_BYTES = 2048;
 

@@ -198,7 +198,7 @@ for (const kind of testBackends()) for (const shape of ['repo', 'repo-less'] as 
       await call('local', 'remember', { fact: claim, provenance: 'chat', entity: slug, visibility: 'private', request_id: randomUUID() });
       for (const r of await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND fact=$2', ['default', claim]))
         await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => withTrustPromotion(tx, 'user_confirmed', () => tx.executeRaw("UPDATE facts SET trust_tier='user_confirmed' WHERE id=$1", [r.id])), TEST_WRITE_ATTRIBUTION));
-      await call('bob', 'put_page', { slug, content: memberPageFrontmatter(BOB) + '# Memory\n\n## Facts\n\n' + renderFactsTable([row(1, 'Bob likes tea'), row(2, claim)] as never) + '\n', request_id: randomUUID() });
+      await call('bob', 'put_page', { slug, content: memberPageFrontmatter(BOB, new Date('2026-01-01T00:00:00Z')) + '# Memory\n\n## Facts\n\n' + renderFactsTable([row(1, 'Bob likes tea'), row(2, claim)] as never) + '\n', request_id: randomUUID() });
       expect(await stored(claim)).toEqual(['private', 'private']);
       expect(await heldProposalRef(engine, 'default', claim)).toMatch(/^tp\d+$/);
       expect(await call('bob', 'get_page', { slug, include_content: true })).toContain('walrusheld');

@@ -148,7 +148,7 @@ export function unlinkedFactsVerdict(stats: UnlinkedFactsStats | null, opts: { t
   const conversationHint = !c ? '' : c.fix === 'manual'
     ? ` ${c.pages} conversation page(s) in source ${c.source_id} (${c.slugs.join(', ')}) were re-extracted on their current content and free relink still could not resolve their facts with no entity; link each by hand (forget it and remember it again with --entity). Re-extraction is offered again when a page's content changes.`
     : c.fix === 'relink'
-      ? ` Conversation facts are derived from their page, so plain relink never examines them; link them for free (preview first): ${fix!.preview_argv!.join(' ')}. Facts it cannot resolve fall back to a paid re-extraction.`
+      ? ` Conversation facts are derived from their page, so plain relink never examines them; link them for free: ${fix!.argv!.join(' ')} (add --dry-run to preview; a dry run records nothing, so only the real run moves this warning). Facts it cannot resolve are recorded and fall back to a paid re-extraction.`
       : ` Free conversation relink could not resolve these conversation facts; re-extract instead (paid, preview first): ${fix!.preview_argv!.join(' ')}.`;
   return {
     status: warn ? 'warn' : 'ok',

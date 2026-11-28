@@ -36,13 +36,14 @@ import { readPersistenceBrainId } from './persistence-identity.ts';
 type TransactionFn<T> = (engine: BrainEngine) => Promise<T>;
 
 /**
- * The nine settings the store's write context keeps (rust/docs/store/write_trust.md): the trust ones and the write
- * attribution ones its writers read there (the trust stamp, the fence reads, the timeline write receipt).
+ * The ten settings the store's write context keeps (rust/docs/store/write_trust.md): the trust ones, the write
+ * attribution ones its writers read there (the trust stamp, the fence reads, the timeline write receipt) and the guest
+ * note a guest-source page write names (the trust stamp's guest rules).
  */
 const TRUST_SETTINGS: ReadonlySet<string> = new Set([
   'gbrain.write_trust_tier', 'gbrain.write_origin', 'gbrain.write_trust_promotion',
   'gbrain.write_trust_backfill', 'gbrain.write_trust_keep', 'gbrain.write_open_facts',
-  'gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id',
+  'gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id', 'gbrain.guest_note',
 ]);
 /**
  * The settings the transaction keeps in TypeScript (`RustTransactionScope.settings`): source scope, protocols and the
@@ -77,7 +78,7 @@ function seen(engine: RustEngine): Set<string> {
  */
 const SCHEMA_READ_SETTINGS: ReadonlySet<string> = new Set([
   'gbrain.materializing_revision', 'gbrain.topology_change', 'gbrain.refresh_barrier',
-  'gbrain.trust_generation_bumped', 'gbrain.guest_note', 'gbrain.graduation_run',
+  'gbrain.trust_generation_bumped', 'gbrain.graduation_run',
 ]);
 /** Postgres's custom setting name: two or more simple identifiers separated by dots, here under `gbrain`. */
 const CUSTOM_SETTING_NAME = /^gbrain(\.[a-z_][a-z0-9_]*)+$/;
@@ -176,10 +177,12 @@ function boundEngine(parent: RustEngine, scope: RustTransactionScope, held: Held
     multiuser: parent.openStoreIfOpen('transaction')?.multiuser === true,
     commitLog: parent.openStoreIfOpen('transaction')?.commitLog === true,
     importRelation: refuseSeed('importRelation'), replaceRelationRows: refuseSeed('replaceRelationRows'), replaceInterval: refuseSeed('replaceInterval'),
-    relationDigest: refuseSeed('relationDigest'), relationEntries: refuseSeed('relationEntries'), allocatorCheck: refuseSeed('allocatorCheck'),
+    relationDigest: refuseSeed('relationDigest'), relationEntries: refuseSeed('relationEntries'), allocatorCheck: refuseSeed('allocatorCheck'), allocatorAdvance: refuseSeed('allocatorAdvance'),
     factFingerprints: refuseSeed('factFingerprints'), seedPlan: refuseSeed('seedPlan'),
     // A snapshot copies the whole store at one committed generation, so it never runs through a transaction's handle either.
     snapshotTo: refuseSeed('snapshotTo'), snapshotCancel: () => { throw capabilityMissing('transactions', 'snapshotCancel'); },
+    // The restore census and quarantine run on the restored store's own handle (gbrain backup restore), never inside a transaction.
+    restoreCensus: refuseSeed('restoreCensus'), restoreQuarantine: refuseSeed('restoreQuarantine'),
   };
   return Object.create(parent, {
     _txScope: { value: scope, writable: false, enumerable: false },

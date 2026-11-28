@@ -14,6 +14,7 @@ export const PERSISTENCE_MEMBERS = {
   readOwnedLinks: 'persistence_journal',
   deleteOwnedLinks: 'persistence_journal',
   readLinkTargetPages: 'persistence_journal',
+  readPageHiddenFromWriter: 'persistence_journal',
   rearmLinksEffects: 'persistence_journal',
   // The facts backstop effect's two extraction reads (engine-sql/facts-backstop.ts).
   hasPendingFactsExtraction: 'persistence_journal',
@@ -331,6 +332,9 @@ export const PERSISTENCE_MEMBERS = {
   readProjectionJobReason: 'persistence_journal',
   readChunkKeepState: 'persistence_journal',
   clearUnkeptChunkVectors: 'persistence_journal',
+  readChunkInputHashes: 'persistence_journal',
+  clearChunkEmbeddingsByIds: 'persistence_journal',
+  writeChunkInputHashes: 'persistence_journal',
   setProjectionChunkerVersion: 'persistence_journal',
   hasDrainableProjectionJob: 'persistence_journal',
   queuePageProjectionJob: 'persistence_journal',

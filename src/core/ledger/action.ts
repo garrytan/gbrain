@@ -44,17 +44,20 @@ export interface ActionRecord {
   claim_basis: ClaimBasis;
   hold?: ActionHold;
   request_id?: string;
+  request_hash?: string;
+  last_request?: { id: string; hash: string };
 }
 
 /** Keys the write path stamps on every page (trust tier and provenance); never part of the action. */
 export const SERVER_STAMPED_KEYS = ['trust_tier', 'source_kind', 'ingested_via', 'ingested_at'];
-const TOP_KEYS = ['type', 'title', 'visibility', 'readable_by', 'action', 'money', 'minutes_saved', 'evidence', 'approval', 'cost', 'supersedes', 'claim_basis', 'hold', 'request_id', ...SERVER_STAMPED_KEYS];
+const TOP_KEYS = ['type', 'title', 'visibility', 'readable_by', 'action', 'money', 'minutes_saved', 'evidence', 'approval', 'cost', 'supersedes', 'claim_basis', 'hold', 'request_id', 'request_hash', 'last_request', ...SERVER_STAMPED_KEYS];
 const NESTED: Record<string, readonly string[]> = {
   action: ['verb', 'purpose', 'status', 'at', 'summary', 'counterparty', 'harness', 'actor'],
   money: ['currency', 'spent', 'saved', 'saved_period', 'estimated'],
   approval: ['by', 'rule', 'policy_revision'],
   cost: ['measured_usd', 'reported'],
   hold: ['amount', 'currency', 'expires_at'],
+  last_request: ['id', 'hash'],
 };
 export const MAX_SUMMARY = 200;
 const MAX_TEXT = 200;
@@ -68,15 +71,18 @@ const text = (v: unknown, max = MAX_TEXT) => typeof v === 'string' && v.trim().l
 const amount = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= MAX_MONEY;
 const isoTime = (v: unknown) => typeof v === 'string' && !Number.isNaN(Date.parse(v)) && /^\d{4}-\d{2}-\d{2}T/.test(v);
 
-/** Validate a stored or proposed agent_action frontmatter. Every key outside the shape is refused. */
-export function validateActionFrontmatter(fm: Record<string, unknown>): ActionValidation {
+/**
+ * Validate a stored or proposed agent_action frontmatter. A write refuses every key outside the shape. A read
+ * (`{ read: true }`) ignores keys it does not know, so an action a newer gbrain wrote still counts here.
+ */
+export function validateActionFrontmatter(fm: Record<string, unknown>, opts: { read?: boolean } = {}): ActionValidation {
   const fail = (field: string, message: string): ActionValidation => ({ ok: false, field, message });
-  for (const key of Object.keys(fm)) if (!TOP_KEYS.includes(key)) return fail(key, `${key} is not an agent_action field`);
+  if (!opts.read) for (const key of Object.keys(fm)) if (!TOP_KEYS.includes(key)) return fail(key, `${key} is not an agent_action field`);
   for (const [key, allowed] of Object.entries(NESTED)) {
     const value = fm[key];
     if (value === undefined) continue;
     if (!isObject(value)) return fail(key, `${key} must be a mapping`);
-    for (const inner of Object.keys(value)) if (!allowed.includes(inner)) return fail(`${key}.${inner}`, `${key}.${inner} is not an agent_action field`);
+    if (!opts.read) for (const inner of Object.keys(value)) if (!allowed.includes(inner)) return fail(`${key}.${inner}`, `${key}.${inner} is not an agent_action field`);
   }
   const a = fm.action as Record<string, unknown> | undefined;
   if (!a) return fail('action', 'action is required');
@@ -115,6 +121,9 @@ export function validateActionFrontmatter(fm: Record<string, unknown>): ActionVa
     if (!amount(h.amount) || typeof h.currency !== 'string' || !/^[A-Z]{3}$/.test(h.currency) || !isoTime(h.expires_at)) return fail('hold', 'hold is {amount, currency, expires_at}');
   }
   if (fm.request_id !== undefined && !text(fm.request_id, 128)) return fail('request_id', 'request_id must be text of at most 128 characters');
+  if (fm.request_hash !== undefined && !(typeof fm.request_hash === 'string' && /^[0-9a-f]{64}$/.test(fm.request_hash))) return fail('request_hash', 'request_hash is a sha256 hex digest (gbrain stamps it)');
+  const lr = fm.last_request as Record<string, unknown> | undefined;
+  if (lr && (!text(lr.id, 128) || typeof lr.hash !== 'string' || !/^[0-9a-f]{64}$/.test(lr.hash))) return fail('last_request', 'last_request is {id, hash} (gbrain stamps it)');
   return { ok: true, record: fm as unknown as ActionRecord };
 }
 
@@ -124,11 +133,17 @@ export function canTransition(from: ActionStatus, to: ActionStatus): boolean {
 
 const CROCKFORD = '0123456789abcdefghjkmnpqrstvwxyz';
 
-/** A ULID-shaped id: 10 characters of the action's time, 16 from a hash of who logged it and its request_id, so a replay names the same page. */
-export function actionId(at: Date, actor: string, requestId: string): string {
-  let t = at.getTime();
+/** The first 10 characters of an action id: its time, so action slugs in one month sort by when they were made. */
+export function actionTimeKey(at: Date): string {
+  let t = Math.max(0, at.getTime());
   let time = '';
   for (let i = 0; i < 10; i++) { time = CROCKFORD[t % 32] + time; t = Math.floor(t / 32); }
+  return time;
+}
+
+/** A ULID-shaped id: 10 characters of the action's time, 16 from a hash of who logged it and its request_id, so a replay names the same page. */
+export function actionId(at: Date, actor: string, requestId: string): string {
+  const time = actionTimeKey(at);
   const digest = createHash('sha256').update(`${actor}\n${requestId}`).digest();
   let rand = '';
   for (let i = 0; i < 16; i++) rand += CROCKFORD[digest[i]! % 32];

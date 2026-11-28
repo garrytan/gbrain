@@ -134,8 +134,8 @@ describe('the reads a page write makes before admission', () => {
   });
 
   parityTest('a revert_version on an unclaimed rooted source is judged by the version file', {
-    methods: ['readVersionSourcePath', 'putPage', 'createVersion', 'getWorktreeBinding'],
-    requires: 'raw_sql',
+    methods: ['readVersionSourcePath', 'putPage', 'createVersion', 'detachPageOrigin', 'getWorktreeBinding'],
+    requires: 'managed_persistence',
     timeout: 60_000,
   }, async (engine, backend) => {
     const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-page-mutation-reads-')));
@@ -157,12 +157,25 @@ describe('the reads a page write makes before admission', () => {
         await engine.putPage(slug, { type: 'note', title: 'Revert example', compiled_truth: 'The second body.', timeline: '',
           frontmatter: {}, source_path: 'notes/revert-example.md' }, { sourceId: 'vault' });
         // The current revision has no file, so only the version's file makes the revert file-backed (the read this covers).
-        // No typed member clears a page's file, so the SQL arms seed it; the Rust arm stops here on raw_sql (case 1
-        // proves its readVersionSourcePath).
-        await engine.executeRaw("UPDATE pages SET source_path=NULL WHERE source_id='vault' AND slug=$1", [slug]);
+        // detachPageOrigin is the typed writer that clears a page's file.
+        await engine.detachPageOrigin(Number((await engine.getPage(slug, { sourceId: 'vault' }))!.id), 'test_cleared_file');
         try {
           const current = await engine.readPageSnapshot(slug, { sourceId: 'vault' });
           const reverted = await run(engine, 'revert_version', { slug, version_id: Number(version.id), expected_revision: current?.revision }, 'vault');
+          if (backend === 'rust') {
+            // A multi-user-trunk Rust arm serves managed_persistence (lane LM slices 1-3; arm-capabilities.ts), so the plain
+            // arm runs as main's managed mode (GBRAIN_TEST_RUST_MANAGED=1) does: the revert claims the unclaimed
+            // rooted source at admission, then its preparation stops on the raw read of the read-only mirror check
+            // (persistence/mirror-read-only.ts isMirrorOnlyPage, executeRaw: raw_sql). The claim is DURABLE: the refusal ends
+            // the write request but does not release the source's writer binding, so the source stays claimed with no
+            // write. Named known loss, RUST_ENGINE.md row 64 (owner: lane LM). Assert the stop and the kept claim, then
+            // rethrow, so the Rust arm counts the case as stopped.
+            const refusal = thrown.get(reverted as object) as { detail?: unknown } | undefined;
+            expect({ reverted, rawSql: String(refusal?.detail ?? '').includes('member=executeRaw capability=raw_sql'),
+              claimedAfterRefusal: (await getWorktreeBinding(engine, 'vault')) !== null })
+              .toEqual({ reverted: expect.objectContaining({ ok: false, code: 'engine_capability_missing' }), rawSql: true, claimedAfterRefusal: true });
+            throw refusal;
+          }
           // File-backed by its version, the revert claims the unclaimed rooted source and writes the file; a revert judged
           // database-only would leave the source unclaimed. Postgres is a multi-process engine: an unclaimed rooted
           // source refuses until a writer claims it (#6608), and its revert is judged the same way first.

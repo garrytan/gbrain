@@ -56,15 +56,8 @@ export async function identityRestoreAvailable(engine: RestoreProbeEngine, sourc
   return autoClaimsUnboundSource(engine, sourceId);
 }
 
-/** SQL: the downgrade record `dg` is open for the page aliased `alias` (no disposition, old page still soft-deleted by that sync). */
-export const identityDowngradeOpen = (alias: string): string =>
-  `dg.completed_keys->0->>'disposition' IS NULL AND ${alias}.deleted_at = (dg.completed_keys->0->>'old_deleted_at')::timestamptz`;
-
-/** SQL predicate for a purge scan over `pages` aliased `alias`: the page has no open downgrade record. */
-export function identityDowngradePurgeHold(alias: string): string {
-  return `NOT EXISTS (SELECT 1 FROM op_checkpoints dg WHERE dg.op = '${IDENTITY_DOWNGRADE_OP}' AND dg.fingerprint = ${alias}.id::text
-    AND ${identityDowngradeOpen(alias)})`;
-}
+/** The downgrade hold predicates live with the purge statement text; re-exported so their import sites stay. */
+export { identityDowngradeOpen, identityDowngradePurgeHold } from './persistence/retention-purge-sql.ts';
 
 const REASON_TEXT: Record<RenameDowngradeReason, string> = {
   id_conflict: 'the two files carry different frontmatter ids',

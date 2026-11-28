@@ -423,9 +423,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 ### v1.0.0
 
-- Initial port. Composite of two upstream skills: the lifecycle spine
-  (schema-first, trial-before-bulk, codify-deterministic) and the
-  manifest-driven durable-state substrate. Genericized: no upstream
-  pipeline names, corpus provenance, or fork-specific paths; Phase 8
-  delegates to shipped skillify; Phase 9 routes through Minions; Phase 10
+- Initial release: the lifecycle spine (schema-first, trial-before-bulk,
+  codify-deterministic) and the manifest-driven durable-state substrate;
+  Phase 8 delegates to shipped skillify; Phase 9 routes through Minions; Phase 10
   rebuilt on testing + signal-detector + cron-scheduler.

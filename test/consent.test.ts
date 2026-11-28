@@ -461,3 +461,57 @@ describe("memorable's relay-only gate (stays hard)", () => {
     expect(relay).not.toContain('--yes');
   });
 });
+
+describe('GCH5-05 (d3): a consent refusal prints each command whole or not at all', () => {
+  test('an approved command longer than the field prints the too-long note; JSON keeps it whole', async () => {
+    const word = 'p q'.repeat(400);
+    const e = await inHome(() => refusal(requireConsent(req(['paid'], [], { argv: ['gbrain', 'demo', word] }), env())));
+    if (!isConsentRefusal(e)) throw e;
+    const ifYes = renderConsentRefusal(e.consent, { json: false }).stdout!.split('\n').find(l => l.startsWith('if_yes: '))!;
+    expect(ifYes).toStartWith('if_yes: (the command is too long for this line; read it from --json)');
+    expect(ifYes).not.toContain('…');
+    expect(JSON.parse(renderConsentRefusal(e.consent, { json: true }).stdout!).fix.command).toContain(`'${word}`);
+  });
+
+  test('a preview or approved argv with NUL prints the unavailable note; JSON keeps the exact argv and no command', async () => {
+    const e = await inHome(() => refusal(requireConsent(req(['paid'], [], { argv: ['gbrain', 'demo', 'a\u0000b'], preview_argv: ['gbrain', 'demo', 'c\u0000d', '--dry-run'] }), env())));
+    if (!isConsentRefusal(e)) throw e;
+    const text = renderConsentRefusal(e.consent, { json: false }).stdout!;
+    expect(text).not.toContain('\u0000');
+    expect(text.split('\n').find(l => l.startsWith('if_yes: '))).toStartWith('if_yes: (command unavailable;');
+    expect(text.split('\n').find(l => l.startsWith('if_no: '))).toContain('To look first (read-only): (command unavailable;');
+    const json = JSON.parse(renderConsentRefusal(e.consent, { json: true }).stdout!);
+    expect(json.preview).toEqual({ argv: ['gbrain', 'demo', 'c\u0000d', '--dry-run'] });
+    expect(json.fix.command).toBeUndefined();
+  });
+});
+
+describe('F6 (d3): a consent refusal shows no raw bidi control, and its JSON text parses to the exact argv', () => {
+  const BIDI = /[\u202a-\u202e\u2066-\u2069]/;
+  test('a page value with U+202E in the approved and preview argv', async () => {
+    const page = 'notes/evil\u202Edm.txt\u202C';
+    const e = await inHome(() => refusal(requireConsent(req(['paid'], [], { argv: ['gbrain', 'demo', page], preview_argv: ['gbrain', 'demo', page, '--dry-run'] }), env())));
+    if (!isConsentRefusal(e)) throw e;
+    expect(renderConsentRefusal(e.consent, { json: false }).stdout!).not.toMatch(BIDI);
+    const text = renderConsentRefusal(e.consent, { json: true }).stdout!;
+    expect(text).not.toMatch(BIDI);
+    const json = JSON.parse(text);
+    expect(json.fix.argv).toEqual(['gbrain', 'demo', page, '--yes']);
+    expect(json.preview.argv).toEqual(['gbrain', 'demo', page, '--dry-run']);
+  });
+});
+
+describe('F6b: a consent refusal shows no raw LRM, RLM or ALM, and its JSON text parses to the exact argv', () => {
+  test('a page value with U+061C in the approved and preview argv', async () => {
+    const MARK = /[\u200e\u200f\u061c]/;
+    const page = 'notes/\u061c1/2\u200f.md';
+    const e = await inHome(() => refusal(requireConsent(req(['paid'], [], { argv: ['gbrain', 'demo', page], preview_argv: ['gbrain', 'demo', page, '--dry-run'] }), env())));
+    if (!isConsentRefusal(e)) throw e;
+    expect(renderConsentRefusal(e.consent, { json: false }).stdout!).not.toMatch(MARK);
+    const text = renderConsentRefusal(e.consent, { json: true }).stdout!;
+    expect(text).not.toMatch(MARK);
+    const json = JSON.parse(text);
+    expect(json.fix.argv).toEqual(['gbrain', 'demo', page, '--yes']);
+    expect(json.preview.argv).toEqual(['gbrain', 'demo', page, '--dry-run']);
+  });
+});

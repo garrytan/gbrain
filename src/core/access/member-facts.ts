@@ -136,14 +136,17 @@ export function scopePageNotShared(sourceId: string): OperationError {
     { reason: 'scope_page_not_shared' });
 }
 
-/** The frontmatter of the scope page its first fact creates: no readers, so the source's read grant is its audience. */
-export function scopePageFrontmatter(): string {
-  return ['---', 'type: note', 'title: Scope memory', '---', ''].join('\n');
+/**
+ * The frontmatter of the scope page its first fact creates: no readers, so the source's read grant is its audience.
+ * #9945: `capturedAt` (the creating request's time, stable across replays) is its temporal provenance.
+ */
+export function scopePageFrontmatter(capturedAt: Date): string {
+  return ['---', 'type: note', 'title: Scope memory', `captured_at: ${capturedAt.toISOString()}`, '---', ''].join('\n');
 }
 
-/** The frontmatter of a member page its first fact creates: the member is its only reader. */
-export function memberPageFrontmatter(member: string): string {
-  return ['---', 'type: note', `title: Memory of ${member}`, 'readable_by:', `  - member:${member}`, '---', ''].join('\n');
+/** The frontmatter of a member page its first fact creates: the member is its only reader. `capturedAt` as above. */
+export function memberPageFrontmatter(member: string, capturedAt: Date): string {
+  return ['---', 'type: note', `title: Memory of ${member}`, `captured_at: ${capturedAt.toISOString()}`, 'readable_by:', `  - member:${member}`, '---', ''].join('\n');
 }
 
 /**

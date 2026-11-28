@@ -37,8 +37,8 @@ import { resolveLifetimes } from './lifetimes.ts';
 import { appendBeliefEvents, type BeliefEventDraft, type RedactionRelease } from './append.ts';
 import { coverageActive, noteBelief, readLedgerSource } from './ledger.ts';
 import { bodySubjects } from './backfill.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
-import { legacySubjectKeysSql, mayHaveLegacyFingerprint } from './legacy-fingerprint.ts';
+import { mayHaveLegacyFingerprint } from './legacy-fingerprint.ts';
+import type { BeliefQuotingKind } from '../engine-sql/belief-purge-ledger.ts';
 
 const SCAN_BATCH = 1000;
 
@@ -95,18 +95,12 @@ async function registerRedaction(tx: Pick<BrainEngine, 'registerPurgeRedaction'>
 }
 
 /** Pass 1: purged keys lose their values. Returns the events marked. */
-export async function redactPurgedKeys(tx: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; claimFps: readonly string[]; lifetimes: readonly string[];
-  /** The purged claim texts: their history recorded under a pre-v341 fingerprint (legacy-fingerprint.ts) is redacted too. */
+export async function redactPurgedKeys(tx: Pick<BrainEngine, 'redactPurgedBeliefKeys'>, input: { sourceId: string; claimFps: readonly string[]; lifetimes: readonly string[];
+  /** The purged claim texts: their history recorded under a pre-v353 fingerprint (legacy-fingerprint.ts) is redacted too. */
   claims?: readonly string[] }): Promise<number> {
   if ((!input.claimFps.length && !input.lifetimes.length) || redactionFault === 'skip_purged_keys') return 0;
-  const legacy = (input.claims ?? []).filter(mayHaveLegacyFingerprint);
-  const params: unknown[] = [input.sourceId, [...input.claimFps], [...input.lifetimes]];
-  if (legacy.length) params.push(legacy);
-  const rows = await tx.executeRaw(`${legacy.length ? `WITH legacy AS (${legacySubjectKeysSql('$4::text[]')})\n` : ''}UPDATE belief_events SET value = NULL, value_hash = NULL, prior_hash = NULL, purged = true
-    WHERE source_id = $1 AND ((subject_kind IN ('fact','take') AND (claim_fp = ANY($2::text[])${legacy.length ? ' OR subject_key IN (SELECT subject_key FROM legacy)' : ''}))
-        OR page_lifetime = ANY($3::uuid[]))
-      AND (purged = false OR value IS NOT NULL OR prior_hash IS NOT NULL) RETURNING id`, params);
-  return rows.length;
+  const legacyClaims = (input.claims ?? []).filter(mayHaveLegacyFingerprint);
+  return tx.redactPurgedBeliefKeys({ sourceId: input.sourceId, claimFps: [...input.claimFps], lifetimes: [...input.lifetimes], legacyClaims });
 }
 
 export interface RedactedField { subject_key: string; field: string; event_id: number }
@@ -116,18 +110,15 @@ export interface RedactedField { subject_key: string; field: string; event_id: n
  * Keyset batches read only the carrying fields of the source's events (no substring scan in SQL, so the cost is
  * one pass over the events whatever the number of claims, #6); the claims are matched in JS.
  */
-export async function redactCarryingFields(tx: Pick<BrainEngine, 'executeRaw' | 'registerPurgeRedaction'>, input: { sourceId: string; request: string; claims: readonly string[] }): Promise<RedactedField[]> {
+export async function redactCarryingFields(tx: Pick<BrainEngine, 'listBeliefCarrierEvents' | 'readBeliefEventValue' | 'rewriteBeliefEventFields'
+  | 'rechainBeliefPriorHash' | 'registerPurgeRedaction'>, input: { sourceId: string; request: string; claims: readonly string[] }): Promise<RedactedField[]> {
   const forms = claimForms(input.claims);
   if (!forms.length || redactionFault === 'skip_carrying_fields') return [];
   const out: RedactedField[] = [];
   const registered = new Set<string>();
   for (let after = 0; ;) {
     await faultPoint('purge:ledger_redaction', { sourceId: input.sourceId });
-    const rows = await tx.executeRaw<{ id: number; subject_kind: string; subject_key: string; context: string | null; resolved_source: string | null }>(`SELECT e.id,
-        e.subject_kind, e.subject_key, e.value->>'context' AS context, e.value->>'resolved_source' AS resolved_source FROM belief_events e
-      WHERE e.source_id = $1 AND e.id > $2 AND e.subject_kind IN ('fact','take','link')
-        AND (COALESCE(e.value->>'context', '') <> '' OR COALESCE(e.value->>'resolved_source', '') <> '')
-      ORDER BY e.id LIMIT ${SCAN_BATCH}`, [input.sourceId, after]);
+    const rows = await tx.listBeliefCarrierEvents(input.sourceId, after);
     if (!rows.length) break;
     after = Number(rows[rows.length - 1]!.id);
     for (const row of rows) {
@@ -136,7 +127,7 @@ export async function redactCarryingFields(tx: Pick<BrainEngine, 'executeRaw' | 
         return typeof text === 'string' && quotes(text, forms);
       });
       if (!fields.length) continue;
-      const [event] = await tx.executeRaw<{ value: unknown; value_hash: string | null; redacted_fields: string[] | null }>('SELECT value, value_hash, redacted_fields FROM belief_events WHERE id = $1', [row.id]);
+      const event = await tx.readBeliefEventValue(input.sourceId, row.id);
       const value = (typeof event!.value === 'string' ? JSON.parse(event!.value) : event!.value) as Record<string, unknown>;
       const next = { ...value };
       for (const field of fields) {
@@ -147,21 +138,18 @@ export async function redactCarryingFields(tx: Pick<BrainEngine, 'executeRaw' | 
         out.push({ subject_key: row.subject_key, field, event_id: Number(row.id) });
       }
       const listed = [...new Set([...(event!.redacted_fields ?? []), ...fields])];
-      await tx.executeRaw(`UPDATE belief_events e SET value = $2::text::jsonb, value_hash = $3, redacted_fields = $4::text[],
-          prior_hash = CASE WHEN EXISTS (SELECT 1 FROM belief_events o WHERE o.source_id = e.source_id AND o.subject_key = e.subject_key AND o.id < e.id
-            AND o.value_hash = e.prior_hash) THEN e.prior_hash END WHERE e.id = $1`, [row.id, canonicalJson(next), valueHash(next), listed]);
-      if (event!.value_hash) await tx.executeRaw(`UPDATE belief_events SET prior_hash = $4 WHERE source_id = $1 AND subject_key = $2 AND id > $5 AND prior_hash = $3`,
-        [input.sourceId, row.subject_key, event!.value_hash, valueHash(next), row.id]);
+      await tx.rewriteBeliefEventFields({ sourceId: input.sourceId, id: row.id, value: canonicalJson(next), valueHash: valueHash(next), redactedFields: listed });
+      if (event!.value_hash) await tx.rechainBeliefPriorHash({ sourceId: input.sourceId, subjectKey: row.subject_key, oldHash: event!.value_hash, newHash: valueHash(next), afterId: row.id });
     }
     if (rows.length < SCAN_BATCH) break;
   }
   return out;
 }
 
-/** Keyset batches of `sql` (params: source, after-id; columns id, slug, text), returning the slugs whose text quotes a form. */
-async function quotingSlugs(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string, forms: readonly string[], sql: string, into: Set<string>): Promise<void> {
+/** Keyset batches of the source's live `kind` rows with a carrying field (listBeliefQuotingRows), adding the slugs whose text quotes a form. */
+async function quotingSlugs(tx: Pick<BrainEngine, 'listBeliefQuotingRows'>, sourceId: string, forms: readonly string[], kind: BeliefQuotingKind, into: Set<string>): Promise<void> {
   for (let after = 0; ;) {
-    const rows = await tx.executeRaw<{ id: number; slug: string | null; text: string }>(`${sql} ORDER BY 1 LIMIT ${SCAN_BATCH}`, [sourceId, after]);
+    const rows = await tx.listBeliefQuotingRows(kind, sourceId, after);
     if (!rows.length) return;
     after = Number(rows[rows.length - 1]!.id);
     for (const r of rows) if (r.slug && quotes(r.text, forms)) into.add(r.slug);
@@ -182,12 +170,7 @@ export async function registerLiveCarriers(tx: BrainEngine, input: { sourceId: s
   if (!forms.length || !source || redactionFault === 'skip_live_carriers') return [];
   await faultPoint('purge:ledger_redaction', { sourceId: input.sourceId });
   const found = new Set<string>();
-  await quotingSlugs(tx, input.sourceId, forms, `SELECT f.id, COALESCE(f.source_markdown_slug, f.entity_slug) AS slug, f.context AS text FROM facts f
-    WHERE f.source_id = $1 AND f.id > $2 AND f.expired_at IS NULL AND COALESCE(f.context, '') <> ''`, found);
-  await quotingSlugs(tx, input.sourceId, forms, `SELECT k.id, p.slug, k.resolved_source AS text FROM takes k JOIN pages p ON p.id = k.page_id
-    WHERE p.source_id = $1 AND k.id > $2 AND COALESCE(k.resolved_source, '') <> ''`, found);
-  await quotingSlugs(tx, input.sourceId, forms, `SELECT l.id, COALESCE(o.slug, f.slug) AS slug, l.context AS text FROM links l JOIN pages f ON f.id = l.from_page_id
-    LEFT JOIN pages o ON o.id = l.origin_page_id WHERE COALESCE(o.source_id, f.source_id) = $1 AND l.id > $2 AND l.context <> ''`, found);
+  for (const kind of ['facts', 'takes', 'links'] as const) await quotingSlugs(tx, input.sourceId, forms, kind, found);
   const slugs = [...found].sort();
   const out: RedactedField[] = [];
   for (let at = 0; at < slugs.length; at += 200) {
@@ -218,9 +201,7 @@ export async function registerVersionCarriers(tx: BrainEngine, input: { sourceId
   const out: RedactedField[] = [];
   for (let at = 0; at < ids.length; at += SCAN_BATCH) {
     await faultPoint('purge:ledger_redaction', { sourceId: input.sourceId });
-    const versions = await tx.executeRaw<{ page_id: number; slug: string; visible: boolean; compiled_truth: string | null; timeline: string | null }>(`SELECT p.id AS page_id, p.slug,
-        (${privatePagesFilterFragment('p')}) AS visible, v.compiled_truth, v.timeline
-      FROM page_versions v JOIN pages p ON p.id = v.page_id WHERE p.source_id = $1 AND v.id = ANY($2::bigint[]) ORDER BY v.id`, [input.sourceId, ids.slice(at, at + SCAN_BATCH)]);
+    const versions = await tx.listPurgeCarrierVersions(input.sourceId, ids.slice(at, at + SCAN_BATCH));
     const pages = new Map(versions.map(v => [Number(v.page_id), v.slug]));
     const lifetimes = await resolveLifetimes(tx, [...pages].map(([pageId, slug]) => ({ sourceId: input.sourceId, incarnation: source.incarnation, slug, pageId })));
     for (const v of versions) {
@@ -237,26 +218,22 @@ export async function registerVersionCarriers(tx: BrainEngine, input: { sourceId
 }
 
 /** The lifetimes of one page: its open lifetime at the slug and every lifetime whose page hint is the page (renames keep it). */
-export async function pageLifetimesOf(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, pageId: number): Promise<string[]> {
-  const rows = await tx.executeRaw<{ page_lifetime: string }>(`SELECT page_lifetime::text AS page_lifetime FROM belief_page_lifetimes
-    WHERE source_id = $1 AND (page_id = $3 OR (slug = $2 AND ended_at IS NULL AND page_id IS NULL))`, [sourceId, slug, pageId]);
-  return rows.map(r => r.page_lifetime);
+export async function pageLifetimesOf(tx: Pick<BrainEngine, 'listPageBeliefLifetimes'>, sourceId: string, slug: string, pageId: number): Promise<string[]> {
+  return tx.listPageBeliefLifetimes(sourceId, slug, pageId);
 }
 
 /**
  * A page purge's exhaustive claim inventory: every fact and take claim on the page, every fence claim
  * in its retained versions, and every claim in its lifetimes' events (keyset batches, no row or length cap).
  */
-export async function pagePurgeClaims(tx: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; slug: string; pageId: number; lifetimes: readonly string[] }): Promise<{ claims: string[]; fps: string[] }> {
+export async function pagePurgeClaims(tx: Pick<BrainEngine, 'listPagePurgeLiveClaims' | 'listPageVersionFenceBodies' | 'listLifetimeClaimEvents'>, input: { sourceId: string; slug: string; pageId: number; lifetimes: readonly string[] }): Promise<{ claims: string[]; fps: string[] }> {
   const claims = new Set<string>();
   const fps = new Set<string>();
-  const live = await tx.executeRaw<{ claim: string; fp: string }>(`SELECT fact AS claim, gbrain_fact_fingerprint(fact) AS fp FROM facts WHERE source_id = $1 AND source_markdown_slug = $2
-    UNION SELECT claim, gbrain_fact_fingerprint(claim) FROM takes WHERE page_id = $3`, [input.sourceId, input.slug, input.pageId]);
+  const live = await tx.listPagePurgeLiveClaims(input.sourceId, input.slug, input.pageId);
   for (const r of live) { claims.add(r.claim); fps.add(r.fp); }
   for (let after = 0; ;) {
     await faultPoint('purge:ledger_redaction', { sourceId: input.sourceId });
-    const versions = await tx.executeRaw<{ id: number; compiled_truth: string; timeline: string | null }>(`SELECT id, compiled_truth, timeline FROM page_versions
-      WHERE page_id = $1 AND id > $2 ORDER BY id LIMIT ${SCAN_BATCH}`, [input.pageId, after]);
+    const versions = await tx.listPageVersionFenceBodies(input.pageId, after);
     if (!versions.length) break;
     after = Number(versions[versions.length - 1]!.id);
     for (const v of versions) for (const body of [v.compiled_truth ?? '', v.timeline ?? '']) {
@@ -267,8 +244,7 @@ export async function pagePurgeClaims(tx: Pick<BrainEngine, 'executeRaw'>, input
   }
   if (input.lifetimes.length) for (let after = 0; ;) {
     await faultPoint('purge:ledger_redaction', { sourceId: input.sourceId });
-    const events = await tx.executeRaw<{ id: number; claim: string | null; claim_fp: string | null }>(`SELECT id, COALESCE(value->>'fact', value->>'claim') AS claim, claim_fp
-      FROM belief_events WHERE page_lifetime = ANY($1::uuid[]) AND subject_kind IN ('fact','take') AND id > $2 ORDER BY id LIMIT ${SCAN_BATCH}`, [[...input.lifetimes], after]);
+    const events = await tx.listLifetimeClaimEvents(input.sourceId, [...input.lifetimes], after);
     if (!events.length) break;
     after = Number(events[events.length - 1]!.id);
     for (const e of events) { if (e.claim) claims.add(e.claim); if (e.claim_fp) fps.add(e.claim_fp); }
@@ -279,12 +255,9 @@ export async function pagePurgeClaims(tx: Pick<BrainEngine, 'executeRaw'>, input
 }
 
 /** The stream slug of each derived row (fact: its fence page or entity; take: its page; page: itself). */
-export async function derivedStreamSlugs(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string, rows: readonly DerivedRow[]): Promise<Map<string, string>> {
+export async function derivedStreamSlugs(tx: Pick<BrainEngine, 'listDerivedStreamSlugs'>, sourceId: string, rows: readonly DerivedRow[]): Promise<Map<string, string>> {
   const ids = (table: string) => rows.filter(r => r.table === table && /^\d+$/.test(r.id)).map(r => Number(r.id));
-  const found = await tx.executeRaw<{ ref: string; slug: string }>(`SELECT 'facts:' || id AS ref, COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts
-      WHERE source_id = $1 AND id = ANY($2::bigint[]) AND COALESCE(source_markdown_slug, entity_slug) IS NOT NULL
-    UNION ALL SELECT 'takes:' || k.id, p.slug FROM takes k JOIN pages p ON p.id = k.page_id WHERE p.source_id = $1 AND k.id = ANY($3::bigint[])
-    UNION ALL SELECT 'pages:' || id, slug FROM pages WHERE source_id = $1 AND id = ANY($4::int[])`, [sourceId, ids('facts'), ids('takes'), ids('pages')]);
+  const found = await tx.listDerivedStreamSlugs(sourceId, ids('facts'), ids('takes'), ids('pages'));
   return new Map(found.map(r => [r.ref, r.slug]));
 }
 
@@ -327,8 +300,7 @@ export async function appendDerivedHidden(tx: BrainEngine, input: { sourceId: st
   const source = await readLedgerSource(tx, input.sourceId);
   if (!source) return 0;
   const keys = [...new Set(input.targets.map(t => t.draft.subjectKey))];
-  const known = new Set((await tx.executeRaw<{ subject_key: string }>(`SELECT DISTINCT subject_key FROM belief_events WHERE source_id = $1 AND subject_key = ANY($2::text[])`,
-    [input.sourceId, keys])).map(r => r.subject_key));
+  const known = new Set(await tx.listKnownBeliefSubjectKeys(input.sourceId, keys));
   const active = coverageActive(source.coverage);
   const seen = new Set<string>();
   const drafts: BeliefEventDraft[] = [];

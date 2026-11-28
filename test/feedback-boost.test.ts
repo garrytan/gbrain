@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { applyFeedbackStage, feedbackMultiplier } from '../src/core/search/feedback-boost.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
 import { _resetFeedbackSettingsCacheForTests } from '../src/core/feedback/settings.ts';
 import type { SearchResult } from '../src/core/types.ts';
@@ -99,6 +100,23 @@ describe('applyFeedbackStage', () => {
     const zero = await applyFeedbackStage(engine, [result('notes/renewal-plan-a', 0.9), result('notes/renewal-plan-b', 0.85)], { reranked: false });
     expect(zero.map(r => r.slug)).toEqual(['notes/renewal-plan-a', 'notes/renewal-plan-b']);
     expect(typeof zero[0]!.content_hash).toBe('string');
+  });
+});
+
+describe('applyFeedbackStage on a failed weight read', () => {
+  test('a database error leaves the list as it was and counts a stage error', async () => {
+    const list = [result('notes/renewal-plan-a', 0.9), result('notes/renewal-plan-b', 0.8)];
+    const failing = Object.assign(Object.create(engine), { readPageFeedbackWeights: async () => { throw new Error('boom'); } });
+    const metas: unknown[] = [];
+    const out = await applyFeedbackStage(failing, list, { reranked: false, onMeta: m => metas.push(m) });
+    expect(out.map(r => r.slug)).toEqual(['notes/renewal-plan-a', 'notes/renewal-plan-b']);
+    expect(metas).toEqual([{ applied: false, boosted: 0, errored: true }]);
+  });
+
+  test('a refused weight read surfaces as the refusal, never as a quietly unboosted list', async () => {
+    const list = [result('notes/renewal-plan-a', 0.9)];
+    const refusing = Object.assign(Object.create(engine), { readPageFeedbackWeights: async () => { throw capabilityMissing('telemetry', 'readPageFeedbackWeights'); } });
+    await expect(applyFeedbackStage(refusing, list, { reranked: false })).rejects.toMatchObject({ code: 'engine_capability_missing' });
   });
 });
 

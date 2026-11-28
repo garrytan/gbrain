@@ -12,6 +12,3 @@
 - `targets[].last_error` in `retry-effects` JSON, `effects[].parked[].last_error` in doctor `parked_effects` and `targets[].last_error` in `settle-effects` previews hold only `phase`, `step`, `reason` (and `identity: true` for a missing identity). A stored step outside the known step names reads `git`, and an unknown reason reads `other`; an entry with no usable diagnostic has no `last_error`.
 - A command word with a control character, a line break, U+2028/U+2029 or a marker token prints as `$'...'` instead of a single-quoted word with the character replaced. Every other word prints as before.
 - dash (Debian's `/bin/sh`) does not read `$'...'`: it reads one literal word that starts with `$`, so such a command does not reach the intended checkout there. No part of the path runs as a command. Use bash, zsh, ksh or busybox sh, or the exact `argv`.
-
-### Known, not in this change
-- A word over 2,000 characters is still cut in the printed `command`, and a cut can split an escape or a surrogate pair; `argv` stays exact. A NUL byte cannot be written in any shell word.

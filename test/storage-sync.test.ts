@@ -13,6 +13,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, chmodSync, symlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { spawnSync } from 'child_process';
 import { manageGitignore } from '../src/commands/sync.ts';
 import { __resetMissingStorageWarning } from '../src/core/storage-config.ts';
 
@@ -238,3 +239,31 @@ describe('manageGitignore collector/db_only collision warning (#2788)', () => {
     expect(warnings.filter((w) => /collector 'test-collector'/.test(w))).toEqual([]);
   });
 });
+
+describe('manageGitignore anchors single-segment db_only dirs (#10102)', () => {
+  const ignored = (path: string) => spawnSync('git', ['check-ignore', '-q', path], { cwd: tmp }).status === 0;
+
+  test('a single-segment db_only dir ignores only the root directory, not nested tracked ones', () => {
+    spawnSync('git', ['init', '-q'], { cwd: tmp });
+    writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only:\n    - decisions/\n    - media/x/\n');
+    mkdirSync(join(tmp, 'docs', 'decisions'), { recursive: true });
+    writeFileSync(join(tmp, 'docs', 'decisions', 'x.md'), '# x\n');
+    manageGitignore(tmp);
+    const lines = readFileSync(join(tmp, '.gitignore'), 'utf-8').split('\n');
+    expect(lines).toContain('/decisions/');
+    expect(lines).toContain('media/x/');
+    expect(ignored('decisions/y.md')).toBe(true);
+    expect(ignored('docs/decisions/x.md')).toBe(false);
+    expect(ignored('media/x/a.md')).toBe(true);
+  });
+
+  test('an existing unanchored or anchored entry is not written again', () => {
+    writeFileSync(join(tmp, 'gbrain.yml'), 'storage:\n  db_only:\n    - decisions/\n    - notes/\n');
+    writeFileSync(join(tmp, '.gitignore'), 'decisions/\n/notes/\n');
+    manageGitignore(tmp);
+    expect(readFileSync(join(tmp, '.gitignore'), 'utf-8')).toBe('decisions/\n/notes/\n');
+    manageGitignore(tmp);
+    expect(readFileSync(join(tmp, '.gitignore'), 'utf-8')).toBe('decisions/\n/notes/\n');
+  });
+});
+

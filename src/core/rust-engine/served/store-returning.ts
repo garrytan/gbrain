@@ -4,7 +4,7 @@
  * inside a transaction, or as the whole operation `servedStoreCall` (owner-ops.ts) on the engine itself.
  */
 export const STORE_RETURNING_MEMBERS: ReadonlySet<string> = new Set([
-  'worktreeClaimStore', 'writerAdminStore', 'writerReleaseStore', 'publicationJournalStore', 'chronicleStore',
+  'worktreeClaimStore', 'writerAdminStore', 'writerReleaseStore', 'publicationJournalStore', 'chronicleStore', 'persistenceUpkeepStore',
   // The managed-mode stores (store-members/managed-hold.ts): a client of a multi-writer server reaches them outside a
   // server-held transaction (a remove_link's links-fence projection, Git effects, topology), so they cross the same way.
   'manualLinkStore', 'topologyStore', 'gitEffectStore', 'gitDurabilityStore', 'refreshStore', 'groupPublishStore',

@@ -9,10 +9,15 @@ export function shellQuote(arg: string): string {
   return quotedWord(arg);
 }
 
-/** A control character, a line or paragraph separator, or an agent marker token: the text no plain quote can carry. */
-const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]|\[\/?(?:AGENT|SHOW USER|gbrain notice)/i;
+/**
+ * A control character, a line or paragraph separator, a bidirectional embedding, override or isolate control
+ * (U+202A-U+202E, U+2066-U+2069: F6, they reorder what a terminal shows), a bidirectional mark (U+061C, U+200E, U+200F:
+ * F6b, they move nearby slashes and digits), or an agent marker token: the text no plain quote can carry. The same
+ * twelve bidirectional characters are in agent-output.ts CONTROL_RE (this module stays import-free).
+ */
+const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]|\[\/?(?:AGENT|SHOW USER|gbrain notice)/i;
 /** What quotedWord writes as `\NNN` octal bytes: those characters, plus the quote, the backslash and `[` (so no marker forms). */
-const ESCAPED = /[\u0000-\u001f\u007f-\u009f\u2028\u2029'\\[]/gu;
+const ESCAPED = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069'\\[]/gu;
 
 /**
  * GCH-02a: one shell word for a value that is not bare-safe. A value with a control character, a line break or a
@@ -25,6 +30,10 @@ const ESCAPED = /[\u0000-\u001f\u007f-\u009f\u2028\u2029'\\[]/gu;
  */
 export function quotedWord(arg: string): string {
   if (!UNPRINTABLE.test(arg)) return `'${arg.replace(/'/g, "'\\''")}'`;
-  const bytes = (ch: string) => [...new TextEncoder().encode(ch)].map(b => `\\${b.toString(8).padStart(3, '0')}`).join('');
-  return `$'${arg.replace(ESCAPED, bytes)}'`;
+  return `$'${arg.replace(ESCAPED, octalBytes)}'`;
+}
+
+/** The fixed three-digit octal UTF-8 bytes of one character (`\033` for ESC); inertText escapes controls with it too. */
+export function octalBytes(ch: string): string {
+  return [...new TextEncoder().encode(ch)].map(b => `\\${b.toString(8).padStart(3, '0')}`).join('');
 }

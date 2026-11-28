@@ -205,8 +205,15 @@ function parseArgs(args: string[]): DreamArgs {
     dreamExit(usageError('--input cannot be combined with --date / --from / --to', 'Use --input <file> alone, or the date filters alone.'), json);
   }
 
-  // --input implies --phase synthesize.
+  if (inputIdx !== -1 && !inputFile) {
+    dreamExit(usageError('--input <file>: missing value. Usage: gbrain dream --input <transcript-file>', 'Example: gbrain dream --input ~/transcripts/2026-04-25.txt'), json);
+  }
+  // --input implies --phase synthesize; only synthesize reads it.
   if (inputFile && phases.length === 0) phases = ['synthesize'];
+  if (inputFile && !phases.includes('synthesize')) {
+    dreamExit(usageError(`--input is read only by the synthesize phase, and --phase named ${phases.join(', ')}`,
+      'Add --phase synthesize, or drop --input to run the named phase(s) over their usual inputs.'), json);
+  }
 
   // v0.41.13: --source <id> (and the --source-id alias) drives per-source
   // cycle scoping. Resolution rules:
@@ -446,7 +453,8 @@ Options:
                       naming used by import/extract/graph-query.
 
   --input <file>      Synthesize a specific transcript file (implies
-                      --phase synthesize). Bypasses corpus-dir scan.
+                      --phase synthesize; an explicit --phase list must
+                      include synthesize). Bypasses corpus-dir scan.
   --date YYYY-MM-DD   Synthesize transcripts dated for one specific day.
   --from YYYY-MM-DD   Backfill range start (use with --to).
   --to   YYYY-MM-DD   Backfill range end.

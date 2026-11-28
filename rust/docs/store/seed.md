@@ -88,6 +88,7 @@ keyset batches in key order. The relations come in groups, each in its own file 
 | `fact_withdrawals` | the withdrawal, with the primary's `fact_hash` and `withdrawn_at` | the hash is not computed again |
 | `page_purges` | the purge tombstone (slug, request id, time) | |
 | `oauth_clients` | the spend columns: client id, name, scope, bound tools, daily budget, `deleted_at` | every other column is reported as unmapped (the store keeps no credentials yet) |
+| `guest_sources` | source id, writers (in the primary's order) and trust ceiling; imported after the pages, so the trust stamp's guest-source rules never refuse the seed's own page rows | `created_at` is reported as unmapped |
 | `page_versions` | the snapshot, its tier and origin, change reason and body reference | the version id and `snapshot_at` are kept |
 | `files` | the file, its page index entry | a path held by another id is `constraint_violation` |
 | `raw_data` | the raw data of a page and source | the serial `id` is not kept; `fetched_at` is kept |
@@ -95,6 +96,7 @@ keyset batches in key order. The relations come in groups, each in its own file 
 | `open_loops` | the loop with its status, times and dedup key | a dedup key held by another id is `constraint_violation` |
 | `synthesis_evidence` | the citation and its reverse index | the take must be stored |
 | `trust_proposals` | the proposal with its status and decision, the pending unique key (pending rows) and the row index | the proposer's principal and `write_request_id` are not kept |
+| `trust_allow_rules` | the owner's allow rule with its id, times and removed-rule receipt (`removed_at`, `removed_by`), and the active unique key (rules not removed) | nothing |
 | `wanted_links` | the row with `checked_at` (`-infinity` is no time) and `first_seen_at` | |
 | `page_facts_reconcile` | the watermark | |
 | `fact_relink_attempts` | the attempt and its memo index | no foreign key: the fact need not exist |
@@ -150,7 +152,7 @@ relation when that family reaches master, in the same PR as the store bridge tha
 | `oauth_tokens` | `rust-engine/access-rule-writes-3`, `rust-engine/access-reads-rust` | issued OAuth tokens do not authorize |
 | `oauth_codes` | `rust-engine/oauth-http-rust` | an OAuth handshake in flight restarts |
 | `oauth_grant_audit`, `guest_marks`, `guest_promotions` | none found | grant audit and guest promotion history are not listed |
-| `guest_sources`, `context_volunteer_events`, `retrieval_feedback` | `rust-engine/collate-equal` | guest writer lists and tier ceilings are not enforced; doctor volunteer counts and feedback history start empty |
+| `context_volunteer_events`, `retrieval_feedback` | `rust-engine/collate-equal` | doctor volunteer counts and feedback history start empty |
 | `chronicle_judge_reservations` | `rust-engine/main` (`chronicle_ledger.rs`; not seeded) | the 24-hour judge cap restarts at zero |
 | `page_embedding_budget` | `rust-engine/main` | held large pages could embed without consent |
 | `entity_identities`, `link_relationships`, `link_transitions`, `fact_purges` | `rust-engine/main` | entity identity unions, link temporal state and the fact purge guard are missing |
@@ -159,7 +161,7 @@ relation when that family reaches master, in the same PR as the store bridge tha
 | `sync_identity_downgrades` (`op_checkpoints` rows of op `sync-identity-downgrade`) | `rust-engine/main`, `rust-engine/identity-downgrade-rust` | pending rename repairs are lost: the purge of deleted pages no longer holds the old page, so the repair can find nothing to restore |
 | `budget_ledger`, `budget_reservations` | key tag only on `rust-engine/main` | the resolver's daily budget restarts at zero |
 | `retrieval_weights` | key tag only on `rust-engine/main` | ranking: every page weight reads 0.5, so the feedback boost is off |
-| `belief_*`, `core_edit_notices`, `derived_generation_activations`, `derived_generation_attempts`, `derived_generation_valve`, `drift_decisions`, `entity_identity_reviews`, `git_canonical_brain`, `ingest_applied_captures`, `link_edge_proposals`, `loop_suppressions`, `memory_proposals`, `page_derivation_spend`, `page_extraction_state`, `page_label_guards`, `page_write_guards`, `pinned_questions`, `question_evidence`, `secret_store`, `secret_store_occurrence`, `shared_skill_*`, `source_ingestion_receipts`, `take_domain_assignments`, `take_horizons`, `take_proposals`, `trust_allow_rules` | none on master or `rust-engine/main` | each is user data, security or spend state the primary reads |
+| `belief_*`, `core_edit_notices`, `derived_generation_activations`, `derived_generation_attempts`, `derived_generation_valve`, `drift_decisions`, `entity_identity_reviews`, `git_canonical_brain`, `ingest_applied_captures`, `link_edge_proposals`, `loop_suppressions`, `memory_proposals`, `page_derivation_spend`, `page_extraction_state`, `page_label_guards`, `page_write_guards`, `pinned_questions`, `question_evidence`, `secret_store`, `secret_store_occurrence`, `shared_skill_*`, `source_ingestion_receipts`, `take_domain_assignments`, `take_horizons`, `take_proposals` | none on master or `rust-engine/main` | each is user data, security or spend state the primary reads |
 
 ### Gap columns (`seed::GAP_COLUMNS`)
 
@@ -208,7 +210,7 @@ Its Rust family must reach master first. "Branch" is the newest branch with a re
 | `fact_purges` | 0 / 1 / 0 | `facts/purge_ledger.rs` | `rust-engine/main` 0ce95bbf7f | yes |
 | `take_purges` | 0 / 1 / 0 | `facts/take_purges.rs` | `rust-engine/page-purge-rust` 4bcab3a4f1 | no |
 | `take_horizons` | 0 / 1 / 0 | `takes/horizons.rs` | `rust-engine/page-purge-rust` 4bcab3a4f1 | no |
-| `guest_sources` | 0 / 1 / 0 | `guest_sources.rs` | `rust-engine/collate-equal` 3a2532707c | no |
+| `guest_sources` | 0 / 1 / 0 | `guest_sources.rs` | `rust-engine/guest-sources-rust` (copied by the seed since then) | no |
 | `pinned_questions` | 0 / 1 / 0 | `jobs/pinned_questions.rs` | `rust-engine/collate-equal` 3a2532707c | no |
 | `context_volunteer_events` | 0 / 1 / 0 | `volunteer_events.rs` | `rust-engine/collate-equal` 3a2532707c | no |
 
@@ -294,11 +296,12 @@ store takes both as lowercase hex of whole bytes and a digest is exactly 32 byte
 | `brain.relationDigest(seedId, relation, lo, hi)` | `{ rows, digest }`: the entry count and the hex digest of the entries in `[lo, hi)`. Read only. `invalid_argument` for an unknown relation or a bad bound; `invalid_state` as above | none |
 | `brain.relationEntries(seedId, relation, lo, hi, limit)` | `[{ sort, digest, generation }]`: the digest entries with a sort key in `[lo, hi)` (hex; `null` is unbounded), in sort order, at most `limit`, as hex sort key, hex row digest and the generation of the call that last wrote the entry. The caller counts exactly which rows differ inside an interval whose `relationDigest` differs. Read only. `invalid_argument` for a `limit` that is not a whole number from 1 to 5000, an unknown relation or a bad bound; `invalid_state` as above | none |
 | `brain.allocatorCheck(seedId, primaryMax)` | `[{ relation, counter, primary_max, ok }]` for every relation whose import raises an id counter, in import order. `primaryMax` is `{ [relation]: text }`, the primary's highest integer id per relation; a relation that is absent or `null` has an empty table. `counter` is the id the store hands out next, as text (1 when nothing raised it). `primary_max` echoes the input (`null` when empty). `ok` is `counter > primary_max`, and true for an empty table. A relation that keeps no counter is not reported. `invalid_argument` for an unknown relation in `primaryMax` or a value that is not a non-negative whole number up to 2^64-1; `invalid_state` as above. Read only | none |
+| `brain.allocatorAdvance(seedId, primaryFloor)` | the `allocatorCheck` report, taken after the write. `primaryFloor` is `{ [relation]: text }`, the primary's highest integer id per relation. In one write, every counter whose next id is not above its floor is raised so the next id is `floor + 1` (a jobs sequence is set to `floor`); a counter already above its floor stays, a counter never goes down, and a relation that is absent or `null` is left alone. Every entry of the result is therefore `ok`. Calling it again changes nothing. `invalid_argument` for an unknown relation, a value that is not a non-negative whole number, or a floor a counter cannot hold (2^64-1 for an id counter, above 2^63-1 for a jobs sequence); nothing is written then. `invalid_state` as above | none |
 | `brain.factFingerprints(texts)` | `[{ fingerprint, fingerprint_v1 }]`, one per text, in order. `fingerprint` is `gbrain_fact_fingerprint(claim)`, the sha256 hex of the normalized claim. `fingerprint_v1` is the sha256 hex of `regexp_replace(lower(btrim(claim)), '[[:space:]]+', ' ', 'g')`, which keeps punctuation (`"Hello,  World."` and `"hello, world."` share it; the normalized one drops it). Needs no seed | none |
 
 The relations `allocatorCheck` reports are those whose import raises an id counter: `pages`, `content_chunks`,
 `links`, `timeline_entries`, `facts`, `takes`, `page_versions`, `files`, `code_edges_chunk`, `code_edges_symbol`,
-`open_loops`, `trust_proposals`, `wanted_links`, `mcp_spend_log`, `decide_calibrations`, `decision_receipts`,
+`open_loops`, `trust_proposals`, `trust_allow_rules`, `wanted_links`, `mcp_spend_log`, `decide_calibrations`, `decision_receipts`,
 `decide_proposals`, `decide_review_proposals`, `calibration_profiles`, `wake_cron_runs` and `wake_forgets`. Every
 write that stores a row with an id (`importRelation`, `replaceRelationRows` and `replaceInterval` alike) raises its
 counter past that id, also for a row the store drops (a retired or segment chunk), so the store never hands out an id
@@ -371,6 +374,7 @@ The relations whose rows are looked up this way, with the column sets that are u
 relation's follow spec: `pages` (source, slug), `tags` (page, tag), `content_chunks` (page, index), `links` (from, to,
 type, source, origin), `slug_aliases`, `page_aliases`, `facts` (the markdown row fence and the stint index), `timeline_entries` (page, date, summary, source), `takes`
 (page, row), `raw_data`, `files` (storage path), `open_loops`, `wanted_links`, `trust_proposals` (the pending key),
+`trust_allow_rules` (source, prefix, family and `removed_at`: the active key),
 `code_edges_chunk`, `code_edges_symbol`, `decide_proposals`, `decide_review_proposals` and `wake_forgets`. The holder is
 found through the digest entries' identity columns, scanning the relation's entries once per call that has a row to
 check (a row that moves a key, or collides), so a swap costs a pass over the relation. A stored row that has no digest entry (imported without digests) cannot be found:

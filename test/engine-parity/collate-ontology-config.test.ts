@@ -70,6 +70,9 @@ describe('ontology and config reads sort text keys by byte', () => {
     return keys;
   });
 
+  // Named Rust design stop: the case hands readConfigRows a handle that has only executeRaw (no getConfigValues), the
+  // fallback a caller with a bare SQL handle takes. The Rust engine has no SQL dialect, so that fallback refuses there by
+  // design; every Rust caller passes the engine, whose getConfigValues the case above covers.
   parityTest('the keyed config read for a handle without getConfigValues returns keys by byte', { methods: ['setConfig', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
     for (const id of MIXED_IDS) await engine.setConfig(`collate.${id}`, 'v');
     const handle = { executeRaw: engine.executeRaw.bind(engine) } as Pick<BrainEngine, 'executeRaw'>;

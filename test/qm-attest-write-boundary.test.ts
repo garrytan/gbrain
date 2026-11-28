@@ -48,6 +48,7 @@ const NOT_PAGE_WRITES: Record<string, string> = {
   memory_conversation_mode: 'returns a rule for the conversation and stores nothing',
   mute_notice: 'a local notice mute list, outside the brain database',
   onboarding_off: "the first-session suggestion's own config row; only the install owner may call it, and no page is written",
+  propose_decide: "the first-session record's answer for one proposed job; only the install owner may call it, and no page is written",
   request_tools: "the calling client's own MCP tool surface",
   think: 'read-only for remote callers; only a local --save writes',
   submit_agent: "queues a job; every tool call it makes is re-resolved against the deferred operations",

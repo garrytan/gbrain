@@ -228,6 +228,8 @@ export interface DispatchOpts {
   transport?: OperationContext['transport'];
   /** The transport's inbound frame cap (OperationContext.inboundFrameBytes). */
   inboundFrameBytes?: number;
+  /** false: a read the brain host makes with a member's key to prove what it reads (gbrain household template --status), never logged as that member's read. */
+  readLog?: boolean;
   /**
    * v0.28: per-token allow-list for the takes.holder field. Threaded by
    * the HTTP/stdio transport from `access_tokens.permissions.takes_holders`.
@@ -1096,7 +1098,7 @@ export async function dispatchToolCall(
     const callParams = attested ? attested.params : args;
     return withCallerAccess({ ...access, privateFactSources: privateFactSources && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? privateFactSources : [], ...(access.owner && opts.auth && opts.transport !== 'stdio' && !roomDeclaration && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? { ownerReads: true } : {}) }, async () => {
       // GST-2476 gap 1: a member's or audience's read is logged after the response (access/read-log.ts); every other read only pays the test.
-      const logged = readOnly && readLogged(access, opts.enforcedMember);
+      const logged = readOnly && opts.readLog !== false && readLogged(access, opts.enforcedMember);
       const { value: out, pageIds } = await collectReturnedPages(logged, () => withRequestIdentityMemo(() => withReadMode(readMode, () => dispatchResolvedCall(engine, name, callParams, scoped))));
       if (logged) recordAccessRead(engine, { member: readLogMember(access), audience: access.audience ? [...access.audience] : null, operation: name, transport: opts.enforcedMember ? 'cli' : opts.transport ?? 'unknown', result_code: resultCode(out), page_ids: pageIds });
       // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.

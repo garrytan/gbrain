@@ -64,7 +64,7 @@ export const PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX = { name: 'persistence_requ
  * The drift-conflict audit (drift-conflicts.ts) pages a source's refused slugs in byte order (`slug COLLATE "C"`). The
  * (source, slug, sequence) index above uses the default collation, which cannot serve a "C" range or grouping on an
  * en_US Postgres, so each page read and sorted the source's receipts. Postgres builds it CONCURRENTLY in migration
- * v338; PGLite inline.
+ * v350; PGLite inline.
  */
 export const PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_source_slug_c
   ON persistence_requests(source_id,slug COLLATE "C")`;
