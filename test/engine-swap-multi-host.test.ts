@@ -429,8 +429,9 @@ describe('engine swap --plan with the switch on only through the brain\'s config
   });
 
   test('neither the switch nor the row: the plan hash is the one the build before the row read printed', async () => {
-    // Printed by e39124ba6e for these exact plans: the answer resolves false, no destination counts and none is bound.
-    const PINNED: Record<string, string> = { 1: '4aae8744e6ccba44', 2: '2415bdbe00862a83', null: '491ee166a11011db' };
+    // Printed by rust-engine/multiuser 59141461ed, the build before the row read, for these exact plans: the answer resolves
+    // false, no destination counts and none is bound. (e39124ba6e printed other values: the plan bound fewer fields then.)
+    const PINNED: Record<string, string> = { 1: '56f801e63ae175ab', 2: 'a9615cb275ad9058', null: '573716f6e87cc6b6' };
     for (const hosts of [1, 2, null]) {
       // An injected environment: engine-selecting variables of the machine running the test (DATABASE_URL) are bound too.
       const r = await run({ hosts, resolveDestination: served, env: { HOME: home } });
