@@ -4,7 +4,7 @@
  * and reconciler (test/helpers/follow-rig.ts) and the real Rust addon.
  */
 import { describe, expect, spyOn, test } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -356,6 +356,59 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect(planAsWrittenSource(r.dir).unknownPaths(since)).toBe(unknownBefore + 1);
       } finally { await base.close(); await r.close(); }
     }, 90_000);
+
+    test('a finished pass whose resume point could not be removed is never resumed again: one record per pass, and no clean pass without its own scan', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      const reconcileDir = join(r.dir, 'reconcile');
+      const file = join(reconcileDir, 'progress.json');
+      const counting = () => {
+        const c = { digests: 0, rpc: <T>(method: string, args?: Record<string, unknown>): Promise<T> => { if (method === 'relationDigest') c.digests++; return r.rpc<T>(method, args); } };
+        return c;
+      };
+      try {
+        // How many interval digests one whole scan reads.
+        const whole = counting();
+        expect((await new Reconciler({ dir: r.dir, reads: base, rpc: whole.rpc, follower: r.follower, intervalRows: 2 }).run('full')).error).toBeUndefined();
+        expect(whole.digests).toBeGreaterThan(3);
+        let small: Reconciler;
+        let digests = 0;
+        const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+          const out = await r.rpc<T>(method, args);
+          if (method === 'relationDigest' && ++digests === 3) small.stop();
+          return out;
+        };
+        small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: 2 });
+        const stopped = await small.run('full', undefined, { resume: true });
+        expect(stopped.error).toBe('stopped');
+        expect(existsSync(file)).toBe(true);
+        const cleanBefore = status(r).reconcile.consecutive_clean_full_passes;
+        // The pass log stays writable; the directory does not, so removing the finished pass's resume point fails.
+        chmodSync(reconcileDir, 0o500);
+        const runs: { id: string; digests: number }[] = [];
+        try {
+          for (let i = 0; i < 3; i++) {
+            const c = counting();
+            const pass = await new Reconciler({ dir: r.dir, reads: base, rpc: c.rpc, follower: r.follower, intervalRows: 2 }).run('full', undefined, { resume: true });
+            expect(pass.error).toBeUndefined();
+            expect(existsSync(file)).toBe(true); // the injected failure fired: the resume point is still there
+            runs.push({ id: pass.id, digests: c.digests });
+          }
+        } finally { chmodSync(reconcileDir, 0o700); }
+        // The first run continues the stopped pass; it then is finished, so each later run is a new pass that scans everything.
+        expect(runs[0]!.id).toBe(stopped.id);
+        expect(runs[0]!.digests).toBeLessThan(whole.digests);
+        for (const run of runs.slice(1)) {
+          expect(run.id).not.toBe(stopped.id);
+          expect(run.digests).toBe(whole.digests);
+        }
+        const ids = readPasses(r.dir).map((p) => p.id);
+        expect(ids.length).toBe(new Set(ids).size);
+        expect(ids.filter((id) => id === stopped.id)).toHaveLength(1);
+        // Three clean passes, each from its own scan (the first finished the stopped one's remaining intervals).
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBe(cleanBefore + 3);
+      } finally { await base.close(); await r.close(); }
+    }, 120_000);
 
     test('a half-done pass is not resumed under another continuity, seed or evidence epoch, or without asking', async () => {
       const r = await rig();

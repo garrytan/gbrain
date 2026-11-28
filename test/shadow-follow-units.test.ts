@@ -425,6 +425,18 @@ describe('follow status', () => {
     expect(buildFollowStatus(dir, STATE, NOW).follower.applied_rows).toBe(0);
   });
 
+  test('a pass is recorded once: a second record with the same pass id is not appended, so it cannot count as another clean pass', () => {
+    const dir = tmp();
+    withFile(dir, {});
+    const at = '2026-01-01T01:00:00.000Z';
+    const rec = { id: 'pass-once', kind: 'full' as const, started_at: at, finished_at: at, repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0 };
+    appendPass(dir, rec);
+    appendPass(dir, { ...rec, finished_at: '2026-01-01T02:00:00.000Z' });
+    appendPass(dir, rec);
+    expect(readFileSync(join(dir, 'reconcile', 'passes.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1);
+    expect(buildFollowStatus(dir, STATE, NOW).reconcile).toMatchObject({ consecutive_clean_full_passes: 1, last_clean_full_pass_at: at });
+  });
+
   test('reconcile fields: state, trailing clean full passes, the newest clean full pass, next full pass due', () => {
     const dir = tmp();
     withFile(dir, {});
