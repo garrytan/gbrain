@@ -23,7 +23,14 @@
  */
 
 import { describe, test, expect } from 'bun:test';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { buildWorkersSnapshot } from '../src/commands/status.ts';
 import { operations, operationsByName } from '../src/core/operations.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 function makeCtx(engine: any): any {
   return {
@@ -91,10 +98,36 @@ describe('get_status_snapshot handler shape (schema_version 2)', () => {
     // pin types, not values.
     const workers = result.workers as Record<string, unknown>;
     expect(typeof workers.supervisor_alive).toBe('boolean');
-    expect([null, 'pidfile', 'db_lock']).toContain(workers.detected_via as any);
+    expect([null, 'pidfile', 'db_lock', 'autopilot']).toContain(workers.detected_via as any);
     expect(typeof workers.live_lock_active).toBe('boolean');
     // Stubbed engine returns no completed rows.
     expect(workers.last_completed_at).toBeNull();
+  });
+
+  test('detects a live Autopilot worker only for its default queue', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-autopilot-status-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        const config = join(home, '.gbrain');
+        const runtime = join(config, 'runtime');
+        mkdirSync(runtime, { recursive: true });
+        writeFileSync(join(config, 'autopilot.lock'), String(process.pid));
+        const key = createHash('sha256').update('default').digest('hex').slice(0, 24);
+        const statePath = join(runtime, `autopilot-${key}.json`);
+        const state = { owner_pid: process.pid, worker_pid: process.pid, runtime_id: 'fixture', processing_state: 'ready' };
+        writeFileSync(statePath, JSON.stringify(state));
+        const engine = { executeRaw: async () => [] } as unknown as BrainEngine;
+        const opts = { pidFile: join(home, 'missing.pid') };
+        expect(await buildWorkersSnapshot(engine, opts)).toMatchObject({
+          supervisor_alive: true, detected_via: 'autopilot', live_lock_active: false,
+        });
+        expect((await buildWorkersSnapshot(engine, { ...opts, queue: 'shell' })).supervisor_alive).toBe(false);
+        writeFileSync(statePath, JSON.stringify({ ...state, processing_state: 'starting', worker_pid: null }));
+        expect((await buildWorkersSnapshot(engine, opts)).supervisor_alive).toBe(false);
+      });
+    } finally {
+      rmSync(home, { recursive: true });
+    }
   });
 
   test('amendment 26: a failing queue section degrades to {error: unavailable} without failing the snapshot', async () => {

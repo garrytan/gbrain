@@ -542,7 +542,9 @@ export async function runPhaseSynthesizeConcepts(
       // the page is chunked (+ embedded when a provider is configured) —
       // mirrors put_page's isAvailable('embedding') → noEmbed gate.
       const synthesizedAt = grandfathered ? String(existing!.frontmatter.synthesized_at ?? new Date().toISOString()) : new Date().toISOString();
+      const created = prior?.frontmatter.created ?? prior?.created_at.toISOString() ?? synthesizedAt;
       const synthesized = (pageVisibility: Visibility) => ({
+        created,
         tier: group.tier,
         mention_count: group.atomTitles.length,
         composite_score: group.atomTitles.length,

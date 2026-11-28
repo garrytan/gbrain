@@ -116,11 +116,12 @@ export interface RemoteQueueSnapshot {
 /**
  * Snapshot v2 `workers` section — composed like `gbrain jobs supervisor
  * status` (pidfile first, queue-scoped DB singleton lock as the
- * HOME-independent fallback authority, #2227).
+ * HOME-independent fallback authority, #2227). The default queue can also
+ * be served by Autopilot's embedded worker.
  */
 export interface RemoteWorkersSnapshot {
   supervisor_alive: boolean;
-  detected_via: 'pidfile' | 'db_lock' | null;
+  detected_via: 'pidfile' | 'db_lock' | 'autopilot' | null;
   live_lock_active: boolean;
   last_completed_at: string | null;
 }
@@ -401,6 +402,14 @@ export async function buildWorkersSnapshot(
     /* pre-migration brains lack the locks table — pidfile signal stands */
   }
 
+  let autopilotReady = false;
+  if (!pidStatus.running && !lockLive && (opts.queue ?? 'default') === 'default') {
+    const { readAutopilotProcessingStatus } = await import('../core/minions/processing-state.ts');
+    const { isPidAlive } = await import('../core/autopilot-lock.ts');
+    const status = readAutopilotProcessingStatus();
+    autopilotReady = status?.processing_ready === true && status.worker_pid !== null && isPidAlive(status.worker_pid);
+  }
+
   let lastCompleted: string | null = null;
   try {
     const rows = await engine.executeRaw<{ last_completed: string | Date | null }>(
@@ -413,8 +422,8 @@ export async function buildWorkersSnapshot(
   }
 
   return {
-    supervisor_alive: pidStatus.running || lockLive,
-    detected_via: pidStatus.running ? 'pidfile' : lockLive ? 'db_lock' : null,
+    supervisor_alive: pidStatus.running || lockLive || autopilotReady,
+    detected_via: pidStatus.running ? 'pidfile' : lockLive ? 'db_lock' : autopilotReady ? 'autopilot' : null,
     live_lock_active: lockLive,
     last_completed_at: lastCompleted,
   };

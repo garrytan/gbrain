@@ -1487,6 +1487,7 @@ export type AutopilotState = 'not_installed' | 'disabled' | 'paused' | 'never_ru
 export interface AutopilotStatusReport {
   installed: boolean;
   install_target: InstallTarget | null;
+  externally_managed: boolean;
   state: AutopilotState;
   disabled_reason: string | null;
   paused_reason: string | null;
@@ -1527,6 +1528,7 @@ export function autopilotStatusExitCode(state: AutopilotState, globalMaintenance
 export function classifyAutopilotStatus(input: {
   installed: boolean;
   installTarget: InstallTarget | null;
+  runtimeObserved?: boolean;
   disabledReason: string | null;
   pausedReason?: string | null;
   heartbeatAgeSeconds: number | null;
@@ -1535,24 +1537,17 @@ export function classifyAutopilotStatus(input: {
   daemon?: { staleAfter: number; nextTickAt: string | null } | null;
   lastLog: string;
 }): AutopilotStatusReport {
-  // Tolerance = 6 intervals. The adaptive scheduler sleeps TWO intervals
-  // between ticks on the healthiest brains (score >= 90), and the heartbeat
-  // only refreshes at tick top — so a healthy gap is cycle_duration + 2x
-  // interval, and a 3x tolerance would flap 'stale' exit-1 alarms on exactly
-  // the installs doing best. 6x still catches the dead-daemon incident in
-  // 30 minutes at the default interval instead of 71 days. A non-finite or
-  // non-positive interval (a typo'd flag upstream) would make staleAfter NaN
-  // and every age comparison false — reading a long-dead daemon as 'fresh' —
-  // so the pure layer defends itself too.
+  // Six intervals cover one cycle plus adaptive sleep. Invalid flags retain the default cutoff.
   const daemon = input.daemon && Number.isFinite(input.daemon.staleAfter) && input.daemon.staleAfter > 0 ? input.daemon : null;
   const staleAfter = daemon ? daemon.staleAfter
     : Number.isFinite(input.intervalSeconds) && input.intervalSeconds > 0
     ? input.intervalSeconds * 6
     : 1800;
   const pausedReason = input.pausedReason ?? null;
+  const externallyManaged = !input.installed && input.runtimeObserved === true;
   let state: AutopilotState;
   if (input.disabledReason !== null) state = 'disabled';
-  else if (!input.installed) state = 'not_installed';
+  else if (!input.installed && !externallyManaged) state = 'not_installed';
   // Paused outranks the heartbeat states: the tick loop refreshes its
   // heartbeat BEFORE honoring the pause marker, so a parked daemon looks
   // 'fresh' by mtime while doing no work. Without this state a pause marker
@@ -1565,6 +1560,7 @@ export function classifyAutopilotStatus(input: {
   return {
     installed: input.installed,
     install_target: input.installTarget,
+    externally_managed: externallyManaged,
     state,
     disabled_reason: input.disabledReason,
     paused_reason: pausedReason,
@@ -1605,9 +1601,12 @@ function showStatus(json: boolean, intervalSeconds: number) {
 
   const jobStatus = autopilotJobStatus(job);
   const installTarget = jobStatus.installTarget;
+  // The native processing record ties externally launched daemons to this brain's live lock owner.
+  const processing = readAutopilotProcessingStatus();
   const report = classifyAutopilotStatus({
     installed: installTarget !== null,
     installTarget,
+    runtimeObserved: processing !== null,
     disabledReason,
     pausedReason,
     heartbeatAgeSeconds,
@@ -1615,13 +1614,13 @@ function showStatus(json: boolean, intervalSeconds: number) {
     daemon: readDaemonStaleAfter(),
     lastLog: lastLine,
   });
-  const processing = readAutopilotProcessingStatus();
   const globalMaintenance = readGlobalMaintenanceVerdict();
   const stalled = globalMaintenance !== null && globalMaintenance.status !== 'ok';
 
   if (json) {
     console.log(JSON.stringify({ ...report, ...processing, job: jobStatus.report, global_maintenance: globalMaintenance }));
   } else {
+    const manager = report.externally_managed ? 'externally managed' : report.install_target;
     switch (report.state) {
       case 'not_installed':
         console.log('Autopilot: not installed. Install with `gbrain autopilot --install`.');
@@ -1638,17 +1637,17 @@ function showStatus(json: boolean, intervalSeconds: number) {
         console.log('  pid it names is dead and no daemon is running to clean it up.');
         break;
       case 'never_run':
-        console.log(`Autopilot: installed (${report.install_target}) but has NEVER run.`);
+        console.log(`Autopilot: no heartbeat recorded (${manager}).`);
         break;
       case 'stale':
         console.log(
-          `Autopilot: installed (${report.install_target}) but NOT ticking — last heartbeat ` +
+          `Autopilot: not ticking (${manager}) — last heartbeat ` +
           `${report.heartbeat_age_seconds}s ago (stale after ${report.stale_after_seconds}s).`,
         );
         break;
       case 'fresh':
         console.log(
-          `Autopilot: running (${report.install_target}) — last heartbeat ` +
+          `Autopilot: running (${manager}) — last heartbeat ` +
           `${report.heartbeat_age_seconds}s ago.`,
         );
         break;

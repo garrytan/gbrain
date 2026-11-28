@@ -136,6 +136,18 @@ describe('classifyAutopilotStatus', () => {
     expect(autopilotStatusExitCode(r.state)).toBe(0);
   });
 
+  test('a live external daemon is graded by the same heartbeat and pause rules', () => {
+    const external = { ...base, installed: false, installTarget: null, runtimeObserved: true };
+    const running = classifyAutopilotStatus(external);
+    expect(running.state).toBe('fresh');
+    expect(running.installed).toBe(false);
+    expect(running.externally_managed).toBe(true);
+    expect(autopilotStatusExitCode(running.state)).toBe(0);
+    expect(classifyAutopilotStatus({ ...external, heartbeatAgeSeconds: 1801 }).state).toBe('stale');
+    expect(classifyAutopilotStatus({ ...external, pausedReason: 'operator pause' }).state).toBe('paused');
+    expect(classifyAutopilotStatus({ ...external, runtimeObserved: false }).state).toBe('not_installed');
+  });
+
   test('installed but never ticked → never_run, exit 1', () => {
     const r = classifyAutopilotStatus({ ...base, heartbeatAgeSeconds: null });
     expect(r.state).toBe('never_run');
