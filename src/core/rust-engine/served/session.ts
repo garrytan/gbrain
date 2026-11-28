@@ -25,6 +25,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Socket } from 'node:net';
 import type { BrainEngine } from '../../engine.ts';
 import { withRemoteCaller } from '../../remote-caller.ts';
+import { parseMemberClaim } from '../../member-claim.ts';
 import { withEngineScope } from '../../engine-scope.ts';
 import { ENGINE_ROOT } from '../../engine-root.ts';
 import { noteSchemaVersion } from '../../migrate-pending.ts';
@@ -322,7 +323,7 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
     if (frame.txn !== undefined) {
       const scoped = frame.scope && typeof frame.scope === 'object' ? (frame.scope as { sv?: unknown }).sv : undefined;
       void runInTransaction(id, member, String(frame.txn), args, remote, scoped === undefined ? undefined : <T>(fn: () => T) => withEngineScope(scopeFor(scoped), fn),
-        { access, deadlineAt: typeof frame.deadline_at === 'number' ? frame.deadline_at : undefined });
+        { access, deadlineAt: typeof frame.deadline_at === 'number' ? frame.deadline_at : undefined, claim: parseMemberClaim(frame.claim) });
       return;
     }
     // Request ids (decision 6).
@@ -338,7 +339,7 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
       // Replay is bound to everything that shapes the answer: the call, its arguments, the caller access record, the
       // remote mark and the engine scope (review G4).
       const ph = createHash('sha256').update(`${kind}\u0000${member}\u0000`).update(JSON.stringify(args))
-        .update(`\u0000${JSON.stringify(access ?? null)}\u0000${remote}\u0000${JSON.stringify(frame.scope ?? null)}`).digest('hex');
+        .update(`\u0000${JSON.stringify(access ?? null)}\u0000${remote}\u0000${JSON.stringify(frame.scope ?? null)}\u0000${JSON.stringify(frame.claim ?? null)}`).digest('hex');
       // A retry with no record runs again only when that cannot write twice: a member-only read, a journaled operation
       // (its receipt answers), or a whole read with no write of its own (remote-whole-ops.ts replayableWholeRead).
       const rerunnable = ownerMemberOnlyReads(member) || journaled

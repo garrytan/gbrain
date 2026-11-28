@@ -815,7 +815,6 @@ src/core/facts/recall-config.ts#readRecallSwitches	promise_catch_empty	2
 src/core/facts/supersession-threshold.ts#readSupersessionThreshold	promise_catch_empty	1
 src/core/facts/writeback-audience.ts#classifyBrainAudience	catch_empty	1
 src/core/facts/writeback-audience.ts#classifyBrainAudience	promise_catch_empty	1
-src/core/feedback/record.ts#recordAnswer	catch_empty	1
 src/core/feedback/settings.ts#loadFeedbackSettings>read	catch_empty	1
 src/core/fence-repair/config.ts#readFenceRepairCaps>read	catch_empty	1
 src/core/fence-repair/model.ts#fileConfig	catch_empty	1

@@ -421,7 +421,9 @@ const think: Operation = {
     }
     if (remote && (Boolean(p.save) || Boolean(p.take))) ctx.emitNotice?.(thinkNotSavedNotice());
     const { recordThinkAnswer, feedbackMetaFields } = await import('../feedback/record.ts');
-    const feedbackMeta = feedbackMetaFields(await recordThinkAnswer(ctx, 'think', result));
+    const answerMeta = await recordThinkAnswer(ctx, 'think', result);
+    result.warnings.push(...(answerMeta?.feedback.warnings ?? []));
+    const feedbackMeta = feedbackMetaFields(answerMeta);
     const evidence = result.taint_refs && [...result.taint_refs, ...(result.room_extra ?? [])];
     delete result.feedback_evidence; delete result.taint_refs; delete result.room_extra;
     const { persist: _persist, persist_base: _persistBase, ...visible } = result;

@@ -12,6 +12,7 @@
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../../engine.ts';
 import { withRemoteCaller } from '../../remote-caller.ts';
+import { withMemberClaim, type MemberClaim } from '../../member-claim.ts';
 import { decodeError, decodeValue, encodeValue, type Wire } from '../owner-ipc/codec.ts';
 import { OWNER_IPC_ROUTES, ownerCallTimeout, ownerIpcRefusal, ownerMemberOnlyReads } from '../owner-ipc/routes.ts';
 import { withCallerAccess, withoutCallerAccess, type CallerAccess } from '../../search/private-visibility.ts';
@@ -116,7 +117,7 @@ export function sessionCalls(ctx: SessionCallsContext) {
 
   // ---- transactions over the wire (decision 2b) ----
   const runInTransaction = async (id: number, member: string, ref: string, args: Wire, remote: boolean, inScope?: <T>(fn: () => T) => T,
-    frameOpts: { access?: Wire; deadlineAt?: number } = {}) => {
+    frameOpts: { access?: Wire; deadlineAt?: number; claim?: MemberClaim | null } = {}) => {
     const open = txns.get(ref);
     if (!open) { replyDirect(id, member, ownerIpcRefusal(member, 'its transaction is not open on this connection')); return; }
     // The dispatcher's rules hold here too (review G8): the caller's deadline, and a caller access record that is an
@@ -160,7 +161,7 @@ export function sessionCalls(ctx: SessionCallsContext) {
     } catch (error) { replyDirect(id, member, error); return; }
     if (!Array.isArray(decoded)) { replyDirect(id, member, servedProtocol('frame_malformed', 'reason=args')); return; }
     const invoke = () => (method as (...a: unknown[]) => Promise<unknown>).apply(self, decoded as unknown[]);
-    const call = () => access ? withCallerAccess(access, invoke) : withoutCallerAccess(invoke);
+    const call = () => withMemberClaim(frameOpts.claim ?? null, () => access ? withCallerAccess(access, invoke) : withoutCallerAccess(invoke));
     const run = inScope ? () => inScope(call) : call;
     try {
       const value = await (remote ? withRemoteCaller(true, run) : run());

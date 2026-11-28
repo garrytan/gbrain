@@ -171,12 +171,14 @@ export const OWNER_IPC_REMOTE_DENY: Readonly<Record<string, string>> = {
 
 /**
  * Engine members that write and that a remote caller may still send, over the served wire only (ruled 2026-11-26): the
- * usage stamp a remote read makes in process too (last-retrieved.ts bumpLastRetrievedAt), best-effort and idempotent. The
- * brain server stamps only page ids the caller may read and refuses the call otherwise (served/remote-member-policy.ts). It
- * is NOT a read: it stays out of OWNER_IPC_REMOTE_READS, and test/rust-owner-ipc-remote.test.ts pins this list to exactly
- * this one member.
+ * usage stamp a remote read makes in process too (last-retrieved.ts bumpLastRetrievedAt), best-effort and idempotent, and
+ * the retrieval event a remote answer records for its caller (feedback/record.ts, via `insertRetrievalEvents`). The brain
+ * server stamps only page ids the caller may read and refuses the call otherwise, and stores an event only for the client
+ * its call frame claims, only for pages and links the caller may read, and never over another client's answer id
+ * (served/remote-member-policy.ts; the claim is member-claim.ts). Neither is a read: both stay out of
+ * OWNER_IPC_REMOTE_READS, and test/rust-owner-ipc-remote.test.ts pins this list to exactly these two members.
  */
-export const OWNER_IPC_REMOTE_SIDE_WRITES: ReadonlySet<string> = new Set(['bumpPageRetrievals']);
+export const OWNER_IPC_REMOTE_SIDE_WRITES: ReadonlySet<string> = new Set(['bumpPageRetrievals', 'insertRetrievalEvents']);
 
 /**
  * Members a remote caller may send only on a transaction it holds (the served wire's `txn`), never outside one: each

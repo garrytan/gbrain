@@ -117,8 +117,8 @@ describe('the remote read list guard', () => {
     expect(remoteListProblems({ remote: ['notAMember'], ...REAL })).toEqual(['notAMember: not a typed read and not on the frozen hand list']);
   });
 
-  test('the remote side-write list is exactly bumpPageRetrievals (any addition waits for a ruling), and it is not a read', () => {
-    expect([...OWNER_IPC_REMOTE_SIDE_WRITES]).toEqual(['bumpPageRetrievals']);
+  test('the remote side-write list is exactly bumpPageRetrievals and insertRetrievalEvents (any addition waits for a ruling), and none is a read', () => {
+    expect([...OWNER_IPC_REMOTE_SIDE_WRITES]).toEqual(['bumpPageRetrievals', 'insertRetrievalEvents']);
     expect([...OWNER_IPC_REMOTE_SIDE_WRITES].filter(member => OWNER_IPC_REMOTE_READS.has(member))).toEqual([]);
     expect([...OWNER_IPC_REMOTE_SIDE_WRITES].filter(member => Object.hasOwn(OWNER_IPC_REMOTE_DENY, member))).toEqual([]);
   });
