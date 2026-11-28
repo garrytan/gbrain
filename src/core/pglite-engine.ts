@@ -1858,6 +1858,7 @@ export class PGLiteEngine implements BrainEngine {
   listBracketPathPages() { return doctorPagesImpl.listBracketPathPages(this.rawRead); }
   listSlugPathCandidates(sourceIds: string[] | null) { return doctorPagesImpl.listSlugPathCandidates(this.rawRead, sourceIds); }
   probeSlugSources(slugs: readonly string[], sourceId: string) { return doctorPagesImpl.probeSlugSources(this.rawRead, slugs, sourceId); }
+  listSchemaPackSourceOverrides(sourceIds: readonly string[] | null) { return doctorReadsImpl.listSchemaPackSourceOverrides(this.rawRead, sourceIds); }
   countAtomExtractionBacklog(query: AtomBacklogQuery, opts?: { signal?: AbortSignal }) {
     return atomBacklogImpl.countAtomExtractionBacklog((sql, params) => this.executeRaw(sql, params, opts?.signal ? { signal: opts.signal } : undefined), query);
   }

@@ -513,6 +513,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readPageIsSegmented', 'hasEmbeddingSignatureDrift', 'lockContentDriftState', 'invalidateContentDriftChunks', 'listUnembeddedChunkIndexes', 'sumEmbedBackfillChars'],
   // doctor_tallies: counts doctor checks ran through executeRaw inside a catch that hid a Rust refusal (engine-sql/doctor-tallies.ts)
   doctor_tallies: ['countLiveSegmentedPages', 'countValidityLapsedFacts', 'countOrphanEventProjections'],
+  // doctor_reads: the schema_pack_source_drift config rows doctor read through executeRaw (engine-sql/doctor-reads.ts)
+  doctor_reads: ['listSchemaPackSourceOverrides'],
   // engine_migration: the source-side reads of `gbrain migrate --to <engine>` (engine-sql/engine-migration.ts)
   engine_migration: ['readEngineMigrationHistory', 'readMigrationRows', 'readMigrationPageColumns', 'listManualLinkTransitions', 'countLiveTimelineEntries'],
   access_grants: ['readOAuthClientReceiptGrant', 'readAccessTokenReceiptGrant', 'readOAuthClientMemberGrant', 'readAccessTokenMemberGrant', 'readLocalWriterMemberGrant', 'readSharedSkillServingEpoch', 'revokeLocalWriterRow'],

@@ -28,3 +28,21 @@ export const getAllConfig: StoreMember<[], Record<string, string>> = (brain) =>
 
 export const getConfigValues: StoreMember<[keys: readonly string[]], Array<{ key: string; value: string }>> = (brain, keys) =>
   storeCall({ member: 'getConfigValues' }, () => brain.getConfigValues([...keys]));
+
+/** `LIKE 'schema_pack.source.%'`: each `_` matches any one character, `%` any run, and the rest literally. */
+const SCHEMA_PACK_SOURCE_KEY = /^schema.pack\.source\./su;
+
+/**
+ * The schema_pack_source_drift rows (engine-sql/doctor-reads.ts): the named `schema_pack.source.<id>` keys through
+ * getConfigValues when `sourceIds` is given (`[]` reads none), else every stored key the SQL engines' LIKE pattern
+ * matches. Rows come in key order; the SQL statements leave order unspecified and the check reads only count and values.
+ */
+export const listSchemaPackSourceOverrides: StoreMember<[sourceIds: readonly string[] | null], Array<{ key: string; value: string }>> = async (brain, sourceIds) => {
+  const member = { member: 'listSchemaPackSourceOverrides' };
+  if (sourceIds) {
+    if (sourceIds.length === 0) return [];
+    return storeCall(member, () => brain.getConfigValues(sourceIds.map((id) => `schema_pack.source.${id}`)));
+  }
+  const all: Record<string, string> = await storeCall(member, () => brain.getAllConfig());
+  return Object.keys(all).filter((key) => SCHEMA_PACK_SOURCE_KEY.test(key)).sort().map((key) => ({ key, value: all[key]! }));
+};

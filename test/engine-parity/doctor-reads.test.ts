@@ -64,4 +64,28 @@ describe('doctor reads', () => {
       return { empty, live, deleted };
     },
   );
+
+  parityTest(
+    'listSchemaPackSourceOverrides reads the named override keys, or every key the LIKE pattern matches, wildcard included',
+    { methods: ['setConfig', 'listSchemaPackSourceOverrides'] },
+    async (engine) => {
+      for (const [key, value] of [
+        ['schema_pack.source.docs', 'pack-a'], ['schema_pack.source.gmail', 'pack-b'], ['schema_pack.source.', 'pack-c'],
+        ['schemaXpack.source.wild', 'pack-d'], ['schema_pack.sourceX', 'pack-e'], ['Schema_pack.source.upper', 'pack-f'], ['other.key', 'pack-g'],
+      ] as const) await engine.setConfig(key, value);
+      const byKey = (rows: Array<{ key: string; value: string }>) => [...rows].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      const all = byKey(await engine.listSchemaPackSourceOverrides(null));
+      const scoped = byKey(await engine.listSchemaPackSourceOverrides(['docs', 'missing', 'docs', 'gmail']));
+      const none = await engine.listSchemaPackSourceOverrides([]);
+      expect({ all, scoped, none }).toEqual({
+        all: [
+          { key: 'schemaXpack.source.wild', value: 'pack-d' }, { key: 'schema_pack.source.', value: 'pack-c' },
+          { key: 'schema_pack.source.docs', value: 'pack-a' }, { key: 'schema_pack.source.gmail', value: 'pack-b' },
+        ],
+        scoped: [{ key: 'schema_pack.source.docs', value: 'pack-a' }, { key: 'schema_pack.source.gmail', value: 'pack-b' }],
+        none: [],
+      });
+      return { all, scoped, none };
+    },
+  );
 });

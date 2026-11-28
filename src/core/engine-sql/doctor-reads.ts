@@ -11,7 +11,7 @@ export type { EngineRawRead } from './cli-reads-ops.ts';
  * The members of this file. Each replaced a statement doctor ran through its deadline-bound executeRaw, so
  * src/core/statement-deadline.ts keeps that bound on them (BOUNDED_TYPED_READS).
  */
-export const DOCTOR_READ_MEMBERS: readonly string[] = ['countPageChildOrphans'];
+export const DOCTOR_READ_MEMBERS: readonly string[] = ['countPageChildOrphans', 'listSchemaPackSourceOverrides'];
 
 /**
  * A page-child relation as `<table>.<column>`: every `PAGE_CHILD_FK_TARGETS` entry of src/core/repair/orphan-children.ts
@@ -48,4 +48,24 @@ export function pageChildOrphanSql(target: PageChildTarget): string {
 export async function countPageChildOrphans(raw: EngineRawRead, target: PageChildTarget): Promise<number> {
   const [row] = await raw<{ n: string | number }>(pageChildOrphanSql(target));
   return Number(row?.n ?? 0);
+}
+
+/** One per-source schema-pack override: a `schema_pack.source.<id>` config key and the pack it names. */
+export interface SchemaPackSourceOverrideRow { key: string; value: string }
+
+/**
+ * The two statements the schema_pack_source_drift check of src/commands/doctor/schema-pack-checks.ts ran, byte for byte:
+ * the named keys for a caller confined to some sources, else every key the LIKE pattern matches (its `_` matches any one
+ * character, as it always did). Neither orders its rows; the check reads only their count and distinct values.
+ */
+export const SCHEMA_PACK_SOURCE_OVERRIDE_SQL = {
+  scoped: `SELECT key, value FROM config WHERE key = ANY($1::text[])`,
+  unscoped: `SELECT key, value FROM config WHERE key LIKE 'schema_pack.source.%'`,
+} as const;
+
+/** The per-source schema-pack overrides: of `sourceIds` when named (`[]` names none), else of every source. */
+export async function listSchemaPackSourceOverrides(raw: EngineRawRead, sourceIds: readonly string[] | null): Promise<SchemaPackSourceOverrideRow[]> {
+  return sourceIds
+    ? raw<SchemaPackSourceOverrideRow>(SCHEMA_PACK_SOURCE_OVERRIDE_SQL.scoped, [sourceIds.map((id) => `schema_pack.source.${id}`)])
+    : raw<SchemaPackSourceOverrideRow>(SCHEMA_PACK_SOURCE_OVERRIDE_SQL.unscoped);
 }

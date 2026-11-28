@@ -1,12 +1,12 @@
 /**
- * BrainEngine parity: the three doctor checks that still read through `executeRaw` (the timeline dedup index shape in
- * src/core/timeline-dedup-repair.ts, the schema-pack config reads in src/commands/doctor/schema-pack-checks.ts, and the
- * three counts in src/commands/doctor/checks/calibration.ts), and the multi_source_drift row, which every arm answers.
+ * BrainEngine parity: the doctor checks that still read through `executeRaw` (the timeline dedup index shape in
+ * src/core/timeline-dedup-repair.ts and the three counts in src/commands/doctor/checks/calibration.ts), and the
+ * multi_source_drift and schema_pack_source_drift rows, which every arm answers.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the focused doctor report run_doctor returns (doctorReportRemote, brain-wide, as an unscoped caller gets it)
  *    completes on every arm and has a row for each check
- *    these three files feed. On PGLite and Postgres each row is a real answer. On the Rust arm each row says it could not
+ *    these files feed. On PGLite and Postgres each row is a real answer. On the Rust arm each row says it could not
  *    check (a `Could not check ...` row, or a `Not verified` row), never ok or a zero count, because the Rust engine
  *    refuses `executeRaw` and the check catches that refusal. The idx_timeline_dedup shape is a named permanent loss: it
  *    is a Postgres index, and the Rust store keeps no SQL index.
@@ -44,10 +44,9 @@ import { checkTimelineDedupIndex, repairTimelineDedupIndex } from '../../src/cor
 
 const { parityTest } = parityArms(testBackends());
 
-/** The rows the three raw-SQL doctor files feed, with the file each row reads through. */
+/** The rows the raw-SQL doctor files feed, with the file each row reads through. */
 const RAW_ROWS: Record<string, string> = {
   timeline_dedup_index: 'src/core/timeline-dedup-repair.ts',
-  schema_pack_source_drift: 'src/commands/doctor/schema-pack-checks.ts',
   abandoned_threads: 'src/commands/doctor/checks/calibration.ts',
   grade_confidence_drift: 'src/commands/doctor/checks/calibration.ts',
   contextual_retrieval_coverage: 'src/commands/doctor/checks/calibration.ts',
@@ -67,6 +66,8 @@ parityTest('the doctor report answers each raw-SQL check on SQL engines and says
     writeFileSync(join(dir, 'notes', 'doctor-raw.md'), '# Doctor raw\n');
     writeFileSync(join(dir, 'notes', 'not-ingested.md'), '# Not ingested\n');
     await createSource(engine, backend, 'doctor-raw-second', {}, dir);
+    await engine.setConfig('schema_pack.source.default', 'pack-a');
+    await engine.setConfig('schema_pack.source.doctor-raw-second', 'pack-b');
     report = await doctorReportRemote(engine, { remote: true });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -86,7 +87,11 @@ parityTest('the doctor report answers each raw-SQL check on SQL engines and says
   const driftRow = { status: drift?.status, code: drift?.details?.code, message: drift?.message };
   expect({ status: driftRow.status, code: driftRow.code }).toEqual({ status: 'warn', code: 'drift_detected' });
   expect(String(driftRow.message)).toStartWith("1 page slug(s) appear at 'default' but NOT at the intended source (e.g., notes/doctor-raw (intended=doctor-raw-second)).");
-  return { rows: rows.map((r) => r.name), drift: driftRow };
+  // The per-source pack overrides are a typed member (listSchemaPackSourceOverrides): every arm finds the two packs.
+  const packDrift = checks.find((c) => c.name === 'schema_pack_source_drift');
+  const packDriftRow = { status: packDrift?.status, message: packDrift?.message };
+  expect(packDriftRow).toEqual({ status: 'warn', message: 'Per-source pack divergence detected: 2 distinct packs across 2 sources. Run `gbrain sources list` then `gbrain schema active --source <id>` per source to audit.' });
+  return { rows: rows.map((r) => r.name), drift: driftRow, packDrift: packDriftRow };
 });
 
 parityTest('the timeline dedup index check reads the shape of a Postgres index', {

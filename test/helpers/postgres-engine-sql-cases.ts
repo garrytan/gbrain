@@ -319,6 +319,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'countChunkColumnCoverage': OOS.embeddingCatalog,
   'hasChunkImageVectors': OOS.embeddingCatalog,
   'countPageChildOrphans': OOS.doctorReads,
+  'listSchemaPackSourceOverrides': OOS.doctorReads,
   'readIgnoredPrivacyLabelCounts': OOS.doctorDerived,
   'countSafeIndexPending': OOS.doctorDerived,
   'countCredentialProjectionPending': OOS.doctorDerived,

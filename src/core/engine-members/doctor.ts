@@ -48,6 +48,8 @@ export interface DoctorMembers {
   /** Writes one remediation step's `migration_impact_log` row. */
   insertImpactLogRow(row: RemediationRecordsSql.ImpactLogRow): Promise<void>;
   // Doctor reads (engine-sql/doctor-reads.ts): the statements doctor checks ran through executeRaw.
+  /** The `schema_pack.source.<id>` config rows: of `sourceIds` when named (`[]` names none), else every source's; unordered. */
+  listSchemaPackSourceOverrides(sourceIds: readonly string[] | null): Promise<DoctorReadsSql.SchemaPackSourceOverrideRow[]>;
 
   // Doctor reads, second set (engine-sql/doctor-derived.ts): the statements more doctor checks and their repairs ran through executeRaw.
   /** The ignored-privacy-label values of live pages by key (at most 50 keys, 100001 pages scanned); `sourceIds` narrows it. */

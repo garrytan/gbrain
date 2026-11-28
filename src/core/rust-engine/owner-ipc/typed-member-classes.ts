@@ -358,7 +358,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listRecentWriterVersions', 'listRecordedHaltReasons7d', 'listRecordedTombstones', 'listReferrerTargetSources',
   'listRefusalBreakerRows', 'listRestorableAtomRetirements', 'listRulePagesReadByNobody', 'listRunningClaimOwners',
   'listRunningRequestStalls', 'listScraperJunkCandidates', 'listSharedSkillCatalogHeads',
-  'listSharedSkillFollowSources', 'listSlugPathCandidates', 'probeSlugSources', 'listSourceBindingsForMovement', 'listSourceIds',
+  'listSharedSkillFollowSources', 'listSlugPathCandidates', 'probeSlugSources', 'listSchemaPackSourceOverrides', 'listSourceBindingsForMovement', 'listSourceIds',
   'listStaleEmbeddingEffects', 'listStalledCatchupRows', 'listStuckWorktreeRefreshes', 'listSweepDeferredPages',
   'listSweepStalePages', 'listTerminalFailureBatch', 'listTimelineHistoryBatch', 'listTopResolvedTakesForHolder',
   'listHostRepositoryRoots', 'listPendingGitEffectPaths', 'listTruncatedMarkdownBodies', 'listTrustClaimTargets', 'listTrustColumns', 'listUnboundSourcePages',

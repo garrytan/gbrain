@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2523/2555
+# covered: 2524/2556
 # lifecycle: 21/22
 # pages: 141/142
 # search: 8/8
@@ -101,6 +101,7 @@
 # owner_only: 1/1
 # embed_stale_work: 10/10
 # doctor_tallies: 3/3
+# doctor_reads: 1/1
 # engine_migration: 5/5
 # access_grants: 7/7
 # access_members: 21/21
@@ -790,7 +791,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	4	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
 getConfig	config	yes	60	no	yes	yes	serves
-setConfig	config	yes	101	no	yes	yes	serves
+setConfig	config	yes	102	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
 getAllConfig	config	yes	2	no	yes	yes	serves
@@ -2423,6 +2424,7 @@ invalidateContentDriftChunks	embed_stale_work	yes	2	no	yes	yes	serves
 countLiveSegmentedPages	doctor_tallies	yes	2	no	yes	yes	serves
 countValidityLapsedFacts	doctor_tallies	yes	1	no	yes	yes	serves
 countOrphanEventProjections	doctor_tallies	yes	1	no	yes	yes	serves
+listSchemaPackSourceOverrides	doctor_reads	yes	1	no	yes	yes	serves
 readEngineMigrationHistory	engine_migration	yes	2	no	yes	yes	serves
 readMigrationRows	engine_migration	yes	5	no	yes	yes	serves
 readMigrationPageColumns	engine_migration	yes	2	no	yes	yes	serves

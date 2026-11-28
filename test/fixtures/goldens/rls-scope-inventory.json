@@ -10722,6 +10722,7 @@
         "listRunningClaimOwners": "none",
         "listRunningRequestStalls": "none",
         "listSafeChunksPending": "none",
+        "listSchemaPackSourceOverrides": "none",
         "listScraperJunkCandidates": "none",
         "listSecretEntrySummaries": "none",
         "listSecretHoldingPages": "none",
