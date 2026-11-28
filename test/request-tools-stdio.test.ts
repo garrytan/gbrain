@@ -191,6 +191,10 @@ describe('request_tools {surface} on stdio', () => {
       const widened = parsed(await widenedSession.client.callTool({ name: 'request_tools', arguments: { surface: 'full' } })) as { surface: string; note: string };
       expect(widened.surface).toBe('full');
       expect(widened.note).toContain('A client that opens a new session for every call, or never re-reads tools/list, gets these tools only when gbrain is registered with them: --surface full (or GBRAIN_SURFACE=full) and no --advertise.');
+      const again = parsed(await widenedSession.client.callTool({ name: 'request_tools', arguments: { surface: 'full' } })) as { widened: boolean; note: string };
+      expect(again.widened).toBe(false);
+      expect(again.note).toContain("a new session starts at the registered surface ('starter') again");
+      expect(again.note).not.toContain('every new one');
     } finally { await widenedSession.close(); }
     // Session-only by design: the next session of the same registration starts at starter again.
     const next = await session(['--surface', 'starter']);

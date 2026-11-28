@@ -163,10 +163,13 @@ async function widenStdioSession(ctx: OperationContext, requested: 'verbs' | 'st
   }
   const target = clampSurface(requested);
   if (!surfaceWiderThan(target, session.surface)) {
+    const lasting = session.surface === session.registered
+      ? 'in this session and in every new one'
+      : `in this session, which was widened earlier; a new session starts at the registered surface ('${session.registered}') again`;
     return { persisted: false, scope: 'session', surface: session.surface, widened: false,
       note: target !== requested
         ? `GBRAIN_MCP_FORCE_SURFACE caps this server at '${target}', so this session stays at '${session.surface}'.`
-        : `This session already serves '${session.surface}', which includes everything in '${requested}'. Its tools are callable by name in this session and in every new one, even when tools/list shows fewer (a server started with --advertise lists only part of it). ${STATELESS_CLIENT_NOTE(requested)}` };
+        : `This session already serves '${session.surface}', which includes everything in '${requested}'. Its tools are callable by name ${lasting}, even when tools/list shows fewer (a server started with --advertise lists only part of it). ${STATELESS_CLIENT_NOTE(requested)}` };
   }
   if (ctx.dryRun) return { persisted: false, scope: 'session', dry_run: true, surface: target, previous: session.surface };
   const change = session.widen(target);
