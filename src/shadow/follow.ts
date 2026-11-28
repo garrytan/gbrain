@@ -19,6 +19,43 @@ import type { Invalidation, InvalidationSink } from './invalidations.ts';
 import { mergeItems, publishItems } from './invalidations.ts';
 import { sqlWrites } from './sql-writes.ts';
 import { memberKind, PageRef, WRITE_MAP, type Target, type WriteSpec } from './write-map.ts';
+import { JOURNAL_MEMBER_STATEMENTS } from './write-capture.ts';
+
+/**
+ * Persistence-journal members the follower does not treat as a write it cannot describe (an `invalid` item). Named one by
+ * one: a member is exempt only when it is on this list. Each sends only the statements listed for it in
+ * JOURNAL_MEMBER_STATEMENTS (write-capture.ts), and what those statements write is published as relation items instead:
+ * a table the store copies goes relation-dirty (a dirty pass re-reads it), and a table it does not copy (the journal's
+ * counters, requests and effects) changes nothing. A statement the parser cannot read, or one that writes anything but a
+ * named table, makes the member an ordinary unmapped write again. Every other unmapped member still publishes `invalid`.
+ */
+export const JOURNAL_BOOKKEEPING_MEMBERS: readonly string[] = [
+  'declarePersistence', 'lockPersistenceCounters', 'completeWriteRow', 'insertPublicationEffects',
+  'completeEffectRow', 'setEffectTransactionLimits', 'lockEffectGuard', 'lockEffectClaimRow',
+];
+const JOURNAL_ALLOWED: ReadonlySet<string> = new Set(JOURNAL_BOOKKEEPING_MEMBERS);
+
+/** The relation items for what `statements` write, or null when any cannot be read or writes something unnamed. */
+export function journalWriteItems(statements: readonly string[] | undefined): Invalidation[] | null {
+  if (!statements?.length) return null;
+  const items: Invalidation[] = [];
+  for (const sql of statements) {
+    let writes; try { writes = sqlWrites(sql); } catch { return null; }
+    for (const w of writes) {
+      if (w.kind !== 'relation') return null;
+      items.push({ kind: 'relation', relation: w.relation, reason: 'journal_bookkeeping' });
+    }
+  }
+  return mergeItems(items);
+}
+
+const journalCache = new Map<string, Invalidation[] | null>();
+/** What an allow-listed journal member publishes instead of `invalid`; null for every other member. */
+export function journalItems(name: string): Invalidation[] | null {
+  if (!JOURNAL_ALLOWED.has(name)) return null;
+  if (!journalCache.has(name)) journalCache.set(name, journalWriteItems(JOURNAL_MEMBER_STATEMENTS.get(name)));
+  return journalCache.get(name)!;
+}
 
 export interface FollowOptions {
   sink: InvalidationSink;
@@ -283,6 +320,8 @@ export function followWrite(ctx: FollowContext, name: string, fn: Function): Fun
     const call = () => fn.apply(ctx.engine, args);
     if (!collecting(ctx)) return call();
     const kind = memberKind(name);
+    const journal = kind === 'unmapped' ? journalItems(name) : null;
+    if (journal) return track(ctx, call, journal, () => [], journal);
     if (kind !== 'mapped') {
       const item: Invalidation = { kind: 'invalid', reason: `${kind === 'schema' ? 'schema_change' : 'unmapped_write'}:${name}` };
       return track(ctx, call, [item], () => [], [item]);

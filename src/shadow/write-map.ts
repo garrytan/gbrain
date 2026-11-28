@@ -207,6 +207,8 @@ export const SCHEMA_MEMBERS: ReadonlySet<string> = new Set(['runMigration']);
 export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   // Connection lifecycle and plumbing (initSchema runs at startup; a migration it applies is runMigration's concern).
   'connect', 'connectForRestore', 'connectWithHeldLock', 'disconnect', 'reconnect', 'initSchema', 'registerBeforeDisconnect',
+  // Registers a pool checkout listener (PostgresEngine only; the persistence consumer's gauge): no statement at all.
+  'onCheckout',
   'closeRetainingLock', 'holdsDatastoreLock', 'batchRetry', 'applyTransactionSettings', 'applyForwardReferenceBootstrap',
   'lockPageKeys', 'lockRegisteredSourceIds', 'keywordBoundedRead', 'rewriteLinks', 'matchTakeRows',
   // Locks.
