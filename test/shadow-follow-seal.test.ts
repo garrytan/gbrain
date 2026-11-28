@@ -10,7 +10,7 @@
  * Regression it catches: a restart trusted on its own word. The real-database path: test/e2e/shadow-serve-short-sessions.test.ts.
  */
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FollowChild, lostWriteRecorder, noteLostWrite, type FollowStore } from '../src/shadow/follow-child.ts';
@@ -25,6 +25,7 @@ import { WRITER_HOOK_TRIGGER, writerHooksManifestPath } from '../src/shadow/writ
 
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+const FOREIGN = 'follower-invalidations.jsonl';
 const tmp = (): string => { const d = mkdtempSync(join(tmpdir(), 'gbrain-follow-seal-')); dirs.push(d); return d; };
 
 const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as unknown as SeedRecord;
@@ -188,6 +189,70 @@ describe('a sealed close', () => {
     const s = next(dir);
     expect(await s.ask('watermark', { valid: true, since: 4_000 })).toMatchObject({ valid: false });
     expect(await s.ask('watermark', { valid: true, since: 6_000, relations: ['pages'] })).toMatchObject({ valid: false });
+    expect(await s.ask('watermark', { valid: true, since: 6_000 })).toMatchObject({ valid: true });
+  });
+
+  /**
+   * A seal written over an invalidation file that already holds one `seal_revoked` line (a refused start left it, a full
+   * pass then repaired the session and it closed sealed): its foreign size is that line's length. A later refusing or
+   * failed-take session whose own blocker line has the same length (same clock, same pid) must not bring the file back to
+   * exactly that size when its follower.json write fails, or the next owner takes the seal it refused.
+   */
+  async function sealedOverBlocker(): Promise<{ dir: string; continuity: string; foreign: number }> {
+    const { dir } = await sealed();
+    appendFileSync(join(dir, FOREIGN), `${JSON.stringify({ at: 2_000, pid: 1, reason: 'other' })}\n`);
+    const s = next(dir); // refuses invalidation_after_seal and leaves its own seal_revoked line
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+    expect(await s.ask('watermark', { valid: true, since: 6_000 })).toMatchObject({ valid: true });
+    const continuity = (await s.ask<{ continuity: string }>('state')).continuity;
+    s.child.handle({ t: 'seal', db_at: 'mark-2' });
+    await s.child.close();
+    const foreign = readFollowerFile(dir)!.seal!.foreign_size;
+    expect(foreign).toBeGreaterThan(0); // sealed over the earlier blocker line
+    return { dir, continuity, foreign };
+  }
+  const failingWrites = (): { restore: () => void; count: () => number } => {
+    let failed = 0;
+    const spy = spyOn(followStatus, 'writeFollowerFile').mockImplementation(() => { failed++; throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); });
+    return { restore: () => spy.mockRestore(), count: () => failed };
+  };
+
+  test('a refusal whose write fails keeps the seal untakeable even when the file already held a same-length blocker line', async () => {
+    const { dir, continuity, foreign } = await sealedOverBlocker();
+    appendFileSync(join(dir, FOREIGN), `${JSON.stringify({ at: 5_500, pid: 1, reason: 'other' })}\n`); // a write after the seal
+    const writes = failingWrites();
+    try { next(dir); } finally { writes.restore(); } // refuses, its write fails, it dies before any other write
+    expect(writes.count()).toBe(1); // the injected failure fired on the refusal's write
+    expect(readFollowerFile(dir)!.seal).toBeDefined(); // the seal could not be removed
+    const size = statSync(join(dir, FOREIGN)).size;
+    const later = next(dir);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+    await refused(later, continuity);
+    expect(size).not.toBe(foreign); // the cause: the blocker brought the file back to the sealed size
+  });
+
+  test('a failed take keeps the seal untakeable even when the file already held a same-length blocker line', async () => {
+    const { dir, continuity, foreign } = await sealedOverBlocker();
+    const writes = failingWrites();
+    try { next(dir); } finally { writes.restore(); } // the consuming write fails, then the refusal's write
+    expect(writes.count()).toBe(2);
+    expect(readFollowerFile(dir)!.seal).toBeDefined();
+    const size = statSync(join(dir, FOREIGN)).size;
+    const later = next(dir);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+    await refused(later, continuity);
+    expect(size).not.toBe(foreign); // the cause: the blocker brought the file back to the sealed size
+  });
+
+  test('a refusal whose write succeeds still clears the old invalidation lines', async () => {
+    const { dir } = await sealedOverBlocker();
+    appendFileSync(join(dir, FOREIGN), `${JSON.stringify({ at: 5_500, pid: 1, reason: 'other' })}\n`);
+    const s = next(dir);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+    expect(readFollowerFile(dir)!.seal).toBeUndefined();
+    const left = readFileSync(join(dir, FOREIGN), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { reason: string });
+    expect(left.filter((l) => l.reason !== 'seal_revoked')).toEqual([]); // the lines before this session are gone
+    // Its own blocker line is not read back as a foreign write: a full pass after the start makes it valid.
     expect(await s.ask('watermark', { valid: true, since: 6_000 })).toMatchObject({ valid: true });
   });
 
