@@ -89,6 +89,7 @@ test/engine-parity/forget-whole.test.ts	served
 test/engine-parity/generation-output-parity.test.ts	served	
 test/engine-parity/generation-write-parity.test.ts	served	
 test/engine-parity/git-durability-credential.test.ts	served	
+test/engine-parity/guest-note-save.test.ts	served	
 test/engine-parity/harness-consumer-stop.test.ts	served	
 test/engine-parity/holding-page-purges.test.ts	served	
 test/engine-parity/hot-memory-meta.test.ts	served	
