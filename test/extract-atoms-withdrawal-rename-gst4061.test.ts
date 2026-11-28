@@ -58,6 +58,16 @@ function copyingChat(empty = false) {
   return { prompts, chat };
 }
 
+const malformedChat = () => {
+  let calls = 0;
+  const chat = async (_o: ChatOpts): Promise<ChatResult> => {
+    calls += 1;
+    return { text: 'not json', blocks: [{ type: 'text', text: 'not json' }], stopReason: 'end',
+      usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'anthropic:claude-haiku-4-5', providerId: 'anthropic' };
+  };
+  return { chat, calls: () => calls };
+};
+
 const liveAtoms = (engine: BrainEngine, sourceId: string) => engine.executeRaw<{ slug: string; text: string; visibility: string | null; source_slug: string | null }>(
   `SELECT slug, title || ' ' || compiled_truth || ' ' || COALESCE(frontmatter->>'source_quote','') AS text, frontmatter->>'visibility' AS visibility,
      frontmatter->>'source_slug' AS source_slug FROM pages WHERE source_id=$1 AND type='atom' AND deleted_at IS NULL ORDER BY slug`, [sourceId]);
@@ -261,7 +271,7 @@ describe('GST-4061 managed extract_atoms after withdrawals and renames', () => {
     // Every page is written before the brain is managed; later writes go through `unmanaged`.
     const pages = [`${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN), fact(2, RETAINED)])}`,
       `${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN)])}`, PROSE('canaryrename4061'),
-      `${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN), fact(2, RETAINED)])}`, `${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN)])}`];
+      `${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN), fact(2, RETAINED)])}`, `${PROSE('the launch')}\n\n${renderFactsTable([fact(1, WITHDRAWN)])}`, PROSE('canaryrename4061')];
     for (const [i, body] of pages.entries()) {
       await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [`gst4061-managed-${i + 1}`]);
       await put(engine, `gst4061-managed-${i + 1}`, body);
@@ -358,6 +368,17 @@ describe('GST-4061 managed extract_atoms after withdrawals and renames', () => {
     expect(again.prompts.length).toBe(1);
     expect(await remoteAtomText(engine, sourceId)).not.toContain('records canaryrename4061');
     for (const atom of await liveAtoms(engine, sourceId)) expect(atom.source_slug).toBe(RESTRICTED);
+    expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(0);
+  }), 120_000);
+
+  test('case 5 held: a renamed private managed page held after repeated failures is not offered again', () => managed(6, async sourceId => {
+    await run(engine, sourceId, copyingChat().chat);
+    await unmanaged(() => restrictFolder(engine, sourceId));
+    expect(await unmanaged(() => renamePageOntoSlug(engine, { sourceId, oldSlug: SLUG, newSlug: RESTRICTED, to: `${RESTRICTED}.md` }))).toBe('renamed');
+    expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(1);
+    const failing = malformedChat();
+    for (let i = 0; i < 5; i++) await run(engine, sourceId, failing.chat);
+    expect(failing.calls()).toBe(3);
     expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(0);
   }), 120_000);
 });

@@ -188,7 +188,8 @@ export async function renamedOriginSlugs(engine: SqlEngine, sourceId: string, sl
  * from whose live generation was read from this page (its input pin carries the page id). Its extraction retires those
  * atoms (retireRenamedOriginAtoms), and the scan it stamps is newer than the rename, so the page is offered once. A rename
  * that leaves the page world is not offered (#7462: readers follow the rename alias, and a bulk move would spend a model
- * call per page). Built per statement: the privacy fragment reads the current configuration.
+ * call per page). A page held after repeated failures, or a managed run cut at the input cap at its current content, is
+ * not offered either: such a run retires nothing. Built per statement: the privacy fragment reads the current configuration.
  */
 export function renamedPrivateReofferSql(): string {
   return `(NOT ${privatePagesFilterFragment('p')} AND EXISTS (
@@ -201,7 +202,13 @@ export function renamedPrivateReofferSql(): string {
           AND (st.tombstoned OR st.partial_input_chars IS NOT NULL)), '-infinity'::timestamptz)
       AND NOT EXISTS (SELECT 1 FROM pages occ WHERE occ.source_id=p.source_id AND occ.slug=r.slug AND occ.deleted_at IS NULL)
       AND EXISTS (SELECT 1 FROM pages a WHERE a.source_id=p.source_id AND a.type='atom' AND a.deleted_at IS NULL
-        AND a.frontmatter->>'source_slug'=r.slug AND a.frontmatter->>'visibility'='world')))`;
+        AND a.frontmatter->>'source_slug'=r.slug AND a.frontmatter->>'visibility'='world'))
+    AND NOT EXISTS (SELECT 1 FROM extract_atoms_page_state hs WHERE hs.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
+      AND hs.page_id=p.id AND hs.content_hash=p.content_hash AND hs.fail_count >= ${MAX_DETERMINISTIC_FAILURES})
+    AND NOT EXISTS (SELECT 1 FROM op_checkpoints hc WHERE hc.op='managed-atoms' AND hc.completed_keys->0->>'sourceId'=p.source_id
+      AND hc.completed_keys->0->>'incarnation'=(SELECT incarnation::text FROM sources WHERE id=p.source_id) AND hc.completed_keys->0->>'kind'='page'
+      AND hc.completed_keys->0->>'pageId'=p.id::text AND hc.completed_keys->0->>'contentHash'=p.content_hash
+      AND (hc.completed_keys->0->>'held'='true' OR hc.completed_keys->0->>'partial' IS NOT NULL)))`;
 }
 
 /**
