@@ -53,7 +53,7 @@ function session(dir: string, o: { clock?: () => number; epoch?: string | null }
 }
 
 /** A brain dir whose last owner session became valid and closed with a seal (`db_at` is the mark it was given). */
-async function sealed(o: { epoch?: string | null; dbAt?: string | null; beforeSeal?: (s: Session, dir: string) => void | Promise<void> } = {}): Promise<{ dir: string; continuity: string }> {
+async function sealed(o: { epoch?: string | null; dbAt?: string | null; refused?: string; beforeSeal?: (s: Session, dir: string) => void | Promise<void> } = {}): Promise<{ dir: string; continuity: string }> {
   const dir = tmp();
   writeSeedRecord(dir, SEED);
   writeShadowState(dir, STATE);
@@ -62,10 +62,13 @@ async function sealed(o: { epoch?: string | null; dbAt?: string | null; beforeSe
   const continuity = (await s.ask<{ continuity: string }>('state')).continuity;
   expect(typeof continuity).toBe('string');
   await o.beforeSeal?.(s, dir);
-  s.child.handle({ t: 'seal', db_at: o.dbAt === undefined ? 'mark-1' : o.dbAt });
+  s.child.handle(o.refused ? { t: 'seal', db_at: null, refused: o.refused } as never : { t: 'seal', db_at: o.dbAt === undefined ? 'mark-1' : o.dbAt });
   await s.child.close();
   return { dir, continuity };
 }
+
+/** What status shows about the last seal decision (follower.json `seal_outcome`, status `follower.seal`). */
+const sealShown = (dir: string) => buildFollowStatus(dir, STATE, new Date(5_000)).follower.seal ?? null;
 
 type State = { valid: boolean; invalidated_reason: string | null; continuity: string | null; pending_seal: { db_at: string | null } | null };
 const next = (dir: string, epoch?: string | null): Session => session(dir, { clock: () => 5_000, epoch });
@@ -86,9 +89,11 @@ describe('a sealed close', () => {
     const s = next(dir);
     expect(await s.ask<State>('state')).toMatchObject({ valid: false, invalidated_reason: 'follower_session_start', continuity: null, pending_seal: { db_at: 'mark-1' } });
     expect(readFollowerFile(dir)!.seal).toBeUndefined(); // consumed at the start
+    expect(sealShown(dir)).toMatchObject({ outcome: 'taken', reason: null });
     expect(await s.ask('confirmSeal', { db_at: 'other-mark', ok: true })).toMatchObject({ valid: false, confirmed: false }); // not this seal's mark
     expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: true, confirmed: true });
     expect(await s.ask<State>('state')).toMatchObject({ valid: true, continuity, pending_seal: null });
+    expect(sealShown(dir)).toMatchObject({ outcome: 'confirmed', reason: null });
   });
 
   test('a seal carries the watermark, never a reconcile pass: no pass is appended and the newest clean full pass stays the one before', async () => {
@@ -121,6 +126,7 @@ describe('a sealed close', () => {
     const s = next(dir);
     await s.ask('state');
     await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'no_seal' });
   });
 
   test('anything after the seal voids it (an apply, an invalidation, a reconcile call)', async () => {
@@ -141,12 +147,27 @@ describe('a sealed close', () => {
 });
 
 describe('every doubt about a seal leaves the watermark invalid', () => {
+  test('PGLite: a seal with no database mark (what a PGLite close wrote) is never taken over, with the reason shown', async () => {
+    const { dir, continuity } = await sealed({ dbAt: null });
+    await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'pglite_no_db_continuity' });
+  });
+
+  test('a close the serving process would not seal records why, and the next session shows that reason', async () => {
+    const { dir, continuity } = await sealed({ refused: 'other_writer_open' });
+    expect(readFollowerFile(dir)!.seal).toBeUndefined();
+    expect(sealShown(dir)).toMatchObject({ outcome: 'not_sealed', reason: 'other_writer_open' });
+    await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'other_writer_open' });
+  });
+
   test('missing seal', async () => {
     const { dir, continuity } = await sealed();
     const file = readFollowerFile(dir)!;
     delete file.seal;
     writeFileSync(join(dir, 'follower.json'), JSON.stringify(file));
     await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'no_seal' });
   });
 
   test('follower.json written again after the seal (seal.at is not updated_at)', async () => {
@@ -155,29 +176,34 @@ describe('every doubt about a seal leaves the watermark invalid', () => {
     file.updated_at = new Date(9_000).toISOString();
     writeFileSync(join(dir, 'follower.json'), JSON.stringify(file));
     await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'seal_rewritten' });
   });
 
   test('wrong evidence epoch', async () => {
     const { dir, continuity } = await sealed({ epoch: 'epoch-1' });
     await refused(next(dir, 'epoch-2'), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'evidence_epoch_changed' });
   });
 
   test('wrong seed: another seed is not this follower at all', async () => {
     const { dir, continuity } = await sealed();
     writeSeedRecord(dir, { ...SEED, seed_id: 'seed-2' } as SeedRecord);
     await refused(next(dir), continuity, 'not_reconciled');
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'follower_state_reset' });
   });
 
   test('state.json restarted since the seal', async () => {
     const { dir, continuity } = await sealed();
     writeShadowState(dir, { ...STATE, started_at: 'state-start-2' });
     await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'shadow_restarted' });
   });
 
   test('shadow disabled since the seal', async () => {
     const { dir, continuity } = await sealed();
     writeShadowState(dir, { ...STATE, enabled: false });
     await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'shadow_disabled' });
   });
 
   test('wrong continuity: a seal that names none', async () => {
@@ -186,12 +212,14 @@ describe('every doubt about a seal leaves the watermark invalid', () => {
     file.seal!.continuity = '';
     writeFileSync(join(dir, 'follower.json'), JSON.stringify(file));
     await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'seal_no_continuity' });
   });
 
   test('dropped write: a line left in follower-invalidations.jsonl after the seal', async () => {
     const { dir, continuity } = await sealed();
     noteLostWrite(dir, 'published_after_close', 2_000);
     await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
   });
 
   test('dropped write: a line left before the seal is carried as a full obligation, and no seal is written when the file cannot be read', async () => {
@@ -200,12 +228,14 @@ describe('every doubt about a seal leaves the watermark invalid', () => {
     expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, confirmed: true });
     const { dir: dir2 } = await sealed({ beforeSeal: (_s, d) => { rmSync(join(d, 'follower-invalidations.jsonl'), { force: true }); mkdirSync(join(d, 'follower-invalidations.jsonl')); } });
     expect(readFollowerFile(dir2)!.seal).toBeUndefined();
+    expect(sealShown(dir2)).toMatchObject({ outcome: 'not_sealed', reason: 'invalidations_unreadable' });
   });
 
   test('unknown writer: the serving process refuses the mark; the obligation stays and the continuity changes', async () => {
     const { dir, continuity } = await sealed();
     const s = next(dir);
-    expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: false })).toMatchObject({ valid: false, confirmed: false });
+    expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: false, reason: 'writer_evidence_changed' })).toMatchObject({ valid: false, confirmed: false });
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'writer_evidence_changed' });
     const st = await s.ask<State>('state');
     expect(st).toMatchObject({ valid: false, pending_seal: null });
     expect(st.continuity).not.toBe(continuity);
@@ -216,6 +246,7 @@ describe('every doubt about a seal leaves the watermark invalid', () => {
     const { dir, continuity } = await sealed();
     writeFileSync(join(dir, 'follower.json'), readFileSync(join(dir, 'follower.json'), 'utf8').slice(0, 40));
     await refused(next(dir), continuity, 'not_reconciled');
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'follower_state_reset' });
   });
 });
 
@@ -238,74 +269,75 @@ const SINCE_ROW = { writers: 2, writers_max: '2026-11-28 10:00:00+00', gaps: 0, 
 function hooked(): string { const dir = tmp(); writeFileSync(writerHooksManifestPath(dir), JSON.stringify({ version: 1, state: 'installed', at: 'x', tables: ['pages', 'tags'] })); return dir; }
 
 describe('seal.ts: the primary\'s writer evidence', () => {
-  test('PGLite has nothing to check: the mark is null and the next start is quiet', async () => {
+  test('PGLite never takes a seal over: no mark is written and nothing is quiet, named pglite_no_db_continuity (no proof the database was untouched between sessions)', async () => {
     const dir = tmp();
-    expect(await sealMark({ dir, reads: fakeReads(MARK_ROW, { fail: true }), postgres: false })).toBeNull();
-    expect(await quietSince({ dir, reads: fakeReads(SINCE_ROW, { fail: true }), postgres: false }, null)).toBe(true);
+    expect(await sealMark({ dir, reads: fakeReads(MARK_ROW), postgres: false })).toEqual({ refused: 'pglite_no_db_continuity' });
+    expect(await quietSince({ dir, reads: fakeReads(SINCE_ROW), postgres: false }, null)).toEqual({ ok: false, reason: 'pglite_no_db_continuity' });
   });
 
   test('a mark is the writer evidence fingerprint, read with row security off; the same fingerprint later is quiet', async () => {
     const dir = hooked();
     const reads = fakeReads(MARK_ROW);
     const mark = await sealMark({ dir, reads, postgres: true });
-    expect(JSON.parse(mark!)).toEqual({ app: 'gbrain-1-abc', writers: 2, writers_max: '2026-11-28 10:00:00+00', gaps: 0, gaps_max: '' });
+    expect('token' in mark).toBe(true);
+    expect(JSON.parse((mark as { token: string }).token)).toEqual({ app: 'gbrain-1-abc', writers: 2, writers_max: '2026-11-28 10:00:00+00', gaps: 0, gaps_max: '' });
     expect(reads.sql[0]).toBe('SET LOCAL row_security = off');
     const since = fakeReads(SINCE_ROW);
-    expect(await quietSince({ dir, reads: since, postgres: true }, mark!)).toBe(true);
+    expect(await quietSince({ dir, reads: since, postgres: true }, (mark as { token: string }).token)).toEqual({ ok: true });
     expect(since.sql[0]).toBe('SET LOCAL row_security = off');
   });
 
-  test('no mark while another process has a write open or wrote recently and is still connected, the hooks are not installed, or the read fails or hangs', async () => {
+  test('no mark while another process has a write open or wrote recently and is still connected, the hooks are not installed, or the read fails or hangs; each with its reason', async () => {
     const dir = hooked();
-    expect(await sealMark({ dir, reads: fakeReads({ ...MARK_ROW, writing: 1 }), postgres: true })).toBeUndefined();
-    expect(await sealMark({ dir, reads: fakeReads({ ...MARK_ROW, live: 1 }), postgres: true })).toBeUndefined();
-    expect(await sealMark({ dir, reads: fakeReads({ ...MARK_ROW, writers: null }), postgres: true })).toBeUndefined();
-    expect(await sealMark({ dir: tmp(), reads: fakeReads(MARK_ROW), postgres: true })).toBeUndefined();
-    expect(await sealMark({ dir, reads: fakeReads(MARK_ROW, { fail: true }), postgres: true })).toBeUndefined();
-    expect(await sealMark({ dir, reads: fakeReads(MARK_ROW, { hang: true }), postgres: true })).toBeUndefined();
+    expect(await sealMark({ dir, reads: fakeReads({ ...MARK_ROW, writing: 1 }), postgres: true })).toEqual({ refused: 'other_writer_open' });
+    expect(await sealMark({ dir, reads: fakeReads({ ...MARK_ROW, live: 1 }), postgres: true })).toEqual({ refused: 'other_writer_live' });
+    expect(await sealMark({ dir, reads: fakeReads({ ...MARK_ROW, writers: null }), postgres: true })).toEqual({ refused: 'mark_unreadable' });
+    expect(await sealMark({ dir: tmp(), reads: fakeReads(MARK_ROW), postgres: true })).toEqual({ refused: 'hooks_not_installed' });
+    expect(await sealMark({ dir, reads: fakeReads(MARK_ROW, { fail: true }), postgres: true })).toEqual({ refused: 'read_failed' });
+    expect(await sealMark({ dir, reads: fakeReads(MARK_ROW, { hang: true }), postgres: true })).toEqual({ refused: 'read_timeout' });
   });
 
   const mark = JSON.stringify({ app: 'gbrain-1-abc', writers: 2, writers_max: '2026-11-28 10:00:00+00', gaps: 0, gaps_max: '' });
   test('unknown writer: a new writer row, or a moved last_seen, is not quiet', async () => {
     const dir = hooked();
-    expect(await quietSince({ dir, reads: fakeReads({ ...SINCE_ROW, writers: 3 }), postgres: true }, mark)).toBe(false);
-    expect(await quietSince({ dir, reads: fakeReads({ ...SINCE_ROW, writers_max: '2026-11-28 10:00:01+00' }), postgres: true }, mark)).toBe(false);
+    expect(await quietSince({ dir, reads: fakeReads({ ...SINCE_ROW, writers: 3 }), postgres: true }, mark)).toEqual({ ok: false, reason: 'writer_evidence_changed' });
+    expect(await quietSince({ dir, reads: fakeReads({ ...SINCE_ROW, writers_max: '2026-11-28 10:00:01+00' }), postgres: true }, mark)).toEqual({ ok: false, reason: 'writer_evidence_changed' });
   });
 
   test('coverage gap: a new gap row is not quiet', async () => {
     const dir = hooked();
-    expect(await quietSince({ dir, reads: fakeReads({ ...SINCE_ROW, gaps: 1, gaps_max: '2026-11-28 10:00:02+00' }), postgres: true }, mark)).toBe(false);
+    expect(await quietSince({ dir, reads: fakeReads({ ...SINCE_ROW, gaps: 1, gaps_max: '2026-11-28 10:00:02+00' }), postgres: true }, mark)).toEqual({ ok: false, reason: 'coverage_gap' });
   });
 
   test('a hook dropped or disabled on any table is not quiet', async () => {
     const dir = hooked();
-    expect(await quietSince({ dir, reads: fakeReads(SINCE_ROW, { hooked: ['pages'] }), postgres: true }, mark)).toBe(false);
+    expect(await quietSince({ dir, reads: fakeReads(SINCE_ROW, { hooked: ['pages'] }), postgres: true }, mark)).toEqual({ ok: false, reason: 'hook_missing' });
   });
 
   test('parse error: no mark, an unreadable mark or one of the wrong shape is not quiet', async () => {
     const dir = hooked();
     for (const token of [null, '', 'not json', '{"app":"x"}', JSON.stringify({ ...JSON.parse(mark), writers: '2' })]) {
-      expect(await quietSince({ dir, reads: fakeReads(SINCE_ROW), postgres: true }, token)).toBe(false);
+      expect(await quietSince({ dir, reads: fakeReads(SINCE_ROW), postgres: true }, token)).toEqual({ ok: false, reason: 'mark_unreadable' });
     }
   });
 
   test('hooks not installed, a failed read or one that hangs is not quiet', async () => {
-    expect(await quietSince({ dir: tmp(), reads: fakeReads(SINCE_ROW), postgres: true }, mark)).toBe(false);
-    expect(await quietSince({ dir: hooked(), reads: fakeReads(SINCE_ROW, { fail: true }), postgres: true }, mark)).toBe(false);
-    expect(await quietSince({ dir: hooked(), reads: fakeReads(SINCE_ROW, { hang: true }), postgres: true }, mark)).toBe(false);
+    expect(await quietSince({ dir: tmp(), reads: fakeReads(SINCE_ROW), postgres: true }, mark)).toEqual({ ok: false, reason: 'hooks_not_installed' });
+    expect(await quietSince({ dir: hooked(), reads: fakeReads(SINCE_ROW, { fail: true }), postgres: true }, mark)).toEqual({ ok: false, reason: 'read_failed' });
+    expect(await quietSince({ dir: hooked(), reads: fakeReads(SINCE_ROW, { hang: true }), postgres: true }, mark)).toEqual({ ok: false, reason: 'read_timeout' });
   });
 
-  test('confirmSeal asks only when a seal is pending, and passes the verdict for that seal\'s mark', async () => {
+  test('confirmSeal asks only when a seal is pending, and passes the verdict and its reason for that seal\'s mark', async () => {
     const calls: Array<[string, unknown]> = [];
     const rpcFor = (pending: unknown) => (async (method: string, args?: unknown) => { calls.push([method, args]); return method === 'state' ? { pending_seal: pending } : {}; }) as never;
     await confirmSeal({ dir: hooked(), reads: fakeReads(SINCE_ROW), postgres: true, rpc: rpcFor(null) });
     expect(calls.map(([m]) => m)).toEqual(['state']);
     calls.length = 0;
     await confirmSeal({ dir: hooked(), reads: fakeReads(SINCE_ROW), postgres: true, rpc: rpcFor({ db_at: mark }) });
-    expect(calls[1]).toEqual(['confirmSeal', { db_at: mark, ok: true }]);
+    expect(calls[1]).toEqual(['confirmSeal', { db_at: mark, ok: true, reason: null }]);
     calls.length = 0;
     await confirmSeal({ dir: hooked(), reads: fakeReads({ ...SINCE_ROW, writers: 3 }), postgres: true, rpc: rpcFor({ db_at: mark }) });
-    expect(calls[1]).toEqual(['confirmSeal', { db_at: mark, ok: false }]);
+    expect(calls[1]).toEqual(['confirmSeal', { db_at: mark, ok: false, reason: 'writer_evidence_changed' }]);
     await confirmSeal({ dir: hooked(), reads: fakeReads(SINCE_ROW), postgres: true, rpc: (async () => { throw new Error('child gone'); }) as never }); // never rejects
   });
 });
