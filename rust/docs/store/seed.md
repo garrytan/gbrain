@@ -25,17 +25,21 @@ records a new store holds (`Mformat`, `Cversion`, `Sdefault`). A later call is r
 carries the same seed id. So a second seed never lands on top of a first, and a retried batch of the same seed skips
 the rows it already stored. A refused batch stores nothing, the manifest included. To seed again, the caller opens a
 new store directory: `gbrain engine shadow stop --delete`, then `gbrain engine shadow seed` (the command refuses
-`--reseed` and a second seed with that step).
+`--reseed` and a second seed with that step). A seed that stopped before `seed.json` was written is cleared by
+`gbrain engine shadow seed --restart`, which deletes the partial store and seeds again from the start.
 
 ## The command and `seed.json`
 
-`gbrain engine shadow seed [--json]` (`src/commands/engine-shadow.ts`, reads in `src/shadow/seed.ts`) refuses while
+`gbrain engine shadow seed [--json] [--budget-minutes <n|none>] [--batch-rows <n>] [--restart]`
+(`src/commands/engine-shadow.ts`, reads in `src/shadow/seed.ts`) refuses while
 shadow mode is on or the store is locked (the shadow child holds it): stop shadow mode first. It opens the primary
-without the shadow wrapper and reads every relation of `seedPlan()` in key order, in batches of 500 rows, inside one
+without the shadow wrapper and reads every relation of `seedPlan()` in key order, in batches of 500 rows (`--batch-rows`), inside one
 read-only transaction (`REPEATABLE READ` on Postgres), so a write during the seed is neither copied nor counted. The
 `pages` read joins each page's `page_projection_jobs` row (on the source incarnation and slug) as the
 `projection_job_*` columns; generated and `tsvector` columns are not read (the store derives its own). The seed stops
-with a refusal after 30 minutes (`SeedBudgetError`); the store it began is then used only through a new directory.
+with a refusal after 30 minutes by default (`SeedBudgetError`; `--budget-minutes` or
+`GBRAIN_SHADOW_SEED_BUDGET_MINUTES` sets the limit, `0` or `none` removes it); the store it began is then cleared by
+`seed --restart`, never resumed, because every row must come from one snapshot.
 
 After the copy, in the same snapshot, it counts the unseeded gap rows (`countSeedGaps`, below), the rows of each
 `not_copied` table, the unfinished `minion_jobs` (status other than `completed`, `failed`, `dead`, `cancelled`) and

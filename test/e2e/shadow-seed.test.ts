@@ -27,6 +27,10 @@ import { readSeedRecord, runSeed } from '../../src/shadow/seed.ts';
 import { shadowBrainKey, shadowDirFor } from '../../src/shadow/state.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { expectSeedReadParity, fillSeedFixture, insertSeedFixtureJobs, primaryDigests, seedInto } from '../helpers/shadow-seed-fixture.ts';
+import {
+  expectBudgetStopNamesTheWayOut, expectDefaultBudgetStop, expectFinishedSeed, expectRestartKeepsAStoreWithASeedRecord, expectRestartRefusesAHeldStore, expectRestartRefusesALinkedStore, inSeedHome, runRestartWatchingTheLockedStore, runSeedCommand,
+  steppingClock, type SeedBudgetCase,
+} from '../helpers/shadow-seed-budget.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -157,4 +161,37 @@ d('shadow seed from Postgres', () => {
     expect(record.relations.pages?.imported).toBe(2);
     expect(mode).toEqual([{ ro: 'on', iso: 'repeatable read' }]);
   }, 60_000);
+
+  // The Postgres twin of the PGLite budget tests (test/shadow-seed.test.ts): a stop past the default budget leaves a
+  // partial store a plain rerun refuses; a raised budget finishes the same seed; --restart clears the partial store.
+  const budgetCase = (): SeedBudgetCase =>
+    ({ primary: engine, addon, home: tempDir(), config: { engine: 'postgres', database_url: 'postgresql://example.invalid/brain' } });
+
+  withAddon('a seed past the default budget stops; --restart with a raised budget clears the partial store and finishes', async () => {
+    await fillSeedFixture(engine);
+    const c = budgetCase();
+    await inSeedHome(c, {}, async dir => {
+      const stopped = await expectDefaultBudgetStop(c, dir);
+      expectBudgetStopNamesTheWayOut(stopped);
+      await expectRestartRefusesAHeldStore(c, dir);
+      await expectRestartKeepsAStoreWithASeedRecord(c, dir);
+      await expectRestartRefusesALinkedStore(c, dir);
+      await expectFinishedSeed(c, dir, await runRestartWatchingTheLockedStore(c, dir));
+    });
+  });
+
+  withAddon('--budget-minutes, GBRAIN_SHADOW_SEED_BUDGET_MINUTES and --batch-rows let the same seed finish', async () => {
+    await fillSeedFixture(engine);
+    for (const [args, env] of [
+      [['seed', '--budget-minutes', 'none', '--batch-rows', '1'], {}],
+      [['seed'], { GBRAIN_SHADOW_SEED_BUDGET_MINUTES: '100000' }],
+    ] as Array<[string[], Record<string, string>]>) {
+      const c = budgetCase();
+      await inSeedHome(c, env, async dir => {
+        const run = await runSeedCommand(c, args, { now: steppingClock() });
+        await expectFinishedSeed(c, dir, run);
+        if (args.includes('--batch-rows')) expect(run.err).toContain('  seeding pages: 2 rows');
+      });
+    }
+  });
 });

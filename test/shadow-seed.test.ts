@@ -22,10 +22,15 @@ import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loa
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { openRustStore, type SeedPlan, type SeedRow } from '../src/core/rust-engine/store.ts';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
+import { validateCommandFlags } from '../src/cli/flag-validation.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
 import {
-  readSeedRecord, runSeed, SeedBudgetError, seedRecordPath, seedSwapCheck, writeSeedRecord, type SeedRecord, type SeedTarget,
+  parseSeedBudgetMs, readSeedRecord, runSeed, SeedBudgetError, seedRecordPath, seedSwapCheck, writeSeedRecord, type SeedRecord, type SeedTarget,
 } from '../src/shadow/seed.ts';
+import {
+  expectBudgetStopNamesTheWayOut, expectDefaultBudgetStop, expectFinishedSeed, expectRestartKeepsAStoreWithASeedRecord, expectRestartRefusesAHeldStore, expectRestartRefusesALinkedStore, inSeedHome, runRestartWatchingTheLockedStore, runSeedCommand,
+  steppingClock, type SeedBudgetCase,
+} from './helpers/shadow-seed-budget.ts';
 import { countSeedGaps } from '../src/shadow/seed-gaps.ts';
 import { shadowBrainKey, shadowDirFor, writeShadowState, SHADOW_STATE_VERSION } from '../src/shadow/state.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -300,5 +305,147 @@ describe('gbrain engine shadow seed', () => {
     expect(readSeedRecord(dir)).toBeNull();
     const unseeded = buildProvisionalReport(dir, 'b', null, new Date('2026-11-21T00:00:00Z'));
     expect(unseeded.seed).toBeNull();
+  });
+});
+
+// Value: protects=a seed past 30 minutes can be given more time, and a stopped seed has a one-command way back
+// (--restart) instead of a store every rerun refuses; fails_when=the budget flag or env var is ignored, --restart is
+// missing or deletes a store another process holds, or the stop text names no way out; why_new=the older tests only
+// prove runSeed throws past a budget; seam=the command's clock (deps.now), already a production seam;
+// no_claim=a real multi-hour snapshot on a pooler (the Postgres twin and the PR's pooler run cover that).
+describe('gbrain engine shadow seed budget and restart', () => {
+  const kase = async (): Promise<SeedBudgetCase> => {
+    addon ??= await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } });
+    const home = tempDir();
+    return { primary, addon, home, config: { engine: 'pglite', database_path: join(home, 'brain.pglite') } };
+  };
+
+  withAddon('a seed past the default budget stops; --restart with a raised budget clears the partial store and finishes', async () => {
+    await fill();
+    const c = await kase();
+    await inSeedHome(c, {}, async dir => {
+      const stopped = await expectDefaultBudgetStop(c, dir);
+      expectBudgetStopNamesTheWayOut(stopped);
+      const restarted = await runSeedCommand(c, ['seed', '--restart', '--budget-minutes', '0'], { now: steppingClock() });
+      expect(restarted.err).toContain('--restart deleted the partial Rust store');
+      await expectFinishedSeed(c, dir, restarted);
+      // A finished seed is never cleared by --restart.
+      const again = await runSeedCommand(c, ['seed', '--restart'], { now: steppingClock() });
+      expect(again.code).toBe(1);
+      expect(again.err).toContain('this seed finished');
+      expect(again.err).toContain('gbrain engine shadow stop --delete');
+      await expectSeedReadParity(primary, addon!, join(dir, 'store'));
+    });
+  });
+
+  withAddon('--budget-minutes and GBRAIN_SHADOW_SEED_BUDGET_MINUTES let the same seed finish', async () => {
+    await fill();
+    for (const [args, env] of [
+      [['seed', '--budget-minutes', 'none'], {}],
+      [['seed', '--budget-minutes', '100000'], {}],
+      [['seed'], { GBRAIN_SHADOW_SEED_BUDGET_MINUTES: '0' }],
+      [['seed', '--budget-minutes', '0'], { GBRAIN_SHADOW_SEED_BUDGET_MINUTES: 'not-a-number' }],
+    ] as Array<[string[], Record<string, string>]>) {
+      const c = await kase();
+      await inSeedHome(c, env, async dir => {
+        await expectFinishedSeed(c, dir, await runSeedCommand(c, args, { now: steppingClock() }));
+      });
+    }
+  });
+
+  withAddon('a too-small budget from the env var still stops the seed and names the restart', async () => {
+    await fill();
+    const c = await kase();
+    await inSeedHome(c, { GBRAIN_SHADOW_SEED_BUDGET_MINUTES: '15' }, async dir => {
+      const stopped = await runSeedCommand(c, ['seed'], { now: steppingClock() });
+      expect(stopped.code).toBe(1);
+      expect(stopped.err).toContain('ran past its 15-minute budget');
+      expectBudgetStopNamesTheWayOut(stopped);
+      expect(readSeedRecord(dir)).toBeNull();
+    });
+  });
+
+  withAddon('--restart refuses a store another process holds and leaves it in place; once free, it reseeds', async () => {
+    await fill();
+    const c = await kase();
+    await inSeedHome(c, {}, async dir => {
+      await expectDefaultBudgetStop(c, dir);
+      await expectRestartRefusesAHeldStore(c, dir);
+      await expectRestartKeepsAStoreWithASeedRecord(c, dir);
+      await expectRestartRefusesALinkedStore(c, dir);
+      await expectFinishedSeed(c, dir, await runRestartWatchingTheLockedStore(c, dir));
+    });
+  });
+
+  withAddon('--restart with no store yet just seeds', async () => {
+    await fill();
+    const c = await kase();
+    await inSeedHome(c, {}, async dir => {
+      await expectFinishedSeed(c, dir, await runSeedCommand(c, ['seed', '--restart']));
+    });
+  });
+
+  test('--batch-rows sets the rows per batch, and the start line names the budget and batch size', async () => {
+    await fill();
+    const home = tempDir();
+    const c: SeedBudgetCase = { primary, addon: {} as RustAddon, home, config: { engine: 'pglite', database_path: join(home, 'brain.pglite') } };
+    await inSeedHome(c, {}, async () => {
+      const run = await runSeedCommand(c, ['seed', '--batch-rows', '1', '--budget-minutes', '90'], { openStore: async () => fakeTarget(PAGES_ONLY) });
+      expect(run.code).toBe(0);
+      expect(run.err).toContain('seeding with a 90-minute budget and 1 rows per batch');
+      expect(run.err).toContain('  seeding pages: 1 rows');
+      expect(run.err).toContain('  seeding pages: 2 rows');
+    });
+  });
+
+  test('a bad --budget-minutes, --batch-rows or env value is a usage error that writes nothing', async () => {
+    const home = tempDir();
+    const c: SeedBudgetCase = { primary, addon: {} as RustAddon, home, config: { engine: 'pglite', database_path: join(home, 'brain.pglite') } };
+    let opened = 0;
+    const openStore = async () => { opened++; return fakeTarget(PAGES_ONLY); };
+    for (const [args, env] of [
+      [['seed', '--budget-minutes', '-5'], {}],
+      [['seed', '--budget-minutes', 'soon'], {}],
+      [['seed', '--budget-minutes'], {}],
+      [['seed', '--batch-rows', '0'], {}],
+      [['seed', '--batch-rows', '1.5'], {}],
+      [['seed', '--batch-rows', '10001'], {}],
+      [['seed'], { GBRAIN_SHADOW_SEED_BUDGET_MINUTES: 'forever' }],
+    ] as Array<[string[], Record<string, string>]>) {
+      await inSeedHome(c, env, async dir => {
+        const run = await runSeedCommand(c, args, { openStore });
+        expect(run.code).toBe(2);
+        expect(run.err).toMatch(/--budget-minutes|--batch-rows|GBRAIN_SHADOW_SEED_BUDGET_MINUTES/);
+        expect(existsSync(dir)).toBe(false);
+      });
+    }
+    expect(opened).toBe(0);
+  });
+
+  test('the gbrain entry point accepts the seed flags (strict unknown-flag check)', () => {
+    for (const flag of [['--restart'], ['--budget-minutes', 'none'], ['--batch-rows', '5']]) {
+      expect(validateCommandFlags('engine', ['shadow', 'seed', ...flag])).toBeNull();
+    }
+  });
+
+  test('help names the seed flags', async () => {
+    const out: string[] = [];
+    expect(await runEngineShadow(['seed', '--help'], { out: l => out.push(l), err: () => undefined })).toBe(0);
+    const help = out.join('\n');
+    expect(help).toContain('gbrain engine shadow seed [--json] [--budget-minutes <n|none>] [--batch-rows <n>] [--restart]');
+    expect(help).toContain('GBRAIN_SHADOW_SEED_BUDGET_MINUTES');
+  });
+
+  test('runSeed with no budget (null) ignores the clock; the budget text reads in minutes', async () => {
+    await fill();
+    let t = 0;
+    const record = await runSeed(primary, fakeTarget(PAGES_ONLY), { primaryEngine: 'pglite', budgetMs: null, now: () => new Date(t += 3_600_000) });
+    expect(record.relations.pages?.imported).toBe(2);
+    expect(new SeedBudgetError('pages', 90_000).message).toContain('ran past its 1.5-minute budget while copying pages');
+    expect(parseSeedBudgetMs('0')).toBeNull();
+    expect(parseSeedBudgetMs(' None ')).toBeNull();
+    expect(parseSeedBudgetMs('120')).toBe(7_200_000);
+    expect(parseSeedBudgetMs('0.5')).toBe(30_000);
+    for (const bad of ['', '-1', '1e3', 'Infinity', '12m', '0x10']) expect(parseSeedBudgetMs(bad)).toBeUndefined();
   });
 });

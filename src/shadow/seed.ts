@@ -26,6 +26,30 @@ import { countSeedGaps, primaryTables, type SeedQuery } from './seed-gaps.ts';
 export const SEED_RECORD_VERSION = 1;
 export const DEFAULT_SEED_BATCH_ROWS = 500;
 export const DEFAULT_SEED_BUDGET_MS = 30 * 60_000;
+/** The largest `--batch-rows`: one batch is held in memory twice (the read and the store call). */
+export const MAX_SEED_BATCH_ROWS = 10_000;
+/** Sets the seed budget in minutes when `--budget-minutes` is not given; `0` or `none` means no limit. */
+export const SEED_BUDGET_ENV = 'GBRAIN_SHADOW_SEED_BUDGET_MINUTES';
+
+/**
+ * A seed budget in minutes, as `--budget-minutes` or `GBRAIN_SHADOW_SEED_BUDGET_MINUTES` give it, in milliseconds:
+ * null for `0` or `none` (no limit), undefined for text that is not a number of minutes.
+ */
+export function parseSeedBudgetMs(raw: string): number | null | undefined {
+  const text = raw.trim().toLowerCase();
+  if (text === 'none') return null;
+  if (!/^\d+(\.\d+)?$/.test(text)) return undefined;
+  const minutes = Number(text);
+  if (minutes === 0) return null;
+  const ms = Math.max(1, Math.round(minutes * 60_000));
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/** `30-minute`, `1.5-minute`: the budget as the error text names it. */
+function budgetText(budgetMs: number): string {
+  const minutes = budgetMs / 60_000;
+  return `${Number.isInteger(minutes) ? minutes : Number(minutes.toFixed(2))}-minute`;
+}
 
 /** The store calls the seed makes: `RustStore`'s seed methods. */
 export interface SeedTarget {
@@ -80,16 +104,20 @@ export interface SeedOptions {
   /** The storage mode the caller read before the snapshot; recorded in `seed.json` as is. */
   storage?: ManagedStorageRecord;
   batchRows?: number;
-  budgetMs?: number;
+  /** The wall-clock budget in milliseconds; null means no limit, undefined the default (30 minutes). */
+  budgetMs?: number | null;
   now?: () => Date;
   seedId?: string;
   /** Called after each batch, for progress on stderr; the seed waits for a returned promise. */
   onBatch?: (relation: string, rowsRead: number) => void | Promise<void>;
 }
 
+/** What to run after a budget stop: a larger budget, with `--restart` to clear the partial store first. */
+export const SEED_BUDGET_FIX = `Raise the budget and seed again from the start: gbrain engine shadow seed --restart --budget-minutes <n> (or set ${SEED_BUDGET_ENV}; 0 or none means no limit). --restart deletes the partial Rust store first; nothing in the brain changes`;
+
 export class SeedBudgetError extends Error {
   constructor(readonly relation: string, readonly budgetMs: number) {
-    super(`the seed ran past its ${Math.round(budgetMs / 60_000)}-minute budget while copying ${relation}`);
+    super(`the seed ran past its ${budgetText(budgetMs)} budget while copying ${relation}, so it stopped; the Rust store holds a partial seed and no seed.json was written. ${SEED_BUDGET_FIX}`);
   }
 }
 
@@ -138,12 +166,14 @@ async function countRows(query: SeedQuery, sql: string, params: unknown[] = []):
 
 /**
  * Seeds `target` from `primary` in one read-only snapshot and returns the record to write as `seed.json`.
- * Throws `SeedBudgetError` past the budget; the store then holds a partial seed and must be replaced.
+ * Throws `SeedBudgetError` past the budget; the store then holds a partial seed and must be replaced
+ * (`gbrain engine shadow seed --restart`). A seed never resumes into a partial store: every row it copies must come
+ * from the one snapshot it reads.
  */
 export async function runSeed(primary: BrainEngine, target: SeedTarget, opts: SeedOptions): Promise<SeedRecord> {
   const now = opts.now ?? (() => new Date());
   const batchRows = opts.batchRows ?? DEFAULT_SEED_BATCH_ROWS;
-  const budgetMs = opts.budgetMs ?? DEFAULT_SEED_BUDGET_MS;
+  const budgetMs = opts.budgetMs === undefined ? DEFAULT_SEED_BUDGET_MS : opts.budgetMs;
   const started = now();
   const seedId = opts.seedId ?? `seed-${started.toISOString().replace(/[-:.]/g, '')}-${randomUUID().slice(0, 8)}`;
   const plan = await target.seedPlan();
@@ -166,7 +196,7 @@ export async function runSeed(primary: BrainEngine, target: SeedTarget, opts: Se
       const digested = sortKeyUnsupported(read.key) === null;
       let after: readonly string[] | null = null;
       for (;;) {
-        if (now().getTime() - started.getTime() > budgetMs) throw new SeedBudgetError(relation, budgetMs);
+        if (budgetMs !== null && now().getTime() - started.getTime() > budgetMs) throw new SeedBudgetError(relation, budgetMs);
         const rows = await readKeysetRows(tx, read, after, batchRows);
         if (!rows.length) break;
         const result = await target.importRelation(seedId, relation, rows.map(r => r.values), digested
