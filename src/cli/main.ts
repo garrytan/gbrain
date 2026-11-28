@@ -50,7 +50,7 @@ import { cliSurface } from './skill-surface.ts';
 import { setSkillSurfaceProvider } from '../core/skill-health.ts';
 import { printHelp } from './top-help.ts';
 import { curatedFlagError } from './help/validate.ts';
-import { cliCommandOf, exitCliError, exitOnRepairFailed, reportInBandFailure, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli-error.ts';
+import { cliCommandOf, exitCliError, exitOnRepairFailed, installCliErrorConsoleSink, reportInBandFailure, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli-error.ts';
 import type { Notice } from '../core/agent-output.ts';
 import { migrationsNotice, pendingUpgradeMigrationsNotice } from './migrations-notice.ts';
 import { opError, opOwnsSource } from '../core/ops/contract.ts';
@@ -2859,6 +2859,7 @@ export function printOpHelp(op: OperationMeta, invokedName?: string) {
  * delivery) before calling this.
  */
 export function runCli(): void {
+  installCliErrorConsoleSink();
   main().then(
     () => {
       if (!shouldForceExitAfterMain()) return;
