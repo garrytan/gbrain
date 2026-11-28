@@ -165,5 +165,6 @@ export const listRecentPurgeRequests: Member<'listRecentPurgeRequests'> = (brain
   storeCall({ member: 'listRecentPurgeRequests' }, () => brain.listRecentPurgeRequests(days, cap));
 /** The store records no derivation-result sweep of a fact purge. */
 export const listDerivationPurgeSweeps: Member<'listDerivationPurgeSweeps'> = async () => [];
-/** The store has no `database_only_reason` on a page, so no page was written database-only to an unbound source. */
-export const listUnboundSourcePages: Member<'listUnboundSourcePages'> = async () => [];
+/** Served from the store's page, source, binding and config records (write_guards.rs list_unbound_source_pages). */
+export const listUnboundSourcePages: Member<'listUnboundSourcePages'> = async (brain) =>
+  await storeCall({ member: 'listUnboundSourcePages' }, () => brain.listUnboundSourcePages()) as Awaited<ReturnType<BrainEngine['listUnboundSourcePages']>>;

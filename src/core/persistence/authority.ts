@@ -1,3 +1,4 @@
+import type { WriterReadPolicy } from '../engine-sql/remote-links.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError, OperationError } from '../ops/contract.ts';
@@ -102,7 +103,7 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
  * registration check just made answers the authorization that follows it (`withRegisteredLocalWriter`, once).
  */
 /** The engine authorization reads through: its raw statements plus the typed local writer and source membership reads. */
-export type AuthorityEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'listTakeHoldersAtRows' | 'readAccessTokenAttest' | 'readOauthClientAttest' | 'hasLabelledOnlyMember' | 'hasLabelledOnlyMemberAmong' | 'getConfig' | 'readLinkedMember' | 'readLocalWriterRow' | 'readSourceMembership' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readPagePrivacyHidden' | 'readLinkTargetPages' | 'readOauthClient' | 'readOAuthClientWriteGrant' | 'readAccessTokenWriteGrant' | 'shareLockWriteCredential' | 'refreshStore'>;
+export type AuthorityEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'listTakeHoldersAtRows' | 'readAccessTokenAttest' | 'readOauthClientAttest' | 'hasLabelledOnlyMember' | 'hasLabelledOnlyMemberAmong' | 'getConfig' | 'getConfigValues' | 'readLinkedMember' | 'readLocalWriterRow' | 'readSourceMembership' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readPagePrivacyHidden' | 'refreshStore' | 'readLinkTargetPages' | 'readPageHiddenFromWriter' | 'readOauthClient' | 'readOAuthClientWriteGrant' | 'readAccessTokenWriteGrant' | 'shareLockWriteCredential'>;
 function localWriterRow(engine: AuthorityEngine, id: string, lock: boolean): Promise<Array<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>> {
   const registered = lock ? undefined : takeRegisteredWriterRow(id);
   if (registered) return Promise.resolve([registered]);
@@ -312,6 +313,9 @@ function onceReads(engine: BrainEngine): BrainEngine {
     // as a typed member it is answered once too, so a receipt check's second visibility pass sends no second probe.
     if (key === 'readWriteVisibilityProbe') return (sourceId: string, slug: string) =>
       memo(JSON.stringify(['typed:visibility', sourceId, slug]), () => target.readWriteVisibilityProbe(sourceId, slug));
+    // The writer-policy test of a slug's rows (authorizePageVisibility's hiddenUnder fallback) was a plain executeRaw read this memo answered once; typed, it still is.
+    if (key === 'readPageHiddenFromWriter') return (sourceId: string, slug: string, policy: WriterReadPolicy, hidePrivate: boolean) =>
+      memo(JSON.stringify(['typed:writer-hidden', sourceId, slug, policy, hidePrivate]), () => target.readPageHiddenFromWriter(sourceId, slug, policy, hidePrivate));
     if (key === 'readLocalWriterRow') return (id: string, opts?: { lock?: boolean }) => opts?.lock ? target.readLocalWriterRow(id, opts)
       : memo(JSON.stringify(['typed:writer', id]), () => target.readLocalWriterRow(id));
     // attestRightOf's credential reads were plain executeRaw reads this memo answered once; as typed members they still are.

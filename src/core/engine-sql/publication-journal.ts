@@ -194,3 +194,47 @@ export function sqlPublicationJournalStore(exec: RawSql): PublicationJournalStor
 export async function publicationJournalStore(exec: RawSql): Promise<PublicationJournalStore> {
   return sqlPublicationJournalStore(exec);
 }
+
+/**
+ * Every statement the SQL store can send, or null when that cannot be told: the shadow write sampler judges the
+ * `publicationJournalStore` member by them (shadow/write-capture.ts), since the store's own calls run on the transaction
+ * unseen by the shadow wrapper. Collected by driving each method (and each branch: `checked`, each recovery table) once
+ * against an executor that only records: every method sends its one statement before its first await, so the text is
+ * recorded synchronously. A method this list does not drive, or one that sends no statement here, makes it null, and the
+ * member then stays an ordinary write (fails closed).
+ */
+export function publicationJournalStatements(): readonly string[] | null {
+  const sent: string[] = [];
+  const store = sqlPublicationJournalStore({ executeRaw: ((sql: string) => { sent.push(sql); return Promise.resolve([]); }) as never });
+  const id = '00000000-0000-4000-8000-000000000000';
+  const reservation: RecoveryReservation = { id, executionToken: id, recovery: {} as RecoveryRecord, bytes: 0, keys: [] };
+  const drive: { [K in keyof PublicationJournalStore]: Array<(s: PublicationJournalStore) => Promise<unknown>> } = {
+    heldBehindImport: [(s) => s.heldBehindImport('default', 'x', 0)],
+    recoveryBlocker: [(s) => s.recoveryBlocker(id, id)],
+    ownerPath: [(s) => s.ownerPath(id)],
+    shareWorktreeOwner: [(s) => s.shareWorktreeOwner(id)],
+    shareWorktree: [(s) => s.shareWorktree(id)],
+    lockSource: [(s) => s.lockSource('default')],
+    recordRecovery: [(s) => s.recordRecovery(reservation, true), (s) => s.recordRecovery(reservation, false)],
+    clearKnownRecovery: [(s) => s.clearKnownRecovery(id, [], {})],
+    clearRecovery: [(s) => s.clearRecovery(id, [], 0)],
+    markRecovering: [(s) => s.markRecovering(id, id, 'x')],
+    markPublicationStarted: [(s) => s.markPublicationStarted(id)],
+    blockCapacity: [(s) => s.blockCapacity(id)],
+    blockRecovery: [(s) => s.blockRecovery(id, 'x')],
+    requeueRecovered: [(s) => s.requeueRecovered(id, null, false)],
+    stagingDurability: [(s) => s.stagingDurability()],
+    recoveryStaging: (Object.keys(RECOVERY_STAGING_SQL) as RecoveryTable[]).map((t) => (s: PublicationJournalStore) => s.recoveryStaging(t, id)),
+    growRecoveryStaging: (Object.keys(RECOVERY_STAGING_SQL) as RecoveryTable[]).map((t) => (s: PublicationJournalStore) => s.growRecoveryStaging(t, id, {}, 0)),
+  };
+  for (const name of Object.keys(store)) {
+    const calls = (drive as Record<string, Array<(s: PublicationJournalStore) => Promise<unknown>>>)[name];
+    if (!calls?.length) return null;
+    for (const call of calls) {
+      const before = sent.length;
+      try { void call(store).catch(() => undefined); } catch { return null; }
+      if (sent.length !== before + 1) return null;
+    }
+  }
+  return [...new Set(sent)];
+}

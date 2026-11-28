@@ -31,7 +31,10 @@ import {
 
 export type OwnerIpcRoute = 'local' | 'forward' | 'refuse';
 
-const LOCAL: ReadonlySet<string> = new Set(['kind', 'capabilities', 'connect', 'disconnect', 'reconnect', 'registerBeforeDisconnect']);
+// withManagedPersistencePaused runs its callback on the caller's side and reaches the owner only through its two typed
+// members (pauseManagedPersistence, restoreManagedPersistence), which are forwarded.
+const LOCAL: ReadonlySet<string> = new Set(['kind', 'capabilities', 'connect', 'disconnect', 'reconnect', 'registerBeforeDisconnect',
+  'withManagedPersistencePaused']);
 const REFUSE: ReadonlySet<string> = new Set(['transaction', 'transactionDirect', 'withReservedConnection', 'holdSchemaMigrationLock', 'keywordBoundedRead',
   'worktreeClaimStore', 'writerAdminStore',
   // The managed-mode stores answer an object of functions that run on the owner's store: a function does not cross the
@@ -126,6 +129,11 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // mention-coverage: a world-only caller's backlinks and coverage, under the caller's referrer scope.
   'listReferrerTargetSources', 'readMentionIndexStatus', 'countLivePagesInSource', 'countReferrerRows',
   'readReferrerPageDetails', 'readReferrerRows',
+  // entity-variants, labelled-only-reads (served, both routes): a remote entity reads its card rows and ranks title
+  // variants without a private one; a remote get_versions reads each version's reason writers.
+  'readEntityCardRows', 'rankEntities', 'listNameVariantCardCandidates', 'readVisibleVariantPages',
+  'listVisibleNameVariantCandidates', 'readRetirementHop', 'readEntityAliasRows', 'readRankCoverage', 'readReferrerTargetCounts',
+  'listVersionReasonWriters',
 ];
 
 /**

@@ -77,6 +77,7 @@ describe('every store-member policy goes through the store derivation', () => {
 
   test('the scan sees a builder outside the derivation', () => {
     const dir = join(import.meta.dir, '..', 'test', 'fixtures', 'access-derivation-coverage');
-    expect(policyBuildersOutsideDerivation(dir)).toEqual(['bad.ts:4 pagePolicyFlags', 'bad.ts:8 storeThingRendered', 'bad.ts:9 storeThingRendered']);
+    expect(policyBuildersOutsideDerivation(dir)).toEqual(['bad.ts:4 pagePolicyFlags', 'bad.ts:8 storeThingRendered', 'bad.ts:9 storeThingRendered',
+      'bad.ts:12 renderForStoreCaller', 'bad.ts:12 pagePolicyFlags']);
   });
 });

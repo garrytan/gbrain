@@ -27,3 +27,14 @@ data.
 
 The tags whose `keys.rs` lines carry no family comment belong to the core store and are listed
 under the family `core`.
+
+## Record kinds added inside a tag
+
+A new record kind under an existing tag changes no catalog entry: the catalog lists tags, and a kind byte only for
+`A`, `R` and `a`. Each such kind is registered here with the format it came in at.
+
+| Tag | Kind | Records | Since |
+| --- | --- | --- | --- |
+| `h` | `0x0C` | the re-derive queue (`generations/needs_rederive.rs`) | no bump (`format.md`) |
+| `t` | `0x0f` | the owner's allow rules by id (`trust/allow_rules.rs`) | format 8, no bump (`format.md`) |
+| `t` | `0x10` | the active allow rule's id by (source, prefix, family) | format 8, no bump (`format.md`) |

@@ -75,6 +75,8 @@ export const ENGINE_CAPABILITIES = [
    * engine reports it only while its store keeps a log, and refuses the members naming it otherwise.
    */
   'commit_log',
+  /** Guest-source records (`guest_sources`: writers and trust ceiling, the record `guests init` writes). The Rust store keeps none yet (row 32m-3). */
+  'guest_sources',
 ] as const;
 
 /**

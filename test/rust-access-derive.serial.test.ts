@@ -11,6 +11,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { accessDeriveContext, firstDifference, withAccessStore, type AccessDeriveRequest } from '../src/core/rust-engine/access-self-check.ts';
+import { enforcedMemberPolicy } from '../src/core/rust-engine/store-members/enforced-member-policy.ts';
+import { hiddenSlugsPolicySql, memberViewPolicySql } from '../src/core/engine-sql/page-mutation-reads.ts';
 import {
   storeFloorPolicy, storeMemberReadPolicy, storePageTextPolicy, storePrivacyPolicy,
 } from '../src/core/rust-engine/store-members/private-provenance.ts';
@@ -19,7 +21,7 @@ import { storeVisibility } from '../src/core/rust-engine/store-members/fact-visi
 import { readPageHiddenFromCaller, readPagePrivacyHidden } from '../src/core/rust-engine/store-members/page-visibility.ts';
 import {
   __resetPrivateVisibilityCacheForTests, privateFactFilterForCaller, privateFactFilterForReader, privatePagesFilterForCaller,
-  privatePagesFilterFragment, privateProvenanceFilterUnderPolicy, readHonorAliases, callerAccessRecord, remoteReadFloorSql, withCallerAccess,
+  privatePagesFilterFragment, privateProvenanceFilterUnderPolicy, readHonorAliases, callerAccessRecord, currentCallerAccess, remoteReadFloorSql, withCallerAccess,
   type CallerAccess,
 } from '../src/core/search/private-visibility.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -223,6 +225,27 @@ function cases(): Case[] {
   return out;
 }
 
+/**
+ * The enforced member CLI's reads around a write (`enforcedMemberPolicy`, store-members/enforced-member-policy.ts): the member
+ * view of a page for a member's identity and rules, and the output guard's text for the caller's own. Kept apart from
+ * `cases()` so the main corpus keeps its size.
+ */
+function enforcedCases(): Case[] {
+  const out: Case[] = [];
+  for (const q of MEMBER_READS.filter(q => !q.owner)) {
+    out.push({ request: { mode: 'enforced_member_policy', view: 'member_view', identity: q.identity, satisfied: q.satisfied },
+      run: () => enforcedMemberPolicy('m', 'member_view', () => memberViewPolicySql(q.identity, q.satisfied, false), q.identity, q.satisfied) });
+  }
+  out.push({ request: { mode: 'enforced_member_policy', view: 'member_view', identity: ['NotValid'], satisfied: ['wiki:team'] },
+    run: () => enforcedMemberPolicy('m', 'member_view', () => memberViewPolicySql(['NotValid'], ['wiki:team'], false), ['NotValid'], ['wiki:team']) });
+  out.push({ request: { mode: 'enforced_member_policy', view: 'member_view', identity: ['member:carol-example'], satisfied: ['bad id'] },
+    run: () => enforcedMemberPolicy('m', 'member_view', () => memberViewPolicySql(['member:carol-example'], ['bad id'], false), ['member:carol-example'], ['bad id']) });
+  // The output guard judges by the caller's own identity and rules, whatever they are in this record.
+  out.push({ request: { mode: 'enforced_member_policy', view: 'hidden_slugs', get identity() { return [...currentCallerAccess().identity]; }, get satisfied() { return [...currentCallerAccess().satisfiedRuleIds]; } },
+    run: () => { const a = currentCallerAccess(); return enforcedMemberPolicy('m', 'hidden_slugs', hiddenSlugsPolicySql, a.identity, a.satisfiedRuleIds); } });
+  return out;
+}
+
 /** The comparable outcome of a TypeScript helper (as access-self-check.ts compares it). */
 async function tsOutcome(run: () => unknown | Promise<unknown>): Promise<unknown> {
   try {
@@ -248,8 +271,7 @@ async function setHonorAliases(on: boolean): Promise<void> {
 
 interface Mismatch { index: number; settings: string; patch: unknown; request: AccessDeriveRequest; ts: unknown; store: unknown; at: string }
 
-async function runCorpus(records: Array<Partial<CallerAccess> | null>, settings: string): Promise<{ compared: number; mismatches: Mismatch[] }> {
-  const all = cases();
+async function runCorpus(records: Array<Partial<CallerAccess> | null>, settings: string, all = cases()): Promise<{ compared: number; mismatches: Mismatch[] }> {
   const mismatches: Mismatch[] = [];
   let compared = 0;
   for (let i = 0; i < records.length; i++) {
@@ -315,6 +337,34 @@ describe('store access derivation equals the TypeScript policy helpers', () => {
       }, 300_000);
     }
   }
+
+  for (const honor of [true, false]) {
+    for (const relaxed of [false, true]) {
+      test(`the enforced member reads over ${records.length} records (honor_aliases ${honor}, process privacy relaxed ${relaxed})`, async () => {
+        await setHonorAliases(honor);
+        if (relaxed) process.env.GBRAIN_REMOTE_PRIVATE_PAGES = '1'; else delete process.env.GBRAIN_REMOTE_PRIVATE_PAGES;
+        try {
+          const { compared, mismatches } = await runCorpus(records, `honor=${honor} relaxed=${relaxed}`, enforcedCases());
+          expect(compared).toBe(records.length * enforcedCases().length);
+          if (mismatches.length) throw new Error(`${mismatches.length} of ${compared} outcomes differ; first:\n${report(mismatches)}`);
+        } finally {
+          delete process.env.GBRAIN_REMOTE_PRIVATE_PAGES;
+        }
+      }, 300_000);
+    }
+  }
+
+  test('the enforced member reads reach a served policy and a refusal', async () => {
+    await setHonorAliases(true);
+    const kinds = new Set<string>();
+    for (const patch of records) {
+      for (const c of enforcedCases()) {
+        const out = patch === null ? storeOutcome(c.request) : withCallerAccess(patch, () => storeOutcome(c.request));
+        kinds.add(`${c.request.mode === 'enforced_member_policy' ? c.request.view : ''}:${(out as { $refuse?: boolean }).$refuse ? 'refuse' : 'value'}`);
+      }
+    }
+    expect([...kinds].sort()).toEqual(['hidden_slugs:refuse', 'hidden_slugs:value', 'member_view:refuse', 'member_view:value']);
+  }, 300_000);
 
   test('the corpus reaches every outcome kind (a served policy, an absent one and a refusal) in each mode', async () => {
     await setHonorAliases(true);

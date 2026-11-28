@@ -72,8 +72,8 @@ export interface WriterAdminStore extends ContentReceiptStore {
   markWorktreeDraining(id: string, manifest: object): Promise<void>;
   /** Cancels a prepared transfer: state `active`, no manifest. */
   reactivateWorktree(id: string): Promise<void>;
-  /** Records the accepting host's paths for the worktree, replacing the paths it had (its Git durability is kept). */
-  upsertHostBinding(row: Omit<HostBindingInsert, 'gitDurability'>): Promise<void>;
+  /** Records the accepting host's paths for the worktree, replacing the paths it had. Its Git durability is kept, except that `carryDurability` (a cross-host accept, #10123) also takes `gitDurability` when it is set. */
+  upsertHostBinding(row: Omit<HostBindingInsert, 'gitDurability'> & { gitDurability?: HostBindingInsert['gitDurability']; carryDurability?: boolean }): Promise<void>;
   /** Accepts a transfer: `hostId` owns the worktree at the next epoch, `active`, heartbeat now; the manifest is kept. */
   acceptWorktreeOwner(id: string, hostId: string): Promise<void>;
 }
@@ -131,6 +131,11 @@ export async function readWriterAdminState(engine: RawSql, opts: WriterAdminStat
   return row.state;
 }
 
+const UPSERT_HOST_BINDING = `INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path,git_durability)
+  VALUES($1::uuid,$2::uuid,$3,$4,$5) ON CONFLICT(worktree_id,host_id) DO UPDATE SET local_path=EXCLUDED.local_path,coordination_path=EXCLUDED.coordination_path`;
+const UPSERT_HOST_BINDING_CARRYING = `INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path,git_durability)
+  VALUES($1::uuid,$2::uuid,$3,$4,$5) ON CONFLICT(worktree_id,host_id) DO UPDATE SET local_path=EXCLUDED.local_path,coordination_path=EXCLUDED.coordination_path,git_durability=COALESCE(EXCLUDED.git_durability,persistence_host_bindings.git_durability)`;
+
 /** The SQL store over a transaction-bound engine. */
 export function sqlWriterAdminStore(tx: BrainEngine): WriterAdminStore {
   return {
@@ -177,9 +182,8 @@ export function sqlWriterAdminStore(tx: BrainEngine): WriterAdminStore {
       await tx.executeRaw(`UPDATE persistence_worktrees SET state='active',manifest=NULL WHERE id=$1::uuid`, [id]);
     },
     async upsertHostBinding(row) {
-      await tx.executeRaw(`INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path)
-        VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(worktree_id,host_id) DO UPDATE SET local_path=EXCLUDED.local_path,coordination_path=EXCLUDED.coordination_path`,
-        [row.worktreeId, row.hostId, row.localPath, row.coordinationPath]);
+      await tx.executeRaw(row.carryDurability ? UPSERT_HOST_BINDING_CARRYING : UPSERT_HOST_BINDING,
+        [row.worktreeId, row.hostId, row.localPath, row.coordinationPath, row.gitDurability ?? null]);
     },
     async acceptWorktreeOwner(id, hostId) {
       await tx.executeRaw(`UPDATE persistence_worktrees SET owner_host_id=$2::uuid,owner_epoch=owner_epoch+1,state='active',heartbeat_at=now() WHERE id=$1::uuid`, [id, hostId]);

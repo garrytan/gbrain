@@ -9,7 +9,7 @@
  * on, `gbrain engine swap --to rust --plan` shows a plan, reads a readiness criterion or writes anything for a brain
  * whose `persistence_brain.enabled` is true, when the refusal loses its reason, exit code, next step or guide anchor,
  * or when a managed brain with the switch off is refused; and when a managed plan stops naming the Rust known loss
- * (RUST_ENGINE.md conflict row 55, with the switch on or off) or an unmanaged plan starts carrying it. (3) No existing test sets managed storage on a swap. (4) No
+ * (RUST_ENGINE.md conflict row 55a, with the switch on or off) or an unmanaged plan starts carrying it. (3) No existing test sets managed storage on a swap. (4) No
  * seam: a real PGLite brain (Postgres too when DATABASE_URL is set) and the real command; only the shadow status
  * reader is injected, to prove it is never called.
  */
@@ -78,7 +78,7 @@ describe(`engine swap refuses a managed brain only where Rust cannot hold it (${
     expect(run.code).toBe(0);
     expect(run.statusReads).toBe(1);
     expect(await persistenceSnapshot(engine)).toBe(before);
-    // RUST_ENGINE.md conflict row 55: the plan names what managed mode does not yet do on a Rust brain.
+    // RUST_ENGINE.md conflict row 55a: the plan names what managed mode does not yet do on a Rust brain.
     const losses: string[] = JSON.parse(run.stdout).managed_known_losses;
     expect(losses).toHaveLength(1);
     expect(losses[0]).toContain('recordFailure');

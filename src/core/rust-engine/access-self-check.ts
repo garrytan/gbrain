@@ -39,7 +39,8 @@ export type AccessDeriveRequest =
   | { mode: 'owner_reach'; identity: string[]; satisfied: string[] }
   | { mode: 'open_page_floor' }
   | { mode: 'writer_policy'; policy: { identities: string[][]; satisfiedRuleIds: string[]; folderCoverage: Array<{ source_id: string; prefix: string }>; owner: boolean; labelledOnly: boolean } }
-  | { mode: 'snapshot_policy'; identity: string[]; privateReadableSources: string[] };
+  | { mode: 'snapshot_policy'; identity: string[]; privateReadableSources: string[] }
+  | { mode: 'enforced_member_policy'; view: 'member_view' | 'hidden_slugs'; identity: string[]; satisfied: string[] };
 
 type Deriver = (ctx: unknown) => unknown;
 /** The store a served member runs on, as the self-check reads it: its multi-user answer and the addon's derivation. */

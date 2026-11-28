@@ -29,6 +29,15 @@ if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
 }
 const withAddon = test.skipIf(!HAVE_ADDON);
 
+/** Creates a Rust store at `dir` by opening it directly (the open the engine makes); registers no writer. */
+async function createRustStore(dir: string): Promise<void> {
+  const { loadRustAddon } = await import('../src/core/rust-engine/addon-loader.ts');
+  const { openRustStore } = await import('../src/core/rust-engine/store.ts');
+  const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON } });
+  const store = await openRustStore(addon, dir);
+  await store.close();
+}
+
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 const REPO = join(import.meta.dir, '..');
 
@@ -239,13 +248,13 @@ describe('gbrain engine status', () => {
     expect(existsSync(join(dir, 'FORMAT'))).toBe(false);
   }, 60_000);
 
-  withAddon('--probe with the built addon and a nonempty records.redb but no FORMAT: store_incomplete, nothing written', () => {
+  withAddon('--probe with the built addon and a nonempty records.redb but no FORMAT: store_incomplete, nothing written', async () => {
     // A first open writes FORMAT last, so a record file without FORMAT may hold no brain metadata yet; opening it
     // would make a new brain. The probe reports it and leaves the record file byte for byte, with no FORMAT made.
     const store = join(home, 'brain.rust');
     writeConfig({ engine: 'rust', database_path: store });
-    const init = run(['stats', '--json'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
-    expect(init.status).toBe(0);
+    // A read command refuses a missing Rust store (brain_missing), so the store is made by an open that creates it.
+    await createRustStore(store);
     rmSync(join(store, 'FORMAT'));
     const before = readFileSync(join(store, 'records.redb'));
     expect(before.length).toBeGreaterThan(0);
@@ -256,12 +265,12 @@ describe('gbrain engine status', () => {
     expect(existsSync(join(store, 'FORMAT'))).toBe(false);
   }, 60_000);
 
-  withAddon('--probe with the built addon and an existing rust store: ok, through a typed read (no raw SQL refusal)', () => {
+  withAddon('--probe with the built addon and an existing rust store: ok, through a typed read (no raw SQL refusal)', async () => {
     const store = join(home, 'brain.rust');
     writeConfig({ engine: 'rust', database_path: store });
-    // A first probe-free command opens and creates the store; the probe then reads it.
-    const init = run(['stats', '--json'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
-    expect(init.status).toBe(0);
+    // The store is created first (createRustStore); the probe then reads it.
+    // A read command refuses a missing Rust store (brain_missing), so the store is made by an open that creates it.
+    await createRustStore(store);
     expect(existsSync(store)).toBe(true);
     const { stdout, status } = run(['engine', 'status', '--json', '--probe'], { GBRAIN_RUST_ENGINE_ADDON: BUILT_ADDON });
     const report = parseReport(stdout);

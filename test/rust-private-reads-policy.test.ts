@@ -16,12 +16,14 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { storePageTextPolicy, storePrivacyPolicy } from '../src/core/rust-engine/store-members/private-provenance.ts';
-import { privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy, withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy, remoteReadFloorSql, withCallerAccess } from '../src/core/search/private-visibility.ts';
 
 const REMOTE = { hidePrivate: true, restricted: true, applyRemoteReadPolicy: true };
 const MEMBER = { ...REMOTE, identity: ['member:alice-example'] };
 
-const RECORDS: Array<[name: string, record: Record<string, unknown> | null, served: boolean]> = [
+/** What each translator serves for a record: the page policy and the fact policy (the fact policy refuses every lineage read, row 32e-b-4). */
+type Served = boolean | { page: boolean; fact: boolean };
+const RECORDS: Array<[name: string, record: Record<string, unknown> | null, served: Served]> = [
   ['no record', null, true],
   ['empty record', {}, true],
   ['remote, no member', { ...REMOTE }, true],
@@ -32,8 +34,12 @@ const RECORDS: Array<[name: string, record: Record<string, unknown> | null, serv
   ['remote owner', { ...REMOTE, identity: ['member:owner-example'], owner: true, ownerReads: true }, true],
   // An audience does not change the page or fact policy text (it narrows other reads), so its text is the member's.
   ['member with an audience', { ...MEMBER, audience: ['member:bob-example'], audienceIdentities: [['member:bob-example']] }, true],
-  ['labelled-only member', { ...MEMBER, labelledOnly: true }, false],
-  ['member with a lineage read', { ...MEMBER, lineage: true }, false],
+  // A labelled-only grant and a member's lineage read are served as the same record with the grant or the lineage rule.
+  ['labelled-only member', { ...MEMBER, labelledOnly: true }, true],
+  ['labelled-only member with a lineage read', { ...MEMBER, labelledOnly: true, lineage: true }, { page: true, fact: false }],
+  ['member with a lineage read', { ...MEMBER, lineage: true }, { page: true, fact: false }],
+  // Not modelled: a labelled-only audience of several identities (the rest of its policy is one test per identity).
+  ['labelled-only member with an audience of two', { ...MEMBER, labelledOnly: true, audience: ['member:alice-example', 'member:bob-example'], audienceIdentities: [['member:alice-example'], ['member:bob-example']] }, false],
   // The remote owner's lineage read (GST-2490): served as the owner read rule with the opt-in off and no audience.
   ['remote owner lineage read', { ...REMOTE, identity: ['member:owner-example'], owner: true, ownerReads: true, lineage: true }, true],
   ['remote owner lineage read under the opt-in', { ...REMOTE, identity: ['member:owner-example'], owner: true, ownerReads: true, lineage: true, ownerReadsRestricted: true }, false],
@@ -51,13 +57,14 @@ function outcome(run: () => unknown, record: Record<string, unknown> | null): 's
 }
 
 describe('the Rust page and fact policy translator under excludePrivate', () => {
-  test('serves the no-record, reader and owner records and still refuses every other record, for page and fact reads', () => {
+  test('serves the no-record, reader, owner, labelled-only and lineage records, and refuses an audience of a labelled-only member, and a lineage fact policy', () => {
     const page = Object.fromEntries(RECORDS.map(([name, record]) =>
       [name, outcome(() => storePageTextPolicy('getPage', () => privatePagesFilterForCaller('p'), { callerReaders: true }), record)]));
     const fact = Object.fromEntries(RECORDS.map(([name, record]) =>
       [name, outcome(() => storePrivacyPolicy('listFactsByEntity', true, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true }), record)]));
-    const expected: Record<string, 'served' | 'refused'> = Object.fromEntries(RECORDS.map(([name, , served]): [string, 'served' | 'refused'] => [name, served ? 'served' : 'refused']));
-    expect({ page, fact }).toEqual({ page: expected, fact: expected });
+    const expect_ = (which: 'page' | 'fact'): Record<string, 'served' | 'refused'> => Object.fromEntries(RECORDS.map(([name, , served]): [string, 'served' | 'refused'] =>
+      [name, (typeof served === 'boolean' ? served : served[which]) ? 'served' : 'refused']));
+    expect({ page, fact }).toEqual({ page: expect_('page'), fact: expect_('fact') });
   });
 
   test('a family that does not opt in with callerReaders serves only the no-record policy, owners included', () => {
@@ -66,5 +73,16 @@ describe('the Rust page and fact policy translator under excludePrivate', () => 
     expect(page['no record']).toBe('served');
     expect(page['local owner']).toBe('refused');
     expect(page['remote owner']).toBe('refused');
+  });
+
+  test('the remote read floor sends the pending prefixes its text was rendered with, for a labelled-only and an ordinary caller', () => {
+    const coverage = [{ source_id: 'default', prefix: 'derived/' }];
+    const floor = (record: Record<string, unknown>) => withCallerAccess(record as never, () => storePageTextPolicy('readReflexPages', () => remoteReadFloorSql('p'), { callerReaders: true }));
+    const labelled = floor({ ...MEMBER, labelledOnly: true, lineage: true, folderCoverage: coverage, satisfiedRuleIds: ['default:r1'] });
+    expect({ coverage: labelled.folderCoverage, record: labelled.callerRecord, terms: labelled.labelledOnly })
+      .toEqual({ coverage, record: true, terms: { identity: ['member:alice-example'], satisfiedRuleIds: ['default:r1'], lineage: true, member: 'alice-example' } });
+    expect(floor({ ...MEMBER, folderCoverage: coverage }).folderCoverage).toEqual(coverage);
+    // No prefix in the record: the plain floor form, which sends none (and never the live pending prefixes of the store).
+    expect(floor({ ...MEMBER, labelledOnly: true }).folderCoverage).toBeUndefined();
   });
 });

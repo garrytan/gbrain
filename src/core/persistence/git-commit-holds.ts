@@ -72,6 +72,31 @@ export function gitCommitHoldLine(hold: Omit<GitCommitHold, 'fix'>): string {
   return `git commits held: ${hold.retrying} retrying, ${hold.parked} parked (${hold.codes.join(', ')}) since ${hold.oldest_at} at step ${hold.last_error.step} (reason: ${hold.last_error.reason})${hold.identity_missing ? '; this checkout has no Git identity (user.name, user.email)' : ''}`;
 }
 
+/** The cap renderAction's inertText puts on why and user_message; hold text is built to fit it, never cut. */
+const TEXT_CAP = 2_000;
+/** GCH5-05: the text with the inline `git -C <root> status` hint when it fits TEXT_CAP whole, else with the step but not the path. */
+function withStatusHint(root: string | null, text: (hint: string) => string): string {
+  const full = text(`git -C ${root ? shellQuote(root) : '<checkout>'} status`);
+  return full.length <= TEXT_CAP ? full : text('git status, run in that checkout (its path is in sync status --json),');
+}
+
+/**
+ * GCH5-06: the identity question names the checkout by its quoted, escaped form (shell-quote.ts), so a control in
+ * the path never reaches the reader raw and the HTTP path mask sees the path. GCH5-05: the whole question is built
+ * first; when it is longer than TEXT_CAP the short form leaves out the inline git commands (the fix command holds the
+ * path), and keeps the retry preview only when it still fits whole. The text is never cut.
+ */
+function identityQuestion(hold: Omit<GitCommitHold, 'fix'>, held: number, retry: string): string {
+  const root = shellQuote(hold.root!);
+  const lost = `the checkout has no commit identity (user.name, user.email), so ${held} Git backup(s) of page writes in source ${hold.source_id} are not committed (nothing is lost; the database has every write). Which name and email should commits in this checkout use?`;
+  const preview = hold.parked ? `, and ${retry} previews one more attempt for the ${hold.parked} parked one(s)` : '';
+  const full = `Git cannot commit page files in ${root}: ${lost} Set them with git -C ${root} config user.name "<name>" and git -C ${root} config user.email "<email>"; retrying effects then commit on their own${preview}.`;
+  if (full.length <= TEXT_CAP) return full;
+  const short = (tail: string) => `Git cannot commit page files in this checkout (its path is in the fix command, too long to print here): ${lost} Set them with git config user.name "<name>" and git config user.email "<email>", run in that checkout; retrying effects then commit on their own${tail}.`;
+  const withPreview = short(preview);
+  return withPreview.length <= TEXT_CAP ? withPreview : short(hold.parked ? `, and a retry-effects dry run for source ${hold.source_id} previews one more attempt for the ${hold.parked} parked one(s)` : '');
+}
+
 const statusVerify = (sourceId: string) => ({ argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
 
 function gitCommitFix(hold: Omit<GitCommitHold, 'fix'>): Action {
@@ -84,12 +109,11 @@ function gitCommitFix(hold: Omit<GitCommitHold, 'fix'>): Action {
     verify: statusVerify(hold.source_id),
   };
   if (hold.identity_missing && hold.root && hold.owner_host === 'this_host') {
-    const root = shellQuote(hold.root);
     return {
       ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
       argv: ['git', '-C', hold.root, 'config', '--show-origin', '--get-regexp', '^user\\.'],
       why: 'Read-only: shows which commit identity this checkout sees (none, which is why its commits fail).',
-      user_message: `Git cannot commit page files in ${hold.root}: the checkout has no commit identity (user.name, user.email), so ${held} Git backup(s) of page writes in source ${hold.source_id} are not committed (nothing is lost; the database has every write). Which name and email should commits in this checkout use? Set them with git -C ${root} config user.name "<name>" and git -C ${root} config user.email "<email>"; retrying effects then commit on their own${hold.parked ? `, and ${retry} previews one more attempt for the ${hold.parked} parked one(s)` : ''}.`,
+      user_message: identityQuestion(hold, held, retry),
       verify: statusVerify(hold.source_id), docs: 'docs/guides/concurrent-writes.md#managed-git-identity',
     };
   }
@@ -97,7 +121,7 @@ function gitCommitFix(hold: Omit<GitCommitHold, 'fix'>): Action {
   const elsewhere = hold.identity_missing ? ` git said the owner's checkout has no commit identity (user.name, user.email); set it on the owner host${hold.owner_host === 'other_host' ? ' (not this one)' : ''}, which gbrain sources writer status --source ${shellQuote(hold.source_id)} names.` : '';
   if (hold.parked) return {
     argv: ['gbrain', 'sources', 'writer', 'retry-effects', hold.source_id, '--parked-code', code, '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false,
-    why: `${hold.parked} Git effect(s) of source ${hold.source_id} parked after repeated commit failures (${hold.codes.join(', ')})${hold.last_error ? ` at git step ${hold.last_error.step} (reason: ${hold.last_error.reason})` : ''};${elsewhere} fix the cause in the checkout first (git -C ${hold.root ? shellQuote(hold.root) : '<checkout>'} status on the owner host shows it), then this previews one more attempt for each; it changes nothing.`,
+    why: withStatusHint(hold.root, hint => `${hold.parked} Git effect(s) of source ${hold.source_id} parked after repeated commit failures (${hold.codes.join(', ')})${hold.last_error ? ` at git step ${hold.last_error.step} (reason: ${hold.last_error.reason})` : ''};${elsewhere} fix the cause in the checkout first (${hint} on the owner host shows it), then this previews one more attempt for each; it changes nothing.`),
     verify: statusVerify(hold.source_id),
   };
   return readFix(`${hold.retrying} Git effect(s) of source ${hold.source_id} retry their commit on their own (${hold.codes.join(', ')})${hold.last_error ? `, failing at git step ${hold.last_error.step} (reason: ${hold.last_error.reason})` : ''};${elsewhere} the owner status shows their next attempt and parks them after 5 failures.`,

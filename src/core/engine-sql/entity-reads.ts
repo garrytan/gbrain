@@ -340,6 +340,67 @@ export async function listNameVariantCandidates(exec: LegacyUnscopedRead, source
   return exec.executeRaw<NameVariantCandidateRow>(text, params);
 }
 
+/**
+ * listNameVariantCandidates under the caller's page policy: with `excludePrivate`, a page the caller may not read
+ * (`privatePagesFilterForCaller`) is never a candidate. Most probe hits first, then the shortest title, then slug in
+ * byte order, at most `limit` (rank_entities' possible duplicates for a remote caller).
+ */
+export async function listVisibleNameVariantCandidates(exec: LegacyUnscopedRead, sourceId: string, q: NameVariantCandidateQuery,
+  opts: { excludePrivate?: boolean } = {}): Promise<NameVariantCandidateRow[]> {
+  const limit = Math.max(0, Math.floor(q.limit));
+  const priv = opts.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('pages'))}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT slug, title, type, frontmatter,
+              (SELECT count(*)::int FROM unnest(${[...q.probes]}::text[]) w WHERE pages.title ILIKE w OR pages.slug ILIKE w) AS probe_hits
+         FROM pages
+        WHERE deleted_at IS NULL AND source_id = ${sourceId}
+          AND (type = ANY(${[...q.types]}::text[]) OR slug LIKE ANY(${[...q.slugPatterns]}::text[]))
+          AND (title ILIKE ANY(${[...q.probes]}::text[]) OR slug ILIKE ANY(${[...q.probes]}::text[]))${priv}
+        ORDER BY probe_hits DESC, length(title), slug COLLATE "C"
+        LIMIT ${limit}`);
+  return exec.executeRaw<NameVariantCandidateRow>(text, params);
+}
+
+/** One name-variant candidate as an entity-card row (`ENTITY_CARD_COLUMNS_SQL`) with its probe hits. */
+export interface NameVariantCardCandidateRow extends EntityCardRow { probe_hits: number }
+
+/**
+ * listVisibleNameVariantCandidates as entity-card rows (the entity card's name-variant arm, verbs/entity-variants.ts):
+ * the same candidates under the same page policy, with the card columns, most probe hits first, then the shortest
+ * title, then by slug, at most `limit`.
+ */
+export async function listNameVariantCardCandidates(exec: LegacyUnscopedRead, sourceId: string, q: NameVariantCandidateQuery,
+  opts: { excludePrivate?: boolean } = {}): Promise<NameVariantCardCandidateRow[]> {
+  const limit = Math.max(0, Math.floor(q.limit));
+  const priv = opts.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('pages'))}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(ENTITY_CARD_COLUMNS_SQL)},
+                (SELECT count(*)::int FROM unnest(${[...q.probes]}::text[]) w WHERE pages.title ILIKE w OR pages.slug ILIKE w) AS probe_hits
+           FROM pages
+          WHERE deleted_at IS NULL AND source_id = ${sourceId}
+            AND (type = ANY(${[...q.types]}::text[]) OR slug LIKE ANY(${[...q.slugPatterns]}::text[]))
+            AND (title ILIKE ANY(${[...q.probes]}::text[]) OR slug ILIKE ANY(${[...q.probes]}::text[]))${priv}
+          ORDER BY probe_hits DESC, length(title), slug COLLATE "C"
+          LIMIT ${limit}`);
+  return exec.executeRaw<NameVariantCardCandidateRow>(text, params);
+}
+
+export interface VariantPageRow { slug: string; title: string | null; type: string | null; frontmatter: Record<string, unknown> | null }
+
+/**
+ * The live pages of the source at `slugs`, in `slugs` order (a repeated slug reads once per mention), as the
+ * name-variant rows (slug, title, type, frontmatter); with `excludePrivate`, only pages the caller may read
+ * (`privatePagesFilterForCaller`).
+ */
+export async function readVisibleVariantPages(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[],
+  opts: { excludePrivate?: boolean } = {}): Promise<VariantPageRow[]> {
+  if (slugs.length === 0) return [];
+  const priv = opts.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('pages'))}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT pages.slug, pages.title, pages.type, pages.frontmatter
+         FROM unnest(${[...slugs]}::text[]) WITH ORDINALITY AS wanted(slug, n)
+         JOIN pages ON pages.source_id = ${sourceId} AND pages.slug = wanted.slug AND pages.deleted_at IS NULL${priv}
+        ORDER BY wanted.n`);
+  return exec.executeRaw<VariantPageRow>(text, params);
+}
+
 export interface InboundLinkerCountRow { source_id: string; slug: string; n: number }
 
 /**

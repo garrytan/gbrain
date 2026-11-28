@@ -9,8 +9,9 @@
  * same policy in another order). A fact family that opts in with `callerReaders` also
  * serves a fresh record of only a reader identity and a private-readable grant: the entity gate judges by both, and the
  * provenance page by the identity only on the caller's own member page (`memberPage`, the member-page case of
- * privateProvenanceFilterUnderPolicy; the other form has none). Any other caller (a folder rule, an audience, a lineage or owner read, a
- * labelled-only grant, a relaxed remote read) refuses with `engine_capability_missing`.
+ * privateProvenanceFilterUnderPolicy; the other form has none), plus a labelled-only grant (callerReference: the store keeps a fact
+ * to the caller's own member page). Any other caller (an audience, a lineage or owner read, a relaxed remote read) refuses with
+ * `engine_capability_missing`; so does every fact policy under access.members_read_lineage (RUST_ENGINE.md row 32e-b-4).
  *
  * A page read under `excludePrivate` (pageReadFilter, src/core/search/read-policy-sql.ts) adds the page policy
  * `privatePagesFilterForCaller('p')` instead, which the entity gate of the fact policy applies to its entity page;
@@ -22,7 +23,8 @@
  * privacy.rs). An owner record (the local owner reading with privacy off, or a remote owner reading its own lineage)
  * is served when its text equals the same record's rendering with the owner fields: that text has no owner-only test
  * (`ownerOnly` off) and, for the local owner, no privacy part (`entityPrivacy` false, and `provenancePrivacyOff` for a
- * fact policy). Lineage, labelled-only grants and relaxed reads still refuse.
+ * fact policy). A labelled-only grant and a member's lineage read are served through callerReference (the grant and the
+ * lineage rule ride in the reference record and in the flags the store reads); relaxed reads still refuse.
  *
  * Every text the store serves ends with the owner-only test (access/owner-only.ts), in the `fn` or the `closed` form
  * by the schema version the context carries; `ownerOnly` sends the form the text holds (owner_only.rs).
@@ -57,6 +59,7 @@ import {
   remoteReadFloorSql,
   readPolicyFragment,
   ownerReadPolicyFragment,
+  labelledOnlyTerms,
 } from '../../search/private-visibility.ts';
 import type { ReflexPrivacy } from '../../engine-sql/reflex-reads.ts';
 import type { RetirementPrivacy } from '../../engine-sql/entity-reads.ts';
@@ -100,6 +103,13 @@ export interface StorePrivacyPolicy {
   callerRecord?: boolean;
   /** A local owner's fact policy with privacy off: the provenance page is judged with no privacy part. */
   provenancePrivacyOff?: boolean;
+  /**
+   * The labelled-only conjunct (`labelledOnlySql`): the page names one of `identity` or has a folder rule in `satisfiedRuleIds`
+   * (`LabelledOnly` in privacy.rs). `lineage`: access.members_read_lineage is on, so a derived page also passes when every
+   * origin names the caller (gbrain_access_origin_labelled_for). `member`: the caller's member id, the one member page a fact
+   * is read on (`labelledOnlyFactSql`). A stored write's writer sends neither (no lineage, no facts).
+   */
+  labelledOnly?: { identity: string[]; satisfiedRuleIds: string[]; lineage?: boolean; member?: string };
 }
 
 /** `OwnerOnlyForm` (access/owner-only.ts), plus 'off' for a text with no owner-only test (`OwnerOnlyForm` in owner_only.rs). */
@@ -245,8 +255,12 @@ function storePrivacyPolicyRendered(
       ...(folders.satisfiedRuleIds.length && validRules ? { satisfiedRuleIds: folders.satisfiedRuleIds } : {}),
       ...(folders.folderCoverage.length ? { folderCoverage: folders.folderCoverage } : {}),
     };
-    const records: Array<Partial<CallerAccess>> = [{ ...readers, hidePrivate: true, restricted: !open }];
-    if (folders.satisfiedRuleIds.length || folders.folderCoverage.length) records.push({ ...readers, ...folders, hidePrivate: true, restricted: !open });
+    // A labelled-only grant rides in the reference record and the flags (callerReference). A lineage read refuses: the fact policy
+    // under lineage judges every provenance page by the member's lineage, which the store does not model (row 32e-b-4).
+    const reference = access.lineage && !access.owner ? null : callerReference();
+    if (!reference) return undefined;
+    const records: Array<Partial<CallerAccess>> = [{ ...readers, ...reference.record, hidePrivate: true, restricted: !open }];
+    if (folders.satisfiedRuleIds.length || folders.folderCoverage.length) records.push({ ...readers, ...folders, ...reference.record, hidePrivate: true, restricted: !open });
     if (access.owner) {
       records.push({ ...readers, hidePrivate: access.hidePrivate, restricted: !open, owner: true, ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) });
       if (access.lineage && !access.ownerReadsRestricted && access.audienceKindMembers.length === 0) {
@@ -262,7 +276,7 @@ function storePrivacyPolicyRendered(
         // A local owner reading with privacy off renders no privacy part on the provenance page either.
         const provenancePrivacyOff = record.owner === true && !canonical.includes(privateSnapshotFilterFragment('pp'));
         const withFolders = 'satisfiedRuleIds' in record || 'folderCoverage' in record;
-        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...(record.lineage ? { ownerRead: true } : {}) };
+        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...reference.flags, ...(record.lineage ? { ownerRead: true } : {}) };
       }
     }
     return undefined;
@@ -461,6 +475,23 @@ function storePageTextPolicyRendered(
     // grants or coverage: a page that names readers fails, and a pending prefix hides nothing (privacy.rs caller_record).
     const floor = renderForStoreCaller({ hidePrivate: true, ...(open ? { restricted: false } : {}) }, () => privatePagesFilterFragment('p'));
     if (text === normalizeConceptInputs(floor)) return { ...pagePolicyFlags(floor), identity: [], privateReadableSources: [], callerRecord: true };
+    // The remote read floor under a caller record that holds pending folder prefixes, and that of a labelled-only caller: the plain
+    // fragment (ANDed, for a labelled-only caller, with its conjunct: remoteReadFloorSql), which reads no identity of the member-access
+    // part. Rendered with the caller's record, it hides a page under a pending prefix of the record, so the prefixes are sent with
+    // the labelled-only terms; the store reads the record's coverage, never its own live pending prefixes, for a record caller.
+    if (!access.owner && access.audienceIdentities.length === 0 && (access.labelledOnly || access.folderCoverage.length > 0)) {
+      const terms = access.labelledOnly ? callerReference()?.flags.labelledOnly : undefined;
+      const folders = callerFolders();
+      const record = { ...callerReaders, ...folders, ...(access.labelledOnly ? { labelledOnly: true } : {}), ...(access.labelledOnly && access.lineage ? { lineage: true } : {}), hidePrivate: true, restricted: !open };
+      const callerFloor = renderForStoreCaller(record, () => remoteReadFloorSql('p'));
+      if ((terms || !access.labelledOnly) && text === normalizeConceptInputs(callerFloor)) {
+        return {
+          ...pagePolicyFlags(callerFloor), identity: [], privateReadableSources: [], callerRecord: true,
+          ...(folders.folderCoverage.length ? { folderCoverage: folders.folderCoverage } : {}),
+          ...(terms ? { labelledOnly: terms } : {}),
+        };
+      }
+    }
     if (!opts.callerReaders && !opts.noReaders) return undefined;
     if (opts.noReaders) {
       const none = { identity: [], privateReadableSources: [] };
@@ -471,12 +502,14 @@ function storePageTextPolicyRendered(
       satisfiedRuleIds: [...access.satisfiedRuleIds],
       folderCoverage: access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })),
     };
-    const canonical = renderForStoreCaller({ ...callerReaders, ...folders, hidePrivate: true, restricted: !open }, () => privatePagesFilterForCaller('p'));
+    // The caller's labelled-only grant and lineage read ride in the reference record and in the flags the store reads (callerReference).
+    const reference = callerReference();
+    const canonical = renderForStoreCaller({ ...callerReaders, ...folders, ...reference?.record, hidePrivate: true, restricted: !open }, () => privatePagesFilterForCaller('p'));
     const stored = {
       ...(folders.satisfiedRuleIds.length ? { satisfiedRuleIds: folders.satisfiedRuleIds } : {}),
       ...(folders.folderCoverage.length ? { folderCoverage: folders.folderCoverage } : {}),
     };
-    if (text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...callerReaders, ...stored, callerRecord: true };
+    if (reference && text === normalizeConceptInputs(canonical)) return { ...pagePolicyFlags(canonical), ...callerReaders, ...stored, ...reference.flags, callerRecord: true };
     // An owner record (the local owner, or a remote owner reading its own lineage): the same record with the owner
     // fields, compared by its exact text. Its text holds no owner-only test, and the local owner's no privacy part, so
     // the flags read off it (`owner_only` off, `entity_privacy` false) are what the text applies.
@@ -495,6 +528,32 @@ function storePageTextPolicyRendered(
   });
   if (policy) return { ...policy, ...openFlag };
   refuseMember(member, 'excludePrivate for a caller whose member pages, grants or lineage widen the policy');
+}
+
+/**
+ * What the caller's own grants add to a fresh reference record (`renderForStoreCaller`) and to the policy the store reads:
+ * the labelled-only grant (`labelledOnly`, with the member a fact is read on) and a member's lineage read (`lineage`, which the
+ * store reads as `ownerRead` and, with the grant, `labelledOnly.lineage`). `record` goes into the reference the caller's text is
+ * compared with; `flags` go into the policy served when it matches. An empty reference is an ordinary caller: nothing changes.
+ * Null when the caller's grants are not modelled: a labelled-only audience of several identities (the rest of its policy is
+ * `accessAllowedForAllSql` per identity). The owner's own lineage is the owner record's (storePageTextPolicy), never this.
+ */
+export interface CallerReference { record: Partial<CallerAccess>; flags: Partial<StorePrivacyPolicy> }
+
+export function callerReference(): CallerReference | null {
+  const access = currentCallerAccess();
+  if (access.owner) return { record: {}, flags: {} };
+  if (access.labelledOnly && access.audienceIdentities.length > 0) return null;
+  const lineage = access.lineage === true;
+  const lone = access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
+  const member = access.actor?.member ?? lone;
+  return {
+    record: { ...(access.labelledOnly ? { labelledOnly: true } : {}), ...(lineage ? { lineage: true } : {}) },
+    flags: {
+      ...(lineage ? { ownerRead: true } : {}),
+      ...(access.labelledOnly ? { labelledOnly: { ...labelledOnlyTerms(access), ...(lineage ? { lineage: true } : {}), ...(member ? { member } : {}) } } : {}),
+    },
+  };
 }
 
 /** The reader record a store policy carries for a widening caller (`identity` and `privateReadableSources` in privacy.rs). */

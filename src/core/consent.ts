@@ -18,8 +18,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { CONTRACT_VERSION, cliRenderContext, renderAction, shellQuote, type Action, type Actor, type CliErrorRender, type Effect, type RenderContext, type RenderedAction } from './agent-output.ts';
-import { agentBlock } from './agent-markers.ts';
+import { CONTRACT_VERSION, cliRenderContext, invalidArgument, jsonText, renderAction, shellQuote, type Action, type Actor, type CliErrorRender, type Effect, type RenderContext, type RenderedAction } from './agent-output.ts';
+import { actionCommandField, AGENT_FIELD_MAX, agentBlock, argvCommand, commandField } from './agent-markers.ts';
 import { writeJsonDocument } from './cli-force-exit.ts';
 import { recordAgentContractEvent } from './agent-contract-log.ts';
 import { gbrainPath } from './config.ts';
@@ -255,7 +255,8 @@ export interface ConfirmationPayload {
   est_usd: number | null;
   user_message: string;
   fix: RenderedAction;
-  preview: { argv: string[]; command: string } | null;
+  /** GCH5-05: `command` is absent when an argument holds NUL or a lone surrogate (no shell can carry it). */
+  preview: { argv: string[]; command?: string } | null;
   plan_hash?: string;
   preapprove_argv?: string[];
   docs_cmd: string[];
@@ -298,7 +299,7 @@ export function confirmationPayload(req: ConsentRequest, ctx: RenderContext): Co
     est_usd: req.est_usd ?? null,
     user_message: req.user_message,
     fix: rendered,
-    preview: rendered.preview_argv ? { argv: rendered.preview_argv, command: shellQuote(rendered.preview_argv) } : null,
+    preview: rendered.preview_argv ? { argv: rendered.preview_argv, ...(invalidArgument(rendered.preview_argv) ? {} : { command: shellQuote(rendered.preview_argv) }) } : null,
     ...(req.plan_hash ? { plan_hash: req.plan_hash } : {}),
     ...(paid && !destructive ? { preapprove_argv: preapprovalCommand(PREAPPROVE_PAID_MAX_USD_PER_RUN, '<usd>') } : {}),
     docs_cmd: ['gbrain', 'errors', 'confirmation_required'],
@@ -343,9 +344,14 @@ function previewChangedError(req: ConsentRequest, expected: string): OperationEr
  * stdout and the one-line error on stderr. Pure: callers write the strings.
  */
 export function renderConsentRefusal(p: ConfirmationPayload, opts: { json: boolean }): CliErrorRender {
-  if (opts.json) return { stdout: `${JSON.stringify(p, null, 2)}\n`, exitCode: 3 };
-  const preview = p.preview ? ` To look first (read-only): ${p.preview.command}` : '';
-  const preapprove = p.preapprove_argv ? `To stop asking for runs under a limit the user picks: ${shellQuote(p.preapprove_argv)}` : '';
+  if (opts.json) return { stdout: `${jsonText(p, 2)}\n`, exitCode: 3 };
+  // GCH5-05: each command prints whole or not at all; the field budget is agentBlock's cap.
+  const preview = p.preview ? actionCommandField(' To look first (read-only): ', p.preview, AGENT_FIELD_MAX - 'Nothing runs; nothing was changed.'.length) ?? '' : '';
+  const preapproveArgv = p.preapprove_argv ? argvCommand(p.preapprove_argv) : undefined;
+  const preapprovePrefix = 'To stop asking for runs under a limit the user picks: ';
+  const preapprove = !preapproveArgv ? '' : 'command' in preapproveArgv
+    ? commandField(preapprovePrefix, preapproveArgv.command, AGENT_FIELD_MAX / 2) : `${preapprovePrefix}${preapproveArgv.unavailable}`;
+  const run = actionCommandField('', p.fix, AGENT_FIELD_MAX - (preapprove ? preapprove.length + 3 : 0));
   const block = agentBlock({
     ask: p.user_message,
     why: p.why,
@@ -353,7 +359,7 @@ export function renderConsentRefusal(p: ConfirmationPayload, opts: { json: boole
     consent: p.effects.join(', '),
     actor: p.fix.actor,
     next: p.fix.next,
-    if_yes: [p.fix.command, preapprove].filter(Boolean).join(' — '),
+    if_yes: [run, preapprove].filter(Boolean).join(' — '),
     if_no: `Nothing runs; nothing was changed.${preview}`,
   }, { showUser: p.user_message });
   return { stdout: block, stderr: `Error [confirmation_required]: ${p.message}\n`, exitCode: 3 };

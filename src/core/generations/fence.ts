@@ -13,6 +13,8 @@
  */
 import type { Action } from '../agent-output.ts';
 import type { BrainEngine } from '../engine.ts';
+import type { EngineRawRead } from '../engine-sql/cli-reads-ops.ts';
+import { listFenceHoldRows as listFenceHoldRowsOver } from '../engine-sql/fence-holds.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, renderFactsTable } from '../facts-fence.ts';
 import { locateOutsideCode } from '../fence-scan.ts';
 import type { BodyStorage } from '../page-body/types.ts';
@@ -167,9 +169,15 @@ export async function clearFenceHold(tx: BrainEngine, key: GenerationKey): Promi
 /** A held fence result, as doctor, `get_page` and `gbrain sync status` list it. */
 export interface FenceHold { source_id: string; kind: FenceGenerationKind; slug: string; reason: HeldReason; read: string; rows: number; since: string; writer: string | null }
 
-/** The held fence results of `sources` (one page with `slug`), oldest first. */
+/**
+ * The held fence results of `sources` (one page with `slug`), oldest first. An engine answers through its typed member
+ * (the Rust brain reads its derived generation family); an `executeRaw`-only handle runs the same engine-sql statement.
+ */
 export async function listFenceHolds(db: BrainEngine, sources: readonly string[], slug?: string): Promise<FenceHold[]> {
-  const rows = await db.listFenceHoldRows(sources, FENCE_GENERATION_KINDS, slug === undefined ? undefined : fenceOwnerKey(slug));
+  const ownerKey = slug === undefined ? undefined : fenceOwnerKey(slug);
+  const rows = typeof db.listFenceHoldRows === 'function'
+    ? await db.listFenceHoldRows(sources, FENCE_GENERATION_KINDS, ownerKey)
+    : await listFenceHoldRowsOver(db.executeRaw.bind(db) as EngineRawRead, sources, FENCE_GENERATION_KINDS, ownerKey);
   return rows.map(row => ({ source_id: row.source_id, kind: row.kind as FenceGenerationKind, slug: fenceSlugOf(row.owner_key) ?? row.owner_key, reason: row.held_reason as HeldReason,
     read: String(row.held_context?.read ?? 'absent'), rows: Number(row.held_context?.rows ?? 0), since: row.created_at,
     writer: typeof row.held_context?.writer === 'string' ? row.held_context.writer : null }));

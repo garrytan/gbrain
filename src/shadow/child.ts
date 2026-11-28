@@ -552,7 +552,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     void drain();
   }
   if (deps.exit) {
-    const timer = setTimeout(() => { summary.child_shed += pending.length; flush(true); deps.exit!(0); }, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS);
+    const timer = setTimeout(() => { summary.child_shed += pending.length; writes.abandon(); flush(true); deps.exit!(0); }, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS);
     (timer as { unref?: () => void }).unref?.();
   }
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.

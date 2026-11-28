@@ -163,13 +163,17 @@ describe('the reads a page write makes before admission', () => {
           const current = await engine.readPageSnapshot(slug, { sourceId: 'vault' });
           const reverted = await run(engine, 'revert_version', { slug, version_id: Number(version.id), expected_revision: current?.revision }, 'vault');
           if (backend === 'rust') {
-            // Named stop (owner: lane LM, managed-mode slice 2): the revert claims the unclaimed rooted source, and a Rust
-            // brain refuses managed mode (managed_persistence). A capability refusal takes the in-test pin: assert the
-            // refusal and that nothing was claimed, then rethrow it, so the Rust arm counts the case as stopped.
+            // A multi-user-trunk Rust arm serves managed_persistence (lane LM slices 1-3; arm-capabilities.ts), so the plain
+            // arm runs as main's managed mode (GBRAIN_TEST_RUST_MANAGED=1) does: the revert claims the unclaimed
+            // rooted source at admission, then its preparation stops on the raw read of the read-only mirror check
+            // (persistence/mirror-read-only.ts isMirrorOnlyPage, executeRaw: raw_sql). The claim is DURABLE: the refusal ends
+            // the write request but does not release the source's writer binding, so the source stays claimed with no
+            // write. Named known loss, RUST_ENGINE.md row 64 (owner: lane LM). Assert the stop and the kept claim, then
+            // rethrow, so the Rust arm counts the case as stopped.
             const refusal = thrown.get(reverted as object) as { detail?: unknown } | undefined;
-            expect({ reverted, managed: String(refusal?.detail ?? '').includes('capability=managed_persistence'),
-              claimed: (await getWorktreeBinding(engine, 'vault')) !== null })
-              .toEqual({ reverted: expect.objectContaining({ ok: false, code: 'engine_capability_missing' }), managed: true, claimed: false });
+            expect({ reverted, rawSql: String(refusal?.detail ?? '').includes('member=executeRaw capability=raw_sql'),
+              claimedAfterRefusal: (await getWorktreeBinding(engine, 'vault')) !== null })
+              .toEqual({ reverted: expect.objectContaining({ ok: false, code: 'engine_capability_missing' }), rawSql: true, claimedAfterRefusal: true });
             throw refusal;
           }
           // File-backed by its version, the revert claims the unclaimed rooted source and writes the file; a revert judged

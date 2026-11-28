@@ -202,6 +202,14 @@ describe('durable mutation journal', () => {
               }
               return t.lockPersistenceCounters(keys);
             };
+            // Admission locks its counters through the typed lockPersistenceCounters member (engine-sql/persistence-journal.ts).
+            if (p === 'lockPersistenceCounters') return (keys: readonly string[]) => {
+              if (keys.includes('brain')) {
+                attempts.add(input.requestId!);
+                if (attempts.size === inputs.length) attempted();
+              }
+              return t.lockPersistenceCounters(keys);
+            };
             const value = Reflect.get(t, p); return typeof value === 'function' ? value.bind(t) : value;
           } })));
           const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;

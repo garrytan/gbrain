@@ -8,7 +8,7 @@
  * changes the plugin code itself.
  */
 
-export const OPENCLAW_SKILL_PLUGIN_CODE_VERSION = 4;
+export const OPENCLAW_SKILL_PLUGIN_CODE_VERSION = 5;
 
 export interface LoaderConstants { home: string; libDir: string; statePath: string; logDir: string; gbrainBin: string; gbrainHomeEnv: string | null }
 
@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, sep } from 'node:path';
 
-const { home, libDir, sha } = workerData;
+const { home, libDir, sha, rebuildMs } = workerData;
 const pending = new Map();
 const lastBuild = new Map();
 let building = null;
@@ -45,7 +45,7 @@ const ready = loadLibrary().then((lib) => ({ lib }), (e) => ({ code: e && e.code
 
 function rebuild(lib, catalog, dirs) {
   if (building || !Array.isArray(dirs) || dirs.length === 0) return;
-  if (Date.now() - (lastBuild.get(catalog) || 0) < 60_000) return;
+  if (Date.now() - (lastBuild.get(catalog) || 0) < rebuildMs) return;
   lastBuild.set(catalog, Date.now());
   building = Promise.resolve().then(() => lib.buildSkillIndex({ catalog, dirs, harness: 'openclaw' }, { home }))
     .then(() => parentPort.postMessage({ type: 'rebuilt', catalog }), (e) => parentPort.postMessage({ type: 'rebuilt', catalog, code: (e && e.code) || 'skill_resolver_internal' }))
@@ -70,7 +70,8 @@ parentPort.on('message', async (m) => {
   for (const [id, p] of pending) if (now - p.at > 30_000) pending.delete(id);
   const input = m.floor ? { ...m.input, min_match_strength: m.floor } : m.input;
   try {
-    const opts = { home, catalogs: [m.catalog], failOpen: true, deadlineMs: m.deadlineMs, env: {}, ...(typeof m.readRoot === 'string' ? { readRoot: m.readRoot } : {}) };
+    const opts = { home, catalogs: [m.catalog], failOpen: true, deadlineMs: m.deadlineMs, env: {}, ...(typeof m.readRoot === 'string' ? { readRoot: m.readRoot } : {}),
+      ...(m.audience === 'owner' || m.audience === 'others' ? { audience: m.audience } : {}), ...(Array.isArray(m.hidden) ? { hidden: m.hidden } : {}) };
     const r = await lib.resolveSkills(input, opts);
     const out = input.shadow ? (r.shadowOutput || r.output) : r.output;
     if (r.pending) pending.set(m.id, { key: r.pending.key, delta: r.pending.delta, at: now });
@@ -89,12 +90,15 @@ const LOADER_JS = String.raw`// Managed by gbrain setup openclaw; a re-run rewri
 // plus the operator's pinned skills (appendSystemContext). Mode, pins and agents come from a data-only
 // state file gbrain writes, re-read when it changes, so a mode or pin change never reloads this plugin.
 // Every failure path lets the turn proceed unchanged; no handler waits more than DEADLINE_MS. Each log line
-// names the turn's session class (from OpenClaw's memoryAudience and trigger) and each skill's OpenClaw
-// source; never the turn's text.
+// names the turn's session class (from OpenClaw's memoryAudience and trigger, else the session key's shape),
+// whether the host sent an audience, and each skill's OpenClaw source; never the turn's text. The owner's
+// sessions get the owner pins (on a session's first turn when pins_route is first_turn: the session-start
+// brief, recorded per durable session so a restart or a retried run never repeats it); conversations get
+// their own pins and no owner-only skill; relay, cron, heartbeat, webhook and internal turns get nothing.
 import { Worker } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -114,6 +118,10 @@ const KEEP_DAYS = 14;
 const MEMO_MAX = 1000;
 const SESSIONS_MAX = 5000;
 const WORKER_URL = new URL('./worker.js', import.meta.url);
+const BRIEF_LEDGER = join(HOME, 'openclaw-session-briefs.jsonl');
+const REFRESH_AFTER_MS = Number(process.env.GBRAIN_TEST_OPENCLAW_SKILL_REFRESH_MS) || 300_000;
+const OWNER_CLASSES = new Set(['owner', 'main']);
+const SILENT_CLASSES = new Set(['relay', 'cron', 'heartbeat', 'webhook', 'internal']);
 
 let state = null;
 let stateMtime = -1;
@@ -130,7 +138,11 @@ const waiters = new Map();
 const memo = new Map();
 const recent = new Map();
 const resetNext = new Set();
-const seenSessions = new Map();
+const rebrief = new Set();
+let briefed = null;
+let briefAppends = 0;
+let refreshedAt = 0;
+let refreshTimer = null;
 
 function readState() {
   let mtime;
@@ -189,7 +201,7 @@ function ensureWorker(s) {
   if (worker) dropWorker();
   let w;
   try {
-    w = new Worker(WORKER_URL, { execArgv: [], env: {}, workerData: { home: HOME, libDir: LIB_DIR, sha: s.library_sha256 } });
+    w = new Worker(WORKER_URL, { execArgv: [], env: {}, workerData: { home: HOME, libDir: LIB_DIR, sha: s.library_sha256, rebuildMs: Number(process.env.GBRAIN_TEST_OPENCLAW_SKILL_REBUILD_MS) || 60_000 } });
   } catch {
     log({ outcome: 'error', code: 'skill_resolver_worker_crash' });
     backoff();
@@ -198,7 +210,7 @@ function ensureWorker(s) {
   w.unref();
   w.on('message', (m) => {
     if (m && m.type === 'warm') { if (m.code) log({ outcome: 'error', code: m.code }); return; }
-    if (m && m.type === 'rebuilt') { log({ outcome: 'rebuilt', catalog: m.catalog, code: m.code || null }); return; }
+    if (m && m.type === 'rebuilt') { log({ outcome: 'rebuilt', catalog: m.catalog, code: m.code || null }); if (!m.code) refreshSoon(); return; }
     const done = m && waiters.get(m.id);
     if (done) { waiters.delete(m.id); done(m); } else if (m && m.id !== undefined) w.postMessage({ type: 'discard', id: m.id });
   });
@@ -229,28 +241,94 @@ function sessionOf(event, ctx, agentId) {
   return typeof k === 'string' && k ? k.slice(0, 256) : 'agent:' + agentId;
 }
 
-// The turn's session class, from what the host resolved for it, never from the session key's shape:
-// owner (owner-private memory on a user turn), group, channel or direct (another person's DM) for a
-// conversation, relay (another session's message), cron, heartbeat, webhook, internal, and unknown
-// when the host sent no memory audience.
-function sessionClassOf(event, ctx) {
+// A session key's class, by OpenClaw's key shapes (agent:<id>:main, agent:<id>:<channel>:direct|group|channel:<peer>,
+// agent:<id>:cron:<job>, agent:<id>:relay-<sender>, agent:<id>:subagent:<n>, hook:<...>): used only when the host
+// sent no memory audience, and for which kind of conversation an audience names.
+function keyClassOf(key) {
+  if (typeof key !== 'string' || !key) return 'unknown';
+  const parts = key.toLowerCase().split(':');
+  if (parts[0] === 'hook' || parts.includes('hook')) return 'webhook';
+  const rest = parts[0] === 'agent' ? parts.slice(2) : parts;
+  if (rest.length === 1 && rest[0] === 'main') return 'main';
+  if (rest.includes('cron')) return 'cron';
+  if (rest.includes('subagent')) return 'internal';
+  if (rest.some((p) => p === 'relay' || p.startsWith('relay-'))) return 'relay';
+  if (rest.includes('group')) return 'group';
+  if (rest.includes('channel')) return 'channel';
+  if (rest.includes('direct') || rest.includes('dm')) return 'direct';
+  return rest.includes('thread') ? 'conversation' : 'unknown';
+}
+
+// The turn's session class and whether the host resolved its audience. With an audience (OpenClaw's memoryAudience):
+// owner (owner-private on a user turn), or group, channel or direct (another person's DM) for a conversation. With
+// none (a host without a native memory provider), the session key's class, logged audience unknown: its main session
+// counts as the owner's, and so does a direct session whose sender is one of the agent's owner_sender_ids. Relay
+// (another session's message), cron, heartbeat, webhook and internal come from the trigger and provenance first.
+function sessionClassOf(event, ctx, a, sessionKey) {
   const pick = (k) => (ctx && ctx[k] !== undefined ? ctx[k] : event && event[k]);
+  const audience = pick('memoryAudience');
+  const host = !!audience && typeof audience === 'object' && (audience.kind === 'owner-private' || audience.kind === 'conversation');
+  const of = (cls) => ({ cls, audience: host ? 'host' : 'unknown' });
   const trigger = pick('trigger');
   const prov = pick('inputProvenance');
   const kind = prov && typeof prov === 'object' ? prov.kind : undefined;
-  if (trigger === 'cron' || trigger === 'heartbeat') return trigger;
-  if (trigger === 'event') return 'webhook';
-  if (kind === 'inter_session') return 'relay';
-  if ((kind && kind !== 'external_user') || (trigger && trigger !== 'user')) return 'internal';
-  const audience = pick('memoryAudience');
-  if (!audience || typeof audience !== 'object') return 'unknown';
-  if (audience.kind === 'owner-private') return 'owner';
-  if (audience.kind !== 'conversation') return 'unknown';
-  const chat = ctx && ctx.channelContext && ctx.channelContext.chat;
-  const type = chat && typeof chat.type === 'string' ? chat.type : '';
-  if (type === 'group' || type === 'supergroup') return 'group';
-  if (type === 'channel') return 'channel';
-  return type === 'private' || type === 'direct' || type === 'dm' ? 'direct' : 'conversation';
+  if (trigger === 'cron' || trigger === 'heartbeat') return of(trigger);
+  if (trigger === 'event') return of('webhook');
+  if (kind === 'inter_session') return of('relay');
+  if ((kind && kind !== 'external_user') || (trigger && trigger !== 'user')) return of('internal');
+  const keyed = keyClassOf(sessionKey);
+  if (host) {
+    if (audience.kind === 'owner-private') return of('owner');
+    const chat = ctx && ctx.channelContext && ctx.channelContext.chat;
+    const type = chat && typeof chat.type === 'string' ? chat.type : '';
+    if (type === 'group' || type === 'supergroup') return of('group');
+    if (type === 'channel') return of('channel');
+    if (type === 'private' || type === 'direct' || type === 'dm') return of('direct');
+    return of(keyed === 'group' || keyed === 'channel' || keyed === 'direct' ? keyed : 'conversation');
+  }
+  if ((keyed === 'direct' || keyed === 'main') && Array.isArray(a.owner_sender_ids) && a.owner_sender_ids.length) {
+    const sender = senderOf(event, ctx);
+    if (sender === null || !a.owner_sender_ids.includes(sender)) return of('direct');
+    if (keyed === 'direct') return of('owner');
+  }
+  return of(keyed);
+}
+
+// owner (the owner's own sessions), silent (no pins, no suggestions) or conversation (everything else, unknown included).
+function tierOf(cls) {
+  return OWNER_CLASSES.has(cls) ? 'owner' : SILENT_CLASSES.has(cls) ? 'silent' : 'conversation';
+}
+
+// Durable sessions that already had their session-start brief, one JSON line each, so a gateway restart never repeats one;
+// a reset or a compaction appends a drop line, so the next turn of that session gets a new brief even after a restart.
+function briefLedger() {
+  if (briefed) return briefed;
+  briefed = new Map();
+  try {
+    for (const line of readFileSync(BRIEF_LEDGER, 'utf8').split('\n')) {
+      if (!line) continue;
+      briefAppends += 1;
+      try { const j = JSON.parse(line); if (j && typeof j.k === 'string') { if (j.drop) briefed.delete(j.k); else remember(briefed, j.k, 1, SESSIONS_MAX); } } catch { /* a torn line */ }
+    }
+  } catch { /* none yet */ }
+  return briefed;
+}
+
+function briefKeyOf(event, ctx, agentId, sessionKey) {
+  const sid = (ctx && typeof ctx.sessionId === 'string' && ctx.sessionId) || (event && typeof event.sessionId === 'string' && event.sessionId) || sessionKey;
+  return agentId + '\0' + sid.slice(0, 256);
+}
+
+function markBriefed(key, drop) {
+  if (drop) { if (!briefLedger().delete(key)) return; } else remember(briefLedger(), key, 1, SESSIONS_MAX);
+  try {
+    appendFileSync(BRIEF_LEDGER, JSON.stringify({ k: key, ...(drop ? { drop: true } : {}), at: new Date().toISOString() }) + '\n', { mode: 0o600 });
+    if (++briefAppends < SESSIONS_MAX) return;
+    briefAppends = 0;
+    const tmp = BRIEF_LEDGER + '.tmp';
+    writeFileSync(tmp, [...briefed.keys()].map((k) => JSON.stringify({ k })).join('\n') + '\n', { mode: 0o600 });
+    renameSync(tmp, BRIEF_LEDGER);
+  } catch { /* a lost line only repeats one brief */ }
 }
 
 const PATH_INDEX = new WeakMap();
@@ -272,7 +350,8 @@ function sourceOf(a, path) {
 
 function readRootOf(a) {
   if (a.path_reads === 'none') return '';
-  return a.path_reads === 'workspace' && typeof a.workspace_dir === 'string' ? a.workspace_dir : undefined;
+  if (a.path_reads === 'workspace') return typeof a.workspace_dir === 'string' ? a.workspace_dir : '';
+  return undefined;
 }
 
 function senderOf(event, ctx) {
@@ -305,6 +384,46 @@ function ask(w, msg, ms = DEADLINE_MS) {
   });
 }
 
+// The conversation pins were rendered from one build of the catalog (pins_built_at). After any rebuild (an edit that makes a
+// pinned skill audience: owner, gbrain skills index build) they may name a skill conversations must not see, so they are
+// withheld until a refresh renders them from the new build; each such turn asks for that refresh, so a failed one is retried.
+const receiptSeen = new Map();
+function pinsCurrent(a) {
+  const file = join(HOME, 'skill-index', String(a.catalog), 'receipt.json');
+  let mtime;
+  try { mtime = statSync(file).mtimeMs; } catch { return false; }
+  let seen = receiptSeen.get(file);
+  if (!seen || seen.mtime !== mtime) {
+    let at = null;
+    try { const r = JSON.parse(readFileSync(file, 'utf8')); at = r && r.build && typeof r.build.built_at === 'string' ? r.build.built_at : null; } catch { /* a torn read: treated as changed */ }
+    seen = { mtime, at };
+    receiptSeen.set(file, seen);
+  }
+  return typeof a.pins_built_at === 'string' && seen.at === a.pins_built_at;
+}
+
+// After the worker rebuilds a catalog (a skill changed), have gbrain re-read what OpenClaw hides from each agent and
+// rewrite the state (setup --skills-index-only), so a new hidden or shadowed skill is not suggested from the new index.
+// A rebuild during the cooldown or a running refresh is not dropped: one trailing refresh runs when the cooldown ends.
+function refreshSoon() {
+  const now = Date.now();
+  if (refreshing || now - refreshedAt < REFRESH_AFTER_MS) {
+    if (!refreshTimer) {
+      refreshTimer = setTimeout(() => { refreshTimer = null; refreshSoon(); }, Math.max(1000, refreshedAt + REFRESH_AFTER_MS - now));
+      if (refreshTimer.unref) refreshTimer.unref();
+    }
+    return;
+  }
+  refreshedAt = now;
+  refreshing = true;
+  const env = { ...process.env, ...(GBRAIN_HOME_ENV ? { GBRAIN_HOME: GBRAIN_HOME_ENV } : {}) };
+  delete env.GBRAIN_SKILL_LOADING;
+  execFile(GBRAIN_BIN, ['setup', 'openclaw', '--skills-index-only'], { timeout: 300_000, env }, (err) => {
+    refreshing = false;
+    log({ outcome: 'refreshed', code: err ? 'skill_resolver_refresh_failed' : null });
+  });
+}
+
 function checkSkew(s) {
   const now = Date.now();
   if (refreshing || now < skewOpenUntil || now - skewCheckedAt < 3_600_000) return;
@@ -323,6 +442,12 @@ function checkSkew(s) {
   });
 }
 
+function isActive(ctx) {
+  const invocation = ctx && typeof ctx.assertActive === 'function' ? ctx : ctx && ctx.hookInvocation;
+  try { if (invocation && typeof invocation.assertActive === 'function') invocation.assertActive(); } catch { return false; }
+  return true;
+}
+
 async function resolveTurn(event, ctx, opts) {
   const s = readState();
   if (!s) return undefined;
@@ -333,42 +458,58 @@ async function resolveTurn(event, ctx, opts) {
   const t0 = Date.now();
   const sessionKey = sessionOf(event, ctx, agentId);
   const arm = armFor(a, sessionKey);
-  const cls = sessionClassOf(event, ctx);
+  const { cls, audience } = sessionClassOf(event, ctx, a, sessionKey);
+  const tier = tierOf(cls);
   const result = {};
-  const pinsOn = a.mode === 'live' && typeof a.pinned_block === 'string' && a.pinned_block !== '';
-  if (pinsOn && a.pins_route !== 'first_turn') result.appendSystemContext = a.pinned_block;
-  const firstTurn = !seenSessions.has(sessionKey) || resetNext.has(sessionKey);
-  remember(seenSessions, sessionKey, 1, SESSIONS_MAX);
-  const pinsFirst = pinsOn && a.pins_route === 'first_turn' && firstTurn ? a.pinned_block : '';
+  const stalePins = tier === 'conversation' && !!a.conversation_pinned_block && !pinsCurrent(a);
+  if (stalePins) refreshSoon();
+  const pinBlock = tier === 'owner' ? a.pinned_block : tier === 'conversation' && !stalePins ? a.conversation_pinned_block : '';
+  const pinIds = (tier === 'owner' ? a.pinned_ids : tier === 'conversation' ? a.conversation_pinned_ids : null) || [];
+  const pinsOn = a.mode === 'live' && typeof pinBlock === 'string' && pinBlock !== '';
+  const briefRoute = tier === 'owner' && a.pins_route === 'first_turn';
+  if (pinsOn && !briefRoute) result.appendSystemContext = pinBlock;
+  const text = turnText(event);
+  const runId = ctx && typeof ctx.runId === 'string' && ctx.runId ? ctx.runId : null;
+  const turnId = (event && (event.currentUserMessageId || event.messageId)) || (runId ? 'run:' + runId : createHash('sha256').update(text).digest('hex').slice(0, 16));
+  const memoKey = agentId + '\0' + sessionKey + '\0' + turnId;
+  const prior = memo.get(memoKey);
+  const carried = (block) => !!block && (prior.text !== text || (Array.isArray(event && event.messages) && event.messages.some((m) => m && textOf(m.content).includes(block))));
+  const briefKey = briefKeyOf(event, ctx, agentId, sessionKey);
+  const due = pinsOn && briefRoute && !prior && (rebrief.has(sessionKey) || !briefLedger().has(briefKey));
   const finish = (line, block) => {
-    const ctxText = [pinsFirst, block || ''].filter(Boolean).join('\n\n');
+    const fresh = due && !opts.selfTest && isActive(ctx);
+    if (fresh) {
+      rebrief.delete(sessionKey);
+      markBriefed(briefKey);
+      const m = memo.get(memoKey);
+      if (m) m.brief = pinBlock; else remember(memo, memoKey, { block: '', text, brief: pinBlock, unresolved: true }, MEMO_MAX);
+    }
+    const brief = fresh ? pinBlock : prior && pinsOn && prior.brief && !carried(prior.brief) ? prior.brief : '';
+    const ctxText = [brief, block || ''].filter(Boolean).join('\n\n');
     if (ctxText) result.appendContext = ctxText;
-    log({ agent: agentId, arm, session_class: cls, ms: Date.now() - t0, pins: pinsOn ? (a.pinned_ids || []).length : 0, ...line });
+    log({ agent: agentId, arm, session_class: cls, audience, ms: Date.now() - t0, pins: pinsOn ? pinIds.length : 0, ...(fresh ? { brief: true } : {}), ...(stalePins ? { pins_stale: true } : {}), ...line });
     return Object.keys(result).length ? result : undefined;
   };
-  const text = turnText(event);
+  if (tier === 'silent') {
+    const prov = (ctx && ctx.inputProvenance && ctx.inputProvenance.kind) || (event && event.inputProvenance && event.inputProvenance.kind);
+    const trigger = (ctx && ctx.trigger) || (event && event.trigger);
+    const why = prov && prov !== 'external_user' ? prov : trigger && trigger !== 'user' ? trigger : null;
+    return finish(why ? { outcome: 'skipped_provenance', provenance: String(why).slice(0, 40) } : { outcome: 'skipped_class' });
+  }
+  const suggestIn = Array.isArray(a.suggest_classes) ? a.suggest_classes : ['owner', 'conversation'];
+  if (!suggestIn.includes(tier)) return finish({ outcome: 'skipped_class' });
   if (!text) return finish({ outcome: 'skipped_empty' });
-  const prov = (ctx && ctx.inputProvenance && ctx.inputProvenance.kind) || (event && event.inputProvenance && event.inputProvenance.kind);
-  if (prov && prov !== 'external_user') return finish({ outcome: 'skipped_provenance', provenance: String(prov).slice(0, 40) });
-  const trigger = (ctx && ctx.trigger) || (event && event.trigger);
-  if (trigger === 'heartbeat' || trigger === 'cron') return finish({ outcome: 'skipped_provenance', provenance: trigger });
   if (Array.isArray(a.owner_sender_ids) && a.owner_sender_ids.length) {
     const sender = senderOf(event, ctx);
     if (sender === null || !a.owner_sender_ids.includes(sender)) return finish({ outcome: 'skipped_sender' });
   }
-  const runId = ctx && typeof ctx.runId === 'string' && ctx.runId ? ctx.runId : null;
-  const turnId = (event && (event.currentUserMessageId || event.messageId)) || (runId ? 'run:' + runId : createHash('sha256').update(text).digest('hex').slice(0, 16));
-  const memoKey = agentId + '\0' + sessionKey + '\0' + turnId;
-  if (memo.has(memoKey)) {
-    const prior = memo.get(memoKey);
-    const carried = !!prior.block && (prior.text !== text || (Array.isArray(event && event.messages) && event.messages.some((m) => m && textOf(m.content).includes(prior.block))));
-    return finish({ outcome: 'retry' }, arm === 'live' && !carried ? prior.block : '');
-  }
+  if (prior && !prior.unresolved) return finish({ outcome: 'retry' }, arm === 'live' && !carried(prior.block) ? prior.block : '');
   const w = ensureWorker(s);
   if (!w) return finish({ outcome: 'error', code: 'skill_resolver_worker_unavailable' });
   const reset = resetNext.delete(sessionKey);
-  const input = { message: text, session_id: sessionKey, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, exclude: [...(Array.isArray(a.pinned_ids) ? a.pinned_ids : []), ...(Array.isArray(a.exclude_ids) ? a.exclude_ids : [])].slice(0, 1024), shadow: arm !== 'live', ...(typeof a.top_gate === 'number' ? { top_gate: a.top_gate } : {}), ...(reset ? { reset_session: true } : {}) };
-  const reply = await ask(w, { type: 'resolve', input, catalog: a.catalog, deadlineMs: DEADLINE_MS - 5, floor: a.min_match || null, dirs: a.skill_dirs || [], readRoot: readRootOf(a) });
+  const input = { message: text, session_id: sessionKey, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, exclude: pinIds.slice(0, 64), shadow: arm !== 'live', ...(typeof a.top_gate === 'number' ? { top_gate: a.top_gate } : {}), ...(reset ? { reset_session: true } : {}) };
+  const reply = await ask(w, { type: 'resolve', input, catalog: a.catalog, deadlineMs: DEADLINE_MS - 5, floor: a.min_match || null, dirs: a.skill_dirs || [], readRoot: readRootOf(a),
+    audience: tier === 'owner' ? 'owner' : 'others', hidden: Array.isArray(a.exclude_ids) ? a.exclude_ids : [] });
   if (reply.late) {
     if (reset) resetNext.add(sessionKey);
     timeouts += 1;
@@ -380,14 +521,12 @@ async function resolveTurn(event, ctx, opts) {
   if (reply.code && !reply.block) return finish({ outcome: 'error', code: reply.code });
   const names = Array.isArray(reply.names) ? reply.names : [];
   const sources = names.map((n, i) => sourceOf(a, (Array.isArray(reply.paths) && reply.paths[i]) || (a.skill_files && a.skill_files[n])));
-  remember(recent, agentId + '\0' + sessionKey, { names: new Set(names), arm, cls }, SESSIONS_MAX);
+  remember(recent, agentId + '\0' + sessionKey, { names: new Set(names), arm, cls, audience }, SESSIONS_MAX);
   const outcome = names.length ? 'suggested' : reply.no_skill_reason || (reply.budget_exhausted ? 'budget' : reply.deduped ? 'deduped' : 'no_match');
   const deliver = arm === 'live' && reply.block ? reply.block : '';
-  let active = true;
-  const invocation = ctx && typeof ctx.assertActive === 'function' ? ctx : ctx && ctx.hookInvocation;
-  try { if (invocation && typeof invocation.assertActive === 'function') invocation.assertActive(); } catch { active = false; }
+  const active = isActive(ctx);
   if (active && !opts.selfTest) w.postMessage({ type: 'commit', id: reply.id }); else w.postMessage({ type: 'discard', id: reply.id });
-  if (deliver || active) remember(memo, memoKey, { block: deliver, text }, MEMO_MAX);
+  if (deliver || active) remember(memo, memoKey, { block: deliver, text, brief: prior && prior.brief ? prior.brief : '' }, MEMO_MAX);
   return finish({ outcome: arm === 'live' || !names.length ? outcome : 'would_suggest', suggested: names, sources, strengths: reply.strengths, code: reply.code || null }, deliver);
 }
 
@@ -441,8 +580,21 @@ function onCompaction(event, ctx) {
   try {
     const s = state;
     const agentId = String((ctx && ctx.agentId) || (event && event.agentId) || 'main');
-    resetNext.add(sessionOf(event, ctx, agentId));
+    const key = sessionOf(event, ctx, agentId);
+    resetNext.add(key);
+    rebrief.add(key);
+    markBriefed(briefKeyOf(event, ctx, agentId, key), true);
     if (s && s.agents[agentId]) log({ agent: agentId, outcome: 'compaction' });
+  } catch { /* best effort */ }
+}
+
+// /new and /reset: OpenClaw can keep the sessionId across a reset, so the ledger entry is dropped and the next turn is briefed.
+function onReset(event, ctx) {
+  try {
+    const agentId = String((ctx && ctx.agentId) || (event && event.agentId) || 'main');
+    const key = sessionOf(event, ctx, agentId);
+    rebrief.add(key);
+    markBriefed(briefKeyOf(event, ctx, agentId, key), true);
   } catch { /* best effort */ }
 }
 
@@ -469,6 +621,7 @@ export default {
     on('before_prompt_build', async (event, ctx) => { try { return await resolveTurn(event, ctx, {}); } catch { return undefined; } });
     on('after_tool_call', onToolCall);
     on('after_compaction', onCompaction);
+    on('before_reset', onReset);
     on('skill_changed', onSkillChanged);
     const s = readState();
     if (s && existsSync(WORKER_URL)) ensureWorker(s);

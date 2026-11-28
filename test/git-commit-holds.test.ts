@@ -28,7 +28,8 @@ import { gitFailure, pushPhaseFailure } from '../src/core/persistence/effect-git
 import { setEngineHostId } from '../src/core/persistence/identity.ts';
 import { readGitPushHolds } from '../src/core/persistence/git-push-holds.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
-import { cliRenderContext, renderAction } from '../src/core/agent-output.ts';
+import { cliRenderContext, redactForTransport, renderAction } from '../src/core/agent-output.ts';
+import { shellQuote as leafQuote } from '../src/core/shell-quote.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 // Read off the module namespace, not named imports, so this file loads on a tree without the reason list (bf547a9497)
@@ -293,5 +294,144 @@ describe('GCH-07: the hold line says commits are held, with the reason code', ()
     expect(former!.fix.argv).toEqual(['gbrain', 'sources', 'writer', 'settle-effects', 'work', '--parked-code', 'git_unavailable', '--dry-run']);
     const [retrying] = await holds(row({ retrying: 2, parked: 0, last_error: { phase: 'commit', step: 'add', reason: 'other' } }));
     expect(retrying!.fix.argv).toEqual(['gbrain', 'sources', 'writer', 'status', '--source', 'work', '--json']);
+  });
+});
+
+describe('GCH5-06: the identity question names the checkout by its quoted form, so no raw control reaches the reader', () => {
+  /** A control a terminal acts on: C0 except tab, DEL and C1. */
+  const RAW = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
+  const hostile = ['/brains/w\u001b]0;owned\u0007x', '/brains/\u001b[2J\u009b31mred', '/brains/bell\u0007\u0085nel\u007fdel'];
+
+  test('the rendered identity fix, why and user_message hold no raw control, and the lead-in reads back to the exact path', async () => {
+    for (const root of hostile) {
+      const [hold] = await holds(row({ root, owner_root: root, last_error: identity }));
+      const rendered = renderAction(hold!.fix, cliRenderContext());
+      for (const text of [rendered.command!, rendered.why, rendered.user_message!]) expect(text).not.toMatch(RAW);
+      expect(rendered.user_message!.startsWith(`Git cannot commit page files in ${leafQuote(root)}: `)).toBe(true);
+      expect(bashArgv(`git -C ${leafQuote(root)}`)).toEqual({ argv: ['git', '-C', root], ran: false });
+    }
+  });
+
+  test('the HTTP view of the identity fix masks a private path that follows an ESC in the checkout name', async () => {
+    const root = 'label\u001b/home/owner/private';
+    const [hold] = await holds(row({ root, owner_root: root, last_error: identity }));
+    const view = JSON.stringify(redactForTransport(renderAction(hold!.fix, { ...cliRenderContext(), transport: 'http' }), 'http'));
+    expect(view).not.toContain('/home/owner');
+    expect(view).not.toContain('private');
+  });
+});
+
+describe('GCH5-05: hold text with a checkout path too long to quote inline names the fix command instead of a cut one', () => {
+  const root = `/brains/${'a\n'.repeat(500)}end`;
+
+  test('the identity question stays under the cap, is never cut and has no inline command; the fix command is whole', async () => {
+    const [hold] = await holds(row({ root, owner_root: root, last_error: identity }));
+    const rendered = renderAction(hold!.fix, cliRenderContext());
+    expect(rendered.user_message!.length).toBeLessThanOrEqual(2_000);
+    expect(rendered.user_message!.endsWith('…')).toBe(false);
+    expect(rendered.user_message).not.toContain('git -C');
+    expect(rendered.user_message).toContain('user.name');
+    expect(bashArgv(rendered.command!)).toEqual({ argv: ['git', '-C', root, 'config', '--show-origin', '--get-regexp', '^user\\.'], ran: false });
+  });
+
+  test('the parked why stays under the cap, is never cut and has no inline command', async () => {
+    const [hold] = await holds(row({ root, owner_root: root, last_error: { phase: 'commit', step: 'add', reason: 'filter_failed' } }));
+    const rendered = renderAction(hold!.fix, cliRenderContext());
+    expect(rendered.why.length).toBeLessThanOrEqual(2_000);
+    expect(rendered.why.endsWith('…')).toBe(false);
+    expect(rendered.why).not.toContain('git -C');
+  });
+});
+
+describe('GCH5-05 (d2): hold text is chosen from the whole message budget, so no command in it is ever cut', () => {
+  const sid = `a${'b'.repeat(30)}c`;
+  const retry = `gbrain sources writer retry-effects ${sid} --parked-code git_unavailable --dry-run`;
+
+  test('identity questions and parked whys for quoted roots of 480-560 characters with a 32-character source id', async () => {
+    for (let n = 470; n <= 552; n += 2) {
+      const root = `/brains/${'x y'.repeat(Math.floor(n / 3))}${'z'.repeat(n % 3)}`;
+      const q = leafQuote(root);
+      const [ask] = await holds(row({ source_id: sid, root, owner_root: root, parked: 3, retrying: 2, last_error: identity }));
+      const message = renderAction(ask!.fix, cliRenderContext()).user_message!;
+      expect(message.length).toBeLessThanOrEqual(2_000);
+      expect(message.endsWith('…')).toBe(false);
+      if (message.includes('git -C')) {
+        expect(message).toContain(`git -C ${q} config user.name "<name>" and git -C ${q} config user.email "<email>"`);
+        expect(message.startsWith(`Git cannot commit page files in ${q}: `)).toBe(true);
+      }
+      if (message.includes('retry-effects ')) expect(message).toContain(`${retry} previews one more attempt`);
+      const [parked] = await holds(row({ source_id: sid, root, owner_root: root, parked: 3, last_error: { phase: 'commit', step: 'add', reason: 'filter_failed' } }));
+      const why = renderAction(parked!.fix, cliRenderContext()).why;
+      expect(why.length).toBeLessThanOrEqual(2_000);
+      expect(why.endsWith('…')).toBe(false);
+      if (why.includes('git -C')) expect(why).toContain(`git -C ${q} status`);
+    }
+  });
+});
+
+describe('F6: a bidirectional control in the checkout name cannot reorder the printed question or command', () => {
+  /** The nine embedding, override and isolate controls (Trojan Source): U+202A-U+202E and U+2066-U+2069. */
+  const BIDI = /[\u202a-\u202e\u2066-\u2069]/;
+  // Each folder name shows its letters in a different order than the one git receives.
+  const hostile = ['/brains/\u202Ekrow\u202C/notes', '/brains/a\u2067b c\u2069d', '/brains/\u202Atxt\u202D\u2066x\u2068y\u202B'];
+
+  test('the identity fix command, why and user_message hold no raw bidi control; the printed git -C reads back to the exact path', async () => {
+    for (const root of hostile) {
+      const [hold] = await holds(row({ root, owner_root: root, last_error: identity }));
+      const rendered = renderAction(hold!.fix, cliRenderContext());
+      for (const text of [rendered.command!, rendered.why, rendered.user_message!]) expect(text).not.toMatch(BIDI);
+      expect(rendered.user_message!.startsWith(`Git cannot commit page files in ${leafQuote(root)}: `)).toBe(true);
+      expect(bashArgv(`git -C ${leafQuote(root)}`)).toEqual({ argv: ['git', '-C', root], ran: false });
+      expect(bashArgv(rendered.command!)).toEqual({ argv: ['git', '-C', root, 'config', '--show-origin', '--get-regexp', '^user\\.'], ran: false });
+    }
+  });
+
+  test('the parked why holds no raw bidi control, and its git -C status reads back to the exact path', async () => {
+    for (const root of hostile) {
+      const [hold] = await holds(row({ root, owner_root: root, last_error: { phase: 'commit', step: 'add', reason: 'filter_failed' } }));
+      const rendered = renderAction(hold!.fix, cliRenderContext());
+      expect(rendered.why).not.toMatch(BIDI);
+      expect(rendered.why).toContain(`git -C ${leafQuote(root)} status`);
+      expect(bashArgv(`git -C ${leafQuote(root)} status`)).toEqual({ argv: ['git', '-C', root, 'status'], ran: false });
+    }
+  });
+
+  test('the HTTP view of the identity fix masks a private path that follows a raw U+202E in the checkout name', async () => {
+    const root = 'label\u202e/home/owner/private';
+    const [hold] = await holds(row({ root, owner_root: root, last_error: identity }));
+    const view = JSON.stringify(redactForTransport(renderAction(hold!.fix, { ...cliRenderContext(), transport: 'http' }), 'http'));
+    expect(view).not.toContain('/home/owner');
+    expect(view).not.toContain('private');
+  });
+
+  test('a long checkout path full of bidi controls still gets whole commands or none in the identity question and parked why', async () => {
+    for (let n = 120; n <= 240; n += 6) {
+      const root = `/brains/${'\u202e'.repeat(n)}x`;
+      for (const last_error of [identity, { phase: 'commit', step: 'add', reason: 'filter_failed' } as const]) {
+        const [hold] = await holds(row({ root, owner_root: root, last_error }));
+        const rendered = renderAction(hold!.fix, cliRenderContext());
+        for (const text of [rendered.why, rendered.user_message ?? '']) {
+          expect(text).not.toMatch(BIDI);
+          expect(text.length).toBeLessThanOrEqual(2_000);
+          expect(text.endsWith('…')).toBe(false);
+          if (text.includes('git -C')) expect(text).toContain(`git -C ${leafQuote(root)}`);
+        }
+      }
+    }
+  });
+
+  test('F6b: a checkout name with LRM, RLM or ALM prints no raw mark; the printed commands read back to the exact path', async () => {
+    const MARK = /[\u200e\u200f\u061c]/;
+    for (const root of ['/brains/\u200fkrow/12', '/brains/a\u200eb c', '/brains/\u061c1/2']) {
+      const [id] = await holds(row({ root, owner_root: root, last_error: identity }));
+      const rendered = renderAction(id!.fix, cliRenderContext());
+      for (const text of [rendered.command!, rendered.why, rendered.user_message!]) expect(text).not.toMatch(MARK);
+      expect(bashArgv(rendered.command!)).toEqual({ argv: ['git', '-C', root, 'config', '--show-origin', '--get-regexp', '^user\\.'], ran: false });
+      const [parked] = await holds(row({ root, owner_root: root, last_error: { phase: 'commit', step: 'add', reason: 'filter_failed' } }));
+      const why = renderAction(parked!.fix, cliRenderContext()).why;
+      expect(why).not.toMatch(MARK);
+      expect(why).toContain(`git -C ${leafQuote(root)} status`);
+      expect(bashArgv(`git -C ${leafQuote(root)} status`)).toEqual({ argv: ['git', '-C', root, 'status'], ran: false });
+    }
   });
 });

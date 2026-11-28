@@ -153,8 +153,12 @@ fn trusted_rows(read: &dyn KvRead, table: TrustedTable) -> Result<Vec<TrustedRow
 }
 
 /// `write_origin->>'channel' = 'trust_claim'`: a row a source claim lifted.
-fn origin_is_trust_claim(origin: &Option<Value>) -> bool {
-    matches!(origin, Some(Value::Object(map)) if map.get("channel").and_then(Value::as_str) == Some("trust_claim"))
+/// `write_origin->>'channel' = 'trust_claim' AND write_origin->'owner_decision' IS NULL`: a row a claim lifted that no
+/// owner decision settled since (#10178). A present `owner_decision` key counts as settled whatever its value, as `->`
+/// answers a JSON null and not SQL NULL for it.
+fn origin_is_relowerable_claim(origin: &Option<Value>) -> bool {
+    matches!(origin, Some(Value::Object(map))
+        if map.get("channel").and_then(Value::as_str) == Some("trust_claim") && !map.contains_key("owner_decision"))
 }
 
 /// `countRowTrustTiers`, `countClaimLiftedRows`: the table to read.
@@ -196,13 +200,13 @@ impl Store {
     }
 
     /// `countClaimLiftedRows(table)`: the rows of pages, facts, takes or timeline entries a source claim lifted
-    /// (`write_origin.channel` `trust_claim`). One number.
+    /// (`write_origin.channel` `trust_claim`) that no owner decision settled since (#10178). One number.
     pub fn count_claim_lifted_rows(&self, spec: &TrustTableSpec) -> Result<Value> {
         let table = trusted_table("countClaimLiftedRows", &spec.table)?;
         let read = self.read()?;
         let n = trusted_rows(&*read, table)?
             .iter()
-            .filter(|row| origin_is_trust_claim(&row.origin))
+            .filter(|row| origin_is_relowerable_claim(&row.origin))
             .count();
         Ok(json!(n))
     }

@@ -197,6 +197,76 @@ impl Brain {
         })
     }
 
+    /// `listSymbolLanguages(input)`: the languages.
+    #[napi]
+    pub fn list_symbol_languages<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::chunk_queries::SymbolLanguagesInput =
+                arg(input, "listSymbolLanguages input")?;
+            s.list_symbol_languages(&input)
+        })
+    }
+
+    /// `listSupportedChunkIds(input)`: the chunk ids.
+    #[napi]
+    pub fn list_supported_chunk_ids<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::chunk_queries::SupportedChunkIdsInput =
+                arg(input, "listSupportedChunkIds input")?;
+            s.list_supported_chunk_ids(&input)
+        })
+    }
+
+    /// `listSymbolChunkIds(input)`: the chunk ids.
+    #[napi]
+    pub fn list_symbol_chunk_ids<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::chunk_queries::SymbolChunkIdsInput =
+                arg(input, "listSymbolChunkIds input")?;
+            s.list_symbol_chunk_ids(&input)
+        })
+    }
+
+    /// `listWalkChunkRows(input)`: the hydrated walk chunks.
+    #[napi]
+    pub fn list_walk_chunk_rows<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::chunk_queries::WalkChunkRowsInput =
+                arg(input, "listWalkChunkRows input")?;
+            s.list_walk_chunk_rows(&input)
+        })
+    }
+
+    /// `readReindexSpendInputs(input)`: `{ pages, chars }`.
+    #[napi]
+    pub fn read_reindex_spend_inputs<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::chunk_queries::ReindexSpendInput =
+                arg(input, "readReindexSpendInputs input")?;
+            s.read_reindex_spend_inputs(&input)
+        })
+    }
+
     /// `listWithdrawalChunks(input)`: the chunk rows.
     #[napi]
     pub fn list_withdrawal_chunks<'env>(

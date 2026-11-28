@@ -54,6 +54,10 @@ export const readGuestDeleteRow: StoreMember<[sourceId: string, slug: string], G
   return { hidden: source.hidden, guest: source.source_id !== null, kept: false, writer: null };
 };
 
+/** Whether the source has a guest row (guest_sources.rs), the record `guests init` writes; config alone is not one. */
+export const hasGuestSourceRow: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
+  storeCall({ member: 'hasGuestSourceRow', sourceId }, () => brain.hasGuestSourceRow(sourceId));
+
 export const listGuestSourceIds: StoreMember<[sourceIds: readonly string[]], string[]> = async (brain, sourceIds) =>
   sourceIds.length === 0 ? [] : storeCall({ member: 'listGuestSourceIds' }, () => brain.listGuestSourceIds([...sourceIds]));
 

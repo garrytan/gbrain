@@ -12,7 +12,10 @@ import { readBackgroundPauseShare, resolveAdmissionOrigin } from './admission-or
 import { withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { linkStreamSlugs, redactExpiredPageJournal } from './page-purge.ts';
-import { identityDowngradePurgeHold } from '../sync-identity-downgrades.ts';
+import { identityDowngradePurgeHold, purgeHoldsSql } from './retention-purge-sql.ts';
+
+/** The purge-hold predicate moved to the statement module; re-exported so its import sites stay. */
+export { purgeHoldsSql };
 import { atomRetirementPurgeHold } from './atom-retirement-hold.ts';
 import { derivedRetirementPurgeHold } from './derived-retirement-hold.ts';
 import { faultPoint } from './fault-points.ts';
@@ -271,15 +274,6 @@ export interface PurgeSelection {
   rebuild: { held: Array<{ source_id: string; slug: string }>; kept: RebuildKept[] };
 }
 
-/**
- * What keeps an expired tombstone of page `page` (source `source`) out of every managed purge: an archived source, or the
- * rename-recovery, restorable-atom, derived-retirement or derived-origin hold; `released` (an SQL int[]) lifts the
- * derived-origin hold for the parked origins a manual purge's preview counts as released.
- */
-export function purgeHoldsSql(page: string, source: string, released?: string): string {
-  const origin = released ? `(${derivedOriginPurgeHold(page)} OR ${page}.id = ANY(${released}))` : derivedOriginPurgeHold(page);
-  return `NOT ${source}.archived AND ${identityDowngradePurgeHold(page)} AND ${atomRetirementPurgeHold(page)} AND ${derivedRetirementPurgeHold(page)} AND ${origin}`;
-}
 
 /**
  * GST-2689 `forecast` (repair/origin-carry.ts forecastCarry; the consented manual purge's preview and consent): the
@@ -298,10 +292,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
     const excludeIds = [...skipped, ...kept.map(row => row.id), ...hold, ...opts.automatic ? await readRederiveHeldConcepts(engine) : []];
     const preview = await engine.purgeDeletedPages(olderThanHours, { dryRun: true, excludeIds });
     // The engine's preview keeps every parked origin; the ones the run frees are read here under the purge's other holds.
-    const released = release.length ? (await engine.executeRaw<{ slug: string; source_id: string; deleted_at: Date | string }>(`SELECT p.slug, p.source_id, p.deleted_at FROM pages p
-      WHERE p.id = ANY($1::int[]) AND p.id <> ALL($2::int[]) AND p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($3 || ' hours')::interval
-        AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')} AND ${derivedRetirementPurgeHold('p')}`,
-      [release, excludeIds, String(Math.max(0, Math.floor(olderThanHours)))])).map(row => ({ slug: row.slug, source_id: row.source_id, deleted_at: new Date(row.deleted_at) }))
+    const released = release.length ? (await engine.listReleasedPurgeOrigins(release, excludeIds, String(Math.max(0, Math.floor(olderThanHours))))).map(row => ({ slug: row.slug, source_id: row.source_id, deleted_at: new Date(row.deleted_at) }))
       .filter(row => !(preview.pages ?? []).some(page => page.source_id === row.source_id && page.slug === row.slug)) : [];
     const pages = [...(preview.pages ?? []), ...released].sort((a, b) => a.deleted_at.getTime() - b.deleted_at.getTime() || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
     const held = kept.filter(row => row.expired);
@@ -312,11 +303,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
       inactive: 0, held: held.length, sync_unreviewed: opts.automatic ? 0 : unreviewed.filter(row => row.expired).length, writers: {}, rebuild: await readHeldConcepts(engine, opts.model ?? true) };
   }
   const hours = Math.max(0, Math.floor(olderThanHours));
-  const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string; cutoff: string; deleted_us: string }>(
-    `SELECT p.id, p.source_id, p.slug, (now() - ($1 || ' hours')::interval)::text AS cutoff,
-      floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p JOIN sources s ON s.id = p.source_id
-      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${purgeHoldsSql('p', 's', '$2::int[]')} AND p.id <> ALL($3::int[])
-      ORDER BY p.deleted_at ASC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC`, [String(hours), release, hold]);
+  const rows = await engine.listManagedPurgeCandidates(String(hours), release, hold);
   const states = new Map<string, { state: string; physical_error?: string }>();
   if (rows.length) for (const source of (await writerOnboardingPreflight(engine)).sources) states.set(source.source_id, source);
   const parks = rows.length ? await readPurgeParks(engine) : new Map<string, PurgePark>();

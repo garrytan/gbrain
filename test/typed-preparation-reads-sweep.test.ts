@@ -94,6 +94,9 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['readPagePrivacyHidden', 'AS hidden FROM pages p', e => e.readPagePrivacyHidden('default', 'a')],
   ['readLinkTargetPages', 'AS visible', e => e.readLinkTargetPages('default', ['a'], null)],
   ['readWriteVisibilityProbe', 'AS identity_may_open', e => e.readWriteVisibilityProbe('default', 'a')],
+  // The create check's and the deleted-row fallback's reads (page-visibility.ts assertLabelledOnlyCreate, hiddenUnder).
+  ['readPageHiddenFromWriter', 'SELECT 1 FROM pages WHERE source_id', e => e.readPageHiddenFromWriter('default', 'a', { identities: [['member:alice-example']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false }, true)],
+  ['readSlugFolderRules', 'gbrain_access_folder_rules', e => e.readSlugFolderRules('default', 'a')],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
   ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];

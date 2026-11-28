@@ -52,7 +52,9 @@ function status(hosts: number | null): ShadowStatus {
     epoch_id: 'e1', epoch_started_at: '2026-11-10T00:00:00Z',
     follower: { state: 'following', lag_ms: 0, lag_ms_p99_24h: 900, lag_ms_p99_epoch: 1200, queue_depth: 0, applied_rows: 5000, coverage_watermark: { valid: true, through: 'x', invalidated_reason: null } },
     reconcile: { state: 'idle', consecutive_clean_full_passes: 3 },
-    write_comparisons: { state: 'on', sample_rate: 1, comparable: 1500, unexplained_difference: 0, uncomparable: 2, capability_missing: 0 },
+    write_comparisons: { state: 'on', sample_rate: 1, comparable: 1500, unexplained_difference: 0, uncomparable: 2, capability_missing: 0,
+      // Criterion 5's qualifying-write window (the same 20 days as test/helpers/swap-ready-status.ts).
+      qualifying_writes: { by_day: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [new Date(Date.parse('2026-12-01T00:00:00Z') - i * 86_400_000).toISOString().slice(0, 10), 100])), first_seen: '2026-11-10T00:00:00Z' } },
     fingerprints: { checked_rows: 900, mismatches: 0, probe: { state: 'pass', checked_at: '2026-11-30T00:00:00Z', server_version: '16', collation: 'C' } },
     allocators: { verified: true, checked_at: '2026-11-30T00:00:00Z' },
     seed: { seed_id: 's', finished_at: '2026-11-10T01:00:00Z', unseeded_gap_rows_total: 0 },

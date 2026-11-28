@@ -150,11 +150,11 @@ export function partialFenceRuns(text: string, entryOpen: boolean): { head: numb
 }
 
 /**
- * `withdrawals` plus, for each fence claim of `texts` whose fingerprint changed at fact_fingerprint_v3 (v341), a copy of
- * every ledger row stored under its pre-v341 fingerprint (legacyFingerprintV2Sql: only a hash no current fingerprint can
+ * `withdrawals` plus, for each fence claim of `texts` whose fingerprint changed at fact_fingerprint_v3 (v353), a copy of
+ * every ledger row stored under its pre-v353 fingerprint (legacyFingerprintV2Sql: only a hash no current fingerprint can
  * equal) keyed by its current one, so the
  * overlay strikes or drops the row as it does on every engine. With `global`, a '*' purge tombstone stored under the old
- * fingerprint is added the same way (resolveGlobalPurges looks up current fingerprints only). Before v341 Postgres folded
+ * fingerprint is added the same way (resolveGlobalPurges looks up current fingerprints only). Before v353 Postgres folded
  * the locale's `[[:space:]]`; PGLite's already was the explicit list, so there no claim has two fingerprints. Runs no
  * query unless a fence claim holds a character the folds may disagree on.
  */

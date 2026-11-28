@@ -5,8 +5,10 @@
 #
 # Vendored from gstack's scripts/ubicloud/ubi-runner.sh (synced at gstack
 # 5532345a, v1.91.341.0, plus gstack #3746 at 74836e41 and #3756 at 693ee713:
-# macOS pack and usage, empty projects, owner-scoped reap). UBICLOUD_API_TOKEN is accepted as an alias for
-# UBICLOUD_API_KEY. SSH connections are multiplexed per VM, and `pack` /
+# macOS pack and usage, empty projects, owner-scoped reap; and gstack's API
+# header file from v1.104.0.0). UBICLOUD_API_TOKEN is accepted as an alias for
+# UBICLOUD_API_KEY. The API key reaches curl as a header file on a pipe, never in
+# its argv. SSH connections are multiplexed per VM, and `pack` /
 # `unpack` upload one prebuilt checkout tarball to many VMs.
 #
 # gbrain additions (keep them when syncing; each is marked "gbrain:" below):
@@ -206,7 +208,7 @@ api() {
   shift
   code=$(python3 -c 'import json,sys; print(json.dumps({"argv": sys.argv[1:]}))' "$@" \
     | curl -sS -o "$out" -w '%{http_code}' --max-time "$API_TIMEOUT" -X POST \
-        -H "Authorization: Bearer $UBICLOUD_API_KEY" \
+        -H @<(printf 'Authorization: Bearer %s\n' "$UBICLOUD_API_KEY") \
         -H 'Accept: text/plain' -H 'Content-Type: application/json' \
         -H 'X-Ubi-Version: 1.0.0' --data @- "$API/cli") || true
   echo "${code:-000}"

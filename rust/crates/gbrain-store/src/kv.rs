@@ -212,6 +212,11 @@ pub trait Kv: Send + Sync {
     fn begin_write_exclusive(&self) -> Result<Box<dyn KvWrite>> {
         self.begin_write()
     }
+    /// True for a handle that refuses every write (`Store::open_dir_read_only`): a restore asks before it
+    /// touches anything, without beginning a write.
+    fn is_read_only(&self) -> bool {
+        false
+    }
     /// The commit sequence of the latest commit (0 on a database nothing was committed to).
     fn version(&self) -> Result<u64>;
     /// Starts writing a commit record for every later commit (`commit_log.rs`). The log's meta

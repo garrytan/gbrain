@@ -53,6 +53,7 @@ const ALLOWLIST = new Map([
 // string in a reviewer-visible edit. Modules reached from `scripts/**` carry
 // reason 'script-reachable', which the guard verifies.
 const PERMITTED_TEST_ONLY = [
+  { path: 'src/core/backup/rust-restore-safety.ts', reason: 'held: restore-side safety for a Rust brain (PR 21b-rust); the `gbrain backup restore` Rust path that calls it is 21b-ts, which removes this row' },
   { path: 'src/core/bootstrap/template-repo.ts', reason: 'script-reachable' },
   { path: 'src/core/engine-swap/served-probe.ts', reason: 'held: multi-user Rust lane L5 B1 builds the swap run\'s served-destination probe ahead of its caller; the run-half commit wires it into runSwapStates once rust-engine/swap-pg-run reaches the multi-user trunk. Added 2026-11-27; remove when that commit lands.' },
   { path: 'src/core/google/provenance.ts', reason: 'held: Google provenance lister (GST-3849 PR 1) lands ahead of its callers, the per-account purge and eval suppression in the approved Google Workspace plan; the PR that wires the first caller removes this entry' },

@@ -156,6 +156,30 @@ impl Brain {
         })
     }
 
+    /// `readFactLiveVisibility(factId)`: `{ visibility, live }` or null.
+    #[napi]
+    pub fn read_fact_live_visibility<'env>(
+        &self,
+        env: &'env Env,
+        fact_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_fact_live_visibility(fact_id))
+    }
+
+    /// `tightenFencedFactVisibility({ sourceId, ids: [factId] }, rowNum)`: resolves the changed ids.
+    #[napi]
+    pub fn tighten_fenced_fact_visibility<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+        row_num: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DuplicateArgs = required(args, "tightenFencedFactVisibility args")?;
+            s.tighten_fenced_fact_visibility(&a, row_num)
+        })
+    }
+
     /// `detachFenceRowFacts({ sourceId, slug, rowNum })`: resolves the changed ids.
     #[napi]
     pub fn detach_fence_row_facts<'env>(
