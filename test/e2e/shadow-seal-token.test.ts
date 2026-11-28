@@ -94,11 +94,11 @@ async function sealed(r: ReadSource = reads): Promise<string> {
   return (mark as { token: string }).token;
 }
 
-/** A login role with the given grants and no route to record evidence; dropped with its privileges. */
-async function throwawayRole(grants: string[]): Promise<{ role: string; connect: (app: string) => ReturnType<typeof postgres>; drop: () => Promise<void> }> {
+/** A login role (BYPASSRLS when asked, so its write is not stopped by row security) with the given grants and no route to record evidence; dropped with its privileges. */
+async function throwawayRole(grants: string[], bypassRls = false): Promise<{ role: string; connect: (app: string) => ReturnType<typeof postgres>; drop: () => Promise<void> }> {
   const role = `seal_tok_${process.pid}_${Math.floor(Math.random() * 1e6)}`;
   const phrase = ['gbtest', role].join('_'); // the throwaway role's login phrase, built from its own name
-  await engine.executeRaw(`CREATE ROLE ${role} LOGIN PASSWORD '${phrase}'`);
+  await engine.executeRaw(`CREATE ROLE ${role} LOGIN PASSWORD '${phrase}'${bypassRls ? ' BYPASSRLS' : ''}`);
   for (const g of grants) await engine.executeRaw(g.replace(/\$ROLE/g, role));
   return {
     role,
@@ -166,7 +166,7 @@ d('the seal change token on Postgres', () => {
   }, 60_000);
 
   test('a role with no way to record evidence is refused at the seal', async () => {
-    const r = await throwawayRole(['GRANT INSERT ON config TO $ROLE']);
+    const r = await throwawayRole(['GRANT INSERT ON config TO $ROLE'], true);
     try {
       expect(await sealMark(deps())).toEqual({ refused: 'uncovered_writer_role' });
     } finally { await r.drop(); }
@@ -174,7 +174,7 @@ d('the seal change token on Postgres', () => {
 
   test('a write by a role that appeared after the seal and is gone again is caught by the counters', async () => {
     const token = await sealed();
-    const r = await throwawayRole(['GRANT INSERT ON config TO $ROLE']);
+    const r = await throwawayRole(['GRANT INSERT ON config TO $ROLE'], true);
     const app = 'psql-role-writer';
     try {
       const sql = r.connect(app);
