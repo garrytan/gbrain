@@ -21,6 +21,7 @@ import { buildFollowStatus, readFollowerFile, renderFollowStatus } from '../../s
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import { writeSeedRecord } from '../../src/shadow/seed.ts';
 import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
+import { WRITE_BAR_CAP, WRITE_BAR_FLOOR } from '../../src/shadow/write-bar.ts';
 import { completeWriteRow, insertPublicationEffects, lockPersistenceCounters, lockWriteRequest } from '../../src/core/engine-sql/persistence-journal.ts';
 import { declarePersistence } from '../../src/core/engine-sql/persistence-declaration.ts';
 import { publicationJournalStatements, sqlPublicationJournalStore } from '../../src/core/engine-sql/publication-journal.ts';
@@ -216,8 +217,11 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       }
       expect(status.write_comparisons).toMatchObject({ state: 'measured', sample_rate: 1, comparable: 1, unexplained_difference: 0, capability_missing: 1, capability_missing_by_family: { tags: 1 } });
       const row = row5({ write_comparisons: status.write_comparisons as ShadowStatus['write_comparisons'] });
-      expect(row.state).toBe('fail'); // 1 of 1,000 comparable: the pass rule is unchanged
-      expect(row.detail).toContain('1 of 1000 comparable');
+      // 1 compared write is short of the brain's own bar. This brain has no qualifying-write history, so the bar is the
+      // floor: min(cap, max(floor, window x 0)).
+      expect(row.state).toBe('fail');
+      expect(row.detail).toContain(`1 of ${WRITE_BAR_FLOOR} compared writes`);
+      expect(row.detail).toContain(`bar ${WRITE_BAR_FLOOR} = min(${WRITE_BAR_CAP}, max(${WRITE_BAR_FLOOR}, `);
       expect(row.detail).toContain(WRITE_COVERAGE_LIMIT);
       expect(row.detail).toContain(WRITE_COVERAGE_NAMED); // the owner's wording, verbatim, names every write type left uncompared
       expect(row.detail).toContain('sampled so far: tags 1');
