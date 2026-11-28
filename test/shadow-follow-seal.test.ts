@@ -143,6 +143,25 @@ describe('a sealed close', () => {
     expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
   });
 
+  for (const [what, event] of [['a watermark invalidation', { t: 'watermark', valid: false, reason: 'relation_dirty', relation: 'pages' }], ['an apply', apply(900)]] as const) {
+    test(`${what} right after the seal, at the same clock, removes the seal from disk before the next event: a process killed then leaves nothing to take`, async () => {
+      const dir = tmp();
+      writeSeedRecord(dir, SEED);
+      writeShadowState(dir, STATE);
+      const s = session(dir, { clock: () => 1_000 });
+      expect(await s.ask('watermark', { valid: true, since: 1_500 })).toMatchObject({ valid: true });
+      s.child.handle({ t: 'seal', db_at: 'mark-1' });
+      await s.child.pending();
+      expect(readFollowerFile(dir)!.seal).toBeDefined();
+      s.child.handle(event as never);
+      await s.child.pending(); // no close and no tick: the process dies here
+      expect(readFollowerFile(dir)!.seal).toBeUndefined();
+      const later = next(dir);
+      expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'seal_revoked' });
+      await refused(later, (await s.ask<{ continuity: string }>('state')).continuity);
+    });
+  }
+
   test('unconfirmed, the session\'s own full obligation is settled only by a full pass that started after the session', async () => {
     const { dir } = await sealed();
     const s = next(dir);
