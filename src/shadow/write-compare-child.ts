@@ -46,7 +46,7 @@ export interface WriteComparerDeps {
 export const scratchRootDefault = (): string => join(configDir(), 'scratch');
 type Verdict = [WriteOutcome, string?];
 
-export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent, bytes?: number, qualifying?: number): void; unreadable(weight: number, qualifying?: number): void; idle(): Promise<boolean>; abandon(): void; flush(): boolean; pass(): boolean; missing(n: number, nonqualifying?: number): void; finish(): boolean } {
+export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent, bytes?: number, qualifying?: number): void; unreadable(weight: number, qualifying?: number): void; idle(): Promise<boolean>; abandon(): void; flush(): boolean; pass(): boolean; missing(n: number, nonqualifying?: number, windowLost?: number): void; finish(): boolean } {
   // Each replay gets a private (0700) directory named for this process, removed when the replay ends, whatever its outcome. Directories of processes
   // that no longer exist (a killed child) are swept here, at shadow start; another child never deletes a live one.
   const scratchRoot = d.scratchRoot ?? scratchRootDefault();
@@ -146,8 +146,8 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
     flush: () => d.tally.flush(),
     /** The 10 s pass: one more save, the lost lines held, the gone sessions settled. True when saves have been failing for `SAVE_FAILURE_EXIT_MS` with outcomes held: the child should exit (it is restarted, and the next owner books what it never settled). */
     pass() { d.tally.save(); return d.tally.stuckMs() >= SAVE_FAILURE_EXIT_MS; },
-    /** Samples the serving process owed that never reached this child's pipe: `uncomparable` / `pipe_unflushed`, except `nonqualifying` of them, writes the shadow never compares (capability_missing / `pipe_unflushed_nonqualifying`). */
-    missing: (n, nonqualifying = 0) => d.tally.missing(n, nonqualifying),
+    /** Samples the serving process owed that never reached this child's pipe: `uncomparable` / `pipe_unflushed`, except `nonqualifying` of them, writes the shadow never compares (capability_missing / `pipe_unflushed_nonqualifying`); `windowLost` (1 for an open marker never closed) is one of the page and link writes, booked as the lost window. */
+    missing: (n, nonqualifying = 0, windowLost = 0) => d.tally.missing(n, nonqualifying, windowLost),
     /** After the final save: removes this session's owed file when it is closed and settled. */
     finish: () => d.tally.finish(),
     idle: () => chain.then(() => d.tally.save()), // the last save also folds the lost samples the serving process recorded; true only when everything this child counted is saved (the caller keeps the sent count when it is not)
