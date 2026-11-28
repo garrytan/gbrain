@@ -14,7 +14,12 @@
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18).
  */
 import { describe, expect } from 'bun:test';
+import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { renderFactsTable, type ParsedFact } from '../../src/core/facts-fence.ts';
+import { normalizeLoweredClaim } from '../../src/core/facts/withdrawal-schema.ts';
+import { pageSnapshotKey } from '../../src/core/page-snapshot-batch.ts';
+import type { PageSnapshot } from '../../src/core/page-state/types.ts';
 import { parseFindPattern } from '../../src/core/page-find.ts';
 import type { Page, PageInput } from '../../src/core/types.ts';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
@@ -532,6 +537,51 @@ describe('engine parity: pages', () => {
       const removed = await engine.applyIdentityDecisions({ remove: ['0000000000000001'] });
       expect(removed).toEqual({ upserted: 0, removed: 1, linked: 0, unlinked: 2 });
       return { applied, decisions: read.decisions.map(d => ({ ...d, decided_at: d.decided_at.slice(0, 10) })), pending: read.pending, removed };
+    },
+  );
+
+  // A stored withdrawal or purge tombstone is applied to the facts fence of every page read, so a forgotten claim reads
+  // struck through ("forgotten: ...") and a purged one is gone. The Rust store keeps the ledger rows; the members apply
+  // them (a seeded store, or one whose body mirror failed, holds the raw fence beside its withdrawal).
+  parityTest(
+    'page reads overlay stored withdrawals and purge tombstones on the facts fence',
+    { methods: ['putPage', 'getPage', 'readPageSnapshot', 'readPageSnapshotsBatch'] },
+    async (engine, backend) => {
+      const fact = (rowNum: number, claim: string, visibility: 'world' | 'private' = 'world'): ParsedFact =>
+        ({ rowNum, claim, kind: 'fact', confidence: 1, visibility, notability: 'medium', active: true, context: 'met at the offsite' } as ParsedFact);
+      const forgotten = 'Alice prefers async standups', everywhere = 'Alice owns the roadmap', purged = 'Alice holds a side project';
+      const kept = 'Alice ships on fridays', secret = 'Alice is interviewing elsewhere';
+      await engine.putPage('people/alice-example', {
+        ...ALICE,
+        compiled_truth: `Alice runs product.\n${renderFactsTable([fact(1, forgotten), fact(2, kept), fact(3, purged), fact(4, secret, 'private')])}`,
+        timeline: `- 2026-01-02: joined\n${renderFactsTable([fact(1, everywhere)])}`,
+      });
+      // The Rust engine does not serve these ledger writers, so its arm seeds them in the store, as a seeded brain holds them.
+      type Ledger = {
+        insertFactWithdrawal(sourceId: string, visibility: string, claim: string, subject: string, at: string | null): Promise<boolean>;
+        insertFactPurge(row: { sourceId: string; visibility: string; subject: string; factHash: string; requestId: null; actor: null; reason: null }): Promise<boolean>;
+      };
+      const ledger: Ledger = backend === 'rust'
+        ? (await (engine as unknown as { storeFor(m: string): Promise<{ brain: Ledger }> }).storeFor('getPage')).brain
+        : engine as unknown as Ledger;
+      const at = '2026-01-15T00:00:00.000Z';
+      await ledger.insertFactWithdrawal('default', 'world', forgotten, 'people/alice-example', at);
+      await ledger.insertFactWithdrawal('default', 'world', everywhere, '*', at);
+      await ledger.insertFactWithdrawal('default', 'private', secret, 'people/alice-example', at);
+      const factHash = createHash('sha256').update(normalizeLoweredClaim(purged.toLowerCase())).digest('hex');
+      await ledger.insertFactPurge({ sourceId: 'default', visibility: 'world', subject: '*', factHash, requestId: null, actor: null, reason: null });
+      const shape = (snapshot: PageSnapshot | null | undefined) => snapshot && {
+        page: view(snapshot.page),
+        withdrawals: snapshot.withdrawals.map(w => ({ visibility: w.visibility, fact_hash: w.fact_hash, purged: w.purged === true })),
+        globalPurges: snapshot.globalPurges ? { count: snapshot.globalPurges.count, world_only: snapshot.globalPurges.world_only } : null,
+      };
+      const page = await engine.getPage('people/alice-example');
+      expect(page?.compiled_truth).toContain('forgotten:');
+      expect(page?.compiled_truth).not.toContain(purged);
+      const exact = await engine.readPageSnapshot('people/alice-example', { sourceId: 'default' });
+      const alias = await engine.readPageSnapshot('people/alice-example', { sourceId: 'default', resolveAlias: true });
+      const batch = await engine.readPageSnapshotsBatch([{ slug: 'people/alice-example', sourceId: 'default' }]);
+      return { page: view(page), exact: shape(exact), alias: shape(alias), batch: shape(batch.snapshots.get(pageSnapshotKey('default', 'people/alice-example'))) };
     },
   );
 });

@@ -21,9 +21,9 @@ import type { PageSnapshot } from '../../page-state/types.ts';
 import { pickCanonicalOrigin } from '../../persistence/origin-guard.ts';
 import { segmentedRevertRefusal } from '../../page-state/versions.ts';
 import type { CorpusSampleOpts, DomainBankRow, DomainBankSampleOpts, PageReadScope } from '../../types.ts';
-import { toGetPage } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { overlaidSnapshot } from './page-withdrawals.ts';
 import { HYBRID_BAG_KEYS, storePagePolicy } from './private-provenance.ts';
 
 /** PGLite's single-batch primitives throw a plain `Error` past `DELETE_BATCH_SIZE`; the caller chunks. */
@@ -65,7 +65,7 @@ export const readPageSnapshotsBatch: StoreMember<
     const ref = refs[i]!;
     const key = pageSnapshotKey(ref.sourceId, ref.slug);
     if (snapshot) {
-      snapshots.set(key, { ...snapshot, page: toGetPage(snapshot.page) });
+      snapshots.set(key, await overlaidSnapshot(brain, 'readPageSnapshotsBatch', snapshot));
       continue;
     }
     // PGLite reads an absent ref again through readPageSnapshot (same exact key), unless absentIsNull; an empty
@@ -73,7 +73,7 @@ export const readPageSnapshotsBatch: StoreMember<
     if (absentIsNull || ref.sourceId === '') continue;
     const again: PageSnapshot | null = await storeCall({ member: 'readPageSnapshotsBatch', slug: ref.slug }, () =>
       brain.readPageSnapshot(ref.slug, { sourceId: ref.sourceId, ...(options.includeDeleted ? { includeDeleted: true } : {}) }));
-    if (again) snapshots.set(key, { ...again, page: toGetPage(again.page) });
+    if (again) snapshots.set(key, await overlaidSnapshot(brain, 'readPageSnapshotsBatch', again));
   }
   return { snapshots, covered: batch.covered };
 };

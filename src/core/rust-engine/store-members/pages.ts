@@ -2,11 +2,12 @@
 import type { PageSnapshot } from '../../page-state/types.ts';
 import type { PageWriteOptions, PageSnapshotOptions } from '../../page-state/types.ts';
 import type { GetPageOpts, Page, PageFilters, PageInput, PageReadScope } from '../../types.ts';
-import { toGetPage, toListPage, toPutPage, withIsoDates } from '../store-codec.ts';
+import { toListPage, toPutPage, withIsoDates } from '../store-codec.ts';
 import { sourceOriginScope } from '../../persistence/origin-guard.ts';
 import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { overlaidSnapshot } from './page-withdrawals.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
 const READ_SCOPE = ['sourceId', 'sourceIds', 'includeDeleted', 'excludePrivate', 'resolveAlias', 'requireUnambiguous',
@@ -33,7 +34,7 @@ export const readPageSnapshot: StoreMember<[slug: string, opts?: PageSnapshotOpt
   const scope = pageScope('readPageSnapshot', opts, READ_SCOPE);
   if (hasCapitals(slug)) return null;
   const snapshot: PageSnapshot | null = await storeCall({ member: 'readPageSnapshot', slug }, () => brain.readPageSnapshot(slug, scope));
-  return snapshot === null ? null : { ...snapshot, page: toGetPage(snapshot.page) };
+  return snapshot === null ? null : overlaidSnapshot(brain, 'readPageSnapshot', snapshot);
 };
 
 /**
@@ -47,7 +48,7 @@ export const getPage: StoreMember<[slug: string, opts?: GetPageOpts], Page | nul
   const scope = pageScope('getPage', opts, READ_SCOPE, GET_PAGE_UNREAD);
   if (hasCapitals(slug)) return null;
   const snapshot: PageSnapshot | null = await storeCall({ member: 'getPage', slug }, () => brain.readPageSnapshot(slug, scope));
-  return snapshot === null ? null : toGetPage(snapshot.page);
+  return snapshot === null ? null : (await overlaidSnapshot(brain, 'getPage', snapshot)).page;
 };
 
 /** The revision the page has now, for the error a rejected revision check throws. `null` when there is no page. */
