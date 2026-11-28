@@ -255,6 +255,8 @@ export const cases: Case[] = [
       assert.match(addon.engineBuild, /^[0-9a-f]{64}$/);
       assert.equal(addon.catalogVersion, 0);
       assert.deepEqual(addon.formatVersions, [1, 2, 3, 4, 5, 6, 7, 8]);
+      assert.equal(typeof addon.logFormatVersion, 'number'); // the commit log format; its number is pinned in gbrain-store tests/format_registry.rs
+      assert.ok(!addon.formatVersions.includes(addon.logFormatVersion), 'the log format is not a base format');
     },
   },
   {

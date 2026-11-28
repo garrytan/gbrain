@@ -111,24 +111,24 @@ records until the rest fit, in its own redb commit, and may trim every record, i
 `newest` and `trimmed_through`, so after a full trim and a restart the cursor rules above still hold. No write is
 refused for the cap.
 
-## Store format 16 and activation
+## The commit log store format and activation
 
-A brain opened with the log becomes store format 16 (`format::LOG_FORMAT_VERSION`, registry row `opt-in` in
-[format.md](format.md)). Its records stay a base format's shapes; the format record keeps the base as
-`log.base_format` and `log.since`, and `FORMAT` carries `"log": { "since": ... }`.
+A brain opened with the log becomes the commit log store format, written `LOG` below: `format::LOG_FORMAT_VERSION`,
+whose number is the `opt-in` row of [format.md](format.md). Its records stay a base format's shapes; the format
+record keeps the base as `log.base_format` and `log.since`, and `FORMAT` carries `"log": { "since": ... }`.
 
 ```
 open with the log on, brain not yet logged:
-  base upgrade (unlogged) -> FORMAT stamped 16 + log.since
-  -> one exclusive write: format record 16 + meta record (its position is since)
+  base upgrade (unlogged) -> FORMAT stamped LOG + log.since
+  -> one exclusive write: format record LOG + meta record (its position is since)
   -> log enabled -> upkeep writes (logged) -> FORMAT written from the records
-open of a format-16 brain:
-  log on:  enable the log -> base upgrade from log.base_format (logged, keeps 16) -> upkeep (logged)
+open of a format-LOG brain:
+  log on:  enable the log -> base upgrade from log.base_format (logged, keeps LOG) -> upkeep (logged)
   log off, writable: refused (format_unknown, names GBRAIN_RUST_MULTIUSER=1), before the record file is opened
   read-only: opens; nothing is written
 ```
 
-A build without the log refuses a format-16 brain as newer, with and without `FORMAT`, and changes no byte. A crash
+A build without the log refuses a format-LOG brain as newer, with and without `FORMAT`, and changes no byte. A crash
 after the `FORMAT` stamp and before the records leaves a brain this build finishes with the log on and refuses without
 it. A base newer than this build reads is refused.
 

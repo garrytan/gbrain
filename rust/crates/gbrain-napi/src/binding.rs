@@ -66,6 +66,8 @@ pub fn module_exports(mut exports: Object, env: Env) -> napi::Result<()> {
         formats.insert(*version)?;
     }
     exports.set("formatVersions", formats)?;
+    // The commit log format (`format::LOG_FORMAT_VERSION`), so tests read it instead of a copy.
+    exports.set("logFormatVersion", gbrain_store::LOG_FORMAT_VERSION)?;
     exports.set("sinkMaxQueueSize", SINK_QUEUE_SIZE as u32)?;
     Ok(())
 }

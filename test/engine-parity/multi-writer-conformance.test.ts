@@ -866,9 +866,11 @@ describe('engine parity: multi-writer conformance', () => {
     const mode = rustArmMultiuser();
     expect(mode, 'C16 upgrades a brain by opening it in multi-user mode: the arm must be multi-user').not.toBe('off');
     const route = rustMultiuserSwitch();
-    // The commit log format (rust/crates/gbrain-store/src/format.rs LOG_FORMAT_VERSION, 16 since lane L2's renumber
-    // e435301421; the addon does not export it). gbrain-store tests/commit_log.rs pins the same number.
-    const LOG_FORMAT_VERSION = 16;
+    // The commit log format, as the addon exports it (format::LOG_FORMAT_VERSION); its number is pinned only in
+    // gbrain-store tests/format_registry.rs.
+    const exported = (await loadRustArmAddon()).logFormatVersion;
+    expect(typeof exported, 'the addon does not export logFormatVersion').toBe('number');
+    const LOG_FORMAT_VERSION = exported as number;
     const SWITCHES = ['GBRAIN_RUST_MULTIUSER', 'GBRAIN_RUST_COMMIT_LOG'] as const;
     const formatOf = (dir: string) => JSON.parse(readFileSync(join(dir, 'FORMAT'), 'utf8')) as { format_version: number; log?: unknown };
     const roleOf = (e: unknown) => (e as { ownerRole?: string }).ownerRole;

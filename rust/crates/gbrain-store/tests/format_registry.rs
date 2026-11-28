@@ -134,3 +134,28 @@ fn format_version_is_the_last_shipped_row() {
         );
     }
 }
+
+/// The one place the commit log format's number is written outside `format.rs` and its registry
+/// row. Every other test and doc reads `LOG_FORMAT_VERSION`. A renumber edits exactly three spots:
+/// `format::LOG_FORMAT_VERSION`, the `opt-in` row of rust/docs/store/format.md, and this pin. A
+/// bump that misses one of them fails here (the pin) or in
+/// `the_only_opt_in_format_is_the_commit_log_format` (the row).
+const LOG_FORMAT_PIN: u32 = 16;
+
+#[test]
+fn the_commit_log_format_number_is_pinned_once_and_matches_its_registry_row() {
+    assert_eq!(
+        LOG_FORMAT_VERSION, LOG_FORMAT_PIN,
+        "format::LOG_FORMAT_VERSION moved: update LOG_FORMAT_PIN and the opt-in row of rust/docs/store/format.md with it"
+    );
+    let row: Vec<u32> = rows()
+        .iter()
+        .filter(|row| row.status == "opt-in")
+        .map(|row| row.format)
+        .collect();
+    assert_eq!(
+        row,
+        [LOG_FORMAT_PIN],
+        "the opt-in row of rust/docs/store/format.md is not the pinned commit log format"
+    );
+}

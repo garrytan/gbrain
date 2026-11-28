@@ -122,7 +122,7 @@ Rules for every method:
   `FORMAT` is rebuilt from the records. Every format number, its upgrade and what an older build
   does with a newer brain are in [`docs/store/format.md`](docs/store/format.md).
 - Multi-user mode (off by default) adds commit positions, an optional commit log written with the
-  data (store format 16) and write origins on journal rows: [`docs/store/commit-log.md`](docs/store/commit-log.md).
+  data (the commit log store format, `format::LOG_FORMAT_VERSION`) and write origins on journal rows: [`docs/store/commit-log.md`](docs/store/commit-log.md).
 
 ### Lifecycle
 

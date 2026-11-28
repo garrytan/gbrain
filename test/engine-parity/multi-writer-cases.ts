@@ -405,7 +405,7 @@ export const MW_CASES: readonly MwCase[] = [
     invariant: 'exactly one upgrade; callers see old or new, never partial',
     reference: 'standalone',
     needs: 'commit_log',
-    scope: 'Rust in multi-user mode with the commit log on (rust-mu, both routes): the upgrade driven is an older brain\'s first open with the log on (format 16). Five engines open it at once; one owns it and upgrades it, four are clients, and the log start and newest commit equal those of a brain a lone opener upgraded. PostgreSQL\'s equivalent (concurrent initSchema on a database behind the code) is not written.',
+    scope: 'Rust in multi-user mode with the commit log on (rust-mu, both routes): the upgrade driven is an older brain\'s first open with the log on (to the commit log format). Five engines open it at once; one owns it and upgrades it, four are clients, and the log start and newest commit equal those of a brain a lone opener upgraded. PostgreSQL\'s equivalent (concurrent initSchema on a database behind the code) is not written.',
     members: ['putPage', 'getPage', 'getConfig', 'readCommitLog'],
     storeTests: {
       runnable: ['c16_format_upgrade_runs_once_under_concurrent_openers'],

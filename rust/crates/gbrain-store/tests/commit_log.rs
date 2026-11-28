@@ -1766,23 +1766,22 @@ fn a_rolled_back_or_dropped_transaction_logs_no_data_and_a_retry_logs_it_once() 
     }
 }
 
-/// Store format 16 is the commit log format (the trunk's allotment; 13 to 15 belong to other lanes):
-/// a brain opened with the log is stamped 16 in FORMAT and its format record, opens again with the
-/// switch on, and a writable open with the switch off still refuses, changing nothing.
+/// A brain opened with the log is stamped the commit log format (`LOG_FORMAT_VERSION`; its number
+/// is pinned once, in tests/format_registry.rs) in FORMAT and its format record, opens again with
+/// the switch on, and a writable open with the switch off still refuses, changing nothing.
 #[test]
-fn a_log_brain_is_stamped_format_16_opens_with_the_switch_on_and_refuses_without_it() {
-    assert_eq!(LOG_FORMAT_VERSION, 16);
+fn a_log_brain_is_stamped_the_log_format_opens_with_the_switch_on_and_refuses_without_it() {
     for concurrent in MODES {
-        let dir = TempDir::new("format-16");
+        let dir = TempDir::new("log-format");
         let brain = dir.path().join("brain");
         let store = Store::open_dir(&brain, options(concurrent, mu())).unwrap();
         assert!(store.multiuser() && store.info().commit_log);
-        assert_eq!(store.info().format_version, 16);
+        assert_eq!(store.info().format_version, LOG_FORMAT_VERSION);
         store.set_config("test.a", "1").unwrap();
         drop(store);
         let format: Value =
             serde_json::from_slice(&std::fs::read(brain.join("FORMAT")).unwrap()).unwrap();
-        assert_eq!(format["format_version"], 16);
+        assert_eq!(format["format_version"], LOG_FORMAT_VERSION);
         let kv = RedbKv::open_path(&brain.join("records.redb")).unwrap();
         let stored: Value = serde_json::from_slice(
             &kv.snapshot()
@@ -1792,7 +1791,7 @@ fn a_log_brain_is_stamped_format_16_opens_with_the_switch_on_and_refuses_without
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(stored["format_version"], 16);
+        assert_eq!(stored["format_version"], LOG_FORMAT_VERSION);
         drop(kv);
         let store = Store::open_dir(&brain, options(concurrent, mu())).unwrap();
         assert_eq!(store.get_config("test.a").unwrap().as_deref(), Some("1"));

@@ -177,6 +177,7 @@ export interface Addon {
   engineBuild: string;
   catalogVersion: number;
   formatVersions: unknown[];
+  logFormatVersion: number;
   sinkMaxQueueSize: number;
   sumF32(values: Float32Array): number;
   scaleF32(values: Float32Array, factor: number): Float32Array;
