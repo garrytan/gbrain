@@ -6293,23 +6293,24 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   record evidence, `track_counts` off, a server older than PostgreSQL 15, a prepared transaction, another connection
   with a write open, and any other connection of a role that can write a copied relation (itself, or through any role
   it can switch to with SET ROLE: a NOINHERIT login that writes after `SET ROLE` counts) that is not idle, went idle
-  under a minute ago, or cannot be seen by the reading role (without superuser or `pg_read_all_stats` another role's
+  under 61 s ago, or cannot be seen by the reading role (without superuser or `pg_read_all_stats` another role's
   `pg_stat_activity` row has NULL state, transaction id and backend type), because counters show only what the server
   has flushed. A connection of a read-only role, such as a monitoring agent, is never waited on. The sealing process's
   own connections are left out only when proven its own: the backend pid of a connection its database driver holds
   (in its ordinary pool, and in its direct pool on a dual-pool brain when that pool is already open, where the
   persistence heartbeat renews every 10 s), read before and after the check (the vendored driver's read-only `backend_pids`); its application name alone
   exempts nothing, and a pool that cannot be proven refuses (`own_backends_unproven`). No seal is written under the same conditions, and not while a
-  connection the writer hooks recorded is still connected, whatever the age of its row: a writer still connected during
-  the seal check is refused until it commits or disconnects. After the child took a confirmation the check reads once
+  connection the writer hooks recorded is still connected, whatever the age of its row: such a writer stays refused while
+  it is connected, even after it commits (`other_writer_live`), until it disconnects. After the child took a confirmation the check reads once
   more: the child stays invalid (`seal_confirm_pending`) until that second read is quiet and the serving process sends
   `commitSeal`, and a failure withdraws it (`revokeSeal`: invalid again, full obligation). A commit that was sent but
   not acknowledged is withdrawn (`seal_commit_unacknowledged`); a commit the child cannot match to its confirmation
   drops the seal (`seal_commit_mismatch`). A confirmation that was sent but not
   acknowledged is withdrawn too (`seal_confirm_unacknowledged`): a timeout does not cancel what is already in the pipe.
   Every withdrawal first appends a `seal_revoked:<reason>` line to `follower-invalidations.jsonl`, which the child reads
-  on its own (and always before its last write at close and before a refused seal), then sends `revokeSeal` again
-  until the child acknowledges it. When no revoke is acknowledged the doubt is returned, even if the line got through:
+  on its own (and always before its last write at close and before a refused seal), then sends `revokeSeal`: one try at once,
+  then retries after waits of 1, 2, 5, 10 and 30 s, each with a 10 s timeout. When no revoke is acknowledged the doubt
+  is returned, even if the line got through:
   the first check withdraws the confirmation once more and runs a fresh full pass, never one resumed from before, and
   the close does not seal. Nor does a close seal while the confirmation is still running (`seal_confirm_pending`): its
   second read is what would catch a write that began after its first. PGLite never seals or confirms
