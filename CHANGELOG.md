@@ -10,6 +10,143 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.784.0] - 2026-11-28
+
+**A Rust brain now stores link writes that carry a link kind or a resolution type, instead of refusing them.**
+
+### Fixed
+- On the Rust engine, `addLinksBatch` refused every link row that carried `link_kind` or `resolution_type` with `engine_capability_missing`, so nothing in that batch was written. The links pass after a remote `put_page` on a SQL primary sends `link_kind`, so shadow mode's sampled replays of those writes on the Rust side failed and were counted as not compared (`rust_write_failed`). This does not turn on remote `put_page` for a Rust brain. The Rust engine now accepts both fields and stores them as PGLite and Postgres do. A value outside the allowed set (`plain` or `typed_ner`; `qualified` or `unqualified`) is still rejected.
+- The Rust shadow evidence epoch restarts when this ships (adapter version 12 to 20; adapter numbers are unique across open branches, so this one skips the numbers they hold). No migration.
+
+<!-- behavior-change: rust_links_batch_link_kind -->
+
+**`gbrain doctor` now warns before a PGLite brain outgrows its vector index, setup pins the brain it labelled into the Claude Code and Codex registration, and four smaller fixes land.**
+
+### Fixed
+- PGLite's vector index ceiling is counted in chunks, and the docs now say so. A PGLite brain whose chunk index cannot fit PGLite's memory never finishes building it (an unsized build over 375,000 chunks had not finished after 10.8 hours), and the old guidance of about 50,000 pages could reach that size. The README and `docs/ENGINES.md` now put PGLite's range at roughly 30,000 pages (about 200,000 embedded chunks), and `gbrain doctor`'s `pglite_scale` check warns at any page count once the chunk index needs 65% of PGLite's build budget, and again, saying it cannot be built, past it. Both warnings carry the read-only move-to-Postgres plan as their fix.
+- `gbrain setup claude-code` and `gbrain setup codex` write the brain they set up (`--brain`, `GBRAIN_BRAIN_ID`, the brain an earlier setup pinned, or, for a run that labels people or binds a member, the brain setup resolved) into the registration as `GBRAIN_BRAIN_ID`. A session started in another directory now opens the brain that holds the labelled members instead of whichever brain that directory points at. A run that labels nobody and names no brain stays unpinned, as before, and so does an entry the gbrain plugin owns; the hooks keep reading the install's own config. The history-choice commands setup prints keep the run's `--brain`.
+- Setup follow-ups: a Codex re-run pinned by its receipt writes its starter pages, notes import and household template into the receipt's source; the rescope command printed for a hand-scoped key makes only the requested move; a company-pinned setup on a one-person brain asks its history question instead of failing; the `--labelled-only` hint always names `--source`; household `--status` and `--resume` open the brain named with `--brain`; `access serves several` refuses an empty `--source` and `GBRAIN_SOURCE=__all__` without `--source`; and `setup` no longer accepts and ignores a stray `--no-federated`.
+- The OpenClaw skill plugin keeps its state straight. A `gbrain skills pin add/remove` made while setup is running is no longer overwritten (pins render from config.json under the state lock); turning the last agent off no longer loses another agent a concurrent setup just turned on; the state lock is an OS lock that is never broken while its holder is alive (a run waits 10 seconds, then refuses); and two concurrent `--owner-skill` runs keep both restrictions.
+- When a Bun global upgrade fails and gbrain restores the previous version, it now removes the failed target first and checks the restored version (and, on Windows, the relinked launcher) before printing "Restored". Before, Bun could register the failed target, exit 0 from the restore without swapping, and gbrain said it was restored.
+- A starter-surface MCP caller can now pass `resume` to `correct`, which a stopped correction's receipt names as its next call.
+
+### Added
+- `gbrain skillpack conventions <dir>` writes the shared conventions gbrain's bundled skills link to as `../conventions/<file>` into `<dir>/conventions`, from the copy built into gbrain, so those links open on a single-file binary install. A file you changed is kept and named, and a file that appears while it runs is never replaced.
+
+### Changed
+- Agent conventions: the `room_above_level` row now says items above the room stay out of the reply unless the ask cannot be answered without them and are never volunteered; the unmetered-model row says what unmetered means (calls add nothing to the group's spend, so the cap does not limit them); `model-routing.md` drops a stale `next_in_chain` note and an unsourced cost multiple.
+
+<!-- behavior-change: pglite_vector_index_ceiling_gst4084 -->
+<!-- behavior-change: setup_pins_brain_gst4069 -->
+
+**Re-auditing a shared team brain no longer overwrites a teammate's page that changed after the sanitized copy was made.**
+
+### Fixed
+- company-brainify's history purge copied the sanitized staging folder over a fresh clone of the shared repo, so a page a teammate changed, added or deleted after staging was silently reverted to the staged version and pushed. The re-audit staging step now records the commit the sanitized pages sit on (`$STAGING.base`), and the purge lists every page in the six sanitized folders that changed on the shared repo since that commit and stops before copying anything. It also stops when the base is missing or was never pushed, and when the pushed folders differ from the staged pages after the sanitize push, which catches a teammate's push merged in during it (ignored files such as editor swap files don't count). A restart of Step 1 after the sanitize push compares against the sanitize commit, so it stops only on later pushes. To reconcile, the skill has you commit-push the sanitized folders from your checkout, read the listed pages, re-stage and restart.
+- meeting-ingestion no longer keeps an attendee name that neither the transcript nor calendar or invite metadata supports just because `gbrain whois` matches it exactly. A recorder's invented name can match a real person in the brain; `whois` now only resolves attendees the evidence already supports.
+
+### Changed
+- postgres-adopt describes both `pglite_scale` warnings: 1000+ pages, and the chunk vector index nearing what PGLite can build.
+- The rooms guide's `room_above_level` row matches the agent protocol's wording.
+- Convention examples use `example.com` addresses.
+
+**A renamed contact or a moved calendar event no longer deletes its only page when the replacement cannot be saved.**
+
+### Fixed
+- When a contact in Google Contacts or Apple Contacts is renamed, the sync writes the page under the new name and then removes the old one. If the new page could not be saved because its content matches a page you purged, or the import kept the page under its old name, the old page was still removed, and the contact was left with no page at all. The old page is now removed only after a page under a different name has actually been saved. Apple Contacts also leaves the contact's person link and its facts as they were when no new page was saved.
+- When a Google Calendar event's title or date changed, the sync removed the old event page before writing the new one. If the new page failed to import, matched a purged page, or kept the old name, the only copy of the event was gone. The sync now writes the new page first and removes the old one only after a page under a different name was saved, and a failed write is retried on the next sync. Cancelled events and events that move out of the sync window are removed as before.
+
+Reported and first fixed by @jack60612.
+
+Supersedes #10579
+Supersedes #10577
+
+**`gbrain get` reads a person page whose facts fence is longer than a segment, and `remember` on such a page no longer runs out of time and drops the save.**
+
+### Fixed
+- `gbrain get` (and `get_page`'s markdown view for a trusted caller) refused a page stored in segments whose `## Facts` fence runs past a forced cut when the page's source has fact withdrawals, with `page_projection_stale`. The view now measures and reads the segments such a fence spans as one run (with the segment its opening marker starts in), the way the trusted body read already joins them, so the page prints whole with withdrawn rows struck and purged rows gone. Windows, digests and outlines of that view read the same run. Remote reads are unchanged.
+- `remember` on a page like that rewrote the whole page for every fact. It read the body back, segmented, hashed and staged all of it again, and checked the canonical file by overlaying the whole fence in the database twice. On a page with a fence of about 1.7 MB a save could pass its 30-second preparation budget and end `preparation_stalled`, and the fact was lost unless the caller sent it again. The new fence row is now published as a splice of the segments it touches, with the same stored body, file and facts rows as before (household and rule pages, and a save that changes the page's oversized verdict or storage class, still take the full rewrite), and the file check compares the file with the stored bytes before overlaying either copy. On a 1.7 MB fence, preparation drops from about 1.7 s to about 0.3 s locally (about six times less); doubling the fence to 3.3 MB adds about 0.1 s.
+
+Reported by @andrew-agents-bot; Part 1 read-path fix informed by @javieraldape (#10596). Fixes #10589.
+
+**The PostgreSQL arms CI job now runs on 32 shards instead of 28, so master's Test run is green again.**
+
+### Fixed
+- Two recent changes added enough PostgreSQL arm test time that two of the 28 `unit-postgres-arms` shards went past the 570 s per-shard budget (570.4 s and 570.2 s), which failed `test/scripts/postgres-unit-arms.test.ts` on master.
+- `ARM_SHARDS` in `scripts/postgres-unit-arms.ts` is now 32, and the `persistence-validation.yml` matrix, job name and `run` argument follow it. The largest shard drops to 499.6 s with both arms and 337.0 s in the Postgres-only mode. The budget and the test are unchanged.
+- Check names become `Unit-lane PostgreSQL arms N/32 / Bun …`, and none of them is a required check.
+
+**A capped embedding run can no longer spend past its cap, and an embedding job you approved with `--max-usd` now stops at that amount.**
+
+### Fixed
+- `gbrain jobs submit embed|embed-backfill|embed-catch-up --max-usd <usd>` asked for your approval and then dropped it. The queued job ran under only the backfill's own $10 default, or with no cap at all under `spend.posture=tokenmax` or `embed.backfill_max_usd off`. A cap you set yourself (`--max-usd` or a preapproval) is now stored on the job and the worker enforces it, the same way `jobs submit enrich` already worked. A plain `--yes` or `tokenmax` approval still queues the job with no extra cap, as before.
+- A queued embedding job that hit its approved cap kept going page by page, retrying each refused request one chunk at a time and counting it toward quarantining the page. The first refusal on an ordinary page now ends `gbrain embed` (`--slugs`, `--stale` and `--all`) and the embed-backfill drain, and the job fails with the cap message.
+- Under a dollar cap (`--max-usd`, `embed.backfill_max_usd`, the maintenance daily cap), each embedding request was let through on a character-count estimate of its tokens. Dense text such as Chinese bills several times more tokens than that, so one request could carry the run past its cap. Each provider request is now admitted on its own at the most input it can bill (one token per UTF-8 byte, capped per input by the model's input limit) and settled to the tokens the provider reports. When the provider reports nothing, or a request failed in a way that may still have billed, the full hold stays charged instead of the smaller estimate.
+- Under a cap, a request the AI SDK would split into several (more inputs than the provider takes per call) is sent as separate requests, each admitted on its own, and the SDK's hidden retries are off, since each would be another billable attempt against one hold. gbrain's own rate-limit retries already admit every attempt again.
+- Voyage and Perplexity responses whose usage omits `total_tokens` were rewritten to report zero tokens, so a queued job's spend meter settled those requests at $0. They now count as unknown usage and keep their reserved cost.
+
+Reported and first fixed by @jack60612. Supersedes #10581.
+
+<!-- behavior-change: embedding_job_approval_and_request_holds -->
+
+**Shadow mode now decides which stale sessions are abandoned before it reads their journals, so a child's samples written between those two steps are no longer counted twice.**
+
+### Fixed
+- The pass that settles a crashed or abandoned shadow session treats a session record more than 10 minutes old as abandoned when the session was closed or its serving process is gone. It made that decision after it read the client journals, so a child that wrote its last samples between the read and the decision had them counted from the record and from its journal (6 counted for 3 owed). The pass now decides before it reads the journals, and a session that becomes stale later waits for the next pass. The only effect is a lower, correct count; no count, reason or status text is added or renamed. One case stays: a child that is still alive when its 10-minute-old record is settled and writes after the journal read is still counted twice; that only raises the count and keeps the write check closed.
+
+<!-- behavior-change: shadow_stale_marker_order -->
+
+**Shadow mode compares a remote page's mention-link write instead of setting it aside as moved when the brain's own background bookkeeping commits during the read-back.**
+
+### Fixed
+- After a remote page write (for example `put_page` over MCP), the links effect writes the page's mention links with `addLinksBatch`. The shadow reads those rows back and sets the sample aside as moved if another write to pages or links committed in between. The effect worker's next claim and the receipt true-up commit transactions that only declare the write protocol, lock counters or claim and complete effect rows. The shadow follower cannot map those journal statements, so it counted each one as an unknown page or link write and the sample was marked `uncomparable/moved` (34 of about 443 samples in one pilot measurement). The follower now leaves out an unmapped journal statement when its writes touch only bookkeeping rows, using the same list the write capture already uses for its own bookkeeping. A page or link row in the same batch, or any other statement the follower cannot map, still counts. These samples now go on to the Rust replay instead of being set aside. The Rust `addLinksBatch` already accepts and stores `link_kind` and `resolution_type`, and the effect sends `link_kind: plain`, so that field no longer causes `rust_write_failed`; the samples are compared when the other checks pass. No count, reason or status text is added or renamed.
+
+<!-- behavior-change: shadow_effect_links_not_moved -->
+
+**Shadow mode reduces write-sample loss caused by per-sample tally saves when an MCP stdio `gbrain serve` session closes after a burst of writes.**
+
+### Fixed
+- With shadow write sampling on, the shadow child saved its write tally to disk after every sample (about 6 ms each), so it read far fewer samples a second than a burst of remote writes produced. The rest waited in the serving process, which dropped them when its client closed the session; status counted them as lost (`pipe_unflushed`, `pipe_unflushed_nonqualifying`). The child now saves once per event-loop turn and keeps up; in bursts of up to 1,000 page writes, nothing was left to drop at exit. Lost samples are still counted the same way, and nothing you run changes.
+
+<!-- behavior-change: shadow_child_tally_per_turn -->
+
+**Shadow mode no longer lets a cleanup worker from a replaced evidence epoch delete the new epoch's lost-window file.**
+
+### Fixed
+- When a shadow session crashes while a window of samples is open, the worker books the loss and leaves a small file (`write-owed.window-lost-<session>.json`) that keeps an older gbrain, reading the same folder, from reading that epoch as measured. If the epoch changed while a worker of the previous epoch was partway through its cleanup pass, that worker could delete the new epoch's file, and an older gbrain then read the write comparison as measured and passed swap criterion 5 although samples were lost. The cleanup now reads the epoch again under the lock it already holds and removes nothing when the epoch has moved. This build's own status always read the epoch as not measured; only an older gbrain sharing the folder was affected. Nothing a status page or the swap check counts changes.
+- While a crashed session's samples are being settled, an I/O error reading its record stamped the settling worker's own process on the lost-window file instead of the session's serving process, which could let that file be removed too early. The settle now fails and is retried on the next save.
+
+### Changed
+- The pass that settles a crashed session's owed samples now does nothing for that round when one of its journals cannot be read, and runs again on its next turn. Before, it booked the owed count from the session's marker as if the journal were empty and the later fold counted the same samples again (6 counted for 3 owed). The only effect is a lower, correct count; no count, reason or status text is added or renamed.
+- The same pass now decides which crashed sessions' children are gone before it reads their journals. Before, a child that wrote its last samples and exited between those two steps had its samples counted twice (6 counted for 3 owed). The only effect is a lower, correct count.
+
+<!-- behavior-change: shadow_stale_blocker_epoch_guard -->
+
+**Shadow mode no longer counts tag and other non-page writes as uncomparable page and link writes when a sample line is cut short or a shadow worker has no evidence epoch of its own.**
+
+### Fixed
+- When a write sample line reached the shadow child cut short, every sample the line stood for was counted as an uncomparable page or link write (`line_unreadable`), even when the line was for a tag or another write the shadow never compares. Only the page and link writes in it now count as `line_unreadable`; the rest is counted as `capability_missing` under `line_unreadable_nonqualifying`, the same split the session's owed record already used.
+- A shadow child that is not the store's owner, or whose evidence epoch was replaced, hands its settled samples to the owner as lost lines. Those lines did not say which samples were page and link writes, so when the session ended early the owner booked the rest of it as uncomparable `receipt_orphaned` instead of `receipt_orphaned_nonqualifying` for the non-page writes. The lines now mark each page and link write (`q: 1`), and the owner books the rest by kind.
+
+### Changed
+- Both fixes only move counts from uncomparable to capability_missing for writes that are not page or link writes; the totals do not change, and neither does the rule swap criterion 5 passes on. Lines written by an older gbrain carry no mark and are still counted the old, stricter way. `line_unreadable_nonqualifying` is a new name in the capability_missing breakdown that `gbrain engine shadow status` and the swap report show.
+
+<!-- behavior-change: shadow_lost_samples_split -->
+
+**Ten small fixes from outside reports: sync, rules, put_pages, mentions, purge, doctor and the `--json` guard behave as their messages say.**
+
+### Fixed
+- A clean `gbrain sync --full` now clears an open `<head>` (history rewrite) sync failure, as an incremental sync already did once the pinned commit verified. Before, doctor kept reporting the failure after the reset an operator runs to clear it. (#10454)
+- `gbrain rules approve` and `gbrain rules retire` wait for the save like every other owner CLI write (30 s by default, `--wait` or `GBRAIN_WRITE_WAIT_MS`), so a retire that commits a few seconds later prints its success line instead of `Error [write_pending]`. (#10466)
+- A `put_pages` status poll that cannot see the batch says the outcome is unknown to this caller and asks for a check before resending, instead of telling the caller to resubmit, which could save the pages twice under another writer. (#10476)
+- When a source gains names, the mention pass's database prefilter requires every word of a name, in order, instead of only its longest word, so a name with a common word ("program") no longer sends most of the brain to the scanner. The pages found are unchanged. (#10529)
+- Purge's held-concept report looks up each concept's members by the pages primary key instead of reading every page once per held concept, which on large brains outlasted the statement timeout and stretched purge to minutes. (#10541)
+- `gbrain doctor --index-audit` lists unusable indexes (a failed or dropping build) first and marks them, so the 20-index size cap no longer hides a small failed build behind larger healthy ones.
+- The extract-atoms drain's dead-letter text says every attempted item failed instead of blaming provider calls; the last error it carries says where.
+- A `--json` run whose reader closes the pipe is no longer logged as `json_document_missing`, so doctor's `agent_contract` stops warning for a week after `gbrain doctor --json 2>&1 | head`. (#10548)
+- `gbrain doctor --only schema_pack_active` runs the check instead of answering "No finding"; the local doctor now runs it like the remote report does. (#10555)
+- The Postgres vector-statement test keeps connection options already in `DATABASE_URL` (such as `sslmode=disable`) when it adds `prepare=false`.
+
 ## [0.60.783.0] - 2026-11-28
 
 **Shadow mode now keeps the file that holds an older gbrain blocked in a file of its own, so no write by the serving command can erase it, and a crashed epoch can no longer pass its lost window on to the next one.**
