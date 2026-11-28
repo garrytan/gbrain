@@ -180,6 +180,71 @@ describe('engine parity: put_page to an unbound source, database-only', () => {
 });
 
 /**
+ * A rename that lands between link preparation's two alias reads (the source's alias rows, then which of their pages
+ * are live) never stores a link to the wrong page. Here `notes/first` was once `notes/old`, and a new page took the old
+ * slug; the put links `[[notes/old]]` while that new page is renamed to `notes/second` between the two reads. The
+ * alias rows are read again after the live-page read: they moved, so the pair is read once more and the link goes to
+ * `notes/second`, the page that held the slug. Before the re-read the stale alias row and the fresh live set
+ * combined into a link to `notes/first`, a page the note never named. The rename's alias row is seeded per arm as in
+ * the case below (Rust records it; the SQL arms take a fixture row).
+ */
+describe('engine parity: put_page link targets through slug aliases under a rename', () => {
+  parityTest('a rename between the alias read and the live-page read links the renamed page, never the alias\'s former target', {
+    methods: ['updateSlug', 'listSlugAliases', 'listLinkEndpointPages', 'getLinks'],
+  }, async (engine, backend) => {
+    const ctx = { engine, sourceId: 'default', remote: false, dryRun: false, config: { engine: engine.kind, embedding_disabled: true },
+      logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+    const put = async (slug: string, body: string) => String((await (putPage.handler(ctx, { slug,
+      content: `---\ntitle: ${slug}\ntype: note\n---\n${body}\n`, request_id: randomUUID(), wait_ms: 25_000 }) as Promise<Record<string, unknown>>)).status);
+    const rename = async (from: string, to: string) => {
+      expect(await engine.updateSlug(from, to)).toBe(1);
+      if (backend !== 'rust') {
+        await engine.executeRaw(`UPDATE slug_aliases SET canonical_slug = $2 WHERE source_id = 'default' AND canonical_slug = $1`, [from, to]);
+        await engine.executeRaw(`INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug) VALUES ('default', $1, $2)
+          ON CONFLICT (source_id, alias_slug) DO UPDATE SET canonical_slug = EXCLUDED.canonical_slug`, [from, to]);
+      }
+    };
+    const handle = engine as unknown as Record<string, unknown>;
+    try {
+      const statuses = [await put('notes/old', 'The page that becomes notes/first.')];
+      await rename('notes/old', 'notes/first');
+      statuses.push(await put('notes/old', 'A new page under the old slug.'));
+      // The first live-page read renames the new notes/old away, after the alias rows were read.
+      const read = engine.listLinkEndpointPages.bind(engine);
+      // Each queued rename runs at the start of the next live-page read that asks about notes/old.
+      const putDuring = async (slug: string, renames: [string, string][]) => {
+        const queue = [...renames];
+        handle.listLinkEndpointPages = async (...args: Parameters<BrainEngine['listLinkEndpointPages']>) => {
+          const next = args[1].includes('notes/old') ? queue.shift() : undefined;
+          if (next) await rename(...next);
+          return read(...args);
+        };
+        try {
+          statuses.push(await put(slug, 'Points at [[notes/old]].'));
+        } finally {
+          delete handle.listLinkEndpointPages;
+        }
+        return { left: queue.length, linked: (await engine.getLinks(slug)).map(link => link.to_slug).sort() };
+      };
+      // One rename: the alias rows moved, the pair is read once more and agrees, the link goes to the renamed page.
+      const once = await putDuring('notes/origin', [['notes/old', 'notes/second']]);
+      // A rename on each read: the rows moved twice, so no alias is followed and the link is stored as written
+      // (notes/old is no live page, so no edge): stale, never notes/first or another wrong page.
+      statuses.push(await put('notes/old', 'Another new page under the old slug.'));
+      const twice = await putDuring('notes/origin-two', [['notes/old', 'notes/third'], ['notes/third', 'notes/fourth']]);
+      expect({ statuses, once, twice }).toEqual({
+        statuses: Array(5).fill('created_or_updated'),
+        once: { left: 0, linked: ['notes/second'] },
+        twice: { left: 0, linked: [] },
+      });
+      return { once, twice };
+    } finally {
+      await disposePersistenceConsumer(engine);
+    }
+  });
+});
+
+/**
  * A put of a note that wikilinks an old slug of a renamed page stores the link to the page's current slug: admission
  * reads the source's slug aliases and which of their pages are live (persistence/links-preparation.ts liveSlugAliases).
  * An alias whose old slug is itself a live page again is not followed. On a brain without the alias table (SQL arms
