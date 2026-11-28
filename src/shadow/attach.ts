@@ -52,6 +52,8 @@ export interface AttachShadowDeps {
    * so primary writes pay nothing for evidence that would be dropped.
    */
   recordsWriteComparisons?: boolean;
+  /** Tests only: the seal's database checks (seal.ts), so a PGLite lifecycle test can reach the seal the child would take. */
+  sealChecks?: { mark: typeof sealMark; confirm: typeof confirmSeal };
 }
 
 export interface AttachedShadow<E extends BrainEngine> {
@@ -78,7 +80,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     dir, argv: shadowChildArgv(dir, deps.gbrainArgv), onDirty: (relation) => reconciler?.markDirty(relation),
     onAsk: (ask) => asks(ask),
     // Each new child is asked once whether the last session's seal holds; deferred, as start() runs inside a send.
-    onStart: () => { confirm = undefined; setImmediate(() => { if (sealDeps) confirm ??= confirmSeal(sealDeps); }); },
+    onStart: () => { confirm = undefined; setImmediate(() => { if (sealDeps) confirm ??= (deps.sealChecks?.confirm ?? confirmSeal)(sealDeps); }); },
     ...deps.supervisor,
   });
   let confirm: Promise<void> | undefined; // the running child's seal confirmation (seal.ts), once asked
@@ -119,7 +121,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   void watch.ready(); // the first freshness token, so a sample captured a moment later has one to be held to
   const asks = makeAskHandler({ engine, reads: askReads, dir, rpc, samples, watch, get follower() { return follower; } });
   if (reads) sealDeps = { dir, reads, postgres: primaryTakesWriterHooks(state.primary_engine), rpc };
-  const askConfirm = (): Promise<void> => (sealDeps ? (confirm ??= confirmSeal(sealDeps)) : Promise.resolve());
+  const askConfirm = (): Promise<void> => (sealDeps ? (confirm ??= (deps.sealChecks?.confirm ?? confirmSeal)(sealDeps)) : Promise.resolve());
   // A write the child will never hear of leaves a line for whichever process owns the store next (follow-child.ts), so no
   // seal is trusted over it. One line a second is enough: the owner reads any line as "a write was lost".
   const lost = lostWriteRecorder({ dir });
@@ -163,7 +165,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
           let token: string | null = null;
           if (!refused) {
             await Promise.race([askConfirm(), new Promise((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
-            const mark = await sealMark(sealDeps);
+            const mark = await (deps.sealChecks?.mark ?? sealMark)(sealDeps);
             if ('refused' in mark) refused = mark.refused;
             else if (!follower.idle()) refused = 'follower_not_idle';
             else token = mark.token;
