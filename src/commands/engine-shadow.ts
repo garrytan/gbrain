@@ -632,7 +632,7 @@ async function reconcileCommand(
 ): Promise<number> {
   const seeded = readSeedRecord(brain.dir);
   if (seeded?.digests !== true) { err(seeded ? `engine shadow: this seed was written before follow existed, so reconcile cannot guard its rows. Reseed: ${RESEED_STEPS}.` : 'engine shadow: reconcile needs a seeded store. Run gbrain engine shadow seed first.'); return 1; }
-  const [{ Reconciler }, { ShadowSupervisor }, { shadowChildArgv }, { openReadSource }, { sealMark }, { primaryTakesWriterHooks }] = await Promise.all([
+  const [{ Reconciler }, { ShadowSupervisor }, { shadowChildArgv }, { openReadSource }, { sealMark, readBasis }, { primaryTakesWriterHooks }] = await Promise.all([
     import('../shadow/reconcile.ts'), import('../shadow/supervisor.ts'), import('../shadow/attach.ts'), import('../shadow/read-pool.ts'),
     import('../shadow/seal.ts'), import('../shadow/writer-hooks.ts'),
   ]);
@@ -640,7 +640,13 @@ async function reconcileCommand(
   const supervisor = new ShadowSupervisor({ dir: brain.dir, argv: shadowChildArgv(brain.dir), stillEnabled: () => true, ...deps.reconcileSupervisor });
   const reads = openReadSource(primary);
   try {
-    const reconciler = new Reconciler({ dir: brain.dir, reads, rpc: (method, args, timeoutMs) => supervisor.request(method, args, timeoutMs) });
+    const sealDeps = { dir: brain.dir, reads, postgres: primaryTakesWriterHooks(readShadowState(brain.dir)?.primary_engine) };
+    // The pass's basis (seal.ts): handed over only once its watermark restore was acknowledged; it is what the seal carries.
+    let basis: string | null = null;
+    const reconciler = new Reconciler({
+      dir: brain.dir, reads, rpc: (method, args, timeoutMs) => supervisor.request(method, args, timeoutMs),
+      basis: () => readBasis(sealDeps), onBasis: (token) => { basis = token; },
+    });
     const pass = await reconciler.run('full');
     if (json) out(JSON.stringify(pass, null, 2));
     else {
@@ -651,7 +657,7 @@ async function reconcileCommand(
     // A clean pass is sealed like a serving process's close (seal.ts), so the next session carries it on. This process
     // writes nothing to the primary; the child refuses the seal if its watermark or continuity does not hold.
     if (!pass.error && supervisor.childPid !== null) {
-      const mark = await sealMark({ dir: brain.dir, reads, postgres: primaryTakesWriterHooks(readShadowState(brain.dir)?.primary_engine) }).catch(() => ({ refused: 'read_failed' })); // silent-read-ok: a refusal means no seal, so the next session starts invalid
+      const mark = await sealMark(sealDeps, basis).catch(() => ({ refused: 'read_failed' })); // silent-read-ok: a refusal means no seal, so the next session starts invalid
       if (supervisor.send(JSON.stringify('token' in mark ? { t: 'seal', db_at: mark.token } : { t: 'seal', db_at: null, refused: mark.refused }) + '\n')) await supervisor.drain();
     }
     return pass.error ? 1 : 0;

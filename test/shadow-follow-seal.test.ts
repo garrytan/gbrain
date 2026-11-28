@@ -20,7 +20,7 @@ import { appendPass, buildFollowStatus, readFollowerFile, readPasses } from '../
 import type { ReadSource } from '../src/shadow/read-pool.ts';
 import { ShadowFollower } from '../src/shadow/follower.ts';
 import { Reconciler } from '../src/shadow/reconcile.ts';
-import { confirmSeal, quietSince, sealMark } from '../src/shadow/seal.ts';
+import { confirmSeal, quietSince, readBasis, sealMark } from '../src/shadow/seal.ts';
 import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
 import { SHADOW_STATE_VERSION, writeShadowState, type ShadowState } from '../src/shadow/state.ts';
 import { WRITER_HOOK_TRIGGER, writerHooksManifestPath } from '../src/shadow/writer-hooks.ts';
@@ -419,6 +419,7 @@ function fakeReads(o: FakeOptions = {}): ReadSource & { sql: string[]; activityP
     if (q.includes('server_version_num')) return o.facts === null ? [] : [{ ...FACTS, ...o.facts }];
     if (q.includes('pg_stat_user_tables')) return o.rels ?? RELS;
     if (q.includes('/* own backends */')) return (o.named ?? []).map((pid) => ({ pid }));
+    if (q.includes('engine_writer_coverage_gaps')) return o.act === null ? [] : [{ gaps: ACTIVITY.gaps, gaps_max: ACTIVITY.gaps_max, ...(o.act ? { gaps: o.act.gaps ?? ACTIVITY.gaps, gaps_max: o.act.gaps_max ?? ACTIVITY.gaps_max } : {}) }]; // the basis's gap read
     throw new Error(`unexpected query: ${q.slice(0, 40)}`);
   };
   return {
@@ -435,7 +436,7 @@ const FACTS = { version: 160016, track_counts: 'on', counts_role_off: false, app
 const ACTIVITY = { writing: 0, prepared: 0, live: 0, recent: 0, unseen: 0, gaps: 0, gaps_max: '' };
 const rel = (name: string, o: Rows = {}): Rows => ({ name, oid: '16400', relfilenode: '16400', ins: '5', upd: '1', del: '0', ...o });
 const RELS = [rel('pages'), rel('page_projection_jobs', { oid: '16500', relfilenode: '16500', ins: '0', upd: '0' })];
-const MARK = { v: 2, app: 'gbrain-1-abc', stats_reset: '1700000000.5', postmaster: '1700000000.25', rels: { pages: { oid: '16400', relfilenode: '16400', ins: '5', upd: '1', del: '0' }, old_table: null, page_projection_jobs: { oid: '16500', relfilenode: '16500', ins: '0', upd: '0', del: '0' } }, gaps: 0, gaps_max: '' };
+const MARK = { v: 3, app: 'gbrain-1-abc', stats_reset: '1700000000.5', postmaster: '1700000000.25', rels: { pages: { oid: '16400', relfilenode: '16400', ins: '5', upd: '1', del: '0' }, old_table: null, page_projection_jobs: { oid: '16500', relfilenode: '16500', ins: '0', upd: '0', del: '0' } }, gaps: 0, gaps_max: '' };
 const mark = JSON.stringify(MARK);
 const withRels = (rels: Record<string, unknown>): string => JSON.stringify({ ...MARK, rels: { ...MARK.rels, ...rels } });
 /** A brain dir with the writer hooks installed and a seed that copied `pages` (and knew `old_table` as absent). */
@@ -450,16 +451,20 @@ function hooked(): string {
 describe('seal.ts: the primary\'s change token', () => {
   test('PGLite never takes a seal over: no mark is written and nothing is quiet, named pglite_no_db_continuity (no proof the database was untouched between sessions)', async () => {
     const dir = tmp();
-    expect(await sealMark({ dir, reads: fakeReads(), postgres: false })).toEqual({ refused: 'pglite_no_db_continuity' });
+    expect(await sealMark({ dir, reads: fakeReads(), postgres: false }, mark)).toEqual({ refused: 'pglite_no_db_continuity' });
+    expect(await readBasis({ dir, reads: fakeReads(), postgres: false })).toBeNull();
     expect(await quietSince({ dir, reads: fakeReads(), postgres: false }, null)).toEqual({ ok: false, reason: 'pglite_no_db_continuity' });
   });
 
-  test('a mark is the versioned token of the statistics epoch and the copied relations (seed.json and page_projection_jobs), read with row security off; the same token later is quiet', async () => {
+  test('a mark is the versioned token of the statistics epoch and the copied relations (seed.json and page_projection_jobs), read with row security off as the basis; the seal writes that basis itself, and the same token later is quiet', async () => {
     const dir = hooked();
+    const basisReads = fakeReads();
+    const basis = await readBasis({ dir, reads: basisReads, postgres: true });
+    expect(JSON.parse(basis!)).toEqual(MARK);
+    expect(basisReads.sql[0]).toBe('SET LOCAL row_security = off');
     const reads = fakeReads();
-    const sealedMark = await sealMark({ dir, reads, postgres: true });
-    expect('token' in sealedMark).toBe(true);
-    expect(JSON.parse((sealedMark as { token: string }).token)).toEqual(MARK);
+    const sealedMark = await sealMark({ dir, reads, postgres: true }, basis);
+    expect(sealedMark).toEqual({ token: basis! }); // the basis as it was read, never a fresh reading
     expect(reads.sql[0]).toBe('SET LOCAL row_security = off');
     const since = fakeReads();
     expect(await quietSince({ dir, reads: since, postgres: true }, (sealedMark as { token: string }).token)).toEqual({ ok: true });
@@ -468,7 +473,7 @@ describe('seal.ts: the primary\'s change token', () => {
 
   test('no mark for any doubt, each with its reason: the server or its counters, who is writing or connected, a copied relation gone, a role that cannot record, the hooks, the seed, the read', async () => {
     const dir = hooked();
-    const refusedFor = (o: FakeOptions) => sealMark({ dir, reads: fakeReads(o), postgres: true });
+    const refusedFor = (o: FakeOptions) => sealMark({ dir, reads: fakeReads(o), postgres: true }, mark);
     expect(await refusedFor({ facts: { version: 140012 } })).toEqual({ refused: 'postgres_version_old' });
     expect(await refusedFor({ facts: { track_counts: 'off' } })).toEqual({ refused: 'track_counts_off' });
     expect(await refusedFor({ facts: { counts_role_off: true } })).toEqual({ refused: 'track_counts_off' });
@@ -481,12 +486,26 @@ describe('seal.ts: the primary\'s change token', () => {
     expect(await refusedFor({ uncovered: 1 })).toEqual({ refused: 'uncovered_writer_role' });
     expect(await refusedFor({ facts: null })).toEqual({ refused: 'mark_unreadable' });
     expect(await refusedFor({ act: { gaps: 'x' } })).toEqual({ refused: 'mark_unreadable' });
-    expect(await sealMark({ dir: tmp(), reads: fakeReads(), postgres: true })).toEqual({ refused: 'hooks_not_installed' });
+    expect(await sealMark({ dir: tmp(), reads: fakeReads(), postgres: true }, mark)).toEqual({ refused: 'hooks_not_installed' });
     const noSeed = tmp();
     writeFileSync(writerHooksManifestPath(noSeed), JSON.stringify({ version: 1, state: 'installed', at: 'x', tables: ['pages'] }));
-    expect(await sealMark({ dir: noSeed, reads: fakeReads(), postgres: true })).toEqual({ refused: 'seed_unreadable' });
+    expect(await sealMark({ dir: noSeed, reads: fakeReads(), postgres: true }, mark)).toEqual({ refused: 'seed_unreadable' });
     expect(await refusedFor({ fail: true })).toEqual({ refused: 'read_failed' });
     expect(await refusedFor({ hang: true })).toEqual({ refused: 'read_timeout' });
+    // The strict basis: no verified point, a basis of another shape (the previous version's too), or any counter moved
+    // since it, refuses; a fresh reading is never sealed in its place.
+    expect(await sealMark({ dir, reads: fakeReads(), postgres: true }, null)).toEqual({ refused: 'no_verified_mark' });
+    expect(await sealMark({ dir, reads: fakeReads(), postgres: true }, JSON.stringify({ ...MARK, v: 2 }))).toEqual({ refused: 'mark_unreadable' });
+    expect(await sealMark({ dir, reads: fakeReads(), postgres: true }, 'not json')).toEqual({ refused: 'mark_unreadable' });
+    for (const moved of [{ ins: '6' }, { upd: '2' }, { del: '1' }]) expect(await refusedFor({ rels: [rel('pages', moved), RELS[1]!] })).toEqual({ refused: 'writes_since_verified' });
+    expect(await refusedFor({ act: { gaps: 1 } })).toEqual({ refused: 'coverage_gap' });
+    // The basis is not read where a seal could not be: hooks not installed, no seed, counters not kept, a read that fails or hangs.
+    expect(await readBasis({ dir: tmp(), reads: fakeReads(), postgres: true })).toBeNull();
+    expect(await readBasis({ dir: noSeed, reads: fakeReads(), postgres: true })).toBeNull();
+    expect(await readBasis({ dir, reads: fakeReads({ facts: { track_counts: 'off' } }), postgres: true })).toBeNull();
+    expect(await readBasis({ dir, reads: fakeReads({ rels: [] }), postgres: true })).toBeNull(); // a copied relation gone
+    expect(await readBasis({ dir, reads: fakeReads({ fail: true }), postgres: true })).toBeNull();
+    expect(await readBasis({ dir, reads: fakeReads({ hang: true }), postgres: true })).toBeNull();
   });
 
   /**
@@ -504,7 +523,7 @@ describe('seal.ts: the primary\'s change token', () => {
     const dir = hooked();
     // No primary to prove anything with: nothing is left out, whatever the connections are called.
     const atSeal = fakeReads({ named: [41, 42] });
-    await sealMark({ dir, reads: atSeal, postgres: true });
+    await sealMark({ dir, reads: atSeal, postgres: true }, mark);
     expect(atSeal.activityParams.map((p) => p.slice(0, 2))).toEqual([[[], []]]);
     expect(atSeal.activityParams[0]![2]).toContain('page_projection_jobs'); // the relations whose writers are waited on
     const atCheck = fakeReads({ facts: { app: 'gbrain-2-def' }, named: [41] });
@@ -514,7 +533,7 @@ describe('seal.ts: the primary\'s change token', () => {
     // whatever they are doing (idle, busy or held reserved elsewhere), and the pool is read again after the activity read.
     const own = fakePrimary([42, 41, 43]);
     const proven = fakeReads({ named: [41, 42] });
-    expect(await sealMark({ dir, reads: proven, postgres: true, primary: own.primary })).toHaveProperty('token');
+    expect(await sealMark({ dir, reads: proven, postgres: true, primary: own.primary }, mark)).toHaveProperty('token');
     expect(proven.activityParams.map((p) => p.slice(0, 2))).toEqual([[[41, 42], [41, 42]]]);
     expect(own.state.reads).toBe(2);
     const checked = fakePrimary([41]);
@@ -525,20 +544,20 @@ describe('seal.ts: the primary\'s change token', () => {
     // its state like anyone else.
     const stranger = fakePrimary([41, 77]);
     const judged = fakeReads({ named: [41, 99] });
-    await sealMark({ dir, reads: judged, postgres: true, primary: stranger.primary });
+    await sealMark({ dir, reads: judged, postgres: true, primary: stranger.primary }, mark);
     expect(judged.activityParams.map((p) => p.slice(0, 2))).toEqual([[[41], [41]]]);
     // No connection carries the name: the pool is not read at all.
     const unnamed = fakePrimary([41]);
-    expect(await sealMark({ dir, reads: fakeReads({ named: [] }), postgres: true, primary: unnamed.primary })).toHaveProperty('token');
+    expect(await sealMark({ dir, reads: fakeReads({ named: [] }), postgres: true, primary: unnamed.primary }, mark)).toHaveProperty('token');
     expect(unnamed.state.reads).toBe(0);
     // Proving fails: a driver that reports no pids, or a proven connection gone from the pool by the end of the read (its
     // pid may be a new backend's now). Refused, never read as quiet.
-    expect(await sealMark({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([], { missing: true }).primary })).toEqual({ refused: 'own_backends_unproven' });
+    expect(await sealMark({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([], { missing: true }).primary }, mark)).toEqual({ refused: 'own_backends_unproven' });
     expect(await quietSince({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([], { missing: true }).primary }, mark)).toEqual({ ok: false, reason: 'own_backends_unproven' });
-    expect(await sealMark({ dir, reads: fakeReads({ named: [41, 42] }), postgres: true, primary: fakePrimary([[41, 42], [42]]).primary })).toEqual({ refused: 'own_backends_unproven' });
+    expect(await sealMark({ dir, reads: fakeReads({ named: [41, 42] }), postgres: true, primary: fakePrimary([[41, 42], [42]]).primary }, mark)).toEqual({ refused: 'own_backends_unproven' });
     expect(await quietSince({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([[41], []]).primary }, mark)).toEqual({ ok: false, reason: 'own_backends_unproven' });
     // A stranger that leaves during the read changes nothing: only proven pids must still be the pool's.
-    expect(await sealMark({ dir, reads: fakeReads({ named: [41, 99] }), postgres: true, primary: fakePrimary([[41, 77], [41]]).primary })).toHaveProperty('token');
+    expect(await sealMark({ dir, reads: fakeReads({ named: [41, 99] }), postgres: true, primary: fakePrimary([[41, 77], [41]]).primary }, mark)).toHaveProperty('token');
   });
 
   test('not quiet when the database shows a write, an epoch change or a changed relation, each with its reason', async () => {
@@ -574,7 +593,7 @@ describe('seal.ts: the primary\'s change token', () => {
   test('parse error: no mark, an unreadable mark, the writer fingerprint of an older build, or one of the wrong shape is not quiet', async () => {
     const dir = hooked();
     const old = JSON.stringify({ app: 'gbrain-1-abc', writers: 2, writers_max: '2026-11-28 10:00:00+00', gaps: 0, gaps_max: '' });
-    for (const token of [null, '', 'not json', '{"app":"x"}', old, JSON.stringify({ ...MARK, v: 1 }), JSON.stringify({ ...MARK, v: 3 }), JSON.stringify({ ...MARK, gaps: '0' }), withRels({ pages: { oid: 16400, relfilenode: '1', ins: '0', upd: '0', del: '0' } }), withRels({ pages: { oid: '1', relfilenode: '1', ins: '-1', upd: '0', del: '0' } }), JSON.stringify({ ...MARK, rels: [] })]) {
+    for (const token of [null, '', 'not json', '{"app":"x"}', old, JSON.stringify({ ...MARK, v: 1 }), JSON.stringify({ ...MARK, v: 2 }), JSON.stringify({ ...MARK, v: 4 }), JSON.stringify({ ...MARK, gaps: '0' }), withRels({ pages: { oid: 16400, relfilenode: '1', ins: '0', upd: '0', del: '0' } }), withRels({ pages: { oid: '1', relfilenode: '1', ins: '-1', upd: '0', del: '0' } }), JSON.stringify({ ...MARK, rels: [] })]) {
       expect(await quietSince({ dir, reads: fakeReads(), postgres: true }, token)).toEqual({ ok: false, reason: 'mark_unreadable' });
     }
   });
@@ -885,7 +904,8 @@ describe('commitSeal: the child is valid only after the commit that follows the 
     const { dir, s } = await takenOver();
     const calls: string[] = [];
     const rpc: Rpc = async (method, args) => { calls.push(method); return s.ask(method, args ?? {}); };
-    expect(await confirmSeal({ dir, reads: fakeReads(), postgres: true, rpc: rpc as never } as never)).toEqual({ doubt: null });
+    // Committed: the carried token is handed back as the session's verified point (what its close may seal with).
+    expect(await confirmSeal({ dir, reads: fakeReads(), postgres: true, rpc: rpc as never } as never)).toEqual({ doubt: null, basis: mark });
     expect(calls).toEqual(['state', 'confirmSeal', 'commitSeal']);
     expect((await s.ask<State>('state')).valid).toBe(true);
     expect(sealShown(dir)).toMatchObject({ outcome: 'confirmed', reason: null });

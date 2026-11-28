@@ -9,10 +9,17 @@
  * (writer-hooks.ts) record other writing connections, but a record can be missing (a role with no way to write one,
  * both evidence tables locked, a row another transaction holds) or not move the evidence (a row refreshed that is not
  * the newest), so the seal does not rest on the records. Its token is the database's own count of what was written:
- *  - at close (`sealMark`) the token is read: the server's statistics epoch (`pg_stat_database.stats_reset`, the
- *    postmaster start) and, for every relation the seed copied (seed.json, plus `page_projection_jobs`, which the pages
- *    read carries), its oid, relfilenode and the tuples inserted, updated and deleted (`pg_stat_user_tables`), plus the
- *    coverage-gap rows. The token is versioned; a token of another shape is refused as `mark_unreadable`;
+ *  - the basis (`readBasis`) is read just before a full pass starts (reconcile.ts): the server's statistics epoch
+ *    (`pg_stat_database.stats_reset`, the postmaster start) and, for every relation the seed copied (seed.json, plus
+ *    `page_projection_jobs`, which the pages read carries), its oid, relfilenode and the tuples inserted, updated and
+ *    deleted (`pg_stat_user_tables`), plus the coverage-gap rows. It becomes the session's verified point once that
+ *    pass restored the watermark, or once a carried seal is committed (the token it carried); a pass stopped at close
+ *    leaves its own basis;
+ *  - at close (`sealMark`) the token written is that basis itself, and only when the database still shows it: any
+ *    tuple change to a copied relation since (this process's own writes included: they are the cost of the strict rule)
+ *    refuses as `writes_since_verified`, no verified point as `no_verified_mark`. A fresh reading at close is never
+ *    sealed: it could include a write the follower never saw. The token is versioned (3); a token of another shape, the
+ *    previous version's included, is refused as `mark_unreadable`;
  *  - at the next start (`quietSince`, from `confirmSeal`) the same read must show the same token: any new write (or an
  *    aborted one), a TRUNCATE or rewrite, a relation dropped, created or replaced, a statistics reset or a restarted
  *    server refuses it. Counters only prove what the server has flushed (a backend flushes at most about a minute
@@ -89,6 +96,10 @@ export const SEAL_CONFIRM_UNACKNOWLEDGED = 'seal_confirm_unacknowledged';
 export const SEAL_COMMIT_UNACKNOWLEDGED = 'seal_commit_unacknowledged';
 /** The sealing process's own connections could not be proven: its pool reports no backend pids, or a proven connection closed during the read. */
 export const OWN_BACKENDS_UNPROVEN = 'own_backends_unproven';
+/** A close with no verified point (no full pass restored the watermark and no carried seal was committed): no seal. */
+export const NO_VERIFIED_MARK = 'no_verified_mark';
+/** A copied relation's counters moved since the verified point (anyone's write, this process's own included): no seal. */
+export const WRITES_SINCE_VERIFIED = 'writes_since_verified';
 /** Waits before the retries of an unacknowledged revoke. */
 export const REVOKE_RETRY_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 30_000];
 /**
@@ -97,14 +108,18 @@ export const REVOKE_RETRY_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 
  * (a veto line may be on disk, but nothing shows the child read it), so the caller withdraws it again and runs a fresh
  * full pass, and a close does not seal.
  */
-export interface SealConfirmOutcome { doubt: string | null }
+/** `basis`: the token of a carried seal the child committed, the session's verified point from then on (`sealMark`). */
+export interface SealConfirmOutcome { doubt: string | null; basis?: string | null }
 const SETTLED: SealConfirmOutcome = { doubt: null };
 
 /** Tables the seed copies without a relation of their own: the pages read carries `page_projection_jobs` (seed-gaps.ts `carried`). */
 export const SEAL_CARRIED_TABLES: readonly string[] = ['page_projection_jobs'];
 
-/** The token's shape version. A token of another version (the writer fingerprint of an older build has none) is refused as `mark_unreadable`. */
-const TOKEN_VERSION = 2;
+/**
+ * The token's shape version. A token of another version is refused as `mark_unreadable`: the writer fingerprint of an
+ * older build has none, and a version 2 token was read fresh at close, so it may have absorbed a foreign write.
+ */
+const TOKEN_VERSION = 3;
 
 /** Statistics are in shared memory (flushed by each backend, readable at once) from PostgreSQL 15. */
 const MIN_SERVER_VERSION = 150_000;
@@ -198,6 +213,9 @@ const ACTIVITY_SQL = `SELECT
   (SELECT coalesce(max(created_at)::text, '') FROM engine_writer_coverage_gaps) AS gaps_max`;
 
 /** The copied relations that exist (as ordinary tables of the current schema), with identity and counters. $1 names. */
+/** The coverage-gap rows, as the activity read counts them. */
+const GAPS_SQL = `SELECT count(*)::int AS gaps, coalesce(max(created_at)::text, '') AS gaps_max FROM engine_writer_coverage_gaps`;
+
 const RELS_SQL = `SELECT c.relname::text AS name, c.oid::text AS oid, c.relfilenode::text AS relfilenode,
   coalesce(t.n_tup_ins, 0)::text AS ins, coalesce(t.n_tup_upd, 0)::text AS upd, coalesce(t.n_tup_del, 0)::text AS del
   FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_catalog.pg_stat_user_tables t ON t.relid = c.oid
@@ -282,6 +300,8 @@ async function uncoveredWriterRoles(tx: BrainEngine): Promise<boolean> {
   return (await readWriterEvidence(tx, new Date(), true, WRITER_HOOK_TRIGGER, WRITER_EVIDENCE_TABLES)).uncovered_roles !== 0;
 }
 
+const WRITES_SINCE_SEAL = 'writes_since_seal';
+
 /** What differs between the token's relations and these, as a reason: a statistics epoch or server restart first, then identity, then the counters. */
 function changed(mark: Mark, now: Observed): string | null {
   if (now.stats_reset !== mark.stats_reset) return 'stats_reset_changed';
@@ -303,31 +323,76 @@ function changed(mark: Mark, now: Observed): string | null {
     if (b.some((n, i) => n < a[i]!)) return 'counter_decreased';
     moved.push(b.some((n, i) => n > a[i]!));
   }
-  return moved.some(Boolean) ? 'writes_since_seal' : null;
+  return moved.some(Boolean) ? WRITES_SINCE_SEAL : null;
+}
+
+/** The relations a mark covers: every relation the seed copied, plus the carried tables; and those that must exist. */
+function sealedRelations(dir: string): { names: string[]; required: string[] } | null {
+  const seed = readSeedRecord(dir);
+  if (!seed) return null;
+  const copied = Object.entries(seed.relations ?? {});
+  return { names: [...new Set([...copied.map(([name]) => name), ...SEAL_CARRIED_TABLES])], required: copied.filter(([, r]) => !r?.absent).map(([name]) => name) };
 }
 
 /**
- * The mark to seal with: a token naming the database's write counters for the relations the seed copied (Postgres), or
- * the reason no seal may be written (PGLite; another process may still be writing, or is connected and may write
- * unrecorded; a role that cannot record its writes; counters not kept; no seed record; the hooks are not installed; the
- * read failed or timed out). The child keeps the token as it is and hands it back at the next start.
+ * The basis: the database's counters as a mark (the token's shape), read just before a full pass starts, so the pass
+ * covers every write the counters hold. No activity checks: a write in flight either commits before the pass starts
+ * (the pass covers it; its counters may still differ at close, a false refusal) or after (the counters differ at close,
+ * refused). Null on PGLite, without hooks or seed, with counters not kept, on any failure or timeout: that pass then
+ * leaves no verified point and the close does not seal.
  */
-export async function sealMark(d: Pick<SealDeps, 'dir' | 'reads' | 'postgres' | 'primary'>): Promise<SealMarkResult> {
+export async function readBasis(d: Pick<SealDeps, 'dir' | 'reads' | 'postgres'>): Promise<string | null> {
+  if (!d.postgres) return null;
+  if (readWriterHooksManifest(d.dir)?.state !== 'installed') return null;
+  const sealed = sealedRelations(d.dir);
+  if (!sealed) return null;
+  const read = d.reads.read(async (_tx, query): Promise<string | null> => {
+    await query('SET LOCAL row_security = off');
+    await query('SELECT pg_catalog.pg_stat_clear_snapshot()');
+    const [facts] = await query(FACTS_SQL);
+    if (!facts || typeof facts.version !== 'number' || facts.version < MIN_SERVER_VERSION || typeof facts.app !== 'string' || typeof facts.stats_reset !== 'string' || typeof facts.postmaster !== 'string') return null;
+    if (String(facts.track_counts).toLowerCase() !== 'on' || facts.counts_role_off !== false) return null;
+    const found = new Map((await query(RELS_SQL, [sealed.names])).map((r) => [r.name as string, r as unknown as Rel]));
+    const rels: Record<string, Rel | null> = {};
+    for (const name of sealed.names) { const r = found.get(name); rels[name] = r && isRel(r) ? { oid: r.oid, relfilenode: r.relfilenode, ins: r.ins, upd: r.upd, del: r.del } : null; }
+    if (sealed.required.some((name) => rels[name] === null)) return null;
+    const [gaps] = await query(GAPS_SQL);
+    const mark = { v: TOKEN_VERSION, app: facts.app, stats_reset: facts.stats_reset, postmaster: facts.postmaster, rels, gaps: gaps?.gaps, gaps_max: gaps?.gaps_max };
+    return isMark(mark) ? JSON.stringify(mark) : null;
+  }).catch((): null => null); // silent-read-ok: no basis means this pass leaves no verified point, so the close does not seal
+  return bounded(read, null);
+}
+
+/**
+ * The mark to seal with: the basis itself (the counters the follower's state is proven from), when the database still
+ * shows it and nothing else forbids a seal; or the reason no seal may be written (PGLite; no verified point; another
+ * process may still be writing, or is connected and may write unrecorded; any write since the basis; a role that
+ * cannot record its writes; a coverage gap or a broken hook; counters not kept; no seed record; the hooks are not
+ * installed; the read failed or timed out). The child keeps the token as it is and hands it back at the next start.
+ */
+export async function sealMark(d: Pick<SealDeps, 'dir' | 'reads' | 'postgres' | 'primary'>, basis: string | null): Promise<SealMarkResult> {
   if (!d.postgres) return { refused: PGLITE_NO_DB_CONTINUITY };
   if (readWriterHooksManifest(d.dir)?.state !== 'installed') return { refused: 'hooks_not_installed' };
-  const seed = readSeedRecord(d.dir);
-  if (!seed) return { refused: 'seed_unreadable' };
-  const copied = Object.entries(seed.relations ?? {});
-  const required = copied.filter(([, r]) => !r?.absent).map(([name]) => name);
-  const names = [...new Set([...copied.map(([name]) => name), ...SEAL_CARRIED_TABLES])];
+  const sealed = sealedRelations(d.dir);
+  if (!sealed) return { refused: 'seed_unreadable' };
+  if (basis === null) return { refused: NO_VERIFIED_MARK };
+  let parsed: unknown = null;
+  try { parsed = JSON.parse(basis); } catch { parsed = null; } // silent-read-ok: an unreadable basis refuses the seal
+  if (!isMark(parsed)) return { refused: 'mark_unreadable' };
+  const was = parsed;
+  // The basis must cover what the seal covers now: a relation the seed names that the basis does not is not proven.
+  if (sealed.names.some((name) => !(name in was.rels))) return { refused: 'mark_unreadable' };
   const read = d.reads.read(async (tx, query): Promise<SealMarkResult> => {
     await query('SET LOCAL row_security = off');
-    const seen = await observe(tx, query, names, null, d.primary);
+    const seen = await observe(tx, query, Object.keys(was.rels), null, d.primary);
     if ('refused' in seen) return seen;
-    if (required.some((name) => seen.rels[name] === null)) return { refused: 'relation_missing' };
+    const moved = changed(was, seen);
+    if (moved) return { refused: moved === WRITES_SINCE_SEAL ? WRITES_SINCE_VERIFIED : moved };
+    if (sealed.required.some((name) => seen.rels[name] === null)) return { refused: 'relation_missing' };
+    if (seen.gaps !== was.gaps || seen.gaps_max !== was.gaps_max) return { refused: 'coverage_gap' };
     if (await uncoveredWriterRoles(tx)) return { refused: 'uncovered_writer_role' };
-    const mark: Mark = { v: TOKEN_VERSION, app: seen.app, stats_reset: seen.stats_reset, postmaster: seen.postmaster, rels: seen.rels, gaps: seen.gaps, gaps_max: seen.gaps_max };
-    return isMark(mark) ? { token: JSON.stringify(mark) } : { refused: 'mark_unreadable' };
+    if (!await hooksIntact(tx)) return { refused: 'hook_missing' };
+    return { token: basis };
   }).catch((): SealMarkResult => ({ refused: READ_FAILED })); // silent-read-ok: a refusal is "no seal", so a failed read fails closed and the next session needs a full pass
   return bounded(read, { refused: 'read_timeout' });
 }
@@ -384,7 +449,8 @@ export async function confirmSeal(d: SealDeps): Promise<SealConfirmOutcome> {
   } catch {
     return revoke(d, SEAL_COMMIT_UNACKNOWLEDGED); // a lost answer does not prove the child did not apply it
   }
-  return SETTLED;
+  // Committed: the child is valid from the carried token, which is the previous session's own basis.
+  return { doubt: null, basis: pending.db_at ?? null };
 }
 
 /**

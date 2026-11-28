@@ -90,8 +90,17 @@ function fakeRpc(token: string | null, onConfirm?: (args: Record<string, unknown
   return { calls, rpc };
 }
 
+/**
+ * The seal check as a close runs it when its verified point was read just before (seal.ts): the basis, then the seal
+ * against it. Every activity refusal is read at the seal itself, before the counters are compared.
+ */
+async function markNow(d: ReturnType<typeof deps>): Promise<Awaited<ReturnType<typeof sealMark>>> {
+  return sealMark(d, await readBasisNow(d));
+}
+const readBasisNow = (d: ReturnType<typeof deps>): Promise<string | null> => (sealModule as unknown as { readBasis: (d: ReturnType<typeof deps>) => Promise<string | null> }).readBasis(d);
+
 async function sealed(r: ReadSource = reads): Promise<string> {
-  const mark = await sealMark(deps(r));
+  const mark = await markNow(deps(r));
   expect(mark).toHaveProperty('token');
   return (mark as { token: string }).token;
 }
@@ -224,14 +233,14 @@ d('the seal change token on Postgres', () => {
     await w`INSERT INTO config (key, value) VALUES ('s4', '1') ON CONFLICT (key) DO UPDATE SET value = '1'`;
     await engine.executeRaw(`UPDATE engine_writer_sessions SET last_seen = now() - interval '20 minutes' WHERE application_name = $1`, [app]);
     await engine.executeRaw(`INSERT INTO engine_writer_sessions (application_name, client_addr, backend_pid, last_seen) VALUES ('psql-ghost-s4', 'local', 0, now() + interval '1 hour')`);
-    expect(await sealMark(deps())).toEqual({ refused: 'other_writer_live' });
+    expect(await markNow(deps())).toEqual({ refused: 'other_writer_live' });
     await finish(w, app);
   }, 60_000);
 
   test('a role with no way to record evidence is refused at the seal', async () => {
     const r = await throwawayRole(['GRANT INSERT ON config TO $ROLE'], true);
     try {
-      expect(await sealMark(deps())).toEqual({ refused: 'uncovered_writer_role' });
+      expect(await markNow(deps())).toEqual({ refused: 'uncovered_writer_role' });
     } finally { await r.drop(); }
   }, 60_000);
 
@@ -324,10 +333,10 @@ d('the seal change token on Postgres', () => {
       const sql = monitor.connect(app);
       await sql`SELECT 1`; // idle from now on, well inside the settle window
       expect(await backends(app)).toBe(1);
-      const seen = await sealMark(deps()); // read as a superuser: the session is visible and idle for under a minute
+      const seen = await markNow(deps()); // read as a superuser: the session is visible and idle for under a minute
       expect(seen).not.toHaveProperty('refused');
       const token = (seen as { token: string }).token;
-      expect(await sealMark(deps(hidden.reads))).not.toHaveProperty('refused'); // read by a role that cannot see it
+      expect(await markNow(deps(hidden.reads))).not.toHaveProperty('refused'); // read by a role that cannot see it
       await sql`SELECT 1`;
       expect(await quietSince(deps(), token)).toEqual({ ok: true });
       await finish(sql, app);
@@ -338,7 +347,7 @@ d('the seal change token on Postgres', () => {
     const writer = await throwawayRole(['GRANT INSERT ON config TO $ROLE', 'GRANT INSERT ON engine_writer_coverage_gaps TO $ROLE', 'GRANT INSERT, UPDATE ON engine_writer_sessions TO $ROLE', 'GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO $ROLE'], true);
     const hidden = await unprivilegedReads();
     try {
-      expect(await sealMark(deps(hidden.reads))).not.toHaveProperty('refused'); // the role alone is covered: no refusal yet
+      expect(await markNow(deps(hidden.reads))).not.toHaveProperty('refused'); // the role alone is covered: no refusal yet
       const app = 'hidden-writer';
       const sql = writer.connect(app);
       let release!: () => void;
@@ -348,7 +357,7 @@ d('the seal change token on Postgres', () => {
       const tx = sql.begin(async (t) => { await t`INSERT INTO config (key, value) VALUES ('hidden-open', '1')`; started(); await held; });
       await open;
       try {
-        expect(await sealMark(deps(hidden.reads))).toEqual({ refused: 'other_backend_unseen' });
+        expect(await markNow(deps(hidden.reads))).toEqual({ refused: 'other_backend_unseen' });
       } finally { release(); await tx; }
       await finish(sql, app);
     } finally { await hidden.drop(); await writer.drop(); }
@@ -373,7 +382,7 @@ d('the seal change token on Postgres', () => {
       const tx = sql.begin(async (t) => { await t.unsafe(`SET LOCAL ROLE ${target}`); await t`INSERT INTO config (key, value) VALUES ('hidden-set-role-open', '1')`; started(); await held; });
       await open;
       try {
-        expect(await sealMark(deps(hidden.reads))).toEqual({ refused: 'other_backend_unseen' });
+        expect(await markNow(deps(hidden.reads))).toEqual({ refused: 'other_backend_unseen' });
         expect(await quietSince(deps(hidden.reads), token)).toEqual({ ok: false, reason: 'other_backend_unseen' });
       } finally { release(); await tx; }
       await finish(sql, app);
@@ -391,7 +400,7 @@ d('the seal change token on Postgres', () => {
     const app = (JSON.parse(token) as { app: string }).app;
     const open = await holdWrite(app, 'same-name-open');
     try {
-      expect(await sealMark(deps())).toEqual({ refused: 'other_writer_open' });
+      expect(await markNow(deps())).toEqual({ refused: 'other_writer_open' });
       expect(await quietSince(deps(), token)).toEqual({ ok: false, reason: 'other_writer_open' });
     } finally { await open.release(); }
   }, 60_000);
@@ -400,12 +409,12 @@ d('the seal change token on Postgres', () => {
     const app = (JSON.parse(await sealed()) as { app: string }).app;
     const sql = connection(app);
     await sql`INSERT INTO config (key, value) VALUES ('same-name-recent', '1')`;
-    expect(await sealMark(deps())).toEqual({ refused: 'other_writer_live' });
+    expect(await markNow(deps())).toEqual({ refused: 'other_writer_live' });
     await sql`SELECT 1`; // a read only, moments ago, by a client that never wrote through the hooks: recent
     const reader = connection(app);
     await reader`SELECT 1`;
     await engine.executeRaw(`DELETE FROM engine_writer_sessions WHERE application_name = $1`, [app]); // its row gone: judged on its state alone
-    expect(await sealMark(deps())).toEqual({ refused: 'other_backend_recent' });
+    expect(await markNow(deps())).toEqual({ refused: 'other_backend_recent' });
   }, 60_000);
 
   test('a hidden login that sets the sealing process\'s connection name, holding an uncommitted INSERT, is refused at the seal and at the check, and the seal is never confirmed', async () => {
@@ -422,7 +431,7 @@ d('the seal change token on Postgres', () => {
       const tx = sql.begin(async (t) => { await t`INSERT INTO config (key, value) VALUES ('hidden-same-name-open', '1')`; started(); await held; });
       await open;
       try {
-        expect(await sealMark(deps(hidden.reads))).toEqual({ refused: 'other_backend_unseen' });
+        expect(await markNow(deps(hidden.reads))).toEqual({ refused: 'other_backend_unseen' });
         expect(await quietSince(deps(hidden.reads), token)).toEqual({ ok: false, reason: 'other_backend_unseen' });
         const { calls, rpc } = fakeRpc(token);
         await confirmSeal({ ...deps(hidden.reads), rpc });
@@ -434,11 +443,11 @@ d('the seal change token on Postgres', () => {
 
   test('control: the sealing process\'s own pool connections, just used, are proven its own and still seal, read as the owner and as a role that cannot see them', async () => {
     await Promise.all([1, 2, 3].map((i) => engine.executeRaw(`SELECT pg_sleep(0.05), ${i}`))); // several pool connections, active a moment ago
-    expect(await sealMark(deps())).toHaveProperty('token');
+    expect(await markNow(deps())).toHaveProperty('token');
     const hidden = await unprivilegedReads();
     try {
       await Promise.all([1, 2, 3].map((i) => engine.executeRaw(`SELECT pg_sleep(0.05), ${i}`)));
-      expect(await sealMark(deps(hidden.reads))).toHaveProperty('token');
+      expect(await markNow(deps(hidden.reads))).toHaveProperty('token');
     } finally { await hidden.drop(); }
   }, 60_000);
 
@@ -450,7 +459,7 @@ d('the seal change token on Postgres', () => {
       const [{ pid }] = await conn.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid');
       const [{ n }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM engine_writer_sessions WHERE backend_pid = $1', [pid]);
       expect(n).toBe(1); // the hooks recorded it as a writer, and it is still connected
-      expect(await sealMark(deps())).toHaveProperty('token');
+      expect(await markNow(deps())).toHaveProperty('token');
     });
   }, 60_000);
 
@@ -458,7 +467,7 @@ d('the seal change token on Postgres', () => {
     const busy = engine.executeRaw('SELECT pg_sleep(1.5)');
     try {
       await new Promise((r) => setTimeout(r, 300)); // the statement is running: not idle, and not reservable
-      expect(await sealMark(deps())).toHaveProperty('token');
+      expect(await markNow(deps())).toHaveProperty('token');
     } finally { await busy; }
   }, 60_000);
 
@@ -487,11 +496,14 @@ d('the seal change token on Postgres', () => {
     const name = await databaseName();
     await engine.executeRaw(`ALTER DATABASE "${name}" SET track_counts = off`);
     expect(await quietSince(deps(), token)).toEqual({ ok: false, reason: 'track_counts_off' });
-    expect(await sealMark(deps())).toEqual({ refused: 'track_counts_off' });
+    // The seal against a basis read while the counters were kept; no basis can be read once they are not.
+    expect(await sealMark(deps(), token)).toEqual({ refused: 'track_counts_off' });
+    expect(await readBasisNow(deps())).toBeNull();
     const fresh = openReadSource(engine);
     sources.push(fresh);
     expect(await quietSince(deps(fresh), token)).toEqual({ ok: false, reason: 'track_counts_off' });
-    expect(await sealMark(deps(fresh))).toEqual({ refused: 'track_counts_off' });
+    expect(await sealMark(deps(fresh), token)).toEqual({ refused: 'track_counts_off' });
+    expect(await readBasisNow(deps(fresh))).toBeNull();
   }, 60_000);
 
   test('track_counts off for a role in this database is refused', async () => {
@@ -501,7 +513,8 @@ d('the seal change token on Postgres', () => {
       const name = await databaseName();
       await engine.executeRaw(`ALTER ROLE ${r.role} IN DATABASE "${name}" SET track_counts = off`);
       expect(await quietSince(deps(), token)).toEqual({ ok: false, reason: 'track_counts_off' });
-      expect(await sealMark(deps())).toEqual({ refused: 'track_counts_off' });
+      expect(await sealMark(deps(), token)).toEqual({ refused: 'track_counts_off' });
+      expect(await readBasisNow(deps())).toBeNull();
     } finally { await r.drop(); }
   }, 60_000);
 });
@@ -522,7 +535,7 @@ p('the seal change token with prepared transactions (GBRAIN_TEST_PREPARED_DATABA
     await finish(w, app);
     try {
       expect(await quietSince(deps(), token)).toEqual({ ok: false, reason: 'prepared_transaction' });
-      expect(await sealMark(deps())).toEqual({ refused: 'prepared_transaction' });
+      expect(await markNow(deps())).toEqual({ refused: 'prepared_transaction' });
     } finally { await engine.executeRaw(`ROLLBACK PREPARED 'seal_token_probe'`).catch(() => undefined); }
   }, 60_000);
 });
