@@ -645,6 +645,7 @@ src/core/rust-engine/store-members/chunks.ts	sealChunks	field	STREAM	mirrors sea
 src/core/rust-engine/store-members/field-usage.ts	readFieldUsageSamples	field	LEAD	the Rust arm of engine-sql/field-usage.ts readFieldUsageSamples: passes the store's sampled compiled_truth through; a segmented page samples a null body (TODOS.md)
 src/core/rust-engine/store-members/page-body.ts	refreshPageBody	call:refreshPageBody	SEGW	forwards to the Rust store, which refuses a segmented page as the body-storage CHECK does; callers assert first
 src/core/rust-engine/store-members/page-ops.ts	toDomainBankRow	field	INLINE	copies the domain-bank body the Rust store returned; the store keeps every body inline
+src/core/rust-engine/store-members/page-withdrawals.ts	overlaidSnapshot	field	STREAM	the Rust arm of page-state/snapshot.ts readSnapshotStatement: the withdrawal overlay reads inline pages only; a segmented page returns before any body read (isSegmentedPage)
 src/core/rust-engine/store-members/pages.ts	putPage	call:putPage	INLINE	forwards the caller's page to the Rust store, which keeps every body inline; it reads no stored body
 src/core/rust-engine/store-members/versions.ts	preimageFields	field	INLINE	read only when isSegmentedPage is false; a segmented preimage sends no body (its version references the live generation)
 src/core/schema-migrations/v091-pages-generation-trigger-and-bookmark.ts	v091	sql	NONE	not the page body: historical generation trigger
