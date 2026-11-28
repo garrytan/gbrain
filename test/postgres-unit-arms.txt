@@ -94,6 +94,7 @@ test/concept-rebuild-holds-unmanaged-9653.test.ts
 test/concept-rebuild-purge-9653.test.ts
 test/concept-rebuild-races-9653.test.ts
 test/concept-rename-history-gst2687.test.ts
+test/connector-replacement-retire.test.ts
 test/consolidate-fenced-close-reimport.test.ts
 test/consolidate-same-instant-6023.test.ts
 test/contact-rows-drift-8109.test.ts
@@ -377,6 +378,7 @@ test/large-pages/purge-segmented-versions-batch.test.ts
 test/large-pages/purge-segments.test.ts
 test/large-pages/recovery-budget-ceiling.slow.test.ts
 test/large-pages/recovery-budget-default.test.ts
+test/large-pages/remember-cost.test.ts
 test/large-pages/remote-get-page-privacy.test.ts
 test/large-pages/remote-versions-storage-change.test.ts
 test/large-pages/remote-window-privacy.test.ts
@@ -412,6 +414,7 @@ test/large-pages/segmented-file-drift.test.ts
 test/large-pages/segmented-forced-cuts.test.ts
 test/large-pages/segmented-frontmatter-reimport.test.ts
 test/large-pages/segmented-get-cli.test.ts
+test/large-pages/segmented-get-cross-cut-withdrawal.test.ts
 test/large-pages/segmented-get-page-parity.test.ts
 test/large-pages/segmented-leads.test.ts
 test/large-pages/segmented-loser-chunks.test.ts

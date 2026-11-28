@@ -11,9 +11,12 @@
  *   - the path finally rendered is checked again: one another contact still owns refuses the contact before anything
  *     is written or retired (#10450);
  *   - a rename lands the new page first, then retires the one it owned at the old path, so a run that dies in
- *     between leaves the contact with a page rather than none.
+ *     between leaves the contact with a page rather than none; the old page is retired only when the import landed a
+ *     different slug, so a replacement it skipped (a purge tombstone) or kept on the old slug never deletes the only
+ *     page (#10579).
  */
 import { opError } from './ops/contract.ts';
+import { slugifyPath } from './sync.ts';
 
 export interface ContactPageIO {
   /** The source_path of the live page this contact owns, or null. */
@@ -25,13 +28,15 @@ export interface ContactPageIO {
   /** Slugs a deleted contact may own when no page is found by id. */
   tombstoneSlugs(): Array<string | null>;
   render(disambiguate: boolean): { relPath: string; markdown: string } | null;
-  write(relPath: string, markdown: string): Promise<void>;
+  /** Imports the page; returns the slug that landed, or null when the import was skipped and landed nothing. */
+  write(relPath: string, markdown: string): Promise<string | null>;
   remove(relPath: string): Promise<void>;
   skippedHandAuthored(relPath: string): void;
   applied(): void;
 }
 
-export async function applyContactPage(contactId: string, deleted: boolean, io: ContactPageIO): Promise<void> {
+/** False when the rendered replacement landed no page: the contact's existing page and decisions stay as they were. */
+export async function applyContactPage(contactId: string, deleted: boolean, io: ContactPageIO): Promise<boolean> {
   const existingPath = await io.existingPath();
   if (deleted) {
     if (existingPath && await io.owner(existingPath) === contactId) {
@@ -41,26 +46,28 @@ export async function applyContactPage(contactId: string, deleted: boolean, io: 
         if (slug && await io.owner(`${slug}.md`) === contactId) await io.remove(`${slug}.md`);
       }
     }
-    return;
+    return true;
   }
   const baseSlug = io.baseSlug();
-  if (!baseSlug) return;
+  if (!baseSlug) return true;
   const baseOwner = await io.owner(`${baseSlug}.md`);
   const collides = baseOwner !== null && baseOwner !== 'hand-authored' && baseOwner !== contactId;
   const rendered = io.render(collides);
-  if (!rendered) return;
+  if (!rendered) return true;
   const owner = await io.owner(rendered.relPath);
   if (owner === 'hand-authored') {
     io.skippedHandAuthored(rendered.relPath);
-    return;
+    return true;
   }
   if (owner !== null && owner !== contactId) {
     throw opError('contact_page_owned', `Contact page ${rendered.relPath} belongs to another contact.`,
       `Contact ${contactId} was not written and its existing page was kept; it is retried on the next sync and held after repeated refusals. Rename one of the two contacts, or remove the other page, to clear it.`);
   }
-  await io.write(rendered.relPath, rendered.markdown);
-  if (existingPath && existingPath !== rendered.relPath && await io.owner(existingPath) === contactId) {
+  const landed = await io.write(rendered.relPath, rendered.markdown);
+  if (landed === null) return false;
+  if (existingPath && landed !== slugifyPath(existingPath) && await io.owner(existingPath) === contactId) {
     await io.remove(existingPath);
   }
   io.applied();
+  return true;
 }

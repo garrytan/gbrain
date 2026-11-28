@@ -33,7 +33,7 @@ import { newMirrorCounters } from '../src/shadow/mirror.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
 import { faultsPath, readFaults } from '../src/shadow/ledger.ts';
 import { sampleWeight } from '../src/shadow/supervisor.ts';
-import { droppedWeight, MAX_DROPPED, lostPath, movedOutsideFootprint, owedPath, pageRefs, readOwed, readWriteSnapshot, readWriteTally, recordLost, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { droppedWeight, MAX_DROPPED, lostPath, movedOutsideFootprint, owedPath, pageRefs, readOwed, readWriteSnapshot, readWriteTally, recordLost, sampleQualifyingWeight, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -1460,6 +1460,52 @@ describe('S2c: a durable per-session obligation for write samples', () => {
     expect(settledOf(dir, epoch, 'sdl')).toBe(5);
   });
 
+  test('a client worker\'s settled page and link write rides its lost line as qualifying: the orphaned rest of its session (an addTag) is capability_missing receipt_orphaned_nonqualifying, never receipt_orphaned', () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch);
+    const dead = deadPid(); owe(dir, 'cq', 2, { child_pid: dead, owed_qualifying: 1 } as never); // a putPage and an addTag owed
+    const client = new WriteTally(dir, () => null, () => true, dead, 'cq');
+    client.note('comparable', undefined, 1, false, 1, 1); client.flush(); // the putPage's verdict reached the file; the addTag never reached the worker, and the worker died
+    worker(dir, epoch, 'o').recover();
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.uncomparable_by_reason.receipt_orphaned).toBeUndefined(); // was 1: the no_epoch line settled no page and link write, so the addTag was booked as one
+    expect(t.capability_missing_by_family.receipt_orphaned_nonqualifying).toBe(1);
+    expect(t.uncomparable_by_reason.no_epoch).toBe(1); // a client's verdict is still uncomparable no_epoch
+    expect(existsSync(owedPath(dir, 'cq'))).toBe(false);
+  });
+
+  test('a live client\'s qualifying line, folded before its worker exits, stays in settled_qualifying: the later orphaned addTag is still receipt_orphaned_nonqualifying', () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch);
+    owe(dir, 'cf', 2, { child_pid: process.pid, owed_qualifying: 1 } as never); // a putPage and an addTag owed; the worker is alive
+    const client = new WriteTally(dir, () => null, () => true, process.pid, 'cf');
+    client.note('comparable', undefined, 1, false, 1, 1); client.flush(); // the putPage's verdict reaches the file
+    const owner = worker(dir, epoch, 'o'); owner.save(); // the owner folds it while the worker still runs
+    const folded = readWriteTally(dir, epoch) as { settled?: Record<string, number>; settled_qualifying?: Record<string, number> };
+    expect(folded.settled?.cf).toBe(1);
+    expect(folded.settled_qualifying?.cf).toBe(1); // the line's q bit is saved, not only its reason
+    owe(dir, 'cf', 2, { child_pid: deadPid(), child_exited: true, owed_qualifying: 1 } as never); // then the worker exits without the addTag
+    owner.recover();
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.uncomparable_by_reason.receipt_orphaned).toBeUndefined();
+    expect(t.capability_missing_by_family.receipt_orphaned_nonqualifying).toBe(1);
+    expect(existsSync(owedPath(dir, 'cf'))).toBe(false);
+  });
+
+  test('a retired-epoch worker\'s settled page and link writes ride its epoch_retired lines as qualifying, both the batch it held when it saw the new epoch and a verdict after: the orphaned addTag is receipt_orphaned_nonqualifying', () => {
+    const dir = tmp(); const oldEpoch = epochOf(dir);
+    const dead = deadPid(); const old = worker(dir, oldEpoch, 'rq'); owe(dir, 'rq', 3, { child_pid: dead, owed_qualifying: 2 } as never); // two putPages and an addTag owed
+    const fresh = ensureEpoch(dir, { ...INPUTS, rust_addon_sha256: 'b' }, NOW.getTime() + 1000).epoch_id;
+    const owner = worker(dir, fresh, 'new-owner', OTHER_PID); passing(dir, fresh);
+    old.note('comparable', undefined, 1, false, 1, 1); // its save finds the new epoch: the unsaved batch becomes epoch_retired lines
+    old.note('comparable', undefined, 1, false, 1, 1); // a retired worker's verdict: epoch_retired lines at once
+    expect(old.flush()).toBe(true);
+    owner.recover();
+    const t = readWriteTally(dir, fresh)!;
+    expect(t.uncomparable_by_reason.receipt_orphaned).toBeUndefined(); // was 1
+    expect(t.capability_missing_by_family.receipt_orphaned_nonqualifying).toBe(1);
+    expect(t.uncomparable + t.capability_missing).toBe(1); // only the orphan: the retired epoch's outcomes count nowhere in this one
+    expect(existsSync(owedPath(dir, 'rq'))).toBe(false);
+  });
+
   test('a closed session that is not settled yet is never removed by the owner pass, and is removed the moment its settlement is in a tally', () => {
     const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch); owe(dir, 'cl', 3, { closed: true, child_pid: process.ppid });
     passing(dir, epoch, { settled: { cl: 1 } });
@@ -1532,10 +1578,28 @@ describe('S2c: the shadow child settles its session', () => {
       input.write('{"t":"write","op":"putPage"}\n'); input.write('{"t":"write","op":"putPage","pad":"torn\n'); input.write('{"t":"write","bad":,"dropped":1}\n'); input.write('{"t":"write","op":"putPage"}\n');
       input.end(); await done;
       const t = readWriteTally(dir, readEpoch(dir)!.epoch_id)!;
-      expect(t.uncomparable_by_reason).toMatchObject({ no_sample: 2, line_unreadable: 3 });
+      expect(t.uncomparable_by_reason).toMatchObject({ no_sample: 2, line_unreadable: 2 }); // the cut-short putPage line, and the earlier loss the other one carries
+      expect(t.capability_missing_by_family).toMatchObject({ line_unreadable_nonqualifying: 1 }); // that line's own sample: its op cannot be read, so it is no page or link write (as the serving process counted it)
       expect(t.uncomparable_by_reason.pipe_unflushed).toBeUndefined(); // every owed sample was read (the unreadable lines too), so nothing is booked as lost
       expect(t.settled).toEqual({ cu: 5 });
       expect(existsSync(owedPath(dir, 'cu'))).toBe(false);
+    });
+  }, 30_000);
+
+  test('an unreadable write line books only its page and link writes as line_unreadable: a cut-short addTag line is capability_missing line_unreadable_nonqualifying, and the earlier losses it carries stay line_unreadable', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      writeOwed(dir, { v: 1, session: 'cn', serving_pid: process.pid, owed: 4, closed: true, child_exited: false, owed_qualifying: 2 } as never);
+      const input = new PassThrough();
+      const done = runShadowChild(dir, { input, writeControl: () => {}, ...BASE, session: 'cn', addonSha256: () => 'a'.repeat(64), openEngine: owner });
+      input.write('{"t":"write","op":"addTag","outcome":"capability_missing","family":"tags","pad":"torn\n'); // 1 sample, no page or link write
+      input.write('{"t":"write","op":"addTag","bad":,"dropped":2}\n'); // 1 + 2: the two earlier losses count as page and link writes (which they were is not known)
+      input.end(); await done;
+      const t = readWriteTally(dir, readEpoch(dir)!.epoch_id)!;
+      expect(t.uncomparable_by_reason.line_unreadable).toBe(2); // only the two earlier losses, not all four samples
+      expect(t.capability_missing_by_family.line_unreadable_nonqualifying).toBe(2);
+      expect(t.settled).toEqual({ cn: 4 });
+      expect(existsSync(owedPath(dir, 'cn'))).toBe(false);
     });
   }, 30_000);
 
@@ -1729,7 +1793,7 @@ describe('S2c: every credit site settles exactly the weight it stands for', () =
   });
 
   test('an unreadable write line credits the weight its text states, once: a plain line is 1, one that still ends in its dropped count is 1 + that', async () => {
-    const r = rig(); r.owe(1 + 6); r.c.unreadable(sampleWeight('{"t":"write","op":"putPage","pad":"cut')); r.c.unreadable(sampleWeight('{"t":"write","op":"putPage","x":1,"dropped":5}\n'));
+    const r = rig(); r.owe(1 + 6); for (const l of ['{"t":"write","op":"putPage","pad":"cut', '{"t":"write","op":"putPage","x":1,"dropped":5}\n']) r.c.unreadable(sampleWeight(l), sampleQualifyingWeight(l));
     await r.c.idle();
     expect(r.settled()).toBe(7);
     expect(readWriteTally(r.dir, r.epoch)!.uncomparable_by_reason).toMatchObject({ line_unreadable: 7 });

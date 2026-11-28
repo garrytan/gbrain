@@ -33,7 +33,7 @@ import type { Page } from '../types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { withoutBody } from '../page-body/page-shape.ts';
 import { ledgerApplies } from '../page-body/segment-ledger.ts';
-import { openSegmentedBody, projectedLayout, projectedOutline, projectedUnits, readBodyRange, type SegmentedBody } from '../page-body/read-range.ts';
+import { openSegmentedBody, projectedLayout, projectedOutline, projectedUnits, readBodyRange, trustedSegments, type SegmentedBody } from '../page-body/read-range.ts';
 import { remoteReadStrips } from '../remote-body.ts';
 import { TIMELINE_SEPARATOR, spanHoldsChunk } from './document.ts';
 import { DATE, sliceWindow, slabWindow, windowAround, windowForBytes, windowFrom, type DocumentSlab, type OutlineEntry, type PageOutline, type WindowSlice } from './window.ts';
@@ -61,6 +61,8 @@ export interface DocumentUnit {
   newlines: number;
   /** Index into body.rows; -1 for literal `text`. */
   row: number;
+  /** The last row of a unit that covers a run of rows (a facts fence a forced cut splits, read joined); `row` when absent. */
+  last?: number;
   text?: string;
 }
 
@@ -244,7 +246,9 @@ export function markdownHead(page: Page, tags: string[]): string {
 /**
  * The markdown view: `head`, the body this audience may see, and serializeMarkdown's final newline. Remote: the read
  * projection. Trusted: the stored body after the withdrawal overlay (rows the overlay can rewrite, those with facts
- * regions, are measured when the page has a ledger), the timeline after TIMELINE_SEPARATOR when it has text.
+ * regions, are measured when the page has a ledger), the timeline after TIMELINE_SEPARATOR when it has text. #10589: a
+ * facts fence a forced cut splits is overlaid whole, so the rows `trustedSegments` joins are one unit, measured and
+ * read together.
  */
 export async function segmentedMarkdownDocument(engine: BrainEngine, body: SegmentedBody, head: string, audience: ViewAudience): Promise<SegmentedDocument> {
   const units: DocumentUnit[] = [textUnit(0, head)];
@@ -262,16 +266,31 @@ export async function segmentedMarkdownDocument(engine: BrainEngine, body: Segme
       return Buffer.concat(parts);
     };
   } else {
-    const measured = new Map<number, { bytes: number; newlines: number }>();
+    const measured = new Map<number, { bytes: number; newlines: number; last: number }>();
     segmentedReadWork.units += body.rows.length;
     if (ledgerApplies(body.ledger)) {
-      for (const [i, row] of body.rows.entries()) {
-        if (!row.hasFacts) continue;
-        const text = await trustedBytes(engine, body, row.byteStart, row.byteStart + row.byteLen);
-        measured.set(i, { bytes: text.length, newlines: newlinesIn(text) });
+      for (let i = 0, done = -1; i < body.rows.length; i++) {
+        if (!body.rows[i]!.hasFacts) continue;
+        let j = i;
+        while (j + 1 < body.rows.length && body.rows[j + 1]!.hasFacts && body.rows[j + 1]!.region === body.rows[i]!.region) j++;
+        // The row before a run records no facts slot when a forced cut fell inside the run's opener; it is read with the run.
+        let first = i - 1 > done && body.rows[i - 1]!.region === body.rows[i]!.region ? i - 1 : i;
+        for await (const seg of trustedSegments(engine, body, body.rows.slice(first, j + 1))) {
+          let last = first;
+          while (body.rows[last]!.byteStart + body.rows[last]!.byteLen < seg.row.byteStart + seg.row.byteLen) last++;
+          const text = Buffer.from(seg.pieces.map(piece => piece.text).join(''), 'utf8');
+          measured.set(first, { bytes: text.length, newlines: newlinesIn(text), last });
+          first = last + 1;
+        }
+        i = done = j;
       }
     }
-    const rowUnits = body.rows.map((row, i) => ({ bytes: row.byteLen, newlines: row.lineCount, ...measured.get(i), row: i }));
+    const rowUnits: Array<Omit<DocumentUnit, 'start'>> = [];
+    for (let i = 0; i < body.rows.length; i++) {
+      const joined = measured.get(i);
+      rowUnits.push({ bytes: body.rows[i]!.byteLen, newlines: body.rows[i]!.lineCount, ...joined, row: i });
+      if (joined) i = joined.last;
+    }
     rowUnits.filter(u => body.rows[u.row]!.region === 'truth').forEach(push);
     const timeline = rowUnits.filter(u => body.rows[u.row]!.region === 'timeline');
     if (timeline.some(u => u.bytes > 0)) {
@@ -288,7 +307,7 @@ export async function segmentedMarkdownDocument(engine: BrainEngine, body: Segme
         if (u.row < 0) { parts.push(Buffer.from(u.text!, 'utf8')); i++; continue; }
         let j = i;
         while (j + 1 < units.length && units[j + 1]!.row >= 0 && units[j + 1]!.start < end) j++;
-        const last = body.rows[units[j]!.row]!;
+        const last = body.rows[units[j]!.last ?? units[j]!.row]!;
         parts.push(await trustedBytes(engine, body, body.rows[u.row]!.byteStart, last.byteStart + last.byteLen));
         i = j + 1;
       }
@@ -494,7 +513,11 @@ async function blocksOutline(doc: SegmentedDocument, from: number, limit: number
   const rows = new Set<number>();
   const end = (k: number) => starts[from + k + 1] ?? doc.total;
   page.forEach((start, k) => {
-    for (let i = doc.unitAt(start); i <= doc.unitAt(end(k) - 1); i++) { segmentedReadWork.units++; if (doc.units[i]!.row >= 0) rows.add(doc.units[i]!.row); }
+    for (let i = doc.unitAt(start); i <= doc.unitAt(end(k) - 1); i++) {
+      segmentedReadWork.units++;
+      const u = doc.units[i]!;
+      for (let row = u.row; row >= 0 && row <= (u.last ?? u.row); row++) rows.add(row);
+    }
   });
   const dates = await storedDates(doc, [...rows]);
   const entries: OutlineEntry[] = page.map((start, k) => {
@@ -504,7 +527,7 @@ async function blocksOutline(doc: SegmentedDocument, from: number, limit: number
       segmentedReadWork.units++;
       const u = doc.units[i]!;
       if (u.row < 0) range.scan(u.text!);
-      else { const d = dates.get(u.row); if (d) range.add(d.min, d.max); }
+      else for (let row = u.row; row <= (u.last ?? u.row); row++) { const d = dates.get(row); if (d) range.add(d.min, d.max); }
     }
     const lineStart = 1 + (start === 0 ? 0 : doc.linesBefore(doc.unitAt(start)));
     const lineEnd = stop === doc.total ? totalLines : Math.max(lineStart, doc.linesBefore(doc.unitAt(stop)));
