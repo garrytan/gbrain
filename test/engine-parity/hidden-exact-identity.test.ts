@@ -166,14 +166,15 @@ const rustStore = (engine: BrainEngine): RustStore =>
 const SOURCE_PAIR = ['default', 'other'] as const;
 
 /**
- * Which caller records the Rust store's page policy expresses. The rest (an audience of several members, an owner's
- * lineage read) are refused before any read, so they never reach the store's exact-slug check. When the store learns
- * one of them, this list changes and the case above then asserts that caller's answers. (The trunk store also serves
- * a labelled-only member, which the sync-21 master tree still listed as refused.)
+ * Which caller records the Rust store's page policy expresses. The rest (an audience of several members) are refused
+ * before any read, so they never reach the store's exact-slug check. When the store learns one of them, this list
+ * changes and the case above then asserts that caller's answers. (The trunk store also serves a labelled-only member,
+ * which the sync-21 master tree still listed as refused, and an owner's lineage read, which the store's owner read rule
+ * serves since rust-engine/owner-fact-reads 609ac570a8.)
  */
 const RUST_CALLER_POLICY = {
-  served: ['a named member', 'a labelled-only member', 'a caller with a private-readable grant for the source'],
-  refused: ['an audience of two members', 'an owner read'],
+  served: ['a named member', 'a labelled-only member', 'an owner read', 'a caller with a private-readable grant for the source'],
+  refused: ['an audience of two members'],
 };
 
 /** Where the legacy read lands in a brain with two allowed sources: the page's source and `self` or `target`, or `ambiguous`. */
