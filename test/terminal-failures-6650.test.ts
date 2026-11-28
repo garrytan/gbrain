@@ -119,15 +119,15 @@ describe('classifyTerminal', () => {
 const SOURCE = 'tf-a';
 const OTHER = 'tf-archived';
 async function seed(o: { source?: string; slug: string; operation?: string; state: string; code?: string | null; message?: string | null; detail?: unknown; recovery?: unknown;
-  compacted?: boolean; digest?: string; hoursAgo?: number; build?: string; kind?: string; blocked?: string; intent?: object }): Promise<string> {
+  compacted?: boolean; digest?: string; hoursAgo?: number; build?: string; kind?: string; blocked?: string; intent?: object; worktree?: string }): Promise<string> {
   const requestId = randomUUID();
   await engine.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,digest,authority,intent_bytes,terminal_reservation,
-      state,error_code,error_message,error_detail,recovery,compacted,intent,completed_at,updated_at,admitter_version,blocked_reason)
+      state,error_code,error_message,error_detail,recovery,compacted,intent,completed_at,updated_at,admitter_version,blocked_reason,worktree_id)
     VALUES('local_cli','fixture',$1::uuid,$2,$3,(SELECT incarnation FROM sources WHERE id=$3),$4,$5,'{}'::jsonb,0,0,$6,$7,$8,$9::text::jsonb,$10::text::jsonb,$11,$12::text::jsonb,
-      now()-($13::double precision*interval '1 hour'),now()-($13::double precision*interval '1 hour'),$14,$15)`,
+      now()-($13::double precision*interval '1 hour'),now()-($13::double precision*interval '1 hour'),$14,$15,$16::uuid)`,
   [requestId, o.operation ?? 'put_page', o.source ?? SOURCE, o.slug, o.digest ?? randomUUID(), o.state, o.code ?? null, o.compacted ? null : o.message ?? null,
     o.detail === undefined ? null : JSON.stringify(o.detail), o.recovery === undefined ? null : JSON.stringify(o.recovery), o.compacted === true,
-    o.compacted ? null : JSON.stringify(o.intent ?? (o.kind ? { kind: o.kind } : { content: 'x' })), o.hoursAgo ?? 1, o.build ?? '0.60.216.0', o.blocked ?? null]);
+    o.compacted ? null : JSON.stringify(o.intent ?? (o.kind ? { kind: o.kind } : { content: 'x' })), o.hoursAgo ?? 1, o.build ?? '0.60.216.0', o.blocked ?? null, o.worktree ?? null]);
   return requestId;
 }
 
@@ -557,6 +557,48 @@ for (const kind of testBackends()) describe(`the aggregate, doctor and the drill
     const ts = rows.map(row => [row.slug, classifyTerminal({ ...base, ...row, recovery: null, blocked_reason: null })!.historical]);
     expect(rows.map(row => [row.slug, row.flag])).toEqual(ts as never);
     expect(ts).toEqual([['h1', true], ['h2', false], ['h3', true], ['h4', true], ['h5', false], ['h6', false], ['h7', true], ['h8', false], ['h9', true], ['h9b', true], ['h9c', false]]);
+  });
+
+  test('GST-3450: a refused sync page import a later committed write of its page settled is history, and leaves the spike', async () => {
+    await engine.setConfig('persistence.terminal_failures.spike_min', '3');
+    const pinned = { slug: '', operation: 'submit_job', state: 'failed', code: 'source_changed', kind: 'managed_sync_import',
+      message: 'Newer working-tree bytes and the current page disagree with this pinned Git import.', detail: { origin: 'pinned_git_worktree_conflict', reason: 'pinned_git_worktree_conflict' }, hoursAgo: 3 };
+    // A managed sync import is bound to the source's worktree; a database-only job (take extraction) is not.
+    const [{ id: worktree }] = await engine.executeRaw<{ id: string }>('INSERT INTO persistence_worktrees DEFAULT VALUES RETURNING id::text AS id');
+    for (let i = 0; i < 4; i++) {
+      await seed({ ...pinned, slug: `sync/p${i}` });
+      // The later sync imported the file's newer bytes: another intent, so another digest.
+      await seed({ slug: `sync/p${i}`, operation: 'submit_job', state: 'committed', kind: 'managed_sync_import', hoursAgo: 2, worktree });
+    }
+    const summary = await readTerminalFailureSummary(engine);
+    if (summary.status !== 'ok') throw new Error('unknown');
+    expect(summary.sources[0]).toMatchObject({ historical_rows: 4, unresolved: { rows: 0 }, new_last_24h: 0 });
+    const check = (await terminalFailuresCheck(engine))!;
+    expect(check.status).toBe('ok');
+    expect(check.details).toMatchObject({ spike: { spiking: false, last_24h: 0 } });
+    const listing = await readTerminalFailures(engine, { sourceId: SOURCE, state: 'all' });
+    if (listing.status !== 'ok') throw new Error('unknown');
+    expect(listing.rows!.filter(r => r.slug?.startsWith('sync/p')).map(r => [r.disposition, r.historical])).toEqual(Array(4).fill(['superseded', true]));
+
+    // No later commit, a later failure of the page, or a refusal whose receipt was compacted: still unresolved, and they still count.
+    await seed({ ...pinned, slug: 'sync/alone' });
+    await seed({ ...pinned, slug: 'sync/again' });
+    await seed({ ...pinned, slug: 'sync/again', hoursAgo: 2 });
+    await seed({ slug: 'sync/compacted', operation: 'submit_job', state: 'failed', code: 'source_changed', compacted: true, detail: { origin: 'pinned_git_worktree_conflict' }, hoursAgo: 3 });
+    await seed({ slug: 'sync/compacted', operation: 'submit_job', state: 'committed', kind: 'managed_sync_import', hoursAgo: 2, worktree });
+    // A later tag or take write on the page publishes none of the file's bytes: the refused import stays unresolved.
+    await seed({ ...pinned, slug: 'sync/tagged' });
+    await seed({ slug: 'sync/tagged', operation: 'add_tag', state: 'committed', hoursAgo: 2 });
+    await seed({ ...pinned, slug: 'sync/takes' });
+    await seed({ slug: 'sync/takes', operation: 'submit_job', state: 'committed', kind: 'managed_maintenance_takes_reextract', hoursAgo: 2 });
+    // A retry of the same intent that has not committed yet keeps the failure out of the pile but in the spike.
+    const retried = randomUUID();
+    await seed({ ...pinned, slug: 'sync/retried', digest: retried });
+    await seed({ slug: 'sync/retried', operation: 'submit_job', state: 'queued', kind: 'managed_sync_import', digest: retried, hoursAgo: 2, worktree });
+    const later = await readTerminalFailureSummary(engine);
+    if (later.status !== 'ok') throw new Error('unknown');
+    expect(later.sources[0]).toMatchObject({ historical_rows: 5, unresolved: { rows: 6 }, new_last_24h: 7 });
+    expect((await terminalFailuresCheck(engine))!.details).toMatchObject({ spike: { spiking: true, last_24h: 7 } });
   });
 
   test('the extracted supersession rule is the one failed-writes applies', async () => {

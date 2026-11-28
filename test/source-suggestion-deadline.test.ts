@@ -27,15 +27,27 @@ const never = () => new Promise<never>(() => {});
 const DEADLINE_MS = 60;
 /** Well under any wait the stalled read could end on its own, well over the timer's slack. */
 const SETTLE_MS = 1_000;
+/**
+ * The existence check answers this late, past the deadline it would have had if the deadline were armed before it.
+ * The deadline is armed when that answer arrives, so a slow first statement on a loaded machine (the CI flake: only
+ * the existence check recorded) never spends the suggestion read's budget.
+ */
+const EXISTENCE_ANSWER_MS = DEADLINE_MS * 2;
+/** Upper bound for the whole call, only so a hang fails the test instead of the runner. */
+const HANG_MS = 5_000;
 
 test('a stalled suggestion read for an unknown --source ends by the doctor deadline and gives back its connection', async () => {
   const counts = { discards: 0, releases: 0 };
   const statements: string[] = [];
+  const scope: StatementDeadline = { startedAt: Date.now(), deadlineAt: Date.now() + HANG_MS, expired: false };
+  let armedAt: number | null = null;
   const fake = makeFakeSql((stmt) => {
     if (!/FROM sources/i.test(stmt.text)) return undefined;
     statements.push(stmt.text);
-    // The existence check for the named source: no such source.
-    if (/WHERE id\s*=\s*\$1/i.test(stmt.text)) return [];
+    // The existence check for the named source: no such source. The doctor deadline starts once it has answered.
+    if (/WHERE id\s*=\s*\$1/i.test(stmt.text)) {
+      return Bun.sleep(EXISTENCE_ANSWER_MS).then(() => { armedAt = Date.now(); scope.deadlineAt = armedAt + DEADLINE_MS; return []; });
+    }
     return never();
   });
   const reserve = fake.sql.reserve;
@@ -48,14 +60,16 @@ test('a stalled suggestion read for an unknown --source ends by the doctor deadl
   };
   const engine = new PostgresEngine();
   (engine as unknown as { _sql: unknown })._sql = fake.sql;
-  const scope: StatementDeadline = { startedAt: Date.now(), deadlineAt: Date.now() + DEADLINE_MS, expired: false };
   const bound = deadlineBoundEngine(engine as unknown as BrainEngine);
   const outcome = await Promise.race([
     withStatementDeadline(scope, () => resolveSourceId(bound, 'notes', '/nowhere/in/particular', { skipLocalSignals: true }))
       .then(() => 'resolved', (error: unknown) => error),
-    Bun.sleep(DEADLINE_MS + SETTLE_MS).then(() => 'still pending'),
+    Bun.sleep(HANG_MS + SETTLE_MS).then(() => 'still pending'),
   ]);
+  const endedAt = Date.now();
   expect(outcome, 'the suggestion read did not end by the doctor deadline').not.toBe('still pending');
+  expect(armedAt, 'the existence check never answered').not.toBeNull();
+  expect(endedAt - armedAt!, 'the suggestion read did not end by the doctor deadline').toBeLessThanOrEqual(DEADLINE_MS + SETTLE_MS);
   // The suggestion read was reached: the existence check and then one stalled read.
   expect(statements.length).toBeGreaterThanOrEqual(2);
   // The unknown source still gets its "not found" error, without a suggestion.

@@ -75,6 +75,15 @@ function resolve(configured: Map<string, string>): WriteSwitchSnapshot {
   return { switches: out, preparation: resolvePreparationPolicy(configured) };
 }
 
+/** GST-3449: what a switch resolves to while its config key is unset (its env override, else its default); null for any other key. */
+export function unsetWriteSwitch(key: string, env: Record<string, string | undefined>): { value: boolean; env: string; fromEnv: boolean } | null {
+  const entry = (Object.values(WRITE_SWITCHES) as Array<{ key: string; env: string; defaultOn?: boolean }>).find(s => s.key === key);
+  if (!entry) return null;
+  const fromEnv = env[entry.env];
+  if (off(fromEnv) || on(fromEnv)) return { value: on(fromEnv), env: entry.env, fromEnv: true };
+  return { value: entry.defaultOn ?? true, env: entry.env, fromEnv: false };
+}
+
 /** Read-through views of an engine (preparation config, pre-admission cache) and the engine they read through. */
 const views = new WeakMap<object, object>();
 export function registerEngineView<T extends object>(view: T, engine: object): T { views.set(view, engine); return view; }
