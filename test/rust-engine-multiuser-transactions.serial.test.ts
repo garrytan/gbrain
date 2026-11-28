@@ -354,6 +354,38 @@ async function rejectionOf(work: Promise<unknown>): Promise<{ name?: string; cod
 
 const tick = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Test-only watch on the addon's `Brain.beginTransaction`: records each begin that asks for retry keys (a run again
+ * that queues for the keys an earlier run lost on) and whether its call has settled. A begin that is not settled while
+ * another transaction holds its keys is waiting in that key's line; the case waits on this state, not on a timer.
+ */
+function watchRerunBegins(): {
+  calls: Array<{ keys: string[]; settled: boolean }>;
+  next: (index: number) => Promise<{ keys: string[]; settled: boolean }>;
+  restore: () => void;
+} {
+  const proto = (addon as unknown as { Brain: { prototype: Record<string, unknown> } }).Brain.prototype;
+  const original = proto.beginTransaction as (...args: unknown[]) => Promise<unknown>;
+  const calls: Array<{ keys: string[]; settled: boolean }> = [];
+  const waiters: Array<() => void> = [];
+  proto.beginTransaction = function (this: unknown, ...args: unknown[]) {
+    const keys = (args[2] as { retryKeys?: string[] } | undefined)?.retryKeys;
+    const result = original.apply(this, args);
+    if (keys?.length) {
+      const call = { keys: [...keys], settled: false };
+      calls.push(call);
+      void result.then(() => { call.settled = true; }, () => { call.settled = true; });
+      for (const wake of waiters.splice(0)) wake();
+    }
+    return result;
+  };
+  const next = async (index: number) => {
+    while (calls.length <= index) await new Promise<void>((resolve) => { waiters.push(resolve); });
+    return calls[index];
+  };
+  return { calls, next, restore: () => { proto.beginTransaction = original; } };
+}
+
 // A cancelled transaction never commits, wherever the abort lands before the commit: while the store opens, while a
 // run again waits for the keys an earlier run lost on, or while the callback runs. Disconnect leaves no attempt open.
 describe('Rust engine transaction cancel and disconnect', () => {
@@ -384,40 +416,52 @@ describe('Rust engine transaction cancel and disconnect', () => {
   withAddon('on: an abort while a run again waits for the key it lost on refuses, nothing written', async () => {
     const engine = await open(true);
     await engine.putPage('notes/k', note('Start'));
-    const runs = { a: 0, b: 0 };
-    const bRead = gate(); const bGo = gate(); const bRerun = gate(); const bFinish = gate();
-    const aRead = gate(); const aGo = gate();
-    const b = engine.transaction(async (tx) => {
-      runs.b++;
-      await tx.getPage('notes/k');
-      if (runs.b === 1) { bRead.open(); await bGo.wait; } else { bRerun.open(); await bFinish.wait; }
-      await tx.putPage('notes/k', note('B'));
-    });
-    await bRead.wait;
-    const controller = new AbortController();
-    const a = engine.transaction(async (tx) => {
-      runs.a++;
-      await tx.getPage('notes/k');
-      if (runs.a === 1) { aRead.open(); await aGo.wait; }
-      await tx.putPage('notes/a', note('A'));
-    }, { signal: controller.signal });
-    await aRead.wait;
-    // Both read notes/k; a write outside both makes each commit lose on it.
-    await engine.putPage('notes/k', note('Outside'));
-    bGo.open();
-    await bRerun.wait; // B runs again, holding the key it lost on
-    aGo.open();
-    await tick(200); // A lost too and now waits behind B for that key
-    expect(runs.a).toBe(1);
-    controller.abort();
-    await tick(50);
-    bFinish.open();
-    await b;
-    const err = await rejectionOf(a);
-    expect(err.name).toBe('AbortError');
-    expect(runs.a).toBe(1);
-    expect(await engine.getPage('notes/a')).toBeNull();
-    expect((await engine.getPage('notes/k'))?.title).toBe('B');
+    const begins = watchRerunBegins();
+    try {
+      const runs = { a: 0, b: 0 };
+      const bRead = gate(); const bGo = gate(); const bRerun = gate(); const bFinish = gate();
+      const aRead = gate(); const aGo = gate();
+      const b = engine.transaction(async (tx) => {
+        runs.b++;
+        await tx.getPage('notes/k');
+        if (runs.b === 1) { bRead.open(); await bGo.wait; } else { bRerun.open(); await bFinish.wait; }
+        await tx.putPage('notes/k', note('B'));
+      });
+      await bRead.wait;
+      const controller = new AbortController();
+      const a = engine.transaction(async (tx) => {
+        runs.a++;
+        await tx.getPage('notes/k');
+        if (runs.a === 1) { aRead.open(); await aGo.wait; }
+        await tx.putPage('notes/a', note('A'));
+      }, { signal: controller.signal });
+      // Handled from the start: A's refusal may come while the test still waits on B.
+      const aRejection = rejectionOf(a);
+      await aRead.wait;
+      // Both read notes/k; a write outside both makes each commit lose on it.
+      await engine.putPage('notes/k', note('Outside'));
+      bGo.open();
+      await bRerun.wait; // B runs again, holding the key it lost on
+      const bBegin = begins.calls[0];
+      expect(begins.calls.length).toBe(1);
+      expect(bBegin.settled).toBe(true);
+      aGo.open();
+      // A lost too: its run again asks for the same key B holds, so that begin waits behind B until B ends.
+      const aBegin = await begins.next(1);
+      expect(aBegin.keys).toEqual(bBegin.keys);
+      expect(runs.a).toBe(1);
+      controller.abort();
+      expect(aBegin.settled).toBe(false); // still in the line behind B when the abort lands
+      bFinish.open();
+      await b;
+      const err = await aRejection;
+      expect(err.name).toBe('AbortError');
+      expect(runs.a).toBe(1);
+      expect(await engine.getPage('notes/a')).toBeNull();
+      expect((await engine.getPage('notes/k'))?.title).toBe('B');
+    } finally {
+      begins.restore();
+    }
   }, 30_000);
 
   withAddon('on: an abort while the callback runs rolls it back, nothing written', async () => {
