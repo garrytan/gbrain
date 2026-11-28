@@ -10,6 +10,22 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.782.0] - 2026-11-28
+
+**Shadow mode now sees and follows writes made through the database handle inside a transaction, and keeps a transaction's calls in order beside a nested transaction that is still running.**
+
+### Fixed
+- Inside a transaction that shadow mode follows, a write made through the transaction's database handle, including raw statements, statements with interpolated fragments, prepared and cursor-style calls, and typed values, used to slip past the follower. It now goes through the same path as a raw statement, so the follower sees it and keeps the Rust store current. A sampled one is counted as a raw-SQL write the swap check does not cover yet. It is not compared. Nothing to do on upgrade.
+- When a nested transaction is still running, a followed write of the outer transaction no longer lets the outer transaction's later calls go ahead of it. The follower waits for the nested transaction first, for at most 2 seconds, and holds the later calls meanwhile; a second wait of up to 2 seconds for calls already running can follow. With shadow mode on, a transaction commits what it commits with shadow mode off. The cost is a write stall of up to 2 seconds per wait beside a nested transaction that is still running while shadow mode is on.
+- Rebuilding the vector index now runs its statements through the transaction's own raw-statement path, so shadow mode sees them.
+
+**Shadow mode no longer counts lost samples of writes it never compares against the compared-write share.**
+
+### Fixed
+- Shadow mode: when a command or `gbrain serve` exits before the shadow child reads every write sample, only the lost page and link writes (`putPage`, `deletePage`, `addLink`, `addLinksBatch`, `removeLink`) count as uncomparable `pipe_unflushed`. Lost samples of other writes, which the shadow sends as `capability_missing` anyway, now count under `capability_missing_by_family` as `pipe_unflushed_nonqualifying`. They stay counted, visible and settled. On a synthetic workload most lost samples were other writes, so the compared share read about 1% when it was much higher.
+- The owed record a command writes now also states how many owed samples were page and link writes (`owed_qualifying`), and the write tally keeps the part of each session's settled count that was (`settled_qualifying`, in the same save). When the next shadow child settles a gone session, it splits the unsettled samples the same way (`receipt_orphaned` and `receipt_orphaned_nonqualifying`).
+- An owed record written by an older version still counts every lost sample as `pipe_unflushed`, as before.
+
 ## [0.60.781.0] - 2026-11-27
 
 **A remote agent can no longer make its own text read as an imported transcript, whatever maintenance runs afterwards.**
