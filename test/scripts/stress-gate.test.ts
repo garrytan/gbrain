@@ -167,9 +167,20 @@ describe('race hunt plan', () => {
     expect(plan.shards.every(s => s.estimateMs <= RACE_SHARD_BUDGET_MS)).toBe(true);
   });
 
+  test('a 3-iteration floor past 24 shards runs every file in a third group of up to 36 shards', () => {
+    const root = armsRepo(30);
+    const plan = planRaceHunt(root, { day: 0 }, weights(Object.fromEntries(list(30).map(f => [f, 15 * 60_000]))));
+    expect(plan.unrun).toEqual([]);
+    expect(plan.files.map(f => f.file)).toEqual(list(30));
+    expect(plan.files.every(f => f.iterations === RACE_MIN_ITERATIONS)).toBe(true);
+    expect(plan.shards.length).toBeGreaterThan(2 * RACE_MAX_SHARDS);
+    expect(plan.shards.length).toBeLessThanOrEqual(RACE_FLOOR_MAX_SHARDS);
+    expect(plan.shards.every(s => s.estimateMs <= RACE_SHARD_BUDGET_MS)).toBe(true);
+  });
+
   test('a set that does not fit at 3 iterations fails "race hunt over budget" naming the unrun files', () => {
-    const root = armsRepo(10);
-    const plan = planRaceHunt(root, { day: 0 }, weights(Object.fromEntries(list(10).map(f => [f, 40 * 60_000]))));
+    const root = armsRepo(20);
+    const plan = planRaceHunt(root, { day: 0 }, weights(Object.fromEntries(list(20).map(f => [f, 40 * 60_000]))));
     expect(plan.unrun.length).toBeGreaterThan(0);
     const report = buildReport({ plan, planResult: 'success', shardsResult: 'success', manifests: [], exemptions: { exemptions: [], openIssues: [] }, today: '2026-10-05', artifact: '' });
     expect(report.exit).toBe(1);
