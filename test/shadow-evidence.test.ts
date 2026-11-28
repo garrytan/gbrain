@@ -257,7 +257,7 @@ describe('reads', () => {
   test('a class that was used but never compared is listed with 0 successes next to classes that were', () => {
     const { dir, epoch } = epochDir();
     put(dir, rowsOf(epoch, 'getPage', { match: 3 }));
-    used(dir, epoch, { getPage: { offered: 40, sampled_out: 37 }, getBacklinks: { offered: 12, sampled_out: 12 }, getTags: { offered: 1, skipped_in_transaction: 1 } });
+    used(dir, epoch, { getPage: { offered: 40, sampled_out: 37 }, getBacklinks: { offered: 12, sampled_out: 12 }, getTags: { offered: 1, skipped_in_transaction: 1 } }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 an unrelated 12 (a count, size or id), not the adapter version
     const s = status(dir);
     expect(s.reads!.ops).toEqual([
       { op: 'getBacklinks', successful: 0, minimum: MIN_SUCCESSFUL_PER_OP }, { op: 'getPage', successful: 3, minimum: 100 }, { op: 'getTags', successful: 0, minimum: 100 },
@@ -657,6 +657,7 @@ describe('follower readiness inputs are reported only for the current epoch', ()
       expect([tag, other.fingerprints, other.allocators, other.follower.lag_ms_p99_epoch, other.follower.lag_ms_p99_24h]).toEqual([
         tag, { checked_rows: 0, mismatches: 0, probe: NOT_RUN_PROBE }, { verified: false, checked_at: null }, null, null,
       ]);
+      // pregate-literal: SHADOW_ADAPTER_VERSION=12 an unrelated 12 (a count, size or id), not the adapter version
       expect(other.follower).toMatchObject({ applied_rows: 12, state: 'following' }); // the Rust store's state is the seed's, not the epoch's
     }
     // After a rotation the manifest names a new epoch: the same file no longer counts.

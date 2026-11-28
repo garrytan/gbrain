@@ -520,7 +520,7 @@ describe('the data fence and the scratch location (lane owner ruling)', () => {
     expect(movedOutsideFootprint('putPage', ['a/x', {}], pre, { sources: [], pages: [A, B], links: [] })).toBe(true); // a link it does not write is gone
     expect(movedOutsideFootprint('deletePage', ['a/x'], pre, { sources: [], pages: [B], links: [] })).toBe(false); // the page and its links go
     expect(movedOutsideFootprint('deletePage', ['a/x'], pre, { sources: [], pages: [{ ...B, title: 'Edited elsewhere' }], links: [] })).toBe(true);
-    const farther = R({ id: '12', from_page_id: '2', to_page_id: '99', link_type: 'knows' });
+    const farther = R({ id: '12', from_page_id: '2', to_page_id: '99', link_type: 'knows' }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 an unrelated 12 (a count, size or id), not the adapter version
     expect(movedOutsideFootprint('deletePage', ['a/x'], pre, { sources: [], pages: [B], links: [farther] })).toBe(false); // a link to a page that was never copied is not a change to the copy
     const jobs = { ...B, projection_job_revision: 'r1' };
     expect(movedOutsideFootprint('addLink', link, { ...pre, pages: [A, jobs] }, { sources: [], pages: [A, { ...jobs, projection_job_revision: 'r2' }], links: [L] })).toBe(false); // job-queue state is not an edit
@@ -1652,13 +1652,13 @@ describe('S2c: every credit site settles exactly the weight it stands for', () =
   test('F1: end to end, a line the serving process owed as 1 is settled as 1 by the child, whatever its dropped field says', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {
       const dir = tmp(); writeSeedRecord(dir, SEED_F1);
-      writeOwed(dir, { v: 1, session: 'cf1', serving_pid: process.pid, owed: 12, closed: true, child_exited: false }); // 2 read, 10 the pipe never delivered
+      writeOwed(dir, { v: 1, session: 'cf1', serving_pid: process.pid, owed: 12, closed: true, child_exited: false }); // 2 read, 10 the pipe never delivered // pregate-literal: SHADOW_ADAPTER_VERSION=12 an unrelated 12 (a count, size or id), not the adapter version
       const input = new PassThrough();
       const done = runShadowChild(dir, { input, writeControl: () => {}, loadAddon: async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1', catalogVersion: 3 } as never }), capabilities: () => ['search', 'pages'], readinessPolicyHash: () => 'p1', heartbeatMs: 60_000, childId: 'c1', session: 'cf1', addonSha256: () => 'a'.repeat(64), openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {} }) as never });
       input.write('{"t":"write","op":"putPage","dropped":100000}\n'); input.write('{"t":"write","op":"putPage"}\n');
       input.end(); await done;
       const t = readWriteTally(dir, readEpoch(dir)!.epoch_id)!;
-      expect(t.settled).toEqual({ cf1: 12 }); // was 10,012 (and the 10 undelivered samples went unbooked: the child believed it had read 10,002)
+      expect(t.settled).toEqual({ cf1: 12 }); // was 10,012 (and the 10 undelivered samples went unbooked: the child believed it had read 10,002) // pregate-literal: SHADOW_ADAPTER_VERSION=12 an unrelated 12 (a count, size or id), not the adapter version
       expect(t.uncomparable_by_reason.pipe_unflushed).toBe(10);
       expect(t.uncomparable_by_reason.send_shed).toBeUndefined();
     });
