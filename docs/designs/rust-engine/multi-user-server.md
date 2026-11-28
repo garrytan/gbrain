@@ -311,6 +311,11 @@ How one crosses:
 - The client sends `runOperation(name, params, context, { auth })` with the remote mark: `context` holds only the plain keys
   of `REMOTE_CONTEXT_KEYS` (source, admission origin, federated sources, agent label, transport, takes holders), and `auth`
   is the caller's grant without its bearer token.
+- A guest note's attribution crosses beside them as `guestChannels`, reduced to the `X-Gbrain-Guest` header and
+  `_meta.guest` (no other `_meta` key). The server refuses any other shape and runs the same guest admission as in process:
+  the writer must be on the source's writer list in the server's own store, at submission and at publication; the label
+  is syntax-checked; the frontmatter's sender and group must equal the attribution; the readers must be the owner and
+  the one audience principal of the caller's access record.
 - K (owner-ipc/remote-check.ts) lets a remote whole operation through only on the served wire and only when it is on the
   list; on the owner socket (v2) every remote whole operation is still refused. The served session refuses it for any
   principal other than the brain owner's floor (until ruling A1 lifts, that is every other principal).
