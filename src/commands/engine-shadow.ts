@@ -12,7 +12,7 @@
  * once, in one read-only snapshot, and writes `seed.json` (src/shadow/seed.ts).
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
@@ -26,7 +26,10 @@ import type { FetchDeps } from '../shadow/eval-gates.ts';
 import { renderEvidenceStatus } from '../shadow/evidence.ts';
 import { renderFollowStatus } from '../shadow/follow-status.ts';
 import { readManagedStorage, storageLine, type ManagedStorageRecord } from '../shadow/managed-gate.ts';
-import { readSeedRecord, RESEED_STEPS, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
+import {
+  DEFAULT_SEED_BATCH_ROWS, DEFAULT_SEED_BUDGET_MS, MAX_SEED_BATCH_ROWS, parseSeedBudgetMs, readSeedRecord, RESEED_STEPS, runSeed, SEED_BUDGET_ENV, seedRecordPath,
+  SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget,
+} from '../shadow/seed.ts';
 import { seedStatus, shadowStatusDocument } from '../shadow/status-document.ts';
 import { installWriterHooks, primaryTakesWriterHooks, removeWriterHooks } from '../shadow/writer-hooks.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
@@ -55,6 +58,8 @@ export interface EngineShadowDeps {
   reconcileSupervisor?: Partial<import('../shadow/supervisor.ts').ShadowSupervisorOptions>;
   /** Opens the Rust store `seed` writes; default openRustStore on the loaded addon at `<dir>/store`. */
   openStore?: (addon: object, storePath: string) => Promise<SeedTarget & { close(): Promise<void> }>;
+  /** The environment `seed` reads GBRAIN_SHADOW_SEED_BUDGET_MINUTES from; default process.env. */
+  env?: Record<string, string | undefined>;
   /** Test seams for `drill`: the owner, verifier and clock of the restore drill, and the HTTP of the eval-gates fetch. */
   drill?: DrillDeps;
   fetchEvals?: Partial<FetchDeps>;
@@ -68,7 +73,7 @@ Usage:
   gbrain engine shadow status [--json]
   gbrain engine shadow stop [--delete]
   gbrain engine shadow report [--json]
-  gbrain engine shadow seed [--json] [--reseed]
+  gbrain engine shadow seed [--json] [--budget-minutes <n|none>] [--batch-rows <n>] [--restart] [--reseed]
   gbrain engine shadow reconcile [--full] [--json]
   gbrain engine shadow capture on --yes | off | status [--json] | delete --yes
   gbrain engine shadow replay [--json] [--budget-minutes <n>]
@@ -92,6 +97,11 @@ seed copies this brain into the Rust store once, in one read-only snapshot, befo
 It writes no table row, source file, ownership marker or registry entry of the brain. Opening a PGLite brain still
 takes its process lock, and PGLite rewrites its own control and log files. A brain with an open repair episode is not
 opened. A store is seeded once: to seed again, delete the shadow directory first.
+seed stops after 30 minutes by default and leaves a partial store. --budget-minutes <n> (or
+GBRAIN_SHADOW_SEED_BUDGET_MINUTES) sets the limit; 0 or none means no limit. A long seed keeps one snapshot open on
+the brain database for the whole run. --batch-rows <n> (default 500, at most 10000) sets the rows read per batch.
+--restart deletes a partial store that a stopped seed left, then seeds from the start; it refuses a finished seed
+(seed.json exists) and a store another process holds. A seed never resumes: every row comes from one snapshot.
 seed runs on a brain that uses managed storage too; only the swap refuses such a brain. seed reads the brain's storage
 mode right before its snapshot and records it in seed.json; a mode it cannot read does not stop the seed.
 A brain that cannot be opened stops the seed: exit 1, \`could not open the brain (pglite_busy)\` while another process
@@ -143,6 +153,44 @@ function parseStart(args: string[]): StartOpts {
       if (!Number.isInteger(n) || n < 1 || n > 100_000) throw new UsageError('--queue-bound must be a whole number from 1 to 100000');
       o.queueBound = n;
     } else throw new UsageError(`Unknown flag for engine shadow start: ${a}`);
+  }
+  return o;
+}
+
+interface SeedOpts { json: boolean; reseed: boolean; restart: boolean; budgetMs: number | null; batchRows: number }
+
+/** `seed`'s flags. `--budget-minutes` wins over GBRAIN_SHADOW_SEED_BUDGET_MINUTES; a bad value of either is a usage error. */
+function parseSeed(args: string[], env: Record<string, string | undefined>): SeedOpts {
+  const o: SeedOpts = { json: false, reseed: false, restart: false, budgetMs: DEFAULT_SEED_BUDGET_MS, batchRows: DEFAULT_SEED_BATCH_ROWS };
+  const budgetUsage = 'must be a number of minutes (decimals allowed), or 0 or none for no limit';
+  let budgetFlag = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    const value = (): string => {
+      const v = args[++i];
+      if (v === undefined || v.startsWith('--')) throw new UsageError(`${a} needs a value`);
+      return v;
+    };
+    if (a === '--json') o.json = true;
+    else if (a === '--reseed') o.reseed = true;
+    else if (a === '--restart') o.restart = true;
+    else if (a === '--budget-minutes') {
+      const ms = parseSeedBudgetMs(value());
+      if (ms === undefined) throw new UsageError(`--budget-minutes ${budgetUsage}`);
+      o.budgetMs = ms;
+      budgetFlag = true;
+    } else if (a === '--batch-rows') {
+      const raw = value();
+      const n = Number(raw);
+      if (!/^\d+$/.test(raw) || n < 1 || n > MAX_SEED_BATCH_ROWS) throw new UsageError(`--batch-rows must be a whole number from 1 to ${MAX_SEED_BATCH_ROWS}`);
+      o.batchRows = n;
+    } else throw new UsageError(`Unknown flag for engine shadow seed: ${a}`);
+  }
+  const envBudget = env[SEED_BUDGET_ENV];
+  if (!budgetFlag && envBudget !== undefined && envBudget.trim() !== '') {
+    const ms = parseSeedBudgetMs(envBudget);
+    if (ms === undefined) throw new UsageError(`${SEED_BUDGET_ENV} ${budgetUsage}; it is ${JSON.stringify(sanitizeText(envBudget, 40))}`);
+    o.budgetMs = ms;
   }
   return o;
 }
@@ -243,7 +291,7 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
     if (sub === 'status') return await status(brain, flags(rest, ['--json'], 'status').has('--json'), out, now);
     if (sub === 'stop') return await stopWithDrillLock(brain, flags(rest, ['--delete'], 'stop').has('--delete'), deps, out, err, now);
     if (sub === 'report') return report(brain, flags(rest, ['--json'], 'report').has('--json'), out, now);
-    if (sub === 'seed') return await seed(brain, flags(rest, ['--json', '--reseed'], 'seed'), deps, out, err, now);
+    if (sub === 'seed') return await seed(brain, parseSeed(rest, deps.env ?? process.env), deps, out, err, now);
     if (sub === 'drill') return await drillCommand(brain, flags(rest, ['--json', '--backup', '--evals'], 'drill'), deps, out, err);
     if (sub === 'reconcile') return await reconcileCommand(brain, flags(rest, ['--json', '--full'], 'reconcile').has('--json'), deps, out, err);
     throw new UsageError(`Unknown engine shadow subcommand: ${sub}`);
@@ -429,6 +477,48 @@ async function status(brain: { key: string; dir: string }, json: boolean, out: (
 export { seedStatus };
 
 const RESEED_STEP = `A Rust store is seeded once. To seed again, start from a new shadow directory: ${RESEED_STEPS}.`;
+const RESTART_STEP = 'No seed.json was written. To seed again from the start, run gbrain engine shadow seed --restart (add --budget-minutes <n> to raise the time limit); it deletes the partial Rust store first and changes nothing in the brain.';
+
+/**
+ * `seed --restart`: deletes the partial Rust store a stopped seed left. It opens the store first, so it holds the store's
+ * lock: a store another process holds, or one this build cannot read, is refused and left alone. Holding the lock it
+ * checks again that no seed.json exists (a seed writes seed.json before it closes its store, so a seed that finished
+ * while this command waited is seen here) and that shadow mode is off, and only then deletes the store directory.
+ * Returns false after printing a refusal; nothing is deleted then.
+ */
+async function clearPartialStore(
+  dir: string, addon: object, openStore: NonNullable<EngineShadowDeps['openStore']>, err: (l: string) => void,
+): Promise<boolean> {
+  const storePath = join(dir, 'store');
+  if (!existsSync(storePath)) return true;
+  let probe: { close(): Promise<void> };
+  try {
+    probe = await openStore(addon, storePath);
+  } catch (e) {
+    const code = (e as { code?: unknown } | null)?.code;
+    const why = code === 'rust_store_locked'
+      ? 'another process holds the Rust store (stop shadow mode with gbrain engine shadow stop and wait 30 seconds, or let a running seed, reconcile or drill finish)'
+      : `the Rust store did not open (${typeof code === 'string' && /^[a-z0-9_]{1,64}$/i.test(code) ? code : 'open_failed'})`;
+    err(`engine shadow: --restart deleted nothing: ${why}. To delete every shadow file instead, run gbrain engine shadow stop --delete.`);
+    return false;
+  }
+  try {
+    if (existsSync(seedRecordPath(dir))) {
+      err(`engine shadow: --restart deleted nothing: a seed finished while it waited (seed.json exists). ${RESEED_STEP}`);
+      return false;
+    }
+    if (readShadowState(dir)?.enabled) {
+      err('engine shadow: --restart deleted nothing: shadow mode was turned on while it waited. Stop it first (gbrain engine shadow stop).');
+      return false;
+    }
+    // Deleted while this process still holds the lock, so no other process can open the store in between.
+    rmSync(storePath, { recursive: true, force: true });
+  } finally {
+    await probe.close().catch(() => undefined);
+  }
+  err('engine shadow: --restart deleted the partial Rust store that a stopped seed left; the seed starts again from the beginning.');
+  return true;
+}
 
 const BENCH_IMPORT_FIX = 'gbrain engine shadow bench --import <receipt.json> [--json]';
 
@@ -493,13 +583,15 @@ async function bench(args: string[], deps: EngineShadowDeps, out: (l: string) =>
 }
 
 async function seed(
-  brain: { key: string; dir: string; engine: string }, f: Set<string>, deps: EngineShadowDeps,
+  brain: { key: string; dir: string; engine: string }, opts: SeedOpts, deps: EngineShadowDeps,
   out: (l: string) => void, err: (l: string) => void, now: () => Date,
 ): Promise<number> {
-  const json = f.has('--json');
   const existing = readSeedRecord(brain.dir);
-  if (f.has('--reseed') || existing) {
-    err(`engine shadow: ${existing ? `already seeded (${existing.seed_id}, finished ${existing.finished_at}). ` : ''}${RESEED_STEP}`);
+  // --restart deletes a store, so any seed.json blocks it, even one this build cannot read (damaged, or from a newer release).
+  const marker = existing !== null || (opts.restart && existsSync(seedRecordPath(brain.dir)));
+  if (opts.reseed || marker) {
+    const restartNote = opts.restart && marker ? '--restart only clears a partial store that a stopped seed left; this seed finished (seed.json exists). ' : '';
+    err(`engine shadow: ${existing ? `already seeded (${existing.seed_id}, finished ${existing.finished_at}). ` : ''}${restartNote}${RESEED_STEP}`);
     return 1;
   }
   if (readShadowState(brain.dir)?.enabled) {
@@ -516,7 +608,7 @@ async function seed(
     return 1;
   }
   try {
-    return await seedFrom(primary, brain, json, deps, out, err, now);
+    return await seedFrom(primary, brain, opts, deps, out, err, now);
   } finally {
     await primary.disconnect().catch(() => undefined);
   }
@@ -524,9 +616,10 @@ async function seed(
 
 /** The rest of `seed` once the primary is open: the addon, the shadow directory, the store, the storage mode, the snapshot. */
 async function seedFrom(
-  primary: BrainEngine, brain: { key: string; dir: string; engine: string }, json: boolean, deps: EngineShadowDeps,
+  primary: BrainEngine, brain: { key: string; dir: string; engine: string }, opts: SeedOpts, deps: EngineShadowDeps,
   out: (l: string) => void, err: (l: string) => void, now: () => Date,
 ): Promise<number> {
+  const json = opts.json;
   const load = await (deps.loadAddon ?? (async () => {
     const { loadRustEngineAddon } = await import('../core/rust-engine/addon-loader.ts');
     return loadRustEngineAddon();
@@ -536,12 +629,14 @@ async function seedFrom(
     return 1;
   }
   mkdirSync(brain.dir, { recursive: true, mode: 0o700 });
+  const openStore = deps.openStore ?? (async (addon, path) => {
+    const { openRustStore } = await import('../core/rust-engine/store.ts');
+    return openRustStore(addon, path);
+  });
+  if (opts.restart && !(await clearPartialStore(brain.dir, load.addon, openStore, err))) return 1;
   let store: SeedTarget & { close(): Promise<void> };
   try {
-    store = await (deps.openStore ?? (async (addon, path) => {
-      const { openRustStore } = await import('../core/rust-engine/store.ts');
-      return openRustStore(addon, path);
-    }))(load.addon, join(brain.dir, 'store'));
+    store = await openStore(load.addon, join(brain.dir, 'store'));
   } catch (e) {
     if ((e as { code?: unknown }).code === 'rust_store_locked') {
       err('engine shadow: stop shadow mode first (gbrain engine shadow stop, then wait 30 seconds): another process holds the Rust store. Nothing was written.');
@@ -552,8 +647,12 @@ async function seedFrom(
   try {
     // Read right before the snapshot, outside its transaction: a failed read there would abort the snapshot. Never throws.
     const storage = await readManagedStorage(primary, now());
+    if (!json) {
+      const budget = opts.budgetMs === null ? 'no time limit' : `a ${Number((opts.budgetMs / 60_000).toFixed(2))}-minute budget`;
+      err(`engine shadow: seeding with ${budget} and ${opts.batchRows} rows per batch, in one read-only snapshot of the brain.`);
+    }
     const record = await runSeed(primary, store, {
-      primaryEngine: brain.engine, now, storage,
+      primaryEngine: brain.engine, now, storage, budgetMs: opts.budgetMs, batchRows: opts.batchRows,
       onBatch: json ? undefined : (relation, rows) => err(`  seeding ${relation}: ${rows} rows`),
     });
     const path = writeSeedRecord(brain.dir, record);
@@ -562,13 +661,15 @@ async function seedFrom(
     return 0;
   } catch (e) {
     if (e instanceof SeedBudgetError) {
-      err(`engine shadow: ${e.message}. The store holds a partial seed. ${RESEED_STEP}`);
+      err(`engine shadow: ${e.message}.`);
       return 1;
     }
     if (e instanceof Error && /^shadow_seed: the store (holds seed|is not empty)/.test(e.message)) {
-      err(`engine shadow: the Rust store already holds data (${e.message}). ${RESEED_STEP}`);
+      err(`engine shadow: the Rust store already holds data from a seed that did not finish (${e.message}). ${RESTART_STEP}`);
       return 1;
     }
+    // Any other stop (a dropped connection, a failed store write) can leave rows behind too.
+    err(`engine shadow: the seed stopped before it finished, so the Rust store may hold a partial seed. ${RESTART_STEP}`);
     throw e;
   } finally {
     await store.close().catch(() => undefined);
