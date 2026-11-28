@@ -447,6 +447,41 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(out.tally).toMatchObject({ unexplained_difference: 0, comparable: 1 }); // the link is a plain one, not typed NER: removed on both sides
     }, 60_000);
 
+    test('removeLinksByPagesAndSource with a real typed-NER link: the kept one survives on both sides, the other is removed, and the write is compared', async () => {
+      let kept: unknown[] = [];
+      const out = await replay(async (e) => {
+        await primary().putPage('people/dora-example', page('Dora Example')); // not sampled: the primary, unwrapped
+        const [link] = await primary().getLinks(ALICE.slug);
+        await primary().addLink(ALICE.slug, 'people/dora-example', 'knows Dora', 'knows', link!.link_source!);
+        await primary().executeRaw(`UPDATE links SET link_kind = 'typed_ner' WHERE link_type = 'works_at'`);
+        await e.removeLinksByPagesAndSource([ALICE], { linkSource: link!.link_source!, keepTypedNerPairs: [{ from_slug: ALICE.slug, from_source_id: 'default', to_slug: ACME.slug, to_source_id: 'default' }] });
+        kept = (await primary().getLinks(ALICE.slug)).map((l) => [l.to_slug, l.link_type]);
+      }, 1);
+      expect(kept).toEqual([[ACME.slug, 'works_at']]);
+      expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+    }, 60_000);
+
+    test('removeLinksByPagesAndSource that keeps its only typed-NER link has nothing to compare', async () => {
+      const out = await replay(async (e) => {
+        const [link] = await primary().getLinks(ALICE.slug);
+        await primary().executeRaw(`UPDATE links SET link_kind = 'typed_ner' WHERE link_type = 'works_at'`);
+        await e.removeLinksByPagesAndSource([ALICE], { linkSource: link!.link_source!, keepTypedNerPairs: [{ from_slug: ALICE.slug, from_source_id: 'default', to_slug: ACME.slug, to_source_id: 'default' }] });
+      }, 1);
+      expect(out.tally).toMatchObject({ comparable: 0, uncomparable: 1, uncomparable_by_reason: { nothing_to_compare: 1 } });
+    }, 60_000);
+
+    test('a link between two neighbours of the written page is copied too: removing links from one corner of a triangle is compared, not booked moved', async () => {
+      const out = await replay(async (e) => {
+        await primary().putPage('people/dora-example', page('Dora Example')); // not sampled: the primary, unwrapped
+        const [link] = await primary().getLinks(ALICE.slug);
+        await primary().addLink(ALICE.slug, 'people/dora-example', 'knows Dora', 'knows', link!.link_source!);
+        await primary().addLink(ACME.slug, 'people/dora-example', 'employs Dora', 'employs', link!.link_source!); // between the two neighbours
+        await e.removeLinksByPagesAndSource([ALICE], { linkSource: link!.link_source! });
+      }, 1);
+      expect(out.inbox[0]!.moved).toBe(false);
+      expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+    }, 60_000);
+
     test('stripStaleFrontmatterKeys is uncomparable (preimage_not_loaded) when the scratch store would hold other ids than the write names', async () => {
       const out = await replay(async (e) => {
         await primary().executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"title": "stale"}'::jsonb WHERE slug = $1`, [ALICE.slug]);

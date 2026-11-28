@@ -104,6 +104,18 @@ export async function readPreimage(engine: BrainEngine, op: string, targets: Pag
     const more = strings(links, 'from_page_id').concat(strings(links, 'to_page_id'), strings(links, 'origin_page_id')).filter((id) => !ids.includes(id));
     if (more.length) pages.push(...await rowsOf('pages', 't.id::text = ANY($1::text[])', [[...new Set(more)]], MAX_PRE_PAGES));
     if (pages.length > MAX_PRE_PAGES) throw new Error('preimage_too_large');
+    // The links between every copied page, not only those touching the targets: the read-back and the data fence read links among all of them, so a link
+    // between two neighbours left out of the copy would read as a difference or a move. A page such a link names as its origin is copied too, and so on.
+    for (let known = new Set(ids); pages.length > known.size;) {
+      known = new Set(pages.map((p) => p.k0!));
+      const seen = new Set(links.map((l) => l.k0));
+      const extra = (await rowsOf('links', 't.from_page_id::text = ANY($1::text[]) AND t.to_page_id::text = ANY($1::text[])', [[...known]], MAX_PRE_LINKS)).filter((l) => !seen.has(l.k0));
+      links.push(...extra);
+      if (links.length > MAX_PRE_LINKS) throw new Error('preimage_too_large');
+      const origins = [...new Set(strings(extra, 'origin_page_id'))].filter((id) => !known.has(id));
+      if (origins.length) pages.push(...await rowsOf('pages', 't.id::text = ANY($1::text[])', [origins], MAX_PRE_PAGES));
+      if (pages.length > MAX_PRE_PAGES) throw new Error('preimage_too_large');
+    }
     // Not comparable, and said before anything is copied further: a soft-deleted page hides its links from the typed read on both engines, and a withdrawn
     // or purged fact changes the body the primary serves (page-state/snapshot.ts) by an overlay the scratch store does not have.
     // `softDeleted` names the pages the write itself soft-deletes: the data fence reads them again afterwards, and they are hidden by then because the write hid them.
