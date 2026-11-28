@@ -316,9 +316,14 @@ export class FollowChild {
   /** Flushes follower.json (called on the heartbeat). */
   tick(): void { this.readForeign(); this.syncEpoch(); this.write(true); }
 
+  /**
+   * The last write of this session. The invalidation lines are read first: a veto the serving process appended (seal.ts
+   * `revoke`) while no heartbeat or call came after it must not leave a valid file behind when the child exits.
+   */
   async close(): Promise<void> {
     await this.chain;
     if (this.foreignTimer) { clearTimeout(this.foreignTimer); this.foreignTimer = null; this.appendForeign('closing'); }
+    this.readForeign();
     this.write(true);
   }
 
@@ -346,8 +351,9 @@ export class FollowChild {
       this.outcome('not_sealed', reason);
       if (!this.write(true) && had) this.appendForeign('seal_revoked'); // an earlier seal is still on disk: make it stale
     };
-    if (refused) { notSealed(typeof refused === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(refused) ? refused : 'refused'); return; }
+    // Read before any write here, a refused seal's included: a veto line appended since the last read is taken in.
     this.readForeign();
+    if (refused) { notSealed(typeof refused === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(refused) ? refused : 'refused'); return; }
     const size = foreignSize(this.o.dir);
     if (size === null) { notSealed('invalidations_unreadable'); return; }
     if (size !== this.foreignOffset) { notSealed('invalidation_unread'); return; }

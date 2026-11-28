@@ -74,8 +74,9 @@ export const SEAL_CONFIRM_UNACKNOWLEDGED = 'seal_confirm_unacknowledged';
 export const REVOKE_RETRY_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 30_000];
 /**
  * What `confirmSeal` leaves behind. `doubt` null: the child's validity is what it says (no seal, refused, confirmed and
- * read quiet again, or revoked and acknowledged). A reason: a confirmation may be applied and nothing durable revokes it
- * (the veto line could not be written and no revoke was acknowledged), so the caller runs a full pass and a close does not seal.
+ * read quiet again, or revoked and acknowledged). A reason: a confirmation may be applied and no revoke was acknowledged
+ * (a veto line may be on disk, but nothing shows the child read it), so the caller withdraws it again and runs a fresh
+ * full pass, and a close does not seal.
  */
 export interface SealConfirmOutcome { doubt: string | null }
 const SETTLED: SealConfirmOutcome = { doubt: null };
@@ -308,13 +309,15 @@ export async function confirmSeal(d: SealDeps): Promise<SealConfirmOutcome> {
 
 /**
  * Withdraws a confirmation the child may hold. First a veto the child reads on its own, whatever happens to the pipe:
- * a line in its invalidation file (follow-child.ts), which leaves it invalid with a full obligation. Then `revokeSeal`,
- * sent again after each wait in `revokeRetryMs` until the child acknowledges it (a refused send or a lost answer is not
- * the end of it). In doubt only when neither the line nor any revoke got through.
+ * a line in its invalidation file (follow-child.ts), which leaves it invalid with a full obligation once read. Then
+ * `revokeSeal`, sent again after each wait in `revokeRetryMs` (a refused send or a lost answer is not the end of it).
+ * Settled only when the child acknowledged a revoke: a line on disk is not proof a live child read it, so when every
+ * revoke failed the doubt is returned (and `revoking` stays set, so the close does not seal) whether or not the line
+ * was written. The first check then withdraws the confirmation again and runs a fresh full pass (reconcile.ts).
  */
 async function revoke(d: SealDeps, reason: string): Promise<SealConfirmOutcome> {
   d.revoking?.(reason);
-  const vetoed = noteLostWrite(d.dir, `seal_revoked:${reason}`);
+  noteLostWrite(d.dir, `seal_revoked:${reason}`); // a failed line leaves the revokes below, then the doubt
   const waits = d.revokeRetryMs ?? REVOKE_RETRY_MS;
   for (let attempt = 0; ; attempt++) {
     try {
@@ -326,6 +329,5 @@ async function revoke(d: SealDeps, reason: string): Promise<SealConfirmOutcome> 
     const ms = waits[attempt]!;
     await new Promise<void>((resolve) => { const t = setTimeout(resolve, ms); (t as { unref?: () => void }).unref?.(); });
   }
-  if (vetoed) { d.revoking?.(null); return SETTLED; }
   return { doubt: reason };
 }
