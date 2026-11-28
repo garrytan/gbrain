@@ -43,11 +43,11 @@ async function seed(engine: BrainEngine): Promise<void> {
 
 /** The engine with every exact batch statement timing out, so the scan steps one page at a time. */
 function timingOut(engine: BrainEngine): BrainEngine {
-  return new Proxy(engine as never, {
+  return new Proxy(engine as object, {
     get(target, prop, receiver) {
       if (prop === 'scanExactBatch') return async () => { throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }); };
-      const value = Reflect.get(target, prop, receiver);
-      return typeof value === 'function' ? value.bind(target) : value;
+      const value: unknown = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
     },
   }) as BrainEngine;
 }

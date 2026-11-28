@@ -143,7 +143,6 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // served-remote-g1-facts-recall: the slot-history arm of a remote query names its entity from the pool's unbacked name keys or
   // from its readable page; both read under the caller's pool policy, as a recall's listSlotRows does.
   'listPoolUnbackedKeys', 'listReadablePageSlugs',
-  'listCallOffCueFacts', // TEMP-VERIFY-ONLY (group 0 serves it)
   // served-remote-g1-facts-recall: a remote search stems the name heads of its saved facts (a pure function of its arguments).
   'matchHeadStems',
   // ... and a remote recall naming an entity checks the pool's entity pairs for namesakes before it ranks.
@@ -158,7 +157,6 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // served-remote-g1-body: a remote search over a segmented page reads its body manifest for evidence windows (the page-id guarded members
   // answer only a page the caller may read), and a segmented lead under a withdrawal is struck through the pure fence-line normalization.
   'readBodyManifestRows', 'readBodyManifestMeta', 'normalizeFenceLines',
-  'readSegmentedPageHead', 'readSegmentedVersionBodyBytes', // TEMP-VERIFY-ONLY (group 3 serves them)
   // served-remote-g1-belief-links: a remote delta with beliefs pages the ledger's history (the remote filter runs in readBeliefHistoryPage,
   // after the raw rows return), keeps a link only when its page lifetimes are visible, and places the window in the coverage events.
   'readBeliefHistoryRows', 'listVisibleBeliefLifetimes', 'readBeliefCoverageEvents',
