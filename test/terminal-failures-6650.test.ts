@@ -559,6 +559,37 @@ for (const kind of testBackends()) describe(`the aggregate, doctor and the drill
     expect(ts).toEqual([['h1', true], ['h2', false], ['h3', true], ['h4', true], ['h5', false], ['h6', false], ['h7', true], ['h8', false], ['h9', true], ['h9b', true], ['h9c', false]]);
   });
 
+  test('GST-3450: a refused sync page import a later committed write of its page settled is history, and leaves the spike', async () => {
+    await engine.setConfig('persistence.terminal_failures.spike_min', '3');
+    const pinned = { slug: '', operation: 'submit_job', state: 'failed', code: 'source_changed', kind: 'managed_sync_import',
+      message: 'Newer working-tree bytes and the current page disagree with this pinned Git import.', detail: { origin: 'pinned_git_worktree_conflict', reason: 'pinned_git_worktree_conflict' }, hoursAgo: 3 };
+    for (let i = 0; i < 4; i++) {
+      await seed({ ...pinned, slug: `sync/p${i}` });
+      // The later sync imported the file's newer bytes: another intent, so another digest.
+      await seed({ slug: `sync/p${i}`, operation: 'submit_job', state: 'committed', kind: 'managed_sync_import', hoursAgo: 2 });
+    }
+    const summary = await readTerminalFailureSummary(engine);
+    if (summary.status !== 'ok') throw new Error('unknown');
+    expect(summary.sources[0]).toMatchObject({ historical_rows: 4, unresolved: { rows: 0 }, new_last_24h: 0 });
+    const check = (await terminalFailuresCheck(engine))!;
+    expect(check.status).toBe('ok');
+    expect(check.details).toMatchObject({ spike: { spiking: false, last_24h: 0 } });
+    const listing = await readTerminalFailures(engine, { sourceId: SOURCE, state: 'all' });
+    if (listing.status !== 'ok') throw new Error('unknown');
+    expect(listing.rows!.filter(r => r.slug?.startsWith('sync/p')).map(r => [r.disposition, r.historical])).toEqual(Array(4).fill(['superseded', true]));
+
+    // No later commit, a later failure of the page, or a refusal whose receipt was compacted: still unresolved, and they still count.
+    await seed({ ...pinned, slug: 'sync/alone' });
+    await seed({ ...pinned, slug: 'sync/again' });
+    await seed({ ...pinned, slug: 'sync/again', hoursAgo: 2 });
+    await seed({ slug: 'sync/compacted', operation: 'submit_job', state: 'failed', code: 'source_changed', compacted: true, detail: { origin: 'pinned_git_worktree_conflict' }, hoursAgo: 3 });
+    await seed({ slug: 'sync/compacted', operation: 'submit_job', state: 'committed', kind: 'managed_sync_import', hoursAgo: 2 });
+    const later = await readTerminalFailureSummary(engine);
+    if (later.status !== 'ok') throw new Error('unknown');
+    expect(later.sources[0]).toMatchObject({ historical_rows: 4, unresolved: { rows: 4 }, new_last_24h: 4 });
+    expect((await terminalFailuresCheck(engine))!.details).toMatchObject({ spike: { spiking: true, last_24h: 4 } });
+  });
+
   test('the extracted supersession rule is the one failed-writes applies', async () => {
     const digest = randomUUID();
     await seed({ slug: 'notes/s', state: 'failed', code: 'writer_coordinator_required', digest, hoursAgo: 5 });

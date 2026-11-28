@@ -237,3 +237,43 @@ describe('#7346 — config get and show redact secrets nested in an object value
     expect(out).not.toContain(KEY_ID);
   });
 });
+
+describe('GST-3449 — config get on a registered key left at its default', () => {
+  test('a write switch with no value prints its default and says it is unset', async () => {
+    writeFileConfig({ engine: 'pglite' });
+    const { logs, errs, exit } = await withEnv({ GBRAIN_SINGLE_CONSUMER: undefined }, () => runGet({}, 'persistence.single_consumer'));
+    expect(exit).toBeNull();
+    expect(logs).toEqual(['false']);
+    expect(errs.join('\n')).toContain('[config] source: built-in default (unset; GBRAIN_SINGLE_CONSUMER or gbrain config set persistence.single_consumer <value> overrides it)');
+    expect(errs.join('\n')).not.toContain('Config key not found');
+  });
+
+  test('the env override is the value in effect while the key is unset, and a set value still wins', async () => {
+    writeFileConfig({ engine: 'pglite' });
+    const env = await withEnv({ GBRAIN_SINGLE_CONSUMER: '1' }, () => runGet({}, 'persistence.single_consumer'));
+    expect(env.logs).toEqual(['true']);
+    expect(env.errs.join('\n')).toContain('GBRAIN_SINGLE_CONSUMER env (the config key is unset)');
+    const set = await withEnv({ GBRAIN_SINGLE_CONSUMER: undefined }, () => runGet({ 'persistence.single_consumer': 'true' }, 'persistence.single_consumer'));
+    expect(set.logs).toEqual(['true']);
+    expect(set.errs.join('\n')).toContain('db plane');
+  });
+
+  test('a preparation budget and a terminal-failure threshold print their defaults', async () => {
+    writeFileConfig({ engine: 'pglite' });
+    expect((await runGet({}, 'persistence.sync_preparation_ms')).logs).toEqual(['120000']);
+    expect((await runGet({}, 'persistence.terminal_failures.window_days')).logs).toEqual(['7']);
+  });
+
+  test('a known key with no machine-readable default stays not-found, naming it as known; an unknown key is unchanged', async () => {
+    writeFileConfig({ engine: 'pglite' });
+    const known = await runGet({}, 'loops.owner_addresses');
+    expect(known.exit).toBe(1);
+    expect(known.errs.join('\n')).toContain('loops.owner_addresses is a known key with no value set');
+    expect(known.errs.join('\n')).toContain('Config key not found: loops.owner_addresses');
+    const unknown = await runGet({}, 'no_such.key_example');
+    expect(unknown.exit).toBe(1);
+    expect(unknown.logs).toEqual([]);
+    expect(unknown.errs.join('\n')).not.toContain('known key');
+    expect(unknown.errs.join('\n')).toContain('Config key not found: no_such.key_example');
+  });
+});

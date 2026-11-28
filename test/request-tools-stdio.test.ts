@@ -185,6 +185,35 @@ describe('request_tools {surface} on stdio', () => {
     }
   }, 90_000);
 
+  test('GST-4055: a client that opens a new session per call is told the registration must carry the surface; an unlisted tool stays callable by name', async () => {
+    const widenedSession = await session(['--surface', 'starter']);
+    try {
+      const widened = parsed(await widenedSession.client.callTool({ name: 'request_tools', arguments: { surface: 'full' } })) as { surface: string; note: string };
+      expect(widened.surface).toBe('full');
+      expect(widened.note).toContain('A client that opens a new session for every call, or never re-reads tools/list, gets these tools only when gbrain is registered with them: --surface full (or GBRAIN_SURFACE=full) and no --advertise.');
+    } finally { await widenedSession.close(); }
+    // Session-only by design: the next session of the same registration starts at starter again.
+    const next = await session(['--surface', 'starter']);
+    try {
+      expect(await names(next)).not.toContain('get_health');
+      expect(isError(await next.client.callTool({ name: 'get_health', arguments: {} }))).toBe(true);
+    } finally { await next.close(); }
+    // The pilot's registration: full served, verbs listed. Each new session still serves a full-only tool called by name.
+    for (let i = 0; i < 2; i++) {
+      const s = await session(['--surface', 'full', '--advertise', 'verbs']);
+      try {
+        expect(await names(s)).not.toContain('get_health');
+        if (i === 0) {
+          const already = parsed(await s.client.callTool({ name: 'request_tools', arguments: { surface: 'full' } })) as { widened: boolean; note: string };
+          expect(already.widened).toBe(false);
+          expect(already.note).toContain('callable by name in this session and in every new one');
+          expect(already.note).toContain('--surface full (or GBRAIN_SURFACE=full) and no --advertise');
+        }
+        expect(isError(await s.client.callTool({ name: 'get_health', arguments: {} }))).toBe(false);
+      } finally { await s.close(); }
+    }
+  }, 120_000);
+
   test('--access read-only still caps the session: request_tools is not callable and the hint stays read-only', async () => {
     const s = await session(['--surface', 'starter', '--access', 'read-only']);
     try {

@@ -452,8 +452,10 @@ export const UNRESOLVED_CALLER_REFUSAL_SQL = (r: string) => `((${GUARD_REFUSAL_S
  * page removal committed or pending; for a `put_page`, any later write committed or pending, or a later caller
  * `put_page` that failed (the newer content); #6834: for a refused sync checkpoint, any later committed checkpoint of the
  * source (both read by kind; a compacted row, which keeps no kind, by its operation); #6824: for a refused connector
- * write, a later committed connector retry whose recorded `retryOf` lineage reaches it (connectorRetrySql). `r` must
- * expose `id`. Literal strings only; NULL-safe for a compacted `c` (no intent).
+ * write, a later committed connector retry whose recorded `retryOf` lineage reaches it (connectorRetrySql); GST-3450: for
+ * a refused managed-sync page import or delete, any later committed write of the same page (the sync that imported the file
+ * again, or a write that published the page since; a compacted row keeps no kind and stays unresolved). `r` must expose
+ * `id`. Literal strings only; NULL-safe for a compacted `c` (no intent).
  */
 export function supersessionSql(r: string, c: string, rKind?: string): string {
   const removals = PAGE_REMOVAL_OPERATIONS.map(op => `'${op}'`).join(',');
@@ -464,8 +466,13 @@ export function supersessionSql(r: string, c: string, rKind?: string): string {
       AND COALESCE((SELECT k.intent->>'kind' FROM persistence_requests k WHERE k.id=${r}.id),'managed_sync_checkpoint')='managed_sync_checkpoint'
       AND COALESCE(${c}.intent->>'kind','managed_sync_checkpoint')='managed_sync_checkpoint')
     OR (${r}.operation='put_page' AND ${c}.state='failed' AND ${c}.operation='put_page' AND COALESCE(NOT (${c}.intent ? 'kind'), false))
+    OR (${r}.operation='submit_job' AND ${c}.state='committed' AND ${syncPageKindOf(r, rKind)} IN (${SYNC_PAGE_WRITE_KINDS}))
     OR ${connectorRetrySql(r, c, rKind)}))`;
 }
+
+const SYNC_PAGE_WRITE_KINDS = "'managed_sync_import','managed_sync_delete'";
+/** The failed row's own intent kind: the caller's column when it has one, else one lookup by id (after the operation test, so a put_page is never detoasted). */
+const syncPageKindOf = (r: string, rKind?: string) => rKind ?? `(SELECT k.intent->>'kind' FROM persistence_requests k WHERE k.id=${r}.id)`;
 
 /** Hops a connector retry's `retryOf` lineage is followed back; a longer chain leaves the refusal unresolved (fail closed). */
 export const CONNECTOR_RETRY_LINEAGE_MAX_DEPTH = 32;
