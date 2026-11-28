@@ -400,6 +400,43 @@ Every SKILL.md gbrain installs for OpenClaw is at most 32,000 bytes
 and when the window is unknown; on smaller models the 16,000-character cap
 applies and the larger skills do not load.
 
+### Install Retrieval Reflex when the workspace is inside a Git repo
+
+`gbrain integrations install` expects `--target` to be the host checkout root
+with a `.git` file or directory. If your OpenClaw workspace and its `AGENTS.md`
+are in a subdirectory, passing the workspace itself can fail with `target has
+no .git`.
+
+For example, if AlphaClaw keeps the checkout at `~/.openclaw` and the agent
+workspace at `~/.openclaw/workspace`, find and preview the host checkout first:
+
+```bash
+workspace="$HOME/.openclaw/workspace"  # Adjust to your OpenClaw workspace.
+host_repo="$(git -C "$workspace" rev-parse --show-toplevel)"
+gbrain integrations install retrieval-reflex --target "$host_repo" --dry-run
+```
+
+Confirm the displayed target is the intended checkout. Run the install
+command again without `--dry-run`. The skill is copied to
+`skills/retrieval-reflex/SKILL.md` under the checkout root.
+
+The installer checks for resolver files at the checkout root and under its
+`skills/` directory. It doesn't look in the nested workspace. If the workspace
+`AGENTS.md` still has no Retrieval Reflex row after installation, copy the
+recipe's marked block from the resolver file the installer updated. If the
+installer printed `add these rows manually`, paste the row it printed as a
+list item in the workspace `AGENTS.md`, between these markers:
+
+```markdown
+<!-- gbrain:retrieval-reflex:resolver-rows -->
+- <paste the printed retrieval-reflex row here>
+<!-- /gbrain:retrieval-reflex:resolver-rows -->
+```
+
+Check that the skill file exists under the checkout root and that the
+resolver file used by the workspace contains the row once. A successful copy
+can still leave that resolver step for you to complete.
+
 ## Scheduled jobs and workspace scripts
 
 OpenClaw cron jobs, workspace scripts and hooks run with another `HOME` and
