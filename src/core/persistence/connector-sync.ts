@@ -1195,7 +1195,9 @@ export class ManagedConnectorSync {
             `The owner of ${this.sourceId} is busy, so the failed write ${failedRow.request_id} for ${slug} was not re-approved and nothing new was admitted. Check the owner's queue; the next run of the same connector sync re-attempts it once the owner is free.`,
             { fix: ownerStatusFix(this.sourceId, 'Shows what the canonical owner is running and what is queued behind it.') });
         }
-        row = await this.engine.transaction(async tx => {
+        // The body returns whether it admitted: a body run again (a multi-user Rust brain reruns it on write_conflict)
+        // that finds another run's approval admits nothing, so a flag set by an earlier, rolled-back run must not count.
+        const approval = await this.engine.transaction(async (tx): Promise<{ row: WriteRequest; admitted: boolean }> => {
           await declarePersistenceProtocol(tx);
           if (this.binding) await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [this.binding.worktree_id]);
           await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [this.sourceId]);
@@ -1206,7 +1208,7 @@ export class ManagedConnectorSync {
             `Failed request ${failedRow.request_id} for ${slug} in ${this.sourceId} disappeared before its retry was approved; nothing was admitted. Inspect the source's receipts before running the same connector sync again.`,
             { fix: ownerStatusFix(this.sourceId, 'Shows the source\'s current receipts and recovery state.') });
           await authorizeStoredRequest(tx, current.row, true);
-          if (!mayRetry(current.row)) return current.row;
+          if (!mayRetry(current.row)) return { row: current.row, admitted: false };
           await this.refuseRetryBlocker(tx);
           const [checkpoint] = await tx.executeRaw<{ completed_keys: unknown[] }>(
             "SELECT completed_keys FROM op_checkpoints WHERE op='managed-connector' AND fingerprint=$1 FOR UPDATE", [this.checkpointKey]);
@@ -1220,9 +1222,10 @@ export class ManagedConnectorSync {
           const accepted = await admitWriteInTransaction(tx, admission(retry));
           await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-connector-retry',$1,$2::text::jsonb)
             ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`, [baseRequestId, JSON.stringify([retry])]);
-          admitted = true;
-          return accepted;
+          return { row: accepted, admitted: true };
         });
+        row = approval.row;
+        admitted = approval.admitted;
         this.retryApprovals.set(baseRequestId, row.request_id);
       } catch (error) {
         // An automatic retry waits behind other accepted work like any pending write.

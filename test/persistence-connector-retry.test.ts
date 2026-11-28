@@ -369,6 +369,43 @@ test('connector retry approval revalidates current and accepted grants plus sour
   }
 }), 120_000);
 
+test('a retry approval whose transaction runs again after another run approved the same item counts no admission of its own', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await retryFixture(engine, 'google', false);
+    await engine.executeRaw('UPDATE connector_retry_faults SET pages=true WHERE source_id=$1', [f.id]);
+    await expect(f.run()).rejects.toMatchObject({ code: 'storage_error' });
+    await disposePersistenceConsumer(engine);
+    await engine.executeRaw('UPDATE connector_retry_faults SET pages=false WHERE source_id=$1', [f.id]);
+    const [original] = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND state='failed'", [f.id]);
+    const [first, second] = await Promise.all([1, 2].map(() => beginConnectorSync(engine, f.id, 'google', f.cfg, { ...options, retryFailed: true })));
+    // The first run's approval body finishes, then its transaction loses and runs again (as a multi-user Rust brain reruns a
+    // body on write_conflict); between the two runs the second sync approves the same item, so the rerun admits nothing.
+    const transaction = engine.transaction;
+    let forced = 0;
+    engine.transaction = async function <T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
+      try {
+        return await transaction.call(this, async (tx: BrainEngine) => {
+          const value = await run(tx);
+          // The approval body returns { row, admitted } (a bare row before the fix, so this test fails on its count there).
+          const row = ((value as { row?: Partial<WriteRequest> } | undefined)?.row ?? value) as Partial<WriteRequest> | undefined;
+          if (forced === 0 && row?.intent?.retryOf === original.request_id) { forced++; throw new Error('forced rerun of the approval transaction (test seam)'); }
+          return value;
+        }) as T;
+      } catch (error) {
+        if ((error as Error)?.message !== 'forced rerun of the approval transaction (test seam)') throw error;
+        engine.transaction = transaction;
+        await second!.importMarkdown(original.intent!.sourcePath as string, original.intent!.content as string);
+        return await transaction.call(this, run) as T;
+      }
+    };
+    try { await first!.importMarkdown(original.intent!.sourcePath as string, original.intent!.content as string); }
+    finally { engine.transaction = transaction; }
+    expect(forced).toBe(1);
+    expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent->>'retryOf'=$2", [f.id, original.request_id])).toHaveLength(1);
+    expect({ first: first!.counts.page_admissions, second: second!.counts.page_admissions }).toEqual({ first: 0, second: 1 });
+  }
+}), 120_000);
+
 test('connector retry approval is atomic and a lost acknowledgement reuses the committed pointer', async () => withEnv(env, async () => {
   for (const engine of engines) for (const bound of [false, true]) {
     const f = await retryFixture(engine, 'google', bound);
@@ -387,7 +424,8 @@ test('connector retry approval is atomic and a lost acknowledgement reuses the c
     let lostAck = false;
     engine.transaction = async function <T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
       const result = await transaction.call(this, run) as T;
-      const row = result as Partial<WriteRequest> | undefined;
+      // The approval body returns { row, admitted }.
+      const row = (result as { row?: Partial<WriteRequest> } | undefined)?.row;
       if (!lostAck && row?.intent?.retryOf === original.request_id && row.state === 'queued') {
         lostAck = true;
         throw new Error('Synthetic lost connector approval acknowledgement');
