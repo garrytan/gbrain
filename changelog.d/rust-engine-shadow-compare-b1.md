@@ -3,7 +3,7 @@
 ### Changed
 - The write comparison now covers 14 writes: the five from before plus `softDeletePage`, `softDeletePages`, `refreshPageBody`, `stripStaleFrontmatterKeys`, `setEmotionalWeightBatch`, `removeLinksByPagesAndSource`, `markPagesExtractedBatch`, `markPagesAttendanceBlocked` and `setPageEmbeddingSignature`. Each of them counts toward criterion 5 like the first five. The comparison also reads three page columns it could not see before (`links_extracted_at`, `links_attendance_blocked_revision`, `embedding_signature`).
 - The swap report and the guide name the page and link writes that are still not compared (15 of them, down from 24), including `restorePage`, `purgeDeletedPages` and `sealSegmentedPage`.
-- The shadow evidence starts a new epoch (adapter version 26): comparisons counted under the old rules no longer count, so criterion 5 counts again from zero after the upgrade.
+- The shadow evidence starts a new epoch (adapter version 27): comparisons counted under the old rules no longer count, so criterion 5 counts again from zero after the upgrade.
 - While shadow mode runs, a sampled write of the nine new kinds does one more read before it saves, as the first five already did, so that save is a little slower. The read that turns page ids into pages has the same 2-second database time limit as the other sampling reads, so a lookup stuck behind a lock gives up instead of holding a database connection.
 - `stripStaleFrontmatterKeys` is compared only when it runs on its own. Frontmatter repair runs it inside a transaction, where the sampler cannot name its pages, so those calls are booked `uncomparable` (`target_unresolved`) and do not count toward criterion 5 yet.
 
