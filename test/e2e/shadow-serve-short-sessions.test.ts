@@ -102,32 +102,38 @@ async function serve(tag: string, o: { write?: boolean; ms?: number } = {}): Pro
 
 const describeIf = hasDatabase() && HAVE_ADDON ? describe : describe.skip;
 
-describeIf('short MCP serve sessions on Postgres', () => {
-  beforeAll(async () => {
-    const base = process.env.DATABASE_URL!;
-    assertSafeE2eDatabaseUrl(base);
-    database = `gbrain_test_short_sessions_${randomUUID().replace(/-/g, '')}`;
-    admin = postgres(base, { max: 1, prepare: false });
-    await admin.unsafe(`CREATE DATABASE ${database}`);
-    const url = new URL(base);
-    url.pathname = `/${database}`;
-    brainUrl = url.toString();
-    home = mkdtempSync(join(tmpdir(), 'gbrain-short-sessions-'));
-    env = keylessBrainEnv(process.env, home, { DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_SOURCE: undefined, GBRAIN_RUST_ENGINE_ADDON: BUILT });
-    expect(cli(['init', '--url', brainUrl, '--no-embedding', '--non-interactive', '--db-only']).status).toBe(0);
-    expect(cli(['engine', 'shadow', 'seed']).status).toBe(0);
-    const plan = cli(['engine', 'shadow', 'start', '--plan']);
-    const hash = /plan_hash:?\s+(\S+)/.exec(plan.stdout + plan.stderr)?.[1];
-    expect(hash).toBeDefined();
-    expect(cli(['engine', 'shadow', 'start', '--yes', '--expect', hash!]).status).toBe(0);
-    snapshot();
-  }, 120_000);
+/** A fresh database with a seeded, started shadow brain; `extra` adds to every command's environment. */
+async function setUp(extra: Record<string, string> = {}): Promise<void> {
+  const base = process.env.DATABASE_URL!;
+  assertSafeE2eDatabaseUrl(base);
+  database = `gbrain_test_short_sessions_${randomUUID().replace(/-/g, '')}`;
+  admin = postgres(base, { max: 1, prepare: false });
+  await admin.unsafe(`CREATE DATABASE ${database}`);
+  const url = new URL(base);
+  url.pathname = `/${database}`;
+  brainUrl = url.toString();
+  home = mkdtempSync(join(tmpdir(), 'gbrain-short-sessions-'));
+  env = keylessBrainEnv(process.env, home, { DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_SOURCE: undefined, GBRAIN_RUST_ENGINE_ADDON: BUILT });
+  for (const [k, v] of Object.entries(extra)) env[k] = v.replace('$BRAIN_URL', brainUrl);
+  expect(cli(['init', '--url', brainUrl, '--no-embedding', '--non-interactive', '--db-only']).status).toBe(0);
+  expect(cli(['engine', 'shadow', 'seed']).status).toBe(0);
+  const plan = cli(['engine', 'shadow', 'start', '--plan']);
+  const hash = /plan_hash:?\s+(\S+)/.exec(plan.stdout + plan.stderr)?.[1];
+  expect(hash).toBeDefined();
+  expect(cli(['engine', 'shadow', 'start', '--yes', '--expect', hash!]).status).toBe(0);
+  snapshot();
+}
 
-  afterAll(async () => {
-    if (home) cli(['engine', 'shadow', 'stop', '--delete']);
-    if (admin) { await admin.unsafe(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`).catch(() => undefined); await admin.end(); }
-    if (home) rmSync(home, { recursive: true, force: true });
-  }, 60_000);
+async function tearDown(): Promise<void> {
+  if (home) cli(['engine', 'shadow', 'stop', '--delete']);
+  if (admin) { await admin.unsafe(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`).catch(() => undefined); await admin.end(); }
+  if (home) rmSync(home, { recursive: true, force: true });
+  home = ''; admin = undefined;
+}
+
+describeIf('short MCP serve sessions on Postgres', () => {
+  beforeAll(() => setUp(), 120_000);
+  afterAll(tearDown, 60_000);
 
   test('each short session reaches a valid watermark, and a quiet session keeps it without a new pass', async () => {
     const s1 = await serve('one');
@@ -199,5 +205,24 @@ describeIf('short MCP serve sessions on Postgres', () => {
     expect({ valid: after.valid, reason: after.reason }).toEqual({ valid: true, reason: null });
     expect(fullPassesIn(after, s.from, s.to)).toEqual([]);
     expect(after.clean).toBe(sealed.clean);
+  }, 90_000);
+});
+
+describeIf('short MCP serve sessions on a Postgres brain with a separate direct pool', () => {
+  // An explicit direct URL to the same server, as a Supabase brain derives one: the serving process opens a second pool,
+  // and its persistence heartbeat renews on that lane every 10 s, so a direct connection always wrote moments before the
+  // close. It is the process's own: the close must still seal.
+  beforeAll(() => setUp({ GBRAIN_DIRECT_DATABASE_URL: '$BRAIN_URL' }), 120_000);
+  afterAll(tearDown, 60_000);
+
+  test('a quiet session with a full pass seals at close, and the next quiet session carries it without a pass', async () => {
+    const s1 = await serve('dual-one');
+    const a = snapshot();
+    expect(fullPassesIn(a, s1.from, s1.to).filter((p) => !p.error).length).toBeGreaterThanOrEqual(1);
+    expect(a.seal).toEqual({ outcome: 'sealed', reason: null });
+    const s2 = await serve('dual-two');
+    const b = snapshot();
+    expect({ valid: b.valid, reason: b.reason }).toEqual({ valid: true, reason: null });
+    expect(fullPassesIn(b, s2.from, s2.to)).toEqual([]);
   }, 90_000);
 });

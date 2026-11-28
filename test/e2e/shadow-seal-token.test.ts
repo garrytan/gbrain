@@ -17,7 +17,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import postgres from '#postgres';
-import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import { randomUUID } from 'node:crypto';
+import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import { startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
 import { hasDatabase } from './helpers.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
@@ -469,6 +471,76 @@ d('the seal change token on Postgres', () => {
       await new Promise((r) => setTimeout(r, 300)); // the statement is running: not idle, and not reservable
       expect(await markNow(deps())).toHaveProperty('token');
     } finally { await busy; }
+  }, 60_000);
+
+  /**
+   * A dual-pool brain (Supabase, or an explicit direct URL): the serving process also holds a separate direct pool, and
+   * its persistence heartbeat renews on that lane every 10 s, so at every close a direct connection was used well inside
+   * the seal's 61 s settle window. Those connections are the process's own (their pids are held by its direct pool), so
+   * they must not refuse the seal; a foreign client must still be refused. The proof reads the direct pool only when it
+   * is already open: it never opens one.
+   */
+  async function useDualPool(): Promise<PostgresEngine> {
+    for (const r of sources.splice(0)) await r.close();
+    const was = url();
+    const db = await databaseName();
+    await engine.disconnect(); // the clone's single-pool engine goes away; teardown still drops the database
+    const admin = postgres(was, { max: 1, onnotice: () => undefined });
+    try {
+      for (let i = 0; i < 100 && (await admin`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = ${db} AND pid <> pg_backend_pid()`)[0]!.n > 0; i++) await new Promise((r) => setTimeout(r, 100));
+    } finally { await admin.end({ timeout: 5 }); }
+    const saved = process.env.GBRAIN_DIRECT_DATABASE_URL;
+    process.env.GBRAIN_DIRECT_DATABASE_URL = was; // an explicit direct URL to the same server
+    const dual = new PostgresEngine();
+    try { await dual.connect({ database_url: was, poolSize: 2 }); } finally {
+      if (saved === undefined) delete process.env.GBRAIN_DIRECT_DATABASE_URL; else process.env.GBRAIN_DIRECT_DATABASE_URL = saved;
+    }
+    expect(dual.connectionManager?.isDualPoolActive()).toBe(true);
+    engine = dual;
+    reads = openReadSource(dual);
+    sources.push(reads);
+    return dual;
+  }
+  const directOpen = (e: PostgresEngine): boolean => (e.connectionManager as unknown as { _directPool: unknown })._directPool != null;
+
+  test('a dual-pool close whose heartbeat renewed on the direct lane moments ago still seals: the direct pool\'s connections are its own', async () => {
+    const dual = await useDualPool();
+    const errors: unknown[] = [];
+    const heartbeat = startConsumerHeartbeat(dual, randomUUID(), { kind: 'serve', mode: 'full', report: () => ({ restart_required: false, root_barrier_age_ms: null }), everyMs: 60_000, onError: (e) => errors.push(e) });
+    try {
+      await heartbeat.renew();
+      expect(errors).toEqual([]);
+      expect(directOpen(dual)).toBe(true); // the renewal ran on the direct pool, and its connection is still open
+      const [{ n }] = await dual.executeRawDirect<{ n: number }>(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND state = 'idle' AND state_change > clock_timestamp() - interval '61 seconds'`);
+      expect(n).toBeGreaterThan(0);
+      expect(await markNow(deps())).toEqual({ token: expect.any(String) });
+    } finally { await heartbeat.stop(); await dual.disconnect(); }
+  }, 60_000);
+
+  test('a dual-pool close still refuses a foreign client that was active moments ago, under its own name or the sealing process\'s (other_backend_recent)', async () => {
+    const dual = await useDualPool();
+    try {
+      await dual.executeRawDirect('SELECT 1');
+      const mark = await markNow(deps());
+      expect(mark).toEqual({ token: expect.any(String) }); // its own direct connection, used moments ago, does not refuse it
+      const app = (JSON.parse((mark as { token: string }).token) as { app: string }).app;
+      const other = connection('psql');
+      await other`SELECT 1`;
+      expect(await markNow(deps())).toEqual({ refused: 'other_backend_recent' });
+      await finish(other, 'psql');
+      const sameName = connection(app);
+      await sameName`SELECT 1`;
+      expect(await markNow(deps())).toEqual({ refused: 'other_backend_recent' });
+    } finally { await dual.disconnect(); }
+  }, 60_000);
+
+  test('the seal never opens a dual-pool brain\'s direct pool to prove its connections', async () => {
+    const dual = await useDualPool();
+    try {
+      expect(directOpen(dual)).toBe(false);
+      expect(await markNow(deps())).toHaveProperty('token');
+      expect(directOpen(dual)).toBe(false);
+    } finally { await dual.disconnect(); }
   }, 60_000);
 
   test('a statistics reset is refused', async () => {
