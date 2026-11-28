@@ -22,7 +22,7 @@ import { serveOwnerEngine } from '../src/core/rust-engine/owner-ipc/server.ts';
 import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
 import { membersWaitingFor } from '../src/core/rust-engine/owner-ipc/confirming-reads.ts';
 import { withReadDeadline } from '../src/core/read-deadline.ts';
-import { withRequestSignal } from '../src/core/request-signal.ts';
+import { requestSignal, withRequestSignal } from '../src/core/request-signal.ts';
 import type { OperationError } from '../src/core/ops/contract.ts';
 import { encodeValue } from '../src/core/rust-engine/owner-ipc/codec.ts';
 import { OWNER_IPC_VERSION } from '../src/core/rust-engine/owner-ipc/protocol.ts';
@@ -55,6 +55,45 @@ async function gatedFactsOwner(maxQueued?: number) {
   if (!server) throw new Error('no socket');
   cleanups.push(async () => { open(); await server.close(); rmSync(dir, { recursive: true, force: true }); });
   return { server, facts, open: () => { opened = true; open(); }, get opened() { return opened; } };
+}
+
+/**
+ * An owner whose every insertFact ignores its abort and waits on its own gate, named by the fact text, and notes when
+ * the owner aborts it (the owner read its cancel). Reads answer at once, except listFactsByEntity for `slowEntity`,
+ * which waits on the gate `read:<entity>`.
+ */
+async function perFactGatedOwner(opts: { permits?: number; slowEntity?: string } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-orphans-'));
+  const facts: Fact[] = [];
+  const gates = new Map<string, () => void>();
+  const aborted = new Set<string>();
+  const reads: string[] = [];
+  const gated = (name: string) => new Promise<void>(resolve => { gates.set(name, resolve); });
+  const owner = {
+    kind: 'pglite', capabilities: new Set<string>(),
+    insertFact: async (input: Fact) => {
+      requestSignal()?.addEventListener('abort', () => { aborted.add(input.fact); }, { once: true });
+      await gated(input.fact);
+      facts.push(input);
+      return { id: facts.length };
+    },
+    listFactsByEntity: async (entity: string) => {
+      reads.push(entity);
+      if (entity === opts.slowEntity) await gated(`read:${entity}`);
+      return facts.filter(f => f.entity_slug === entity);
+    },
+    getHealth: async () => ({ ok: true }),
+  } as unknown as BrainEngine;
+  const server = await serveOwnerEngine(owner, join(dir, 'owner.sock'), { permits: opts.permits ?? 4 });
+  if (!server) throw new Error('no socket');
+  const releaseAll = () => { for (const open of gates.values()) open(); };
+  cleanups.push(async () => { releaseAll(); await server.close(); rmSync(dir, { recursive: true, force: true }); });
+  /** Waits until the owner runs the insertFact for `text`, then lets it commit. */
+  const release = async (text: string) => { await until(() => gates.has(text)); gates.get(text)!(); };
+  return {
+    server, facts, release, aborted, reads,
+    running: (text: string) => gates.has(text) && !facts.some(f => f.fact === text),
+  };
 }
 
 async function clientOf(socketPath: string) {
@@ -325,6 +364,158 @@ describe('an extract rollup add whose reply was lost (Ember ruling B, option 2)'
       expect(owner.added).toEqual([delta]);
     });
   }
+});
+
+describe('a read held behind running writes, with two or more writers taking turns', () => {
+  const entity = 'people/alice-example';
+  const factOf = (text: string): Fact => ({ fact: text, entity_slug: entity });
+
+  // Value: protects=a read on the owner socket answers while writers keep overlapping, instead of waiting until all
+  // writing stops; fails_when=the hold counts every started write, including writes admitted after the read, so with
+  // two overlapping writers the read never runs (measured 0.8 s at 8 writers, ~2 s at 32 and 80, switch off);
+  // why_new=lane L2 item 4 found the starvation; seam=none (a fake owner whose writes each wait on their own gate);
+  // no_claim=latency numbers (the probe measures them), the store's own thread pool
+  test('a write admitted after the read no longer holds the read', async () => {
+    const owner = await perFactGatedOwner();
+    const writer = await clientOf(owner.server.socketPath);
+    const reader = await clientOf(owner.server.socketPath);
+    const writes: Promise<unknown>[] = [];
+    const write = (text: string) => { const p = writer.insertFact(factOf(text)); p.catch(() => undefined); writes.push(p); };
+    write('w1');
+    await until(() => owner.server.stats().active === 1);
+    let answered = false;
+    const read = reader.listFactsByEntity(entity).then(rows => { answered = true; return rows; });
+    // A failed run closes the owner under these calls; their rejections must not land on the next test.
+    read.catch(() => undefined);
+    await until(() => owner.server.stats().queued === 1);
+    // Writes admitted after the read take turns: one always runs while the next starts.
+    write('w2');
+    await until(() => owner.server.stats().active === 2);
+    expect(answered).toBe(false);
+    await owner.release('w1');
+    // Only w1 came before the read, so the read answers now, while w2 still runs.
+    await until(() => answered);
+    expect(answered).toBe(true);
+    expect(await read).toEqual([factOf('w1')]);
+    expect(owner.running('w2')).toBe(true);
+    for (let k = 3; k <= 5; k++) {
+      write(`w${k}`);
+      await until(() => owner.server.stats().active === 2);
+      await owner.release(`w${k - 1}`);
+    }
+    await owner.release('w5');
+    await Promise.all(writes);
+    expect(owner.facts.map(f => f.fact)).toEqual(['w1', 'w2', 'w3', 'w4', 'w5']);
+    expect(owner.server.stats()).toMatchObject({ active: 0, queued: 0, inflightBytes: 0 });
+  });
+
+  // Value: protects=read-your-write for the confirming caller: its read, sent after its own orphaned write, still
+  // waits for that write and sees it, so following the advice never inserts the fact twice, while other callers'
+  // later writes no longer hold it; fails_when=the confirming read answers before its own write settles (empty
+  // read, second insert), or it waits for writes admitted after it; why_new=the fair hold of lane L2 item 4;
+  // seam=none; no_claim=a read admitted before the write it means to confirm (a caller never sends one)
+  test('the confirming read still waits for its own earlier write, but not for writes admitted after it', async () => {
+    const owner = await perFactGatedOwner();
+    const caller = await clientOf(owner.server.socketPath);
+    const others = await clientOf(owner.server.socketPath);
+    const mine = factOf('mine');
+    const controller = new AbortController();
+    const first = withRequestSignal(controller.signal, () => caller.insertFact(mine)).then(() => null, e => e as OperationError);
+    await until(() => owner.running('mine'));
+    expect(owner.running('mine')).toBe(true);
+    controller.abort();
+    const error = await first;
+    expect(error).toMatchObject({ code: 'owner_unavailable', reason: 'outcome_unknown', retryable: false });
+    let answered = false;
+    const followed = caller.listFactsByEntity(entity).then(async rows => {
+      answered = true;
+      if ((rows as Fact[]).every(f => f.fact !== 'mine')) await caller.insertFact(mine);
+      return rows as Fact[];
+    });
+    // A failed run closes the owner under these calls; their rejections must not land on the next test.
+    followed.catch(() => undefined);
+    await until(() => owner.server.stats().queued === 1);
+    const later = [others.insertFact(factOf('o1')), others.insertFact(factOf('o2'))];
+    for (const p of later) p.catch(() => undefined);
+    await until(() => owner.server.stats().active === 3);
+    await Bun.sleep(100);
+    // Its own write still runs, so the read waits.
+    expect(answered).toBe(false);
+    await owner.release('mine');
+    await until(() => answered);
+    expect(answered).toBe(true);
+    expect(await followed).toEqual([mine]);
+    expect(owner.running('o1') && owner.running('o2')).toBe(true);
+    await owner.release('o1');
+    await owner.release('o2');
+    await Promise.all(later);
+    expect(owner.facts.filter(f => f.fact === 'mine')).toEqual([mine]);
+  });
+  // Value: protects=a write admitted after the read whose caller already stopped waiting still holds the read, so a
+  // confirming read on another connection that the owner admitted first cannot answer "not there" once the owner has
+  // read that write's cancel; fails_when=the fair hold drops every later write, including an orphan (review finding
+  // F1 of the fair-hold plan); why_new=the fair hold is new; seam=none; no_claim=the window before the owner reads the
+  // cancel (the server header names it)
+  test('a later write whose caller stopped waiting still holds the read', async () => {
+    const owner = await perFactGatedOwner();
+    const writer = await clientOf(owner.server.socketPath);
+    const caller = await clientOf(owner.server.socketPath);
+    const reader = await clientOf(owner.server.socketPath);
+    const unrelated = writer.insertFact({ fact: 'w0', entity_slug: 'people/charlie-example' });
+    unrelated.catch(() => undefined);
+    await until(() => owner.running('w0'));
+    let answered = false;
+    const read = reader.listFactsByEntity(entity).then(rows => { answered = true; return rows; });
+    read.catch(() => undefined);
+    await until(() => owner.server.stats().queued === 1);
+    // The write the read means to confirm arrives after it, starts, and its caller gives up.
+    const controller = new AbortController();
+    const lost = withRequestSignal(controller.signal, () => caller.insertFact(factOf('late'))).then(() => null, e => e as OperationError);
+    await until(() => owner.running('late'));
+    controller.abort();
+    expect(await lost).toMatchObject({ code: 'owner_unavailable', reason: 'outcome_unknown' });
+    await until(() => owner.aborted.has('late'));
+    expect(owner.aborted.has('late')).toBe(true);
+    await owner.release('w0');
+    await unrelated;
+    await Bun.sleep(100);
+    expect(answered).toBe(false);
+    await owner.release('late');
+    expect(await read).toEqual([factOf('late')]);
+  });
+
+  // Value: protects=a read that waits only for capacity, with no earlier write running, reaches its deadline as a
+  // retryable `timeout` / `not_started`, not `earlier_call_running`; fails_when=the deadline paths keep counting a
+  // write admitted after the read; why_new=review finding F2 of the fair-hold plan; seam=none; no_claim=how long
+  // capacity waits last
+  test('a read queued only for capacity, behind a later write, times out not_started', async () => {
+    const owner = await perFactGatedOwner({ permits: 2, slowEntity: 'people/slow-example' });
+    const writer = await clientOf(owner.server.socketPath);
+    const reader = await clientOf(owner.server.socketPath);
+    const writes = [writer.insertFact(factOf('w0'))];
+    await until(() => owner.running('w0'));
+    const slow = reader.listFactsByEntity('people/slow-example');
+    slow.catch(() => undefined);
+    await until(() => owner.server.stats().queued === 1);
+    const target = withReadDeadline(Date.now() + 400, () => reader.listFactsByEntity(entity)).then(() => null, e => e as OperationError);
+    await until(() => owner.server.stats().queued === 2);
+    writes.push(writer.insertFact(factOf('w1')));
+    for (const p of writes) p.catch(() => undefined);
+    await until(() => owner.running('w1'));
+    expect(owner.server.stats()).toMatchObject({ active: 2, queued: 2 });
+    // w0 ends: the slow read takes its permit, and the target waits for capacity while only w1 (admitted later) runs.
+    await owner.release('w0');
+    await until(() => owner.reads.includes('people/slow-example'));
+    expect(owner.server.stats()).toMatchObject({ active: 2, queued: 1 });
+    const error = await target;
+    expect(error).toMatchObject({ code: 'timeout', reason: 'not_started', retryable: true });
+    expect(owner.reads).not.toContain(entity);
+    await owner.release('read:people/slow-example');
+    await owner.release('w1');
+    await Promise.all([slow, ...writes]);
+    await until(() => owner.server.stats().active === 0);
+    expect(owner.server.stats()).toMatchObject({ active: 0, queued: 0, inflightBytes: 0 });
+  });
 });
 
 describe('which members an orphan holds back', () => {
