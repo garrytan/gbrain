@@ -429,12 +429,13 @@ async function refreshAliases(engine: BrainEngine, managed: boolean, sourceId: s
  * statement never reads a whole source looking for a rare name). `through` is the last page id read when the deadline stopped the scan, null
  * when every page was read.
  */
-async function pagesMatchingNames(engine: BrainEngine, sourceIds: string[], added: Gazetteer, allowCrossSource: boolean, deadline: number): Promise<{ ids: number[]; through: number | null }> {
-  const longest = [...added.values()].flat().map(e => [...e.tokens].sort((a, b) => b.length - a.length)[0]!);
+export async function pagesMatchingNames(engine: BrainEngine, sourceIds: string[], added: Gazetteer, allowCrossSource: boolean, deadline: number): Promise<{ ids: number[]; through: number | null }> {
+  const names = [...added.values()].flat().map(e => e.tokens);
   // ASCII tokens: lower() in SQL agrees with the scanner's NFC+toLowerCase, so LIKE is a superset.
   // Otherwise every page in scope is scanned in JS.
-  const ascii = longest.every(t => /^[\x20-\x7e]+$/.test(t));
-  const patterns = [...new Set(longest)].map(t => `%${t.replace(/[\\%_]/g, m => `\\${m}`)}%`);
+  const ascii = names.every(tokens => tokens.every(t => /^[\x20-\x7e]+$/.test(t)));
+  // #10529: every token of a name, in order (the scanner needs them adjacent), so a common longest word alone passes nothing.
+  const patterns = [...new Set(names.map(tokens => `%${tokens.map(t => t.replace(/[\\%_]/g, m => `\\${m}`)).join('%')}%`))];
   const out: number[] = [];
   let after = 0;
   for (;;) {
