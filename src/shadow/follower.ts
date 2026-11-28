@@ -26,8 +26,8 @@ const COMPARED_RELATIONS: ReadonlySet<string> = new Set(['pages', 'links']);
 const UNMAPPED = 'unmapped_write:';
 /**
  * Whether an item can change a row a write comparison reads: a `pages` or `links` item, or an `invalid` one (a write nothing describes), except an unmapped write by
- * a journal member whose statements write only bookkeeping tables (write-capture.ts `bookkeepingMember`: the protocol declaration, the counter lock, an effect's locks
- * and completion). Those are the process's own persistence bookkeeping, as its journal rows are.
+ * a journal member whose statements write only bookkeeping tables (write-capture.ts `bookkeepingMember`: the protocol declaration, the counter lock, the request completion,
+ * the publication's effects insert, an effect's completion, transaction settings and locks). Those are the process's own persistence bookkeeping, as its journal rows are.
  */
 const movesComparedRows = (item: Invalidation): boolean =>
   item.kind === 'invalid' ? !(item.reason.startsWith(UNMAPPED) && bookkeepingMember(item.reason.slice(UNMAPPED.length))) : COMPARED_RELATIONS.has(item.relation);

@@ -216,8 +216,8 @@ const SEAL_MEMBER = 'sealImportedPage';
 const BOOKKEEPING_MEMBERS: ReadonlySet<string> = new Set([...JOURNAL_MEMBER_STATEMENTS].filter(([name, sqls]) => bookkeepingStatements(sqls, EFFECT_LOCK_MEMBERS.has(name))).map(([name]) => name));
 /**
  * True for a typed journal member above whose statements pass the bookkeeping rule. The follower reports these members as unmapped writes, and its
- * page/link write count (follower.ts `pageLinkWrites`, this sampler's `generation`) skips a batch whose only unmapped writes are these: the effect
- * worker's next claim or a receipt true-up committing during a sample's read-back is not another writer.
+ * page/link write count (follower.ts `pageLinkWrites`, this sampler's `generation`) skips a batch only when it holds no page or link item and every invalid item is
+ * `unmapped_write:<member>` for one of these members: the effect worker's next claim or a receipt true-up committing during a sample's read-back is not another writer.
  */
 export const bookkeepingMember = (name: string): boolean => BOOKKEEPING_MEMBERS.has(name);
 const pageKey = (name: string, args: unknown[]): string => { const r = pageRefs(name === STAMP ? 'putPage' : name, name === STAMP ? [args[0], undefined, { sourceId: args[1] }] : args)[0]; return r ? `${r.source}\0${r.slug}` : ''; };

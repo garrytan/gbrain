@@ -2034,8 +2034,8 @@ export function defineFenceNegatives(ctx: WriteCompareContext): void {
       expect(Boolean(linkSamples(inbox)[0]!.moved)).toBe(false); // master: moved, so the pilot counted every such sample uncomparable
       await follower.settle();
       if (ctx.addon) {
-        // The replay is comparable once the Rust member stores the effect's link_kind and resolution_type (a separate fix); until then the Rust write refuses it
-        // (rust_write_failed). Either way it is never moved and never a difference.
+        // The Rust member already stores link_kind and resolution_type, and the effect sends link_kind: plain, so the replay should be comparable. A base without that
+        // support refuses it (rust_write_failed); the test accepts either, and neither is moved or a difference.
         const counts = await kit.replay(linkSamples(inbox));
         expect([counts.comparable + (counts.uncomparable_by_reason.rust_write_failed ?? 0), counts.unexplained_difference, counts.uncomparable_by_reason.moved ?? 0]).toEqual([1, 0, 0]);
       }
