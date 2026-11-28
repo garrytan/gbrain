@@ -73,7 +73,8 @@ export interface ReconcilerOptions {
   intervalRows?: number;
   /**
    * Awaited before the first check: the serving process's seal confirmation (seal.ts), so the check sees its outcome.
-   * A `doubt` (a confirmation the child may hold that nothing durable revoked) makes the first check run a full pass.
+   * A `doubt` (a confirmation the child may hold that no acknowledged revoke withdrew) makes the first check withdraw it
+   * and run a fresh full pass, never one resumed from before.
    */
   ready?: () => Promise<{ doubt: string | null } | void>;
 }
@@ -134,6 +135,8 @@ export class Reconciler {
   private nightly: ReturnType<typeof setInterval> | null = null;
   private firstCheck: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  /** A seal confirmation the child may hold that no revoke was acknowledged for (seal.ts), until a check withdraws it. */
+  private doubt: string | null = null;
 
   constructor(private readonly o: ReconcilerOptions) {}
 
@@ -170,7 +173,8 @@ export class Reconciler {
   /**
    * A full pass when one has not run for 24 h, or an hour after the last pass while the watermark is invalid; and one
    * FIRST_CHECK_MS after start when the watermark is invalid then (once a seal is confirmed or refused), a pass is
-   * left half done, or the last full pass is 24 h old. A command that exits sooner never runs it.
+   * left half done, or the last full pass is 24 h old. A confirmation left in doubt makes both run a fresh full pass
+   * after withdrawing it (`checkedFull`). A command that exits sooner never runs it.
    */
   startNightly(): void {
     if (this.nightly) return;
@@ -183,12 +187,31 @@ export class Reconciler {
   private async firstRun(): Promise<void> {
     try {
       const confirmed = await this.o.ready?.();
+      if (confirmed?.doubt) this.doubt = confirmed.doubt;
       if (this.stopped) return;
       const w = await this.o.rpc<StateReply>('state', {}, 10_000);
       const lastFull = readPasses(this.o.dir).filter((p) => p.kind === 'full').at(-1);
-      const due = !!confirmed?.doubt || !w.valid || readProgress(this.o.dir) !== null || fullPassDue(lastFull);
-      if (due && !this.stopped) await this.run('full', undefined, { resume: true });
-    } catch { /* the nightly tick tries again */ } // silent-read-ok: no pass runs, so the watermark stays as it was (invalid until a full pass) and the nightly tick retries
+      const due = this.doubt !== null || !w.valid || readProgress(this.o.dir) !== null || fullPassDue(lastFull);
+      if (due && !this.stopped) await this.checkedFull(true);
+    } catch { /* the nightly tick tries again */ } // silent-read-ok: no pass runs, so the watermark stays as it was (invalid until a full pass, or in doubt until a check withdraws it) and the nightly tick retries
+  }
+
+  /**
+   * The full pass of a check. A confirmation left in doubt is withdrawn first (`revokeSeal`): the child is then invalid
+   * with a full obligation that only a pass starting after it settles, under a new continuity. And the pass is fresh: a
+   * resume point written under the continuity that confirmation failed to prove is never continued (it would skip what
+   * it had already walked). A withdrawal that fails runs no pass and keeps the doubt for the next tick.
+   */
+  private async checkedFull(resume: boolean): Promise<void> {
+    if (this.doubt !== null) {
+      await this.o.rpc('revokeSeal', { reason: this.doubt }, 10_000);
+      this.doubt = null;
+      resume = false;
+      // The withdrawal's obligation is settled only by a pass that starts after it, never in the same millisecond.
+      const at = Date.now();
+      while (Date.now() <= at) await pause(1);
+    }
+    await this.run('full', undefined, { resume });
   }
 
   stop(): void {
@@ -206,9 +229,9 @@ export class Reconciler {
       const passes = readPasses(this.o.dir);
       const lastFull = passes.filter((p) => p.kind === 'full').at(-1);
       const last = passes.at(-1);
-      let due = fullPassDue(lastFull);
+      let due = this.doubt !== null || fullPassDue(lastFull);
       if (!due && last && elapsed(last.finished_at, INVALID_RETRY_MS)) due = !(await this.o.rpc<Watermark>('state', {}, 10_000)).valid;
-      if (due) await this.run('full');
+      if (due) await this.checkedFull(false);
     } catch { /* the next tick tries again */ }
   }
 
