@@ -56,6 +56,18 @@ export async function passBatchStep<T extends Pick<BrainEngine, 'executeRaw'>>(t
   passBatches.set(key, { value: next, header: nextHeader });
   return true;
 }
+/**
+ * Taken before a transaction that may step the batch under `key`; call what it returns first in each run of the
+ * transaction's callback. A transaction callback may run more than once (the multi-user Rust engine retries it after a
+ * write conflict), and a step moves the in-memory batch before its transaction commits: the rerun starts again from the
+ * batch as it was, so its compare-and-swap still holds and what rides the step (a hold write) commits. A no-op on the first
+ * run, and for a key that is not a pass batch.
+ */
+export function passBatchRerun(key: string | null | undefined): () => void {
+  if (!isPassBatchKey(key)) return () => {};
+  const entry = passBatches.get(key);
+  return () => { if (entry) passBatches.set(key, entry); else passBatches.delete(key); };
+}
 /** The batch's head as the waivers' cursor-row read returns it, fenced by the drain lease. */
 export async function passBatchHead(tx: Pick<BrainEngine, 'executeRaw'>, key: string, sourceId: string): Promise<{ run_id: string | null; index: number | null; request_id: string | null } | undefined> {
   await assertDrainLease(tx, sourceId);

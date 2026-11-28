@@ -102,19 +102,26 @@ export const FENCED_SLICE_MS = 5_000;
  * GBRA-133: `write` for each item in fenced transactions of at most `FENCED_SLICE_MS`. The fence holds the lock row
  * until the transaction ends, so the lease's release and any takeover wait for it: one transaction that wrote a round's holds
  * at 65 ms per round trip stayed open for 14 minutes (when the fence was `FOR SHARE` it also blocked every renewal and lapsed
- * the lease, #7442). Each slice is fenced again, so a lapsed lease stops the writes at the next slice. `committed` sees each slice once it commits.
+ * the lease, #7442). Each slice is fenced again, so a lapsed lease stops the writes at the next slice. `committed` sees each slice once it commits,
+ * with the items whose `write` returned true in the run that committed (`landed`): a caller counts what landed there, never in `write`.
  */
 export async function inFencedSlices<T>(engine: BrainEngine, sourceId: string, items: readonly T[],
-  write: (tx: BrainEngine, item: T) => Promise<void>, committed?: (slice: readonly T[]) => void): Promise<void> {
+  write: (tx: BrainEngine, item: T) => Promise<boolean | void>, committed?: (slice: readonly T[], landed: readonly T[]) => void): Promise<void> {
   for (let start = 0; start < items.length;) {
-    const end = await engine.transaction(async tx => {
+    const { end, landed } = await engine.transaction(async tx => {
+      // A transaction callback may run more than once (the multi-user Rust engine retries it after a write conflict), so what
+      // landed is collected per run and only the committed run's list reaches `committed`.
+      const landed: T[] = [];
       await assertDrainLease(tx, sourceId);
       const began = performance.now();
       let next = start;
-      do await write(tx, items[next++]!); while (next < items.length && performance.now() - began < FENCED_SLICE_MS);
-      return next;
+      do {
+        const item = items[next++]!;
+        if (await write(tx, item) === true) landed.push(item);
+      } while (next < items.length && performance.now() - began < FENCED_SLICE_MS);
+      return { end: next, landed };
     });
-    committed?.(items.slice(start, end));
+    committed?.(items.slice(start, end), landed);
     start = end;
   }
 }

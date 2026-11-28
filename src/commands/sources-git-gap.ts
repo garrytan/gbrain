@@ -182,17 +182,28 @@ export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: 
   }
   for (let cursor = '0', offset = 0; ;) {
     if (opts.deadlineAt !== undefined && Date.now() >= opts.deadlineAt) { census.complete = false; break; }
-    const done = await engine.transaction(async tx => {
+    // A transaction callback may run more than once (the multi-user Rust engine retries it after a write conflict, which a
+    // read can meet too), so each run starts from the census as it was before the batch, and only the committed run's
+    // classified pages reach `collect`.
+    const before = structuredClone(census);
+    const pendingAt = pending.length;
+    let collected: Array<Parameters<GitGapCollect>> = [];
+    const step = await engine.transaction(async tx => {
+      for (const key of Object.keys(census) as Array<keyof GitGapCensus>) if (!(key in before)) delete census[key];
+      Object.assign(census, structuredClone(before));
+      pending.length = pendingAt;
+      collected = [];
       await tx.markTransactionReadOnly();
       const batch = await tx.readGitGapPageBatch(sourceId, newest ? { ids: newest.slice(offset, offset + BATCH) } : { after: cursor }) as Key[];
-      if (batch.length) {
-        await censusBatch(tx, batch, census, { checkout, policy, incarnation: source!.incarnation, sample: opts.sample, collect: opts.collect, pending: opts.evidence ? pending : undefined });
-        cursor = batch[batch.length - 1]!.id;
-      }
-      offset += BATCH;
-      return newest ? offset >= newest.length : batch.length < BATCH;
+      const collect: GitGapCollect | undefined = opts.collect ? (page, snapshot) => { collected.push([page, snapshot]); } : undefined;
+      if (batch.length) await censusBatch(tx, batch, census, { checkout, policy, incarnation: source!.incarnation, sample: opts.sample, collect, pending: opts.evidence ? pending : undefined });
+      const nextOffset = offset + BATCH;
+      return { cursor: batch.length ? batch[batch.length - 1]!.id : cursor, offset: nextOffset, done: newest ? nextOffset >= newest.length : batch.length < BATCH };
     });
-    if (done) break;
+    for (const [page, snapshot] of collected) opts.collect!(page, snapshot);
+    cursor = step.cursor;
+    offset = step.offset;
+    if (step.done) break;
   }
   if (pending.length) await settleUnrecorded(engine, census, checkout!, pending, { sample: opts.sample, collect: opts.collect, read: census.complete });
   await engine.transaction(async tx => {

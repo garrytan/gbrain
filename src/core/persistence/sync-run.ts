@@ -73,7 +73,7 @@ import { withSyncTail } from './sync-tail.ts';
 import { assertDrainLease, currentDrainLease, leaseHeldResult, readDrainHolder, withDrainLease } from './sync-lease.ts';
 import { LockUnavailableError, syncLockId } from '../db-lock.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
-import { assertPassAdmission, isPassBatchKey, passBatchStep, passedOverBefore, passRequestId, readPassBatch, setPassBatch, type PassEntry } from './sync-pass-batch.ts';
+import { assertPassAdmission, isPassBatchKey, passBatchRerun, passBatchStep, passedOverBefore, passRequestId, readPassBatch, setPassBatch, type PassEntry } from './sync-pass-batch.ts';
 import type { PassStamp } from './sync-prepare.ts';
 import { runSyncPass, stampManagedSourceFresh } from './sync-pass-run.ts';
 import { serr } from '../console-prefix.ts';
@@ -241,7 +241,9 @@ async function readCursor(engine: BrainEngine, key: string, cached?: Cursor): Pr
 }
 async function saveCursor(engine: BrainEngine, key: string, before: Cursor | null, next: Cursor, requireIdle = false, assertActive?: () => void,
   inTx?: (tx: BrainEngine) => Promise<unknown>): Promise<Cursor> {
+  const rerun = passBatchRerun(key);
   const saved = await engine.transaction(async tx => {
+    rerun();
     assertActive?.();
     if (!requireIdle) {
       const current = await writeCursor(tx, key, before, next, inTx, true);
@@ -615,7 +617,9 @@ async function holdUnderGate(engine: BrainEngine, input: { cursor: Cursor; key: 
   const deadline = performance.now() + input.waitMs;
   for (;;) {
     assertActive();
+    const rerun = passBatchRerun(key);
     const saved = await engine.transaction(async tx => {
+      rerun();
       assertActive();
       await tx.lockPageKeys(keys);
       if ((await syncRows(tx, 'unfinished_page_request', unfinishedPageRequestParams(cursor, pending))).length) return null;
@@ -1029,7 +1033,9 @@ function groupSize(cursor: Cursor, bulk: BulkPass): number {
  * admitted that the cursor does not hold. Returns the saved cursor, or null when another run moved the cursor.
  */
 async function admitAndSave(engine: BrainEngine, key: string, before: Cursor, next: Cursor, members: Pending[], assertActive: () => void): Promise<Cursor | null> {
+  const rerun = passBatchRerun(key);
   const rows = await admitGroup(engine, members, before, async tx => {
+    rerun();
     assertActive();
     if (isPassBatchKey(key)) return passBatchStep(tx, key, JSON.stringify(header(before)), next, JSON.stringify(header(next)));
     const [saved] = await pipelined(tx, [

@@ -31,7 +31,7 @@ import { noteDrainSql } from './drain-step.ts';
 import { REVISION_BACKFILL_PENDING } from '../page-state/types.ts';
 import { withScreeningPaths } from './screening-paths.ts';
 import { withBoundedReadSession } from './bounded-reads.ts';
-import { isPassBatchKey, passBatchHead } from './sync-pass-batch.ts';
+import { isPassBatchKey, passBatchHead, passBatchRerun } from './sync-pass-batch.ts';
 
 /**
  * The cursor row a waiver commits beside, locked FOR UPDATE (the fixed order: the page guard, then the cursor). #6712 PR 4b:
@@ -117,7 +117,9 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
   const waived = await screenWaiver(engine, cursor, pending, config, signal);
   if (!waived) return null;
   const intent = pending.intent;
+  const rerun = passBatchRerun(key);
   return engine.transaction(async tx => {
+    rerun();
     await tx.lockPageKeys([{ sourceId: cursor.sourceId, slug: pending.slug }]);
     const held = await heldCursorHead(tx, key, cursor.sourceId);
     if (held?.run_id !== cursor.runId || Number(held.index) !== cursor.index || held.request_id !== pending.requestId) return reread(tx);
@@ -191,8 +193,10 @@ export const WAIVER_PIPELINE_MAX = 64;
 export async function waiveNoopRun<C extends WaiverCursor>(engine: BrainEngine, cursor: C, run: readonly WaiverRunEntry[], key: string,
   advance: (tx: BrainEngine, prefix: readonly WaiverRunEntry[]) => Promise<C>, reread: (tx: BrainEngine) => Promise<C>): Promise<{ cursor: C; waived: number; next?: WaiverEntry } | null> {
   if (!run.length) return null;
+  const rerun = passBatchRerun(key);
   try {
     return await engine.transaction(async tx => {
+      rerun();
       await syncRows(tx, 'waiver_settings');
       await tx.lockPageKeys(run.map(entry => ({ sourceId: cursor.sourceId, slug: entry.pending.slug })));
       const held = await heldCursorHead(tx, key, cursor.sourceId);
@@ -272,8 +276,10 @@ export async function waivePrescreenedRun<C extends WaiverCursor & { binding: { 
   for (let i = 0; i < run.length; i += 16) await Promise.all(run.slice(i, i + 16).map(entry => validateSyncAuthority(engine, cursor.authority, entry.slug)));
   // A cursor frozen by another binary or under another schema pack re-checks the parser fingerprint its prescreen matched.
   const pack = input.noSchemaPack ? null : await loadActivePackForEngine(engine, { remote: false, sourceId: cursor.sourceId }).catch(() => null);
+  const rerun = passBatchRerun(key);
   try {
     return await engine.transaction(async tx => {
+      rerun();
       await syncRows(tx, 'waiver_settings');
       await tx.lockPageKeys(run.map(entry => ({ sourceId: cursor.sourceId, slug: entry.slug })));
       const held = await heldCursorHead(tx, key, cursor.sourceId);

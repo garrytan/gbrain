@@ -218,11 +218,11 @@ async function retireMarkers(engine: BrainEngine, level: ShadowLevel, state: Pas
   await inFencedSlices(engine, level.sourceId, retire, async (tx, entry) => {
     const { sourcePath } = passEntryPaths(level, entry.path);
     const stored = await readStoredMarker(tx, level, sourcePath);
-    if (!stored) return;
+    if (!stored) return false;
     const blobOids = Array.isArray(stored.blob_oids) ? stored.blob_oids : [];
-    if ((stored.kind === 'legacy' ? 'legacy' : 'deleted') !== entry.state.marker!.kind || blobOids.join('\0') !== entry.state.marker!.blobOids.join('\0')) return;
-    if (await retireOriginDeletedMarker(tx, { sourceId: level.sourceId, incarnation: level.incarnation, origin: sourcePath, expected: stored })) state.markersRetired++;
-  });
+    if ((stored.kind === 'legacy' ? 'legacy' : 'deleted') !== entry.state.marker!.kind || blobOids.join('\0') !== entry.state.marker!.blobOids.join('\0')) return false;
+    return await retireOriginDeletedMarker(tx, { sourceId: level.sourceId, incarnation: level.incarnation, origin: sourcePath, expected: stored });
+  }, (_slice, retired) => { state.markersRetired += retired.length; });
 }
 
 async function readStoredMarker(exec: Pick<BrainEngine, 'executeRaw'>, level: ShadowLevel, origin: string): Promise<{ kind?: string; blob_oids?: string[]; slug?: string } | null> {
@@ -298,8 +298,8 @@ async function skipDanglingLinks(engine: BrainEngine, level: ShadowLevel, input:
   const holds = new Set((await syncRows<{ path: string }>(engine, 'unreadable_hold_paths', [GIT_HOLD_OP, skipped.filter(link => link.entry.state.hold).map(link => gitHoldFingerprint(level.sourceId, level.incarnation, link.path))])).map(row => row.path));
   const settled = skipped.filter(link => !link.entry.state.hold || holds.has(link.path));
   await inFencedSlices(engine, level.sourceId, settled.filter(link => holds.has(link.path)), async (tx, link) => {
-    if (await clearGitHold(tx, { sourceId: level.sourceId, incarnation: level.incarnation, path: link.path, observedAt: input.observedAt })) state.dangling.released++;
-  });
+    return await clearGitHold(tx, { sourceId: level.sourceId, incarnation: level.incarnation, path: link.path, observedAt: input.observedAt });
+  }, (_slice, released) => { state.dangling.released += released.length; });
   for (const link of settled) {
     settleAs(link.entry, { settled: true, action: 'none', classAction: 'none' });
     state.dangling.skipped.add(link.path);

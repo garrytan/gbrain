@@ -190,6 +190,10 @@ export function mountAdminRegistration(app: Express, requireAdmin: RequestHandle
       let registered: RegisteredClient | undefined;
       mutationStarted = true;
       await engine.transaction(async (tx) => {
+        // A transaction callback may run more than once (the multi-user Rust engine retries it after a write conflict),
+        // so the outcome is the committed run's alone.
+        dupClientId = null;
+        registered = undefined;
         await tx.lockOauthClientName(registerClientNameLockKey(name));
         const txSql = sqlQueryForEngine(tx);
         // An engine brain has run its migrations, so the live rows are the ones with no `deleted_at`.
