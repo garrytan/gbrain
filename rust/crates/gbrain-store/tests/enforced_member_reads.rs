@@ -147,7 +147,12 @@ fn the_reads_answer_from_the_persisted_records() {
 
 /// `member` with the labelled-only conjunct (`labelledOnlySql`, no lineage): the page must also name one of `named` or
 /// hold a stamped folder rule in `rules`.
-fn labelled_member(identity: &[&str], satisfied: &[&str], named: &[&str], rules: &[&str]) -> PrivacyPolicy {
+fn labelled_member(
+    identity: &[&str],
+    satisfied: &[&str],
+    named: &[&str],
+    rules: &[&str],
+) -> PrivacyPolicy {
     serde_json::from_value(json!({
         "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn", "identity": identity,
         "privateReadableSources": [], "callerRecord": true, "satisfiedRuleIds": satisfied,
@@ -161,28 +166,70 @@ fn a_labelled_only_member_reads_a_page_only_when_it_names_the_member() {
     let dir = TempDir::new("enforced-member-labelled-reads");
     drop(seeded(&dir));
     let store = open(&dir);
-    put(&store, "default", "notes/group", json!({"readable_by": ["group:team-a"]}));
-    put(&store, "default", "notes/secret", json!({"readable_by": ["member:tess-example"], "visibility": "private"}));
+    put(
+        &store,
+        "default",
+        "notes/group",
+        json!({"readable_by": ["group:team-a"]}),
+    );
+    put(
+        &store,
+        "default",
+        "notes/secret",
+        json!({"readable_by": ["member:tess-example"], "visibility": "private"}),
+    );
     let readable = |slug: &str, policy: &PrivacyPolicy| {
-        store.read_member_page_readable("default", slug, policy).unwrap()
+        store
+            .read_member_page_readable("default", slug, policy)
+            .unwrap()
     };
 
     // One identity: the page that lists the member (soft-deleted too), not an open page, one that lists someone else,
     // one the privacy part hides, and no row at all.
     let tess = labelled_member(&["member:tess-example"], &[], &["member:tess-example"], &[]);
     assert_eq!(
-        ["notes/listed", "notes/gone", "notes/open", "notes/twin", "notes/secret", "notes/none"].map(|s| readable(s, &tess)),
-        [Some(true), Some(true), Some(false), Some(false), Some(false), None]
+        [
+            "notes/listed",
+            "notes/gone",
+            "notes/open",
+            "notes/twin",
+            "notes/secret",
+            "notes/none"
+        ]
+        .map(|s| readable(s, &tess)),
+        [
+            Some(true),
+            Some(true),
+            Some(false),
+            Some(false),
+            Some(false),
+            None
+        ]
     );
     // A page named only for a group of the member needs the group among the identities; a rule page needs the rule satisfied.
     assert_eq!(readable("notes/group", &tess), Some(false));
-    let mixed = labelled_member(&["member:tess-example", "group:team-a"], &[], &["group:team-a", "member:tess-example"], &[]);
+    let mixed = labelled_member(
+        &["member:tess-example", "group:team-a"],
+        &[],
+        &["group:team-a", "member:tess-example"],
+        &[],
+    );
     assert_eq!(readable("notes/group", &mixed), Some(true));
     assert_eq!(readable("team-a/plan", &mixed), Some(false));
-    let ruled = labelled_member(&["member:tess-example"], &["default:team-a"], &["member:tess-example"], &["default:team-a"]);
+    let ruled = labelled_member(
+        &["member:tess-example"],
+        &["default:team-a"],
+        &["member:tess-example"],
+        &["default:team-a"],
+    );
     assert_eq!(readable("team-a/plan", &ruled), Some(true));
     // The conjunct only narrows: a rule listed in it that the member's access does not satisfy admits nothing.
-    let unsatisfied = labelled_member(&["member:tess-example"], &[], &["member:tess-example"], &["default:team-a"]);
+    let unsatisfied = labelled_member(
+        &["member:tess-example"],
+        &[],
+        &["member:tess-example"],
+        &["default:team-a"],
+    );
     assert_eq!(readable("team-a/plan", &unsatisfied), Some(false));
     // An invalid set is empty (the TypeScript member sends the set the SQL applies): nothing is named.
     let nobody = labelled_member(&["member:tess-example"], &[], &[], &[]);
