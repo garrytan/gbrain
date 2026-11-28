@@ -271,8 +271,8 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
   if (params.pages === undefined) {
     const rows = await readBatch(ctx, batchId);
     if (!rows.length) {
-      throw opError('not_found', 'No accessible put_pages batch has that request_id.',
-        'Check the request_id. A batch whose every page was refused before admission has no receipt: resubmit its pages.');
+      throw opError('not_found', 'No accessible put_pages batch has that request_id, so its outcome is unknown to this caller.',
+        'Check the request_id and poll again as the writer that submitted the batch. If that writer is unavailable, ask the brain operator to check the original outcome before resending any page.');
     }
     const settled = await waitForWrites(ctx.engine, rows, ctx.config, remaining());
     const size = markerOf(rows[0]!)!.size;

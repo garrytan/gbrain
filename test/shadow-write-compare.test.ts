@@ -164,6 +164,30 @@ describe('the locked write tally', () => {
     expect(status(dir).unresolved_replays).toBeUndefined(); // the first epoch is retired: its lost line is not this epoch's
   });
 
+  test('a tally with deferred saves saves the outcomes noted in one turn once, a save() or a pipe loss saves at once, and a replay\'s mark ends only with that save', () => {
+    const dir = tmp();
+    const { epoch } = tallyOn(dir);
+    const queued: Array<() => void> = [];
+    const tally = new WriteTally(dir, () => epoch, () => true, process.pid, 'session-a', Date.now, (save) => { queued.push(save); });
+    const counts = () => readWriteTally(dir, epoch);
+    expect(tally.begin()).toBe(true); // the mark is saved at once: no replay runs before it is durable
+    tally.note('comparable', undefined, 1, true, 1);
+    tally.note('capability_missing', 'tags', 1, false, 1);
+    tally.note('uncomparable', 'no_sample', 1, false, 1);
+    expect(queued.length).toBe(1); // one save asked for, however many outcomes
+    expect(counts()).toMatchObject({ comparable: 0, in_flight: [process.pid] }); // nothing saved yet: the mark still stands, so a death now reads as unexplained, never a pass
+    queued.shift()!();
+    expect(counts()).toMatchObject({ comparable: 1, capability_missing: 1, uncomparable: 1, in_flight: [] });
+    expect(readWriteTally(dir, epoch)?.settled?.[sessionKey('session-a')]).toBe(3);
+    tally.note('comparable');
+    expect(tally.save()).toBe(true); // the end of the input saves what is still waiting
+    expect(counts()?.comparable).toBe(2);
+    tally.missing(3, 1); // a pipe loss is booked at once, not on the next turn
+    expect(counts()).toMatchObject({ uncomparable_by_reason: { no_sample: 1, pipe_unflushed: 2 }, capability_missing_by_family: { tags: 1, pipe_unflushed_nonqualifying: 1 } });
+    for (const save of queued.splice(0)) save(); // the saves still asked for find nothing left to add
+    expect(counts()).toMatchObject({ comparable: 2, capability_missing: 2, uncomparable: 3 });
+  });
+
   test('two children: a mismatch the second saves is never lost when the first saves late, and neither clears the other\'s mark', () => {
     const dir = tmp();
     const a = tallyOn(dir, process.pid); const b = tallyOn(dir, OTHER);
@@ -520,7 +544,7 @@ describe('the data fence and the scratch location (lane owner ruling)', () => {
     expect(movedOutsideFootprint('putPage', ['a/x', {}], pre, { sources: [], pages: [A, B], links: [] })).toBe(true); // a link it does not write is gone
     expect(movedOutsideFootprint('deletePage', ['a/x'], pre, { sources: [], pages: [B], links: [] })).toBe(false); // the page and its links go
     expect(movedOutsideFootprint('deletePage', ['a/x'], pre, { sources: [], pages: [{ ...B, title: 'Edited elsewhere' }], links: [] })).toBe(true);
-    const farther = R({ id: '12', from_page_id: '2', to_page_id: '99', link_type: 'knows' });
+    const farther = R({ id: '12', from_page_id: '2', to_page_id: '99', link_type: 'knows' }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 a link id or sample count, not the adapter version
     expect(movedOutsideFootprint('deletePage', ['a/x'], pre, { sources: [], pages: [B], links: [farther] })).toBe(false); // a link to a page that was never copied is not a change to the copy
     const jobs = { ...B, projection_job_revision: 'r1' };
     expect(movedOutsideFootprint('addLink', link, { ...pre, pages: [A, jobs] }, { sources: [], pages: [A, { ...jobs, projection_job_revision: 'r2' }], links: [L] })).toBe(false); // job-queue state is not an edit
@@ -1199,6 +1223,34 @@ describe('S2c: a durable per-session obligation for write samples', () => {
     expect(existsSync(owedPath(dir, 'sg'))).toBe(false);
   });
 
+  test('a child killed (SIGKILL) between note() and its deferred save loses only that turn: the next owner books it receipt_orphaned once, and none of it counts as a pass', async () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch, { comparable: 0 });
+    const ready = join(tmp(), 'noted');
+    // test/helpers/deferred-tally-child.ts: turn 1 notes a pass and a tags write and saves them; turn 2 marks a replay, notes its pass and two more outcomes, and blocks before its save.
+    const child = Bun.spawn(['bun', join(import.meta.dir, 'helpers', 'deferred-tally-child.ts'), dir, epoch, 'sk', ready], { stdout: 'ignore', stderr: 'pipe' });
+    owe(dir, 'sk', 5, { child_pid: child.pid, owed_qualifying: 3 } as never); // 5 samples owed, 3 of them page and link writes
+    const reach = async (file: string): Promise<void> => { for (let i = 0; i < 400 && !existsSync(file); i++) await Bun.sleep(25); expect(existsSync(file)).toBe(true); };
+    await reach(`${ready}.1`);
+    expect(readWriteTally(dir, epoch)).toMatchObject({ comparable: 1, capability_missing: 1, in_flight: [], settled: { sk: 2 } }); // turn 1 was saved once that turn ended, by the save it asked for
+    writeFileSync(`${ready}.go`, '1');
+    await reach(`${ready}.2`);
+    expect(readWriteTally(dir, epoch)).toMatchObject({ comparable: 1, capability_missing: 1, in_flight: [child.pid], settled: { sk: 2 } }); // turn 2's mark is on disk; its outcomes are only in the child's memory
+    child.kill('SIGKILL');
+    await child.exited;
+    expect(child.signalCode).toBe('SIGKILL');
+    const owner = worker(dir, epoch, 'owner-session'); owner.recover(); // its child is not running: orphaned
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.comparable).toBe(1); // the two passes of turn 2 were never saved: neither counts
+    expect(t.unexplained_difference).toBe(1); // the replay whose verdict died with the child stays unexplained, never a pass
+    expect(t.uncomparable_by_reason).toEqual({ receipt_orphaned: 2 }); // owed 5 less settled 2 = 3: the 2 page and link writes of turn 2
+    expect(t.capability_missing_by_family).toEqual({ tags: 1, receipt_orphaned_nonqualifying: 1 }); // and its tags write
+    expect(t.in_flight).toEqual([]);
+    expect(existsSync(owedPath(dir, 'sk'))).toBe(false);
+    expect(stat(dir)).toMatchObject({ state: 'measured', comparable: 1, unexplained_difference: 1 }); // settled evidence that holds an unexplained difference: the write bar fails, it never passes
+    owner.save(); worker(dir, epoch, 'another-owner').recover(); // booked once, however many owners look
+    expect(readWriteTally(dir, epoch)).toMatchObject({ comparable: 1, unexplained_difference: 1, uncomparable_by_reason: { receipt_orphaned: 2 }, capability_missing_by_family: { tags: 1, receipt_orphaned_nonqualifying: 1 } });
+  });
+
   // The hard limit and the per-session rule.
   test('a long-running session with nothing unsettled reads measured, however many samples it has owed', () => {
     const dir = tmp(); const epoch = epochOf(dir); owe(dir, 'long', 1_000_000, { child_pid: process.pid });
@@ -1640,12 +1692,14 @@ describe('S2c: every credit site settles exactly the weight it stands for', () =
   test('F1: end to end, a line the serving process owed as 1 is settled as 1 by the child, whatever its dropped field says', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {
       const dir = tmp(); writeSeedRecord(dir, SEED_F1);
+      // pregate-literal: SHADOW_ADAPTER_VERSION=12 a link id or sample count, not the adapter version
       writeOwed(dir, { v: 1, session: 'cf1', serving_pid: process.pid, owed: 12, closed: true, child_exited: false }); // 2 read, 10 the pipe never delivered
       const input = new PassThrough();
       const done = runShadowChild(dir, { input, writeControl: () => {}, loadAddon: async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1', catalogVersion: 3 } as never }), capabilities: () => ['search', 'pages'], readinessPolicyHash: () => 'p1', heartbeatMs: 60_000, childId: 'c1', session: 'cf1', addonSha256: () => 'a'.repeat(64), openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {} }) as never });
       input.write('{"t":"write","op":"putPage","dropped":100000}\n'); input.write('{"t":"write","op":"putPage"}\n');
       input.end(); await done;
       const t = readWriteTally(dir, readEpoch(dir)!.epoch_id)!;
+      // pregate-literal: SHADOW_ADAPTER_VERSION=12 a link id or sample count, not the adapter version
       expect(t.settled).toEqual({ cf1: 12 }); // was 10,012 (and the 10 undelivered samples went unbooked: the child believed it had read 10,002)
       expect(t.uncomparable_by_reason.pipe_unflushed).toBe(10);
       expect(t.uncomparable_by_reason.send_shed).toBeUndefined();

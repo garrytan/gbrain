@@ -388,6 +388,9 @@ gbrain skillpack remove --harness claude-code --skill query
 - **Lift your fork's skill back into gbrain** → `harvest` + the
   `skillpack-harvest` editorial skill
 - **Undo a harness install** → `remove --harness <h>` (ledger-owned files only)
+- **Bundled skills' `../conventions/` links don't open (single-file binary
+  install, no skills folder)** → `conventions <dir>` (writes them into
+  `<dir>/conventions`; never replaces a file you changed)
 
 ## What about `install` and `uninstall`?
 

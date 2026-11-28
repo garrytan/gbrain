@@ -925,7 +925,7 @@ and none of them ever refuses the work:
 
 | Code | Kind | What you do |
 |---|---|---|
-| `room_above_level` | `safety` | some items are `readable: false` or `unknown` for the room: use them to do the work, keep them out of the reply unless the ask needs them, offer the rest in a direct message |
+| `room_above_level` | `safety` | some items are `readable: false` or `unknown` for the room: use them to do the work; keep them out of the reply unless the ask cannot be answered without them, never add one the ask did not call for, and offer the rest in a direct message |
 | `room_hints_unavailable` | `degraded` | the room could not be judged (`_meta.room.unavailable` names why): the answer is complete, treat every item as above the room, and follow `fix` when one is given |
 | `room_conflict` | `safety` | the `room` argument named a different room than the harness did: the answer was marked for everyone either names; trust the harness's room |
 
@@ -1055,7 +1055,7 @@ see:
 |---|---|
 | Sibling jobs' calls in flight fill the group | the job is delayed (no attempt burned) and retried; after 6 retries it dies like exhaustion |
 | The group's settled spend reaches its cap | the job dies with `derived_cap_exhausted` (derived cap) or `cost_cap_exceeded`; its `result.spend_refusal` envelope carries the group's spent, reserved and remaining amounts and a `fix` that reruns the command with twice the cap (`next: ask_user`) |
-| A model with no known price, derived or default cap | runs unmetered and warns `BUDGET_TRACKER_NO_PRICING` |
+| A model with no known price, derived or default cap | runs, but gbrain cannot price its calls, so they add nothing to the group's spend and the cap does not limit them; it warns `BUDGET_TRACKER_NO_PRICING` once per job. Register the rate with `gbrain pricing set` to meter it |
 | A model with no known price, user cap | dies with `no_pricing` before the provider call; register the rate with `gbrain pricing set` and rerun |
 
 A rerun queues the unfinished work under a new group: completed jobs are

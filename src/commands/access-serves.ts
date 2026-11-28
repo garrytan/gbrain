@@ -27,6 +27,8 @@
  * GST-4043: without --source the run labels GBRAIN_SOURCE, then sources.default, not literal `default`; the directory it
  * runs from (a .gbrain-source file, a registered checkout) never decides where member keys write. A re-run on another source moves a list key setup minted (its list still the one setup gave it)
  * to write to that source, keeping what it read; any other key writing elsewhere is skipped with its rescope command.
+ * GST-4069: that command makes the move alone (the new write source plus what the key reads now). An empty --source is
+ * refused, and so is GBRAIN_SOURCE=__all__ without --source, since the members are labelled in one source.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -46,7 +48,7 @@ import { COMPANY_SOURCE_ID, memberKeyReadSources, openPagesLines, readOpenPages,
 import { rescopeLegacyToken } from '../core/grants/legacy-token.ts';
 import { coerceLegacyPermissions } from '../core/legacy-token-scope.ts';
 import type { OpenPages } from '../core/access/open-pages.ts';
-import { resolveSourceId } from '../core/source-resolver.ts';
+import { ALL_SOURCES, resolveSourceId } from '../core/source-resolver.ts';
 import { addFolderRules, currentFolderRules } from './access-rules.ts';
 import { mintToken } from './auth-mint.ts';
 import { rescopeArchiveAfter, rescopeArchiveBefore } from './archive-rescope.ts';
@@ -201,21 +203,21 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
     else if (token.source_grant !== 'federated' && (token.source_id ?? 'default') === sourceId) keys.push({ member: id, token_name: name, path, action: 'keep' });
     else if (token.source_grant !== 'federated') {
       keys.push({ member: id, token_name: name, path, action: 'skipped',
-        detail: `it writes to ${token.source_id ?? 'default'} and setup did not mint it with a source list, so setup leaves it as it is; to move it to ${sourceId}, run gbrain auth rescope --token ${name} --sources ${desired.join(',')}` });
+        detail: `it writes to ${token.source_id ?? 'default'} and setup did not mint it with a source list, so setup leaves it as it is; to move it to ${sourceId}, run gbrain auth rescope --token ${name} --sources ${[...new Set([sourceId, token.source_id ?? 'default'])].join(',')}` });
     } else {
       const held = textList(token.federated_read);
       const adds = desired.filter(s => !held.includes(s));
       const active = new Set((await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE', [[...held, token.source_id ?? 'default']])).map(r => r.id));
-      const reads = [...held.filter(s => active.has(s)), ...adds];
+      const live = held.filter(s => active.has(s));
+      const reads = [...live, ...adds];
       const minted = setupReads(token.permissions);
       if (!active.has(token.source_id ?? 'default')) {
         keys.push({ member: id, token_name: name, path, action: 'blocked', reads: held,
           detail: `its write source ${token.source_id} is archived, so setup leaves the key as it is and never moves where it writes; repoint it with gbrain auth rescope --token ${name} --sources <new write source>${reads.length ? `,${reads.join(',')}` : ''}, or revoke it with gbrain auth revoke ${name}` });
       } else if (token.source_id !== sourceId) {
-        const moved = [...new Set([sourceId, ...reads])];
-        if (minted && sameSet(minted, held) && minted[0] === token.source_id) keys.push({ member: id, token_name: name, path, action: 'keep', reads: moved, moves: token.source_id ?? 'default', adds });
+        if (minted && sameSet(minted, held) && minted[0] === token.source_id) keys.push({ member: id, token_name: name, path, action: 'keep', reads: [...new Set([sourceId, ...reads])], moves: token.source_id ?? 'default', adds });
         else keys.push({ member: id, token_name: name, path, action: 'skipped', reads: held,
-          detail: `it writes to ${token.source_id} and its source list (${held.join(', ')}) is not the one setup gave it, so setup leaves it as it is; to move it to ${sourceId}, run gbrain auth rescope --token ${name} --sources ${moved.join(',')}` });
+          detail: `it writes to ${token.source_id} and its source list (${held.join(', ')}) is not the one setup gave it, so setup leaves it as it is; to move it to ${sourceId}, run gbrain auth rescope --token ${name} --sources ${[...new Set([sourceId, ...live])].join(',')}` });
       } else if (adds.length && !(minted && sameSet(minted, held))) {
         keys.push({ member: id, token_name: name, path, action: 'skipped', reads: held,
           detail: `its source list (${held.join(', ')}) is not the one setup gave it${minted ? ` (${minted.join(', ')})` : ''}, so setup leaves it as it is and does not add ${adds.join(', ')}; to add them, run gbrain auth rescope --token ${name} --sources ${reads.join(',')}` });
@@ -438,7 +440,7 @@ function ownerVerb(action: NonNullable<ServesReceipt['owner']>['action'], applie
 /** The --labelled-only re-run for the members it would still change: never the owner, a BLOCKED member or one already labelled-only. */
 function labelledOnlyCommand(r: ServesReceipt): { labelledOnly?: string } {
   const ids = r.members.filter(m => m.action !== 'blocked' && !m.labelled_only && m.id !== r.open_pages?.owner).map(m => m.id);
-  return ids.length ? { labelledOnly: `gbrain access serves several --members ${ids.join(',')}${r.source_id === 'default' ? '' : ` --source ${r.source_id}`} --labelled-only --yes` } : {};
+  return ids.length ? { labelledOnly: `gbrain access serves several --members ${ids.join(',')} --source ${r.source_id} --labelled-only --yes` } : {};
 }
 
 export const receiptOk = (r: ServesReceipt): boolean => !r.error && !blocked(r) && !ruleWritePending(r) && (!r.applied || r.unlabeled.length === 0);
@@ -457,7 +459,11 @@ export async function runAccessServes(engine: BrainEngine, mode: string | undefi
   const roster = readRoster(flagValue(args, '--members'), flagValue(args, '--members-file'));
   if (!roster.length) throw rosterEmpty('gbrain access serves several');
   const owner = flagValue(args, '--owner');
-  const named = flagValue(args, '--source') ?? (process.env.GBRAIN_SOURCE?.trim() || null) ?? ((await engine.getConfig('sources.default'))?.trim() || 'default');
+  const flag = flagValue(args, '--source');
+  if (flag !== undefined && !flag.trim()) throw usageError('--source is empty, so it names no source.', 'Name the source the members are labelled in, as in --source default, or drop --source to label GBRAIN_SOURCE, then sources.default.');
+  const pinned = process.env.GBRAIN_SOURCE?.trim() || null;
+  if (flag === undefined && pinned === ALL_SOURCES) throw usageError('GBRAIN_SOURCE=__all__ spans every source, and the members are labelled in one source.', 'Name that source with --source <id> (gbrain sources list shows them), or unset GBRAIN_SOURCE to label sources.default.');
+  const named = flag ?? pinned ?? ((await engine.getConfig('sources.default'))?.trim() || 'default');
   const source = await resolveSourceId(engine, named, undefined, { skipLocalSignals: true });
   const r = await labelSeveral(engine, roster, source, args.includes('--yes'), json, { labelledOnly: args.includes('--labelled-only'), ...(owner !== undefined ? { owner: assertAccessId(owner) } : {}) });
   if (r.applied) await rescopeArchiveAfter(engine);
