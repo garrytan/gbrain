@@ -87,7 +87,7 @@ export async function sealMark(d: Pick<SealDeps, 'dir' | 'reads' | 'postgres'>):
     if (!row || row.writing !== 0 || row.live !== 0) return undefined;
     const mark = { app: row.app, writers: row.writers, writers_max: row.writers_max, gaps: row.gaps, gaps_max: row.gaps_max };
     return isMark(mark) ? JSON.stringify(mark) : undefined;
-  }).catch(() => undefined);
+  }).catch(() => undefined); // silent-read-ok: undefined is "no seal", so a failed read fails closed and the next session needs a full pass
   return bounded(read, undefined);
 }
 
@@ -103,7 +103,7 @@ export async function quietSince(d: Pick<SealDeps, 'dir' | 'reads' | 'postgres'>
     const [row] = await query(SINCE_SQL, [mark.app]);
     return !!row && row.writers === mark.writers && row.writers_max === mark.writers_max && row.gaps === mark.gaps && row.gaps_max === mark.gaps_max
       && await hooksIntact(tx);
-  }).catch(() => false);
+  }).catch(() => false); // silent-read-ok: false refuses the seal, so a failed read fails closed and the obligation stays
   return bounded(read, false);
 }
 

@@ -651,7 +651,7 @@ async function reconcileCommand(
     // A clean pass is sealed like a serving process's close (seal.ts), so the next session carries it on. This process
     // writes nothing to the primary; the child refuses the seal if its watermark or continuity does not hold.
     if (!pass.error && supervisor.childPid !== null) {
-      const mark = await sealMark({ dir: brain.dir, reads, postgres: primaryTakesWriterHooks(readShadowState(brain.dir)?.primary_engine) }).catch(() => undefined);
+      const mark = await sealMark({ dir: brain.dir, reads, postgres: primaryTakesWriterHooks(readShadowState(brain.dir)?.primary_engine) }).catch(() => undefined); // silent-read-ok: undefined means no seal, so the next session starts invalid
       if (mark !== undefined && supervisor.send(JSON.stringify({ t: 'seal', db_at: mark }) + '\n')) await supervisor.drain();
     }
     return pass.error ? 1 : 0;

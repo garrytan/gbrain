@@ -168,7 +168,7 @@ export class Reconciler {
       const lastFull = readPasses(this.o.dir).filter((p) => p.kind === 'full').at(-1);
       const due = !w.valid || readProgress(this.o.dir) !== null || !lastFull || Date.now() - Date.parse(lastFull.finished_at) >= NIGHTLY_MS;
       if (due && !this.stopped) await this.run('full', undefined, { resume: true });
-    } catch { /* the nightly tick tries again */ }
+    } catch { /* the nightly tick tries again */ } // silent-read-ok: no pass runs, so the watermark stays as it was (invalid until a full pass) and the nightly tick retries
   }
 
   stop(): void {
