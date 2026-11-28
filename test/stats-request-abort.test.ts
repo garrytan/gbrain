@@ -16,7 +16,8 @@ import { withRequestSignal } from '../src/core/request-signal.ts';
 import { makeFakeSql, type RecordedStatement } from './helpers/fake-postgres-sql.ts';
 
 const AGGREGATE = { page_count: '3', chunk_count: '4', embedded_count: '1', link_count: '2', tag_count: '5', timeline_entry_count: '6' };
-const kind = (stmt: RecordedStatement) => /search_embedding_column/.test(stmt.text) ? 'registry' : /GROUP BY type/.test(stmt.text) ? 'types' : /page_count/.test(stmt.text) ? 'aggregate' : 'other';
+// The registry lookup is the typed config read (getConfigValues) on the Rust engine trunk, not master's raw search_embedding_column statement.
+const kind = (stmt: RecordedStatement) => /search_embedding_column|FROM config WHERE key = ANY/.test(stmt.text) ? 'registry' : /GROUP BY type/.test(stmt.text) ? 'types' : /page_count/.test(stmt.text) ? 'aggregate' : 'other';
 
 /** The engine on a fake that answers each of the three statements; `onStatement` runs as one is sent. */
 function engineWith(onStatement: (what: string) => void = () => undefined) {
