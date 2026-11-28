@@ -221,16 +221,24 @@ export async function narrowConversationExpiredCopies(raw: EngineRawRead, source
 export async function clearConversationPageFacts(raw: EngineRawRead, sourceId: string, slug: string,
   windows?: { keys: readonly string[]; keep: boolean; unanchored: boolean }): Promise<number> {
   const audits = [...AUDIT_ROW_SOURCES];
-  const base = sqlFragment`f.source_id=${sourceId} AND f.source_markdown_slug=${slug} AND ${trustedSql(CONVERSATION_SOURCE_SQL)}`;
-  const page = windows
-    ? sqlFragment`${base} AND NOT (f.source = ANY(${audits}::text[])) AND (CASE WHEN f.source_window IS NULL THEN ${windows.unanchored}::boolean ELSE (${trustedSql(WINDOW_KEY_SQL)} = ANY(${[...windows.keys]}::text[])) <> ${windows.keep}::boolean END)`
-    : base;
   const run = async <T>(fragment: SqlFragment): Promise<T[]> => {
     const { text, params } = renderFragment(fragment);
     return raw<T>(text, params);
   };
+  if (windows) {
+    // A window clear reuses $3 (the audit sources) in each statement, so its two statements are static strings with the
+    // constants spelled out; test/facts-conversation-sites-sql-pin.test.ts pins them against CONVERSATION_SOURCE_SQL,
+    // WINDOW_KEY_SQL and UNSLOT_SQL.
+    const params = [sourceId, slug, audits, windows.unanchored, [...windows.keys], windows.keep];
+    await raw(`UPDATE facts f SET dimension=NULL, value=NULL, value_hash=NULL, dim_status=NULL WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.source LIKE 'cli:extract-conversation-facts%' AND NOT (f.source = ANY($3::text[])) AND (CASE WHEN f.source_window IS NULL THEN $4::boolean ELSE ((f.source_window->>'occurrence_id') || ':' || (f.source_window->>'window_ordinal') || ':' || (f.source_window->>'window_text_sha') = ANY($5::text[])) <> $6::boolean END) AND NOT (f.source = ANY($3::text[])) AND f.expired_at IS NOT NULL AND f.dimension IS NOT NULL`, params);
+    const [expired] = await raw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now(), dimension=NULL, value=NULL, value_hash=NULL, dim_status=NULL
+    WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.source LIKE 'cli:extract-conversation-facts%' AND NOT (f.source = ANY($3::text[])) AND (CASE WHEN f.source_window IS NULL THEN $4::boolean ELSE ((f.source_window->>'occurrence_id') || ':' || (f.source_window->>'window_ordinal') || ':' || (f.source_window->>'window_text_sha') = ANY($5::text[])) <> $6::boolean END) AND f.expired_at IS NULL AND NOT (f.source = ANY($3::text[])) RETURNING 1)
+    SELECT COUNT(*)::text AS count FROM up`, params);
+    return Number(expired?.count ?? 0);
+  }
+  const page = sqlFragment`f.source_id=${sourceId} AND f.source_markdown_slug=${slug} AND ${trustedSql(CONVERSATION_SOURCE_SQL)}`;
   await run(sqlFragment`UPDATE facts f SET ${trustedSql(UNSLOT_SQL)} WHERE ${page} AND NOT (f.source = ANY(${audits}::text[])) AND f.expired_at IS NOT NULL AND f.dimension IS NOT NULL`);
-  const [audit] = windows ? [] : await run<{ count: string }>(sqlFragment`WITH del AS (DELETE FROM facts f WHERE ${page} AND f.source = ANY(${audits}::text[]) RETURNING 1)
+  const [audit] = await run<{ count: string }>(sqlFragment`WITH del AS (DELETE FROM facts f WHERE ${page} AND f.source = ANY(${audits}::text[]) RETURNING 1)
     SELECT COUNT(*)::text AS count FROM del`);
   const [expired] = await run<{ count: string }>(sqlFragment`WITH up AS (UPDATE facts f SET expired_at=now(), ${trustedSql(UNSLOT_SQL)}
     WHERE ${page} AND f.expired_at IS NULL AND NOT (f.source = ANY(${audits}::text[])) RETURNING 1)
