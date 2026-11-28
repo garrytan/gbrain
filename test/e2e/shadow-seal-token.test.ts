@@ -40,7 +40,7 @@ const sockets: Array<ReturnType<typeof postgres>> = [];
 const sources: ReadSource[] = [];
 
 const url = (): string => (engine as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl;
-const deps = (r: ReadSource = reads) => ({ dir, reads: r, postgres: true as const });
+const deps = (r: ReadSource = reads) => ({ dir, reads: r, postgres: true as const, primary: engine });
 
 /** A plain connection to the clone with its own application_name (psql, another machine's writer). */
 function connection(applicationName: string): ReturnType<typeof postgres> {
@@ -330,6 +330,59 @@ d('the seal change token on Postgres', () => {
       await engine.executeRaw(`DROP OWNED BY ${target}`).catch(() => undefined);
       await engine.executeRaw(`DROP ROLE IF EXISTS ${target}`).catch(() => undefined);
     }
+  }, 60_000);
+
+  // No exemption by connection name: anyone can set application_name. Only connections proven to be the sealing
+  // process's own (reserved from its pool while the read runs) are left out of the activity checks.
+  test('a visible client that sets the sealing process\'s connection name and holds a write open is refused at the seal (other_writer_open)', async () => {
+    const token = await sealed();
+    const app = (JSON.parse(token) as { app: string }).app;
+    const open = await holdWrite(app, 'same-name-open');
+    try {
+      expect(await sealMark(deps())).toEqual({ refused: 'other_writer_open' });
+      expect(await quietSince(deps(), token)).toEqual({ ok: false, reason: 'other_writer_open' });
+    } finally { await open.release(); }
+  }, 60_000);
+
+  test('a visible client that sets the sealing process\'s connection name and wrote moments ago is refused at the seal (other_backend_recent)', async () => {
+    const app = (JSON.parse(await sealed()) as { app: string }).app;
+    const sql = connection(app);
+    await sql`INSERT INTO config (key, value) VALUES ('same-name-recent', '1')`;
+    expect(await sealMark(deps())).toEqual({ refused: 'other_backend_recent' });
+  }, 60_000);
+
+  test('a hidden login that sets the sealing process\'s connection name, holding an uncommitted INSERT, is refused at the seal and at the check, and the seal is never confirmed', async () => {
+    const writer = await throwawayRole(['GRANT INSERT ON config TO $ROLE', 'GRANT INSERT ON engine_writer_coverage_gaps TO $ROLE', 'GRANT INSERT, UPDATE ON engine_writer_sessions TO $ROLE', 'GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO $ROLE'], true);
+    const hidden = await unprivilegedReads();
+    try {
+      const token = await sealed(hidden.reads);
+      const app = (JSON.parse(token) as { app: string }).app; // the name the sealing process connects with
+      const sql = writer.connect(app);
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      let started!: () => void;
+      const open = new Promise<void>((r) => { started = r; });
+      const tx = sql.begin(async (t) => { await t`INSERT INTO config (key, value) VALUES ('hidden-same-name-open', '1')`; started(); await held; });
+      await open;
+      try {
+        expect(await sealMark(deps(hidden.reads))).toEqual({ refused: 'other_backend_unseen' });
+        expect(await quietSince(deps(hidden.reads), token)).toEqual({ ok: false, reason: 'other_backend_unseen' });
+        const { calls, rpc } = fakeRpc(token);
+        await confirmSeal({ ...deps(hidden.reads), rpc });
+        expect(calls.filter((c) => c.method === 'confirmSeal').map((c) => c.args)).toEqual([{ db_at: token, ok: false, reason: 'other_backend_unseen' }]);
+        expect(calls.map((c) => c.method)).not.toContain('commitSeal');
+      } finally { release(); await tx; }
+    } finally { await hidden.drop(); await writer.drop(); }
+  }, 60_000);
+
+  test('control: the sealing process\'s own pool connections, just used, are proven its own and still seal, read as the owner and as a role that cannot see them', async () => {
+    await Promise.all([1, 2, 3].map((i) => engine.executeRaw(`SELECT pg_sleep(0.05), ${i}`))); // several pool connections, active a moment ago
+    expect(await sealMark(deps())).toHaveProperty('token');
+    const hidden = await unprivilegedReads();
+    try {
+      await Promise.all([1, 2, 3].map((i) => engine.executeRaw(`SELECT pg_sleep(0.05), ${i}`)));
+      expect(await sealMark(deps(hidden.reads))).toHaveProperty('token');
+    } finally { await hidden.drop(); }
   }, 60_000);
 
   test('a statistics reset is refused', async () => {
