@@ -149,6 +149,12 @@ export interface ParityCaseOpts {
    * (checkMwArm) and the case writes one line per arm to the GBRAIN_TEST_MW_LEDGER ledger. Takes no `requires`.
    */
   mwCase?: MwCaseId | `${MwCaseId}.${string}`;
+  /**
+   * Served Rust route only: members of `methods` this case reaches in process but not on a served route, because a remote
+   * deny pinned for this case (a `member@file` row of test/rust-stop-pins/ naming an OWNER_IPC_REMOTE_DENY member) ends
+   * that step there. They are exempt from the called check on a served route only, and only while such a pin is armed.
+   */
+  servedSkips?: readonly EngineMethod[];
   timeout?: number;
 }
 
@@ -1229,6 +1235,9 @@ export async function pinnedMultiuserStop(arm: ParityArm, name: string, pin: Non
  * Anything else fails: a refusal the case caught on its way to some other failure, or to a value, does not make it pass,
  * and a divergence row never excuses a thrown error.
  */
+/** A caught-stop pin whose member is a remote deny (owner-ipc/routes.ts OWNER_IPC_REMOTE_DENY): armed on a served route only. */
+const isRemoteDenyPin = (p: StopPin): boolean => Object.hasOwn(OWNER_IPC_REMOTE_DENY, p.member.split('@')[0]!);
+
 export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise<void> {
   let outcome: { value: T } | { error: unknown };
   try {
@@ -1314,20 +1323,25 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
   if (pendingPin) throw new Error(`[rust] "${c.name}" no longer stops; remove its rustPendingStop pin (${pinText})`);
   // It returned. A case that reaches a refusing member, or caught a refusal, must not finish as if nothing happened,
   // unless every refusal it caught is pinned by member and calling file (test/rust-stop-pins/, owner and due date).
-  const caughtPins = c.caughtPins ?? [];
+  // A remote deny (OWNER_IPC_REMOTE_DENY) fires only on a served route; in process the same member answers, so its pin
+  // is armed on a served arm only and an in-process refusal at that site stays unpinned.
+  const caughtPins = (c.caughtPins ?? []).filter((p) => c.served || !isRemoteDenyPin(p));
   const sites = c.refusals.filter(refusedBy).map(caughtSite);
   const unpinned = sites.filter((site) => !caughtPins.some((p) => p.member === site));
   for (const p of caughtPins) {
     if (p.due < today()) throw new Error(`[rust] "${c.name}": the stop pin for ${p.member} (${p.owner}) was due ${p.due} and has passed (${p.reason}); fix the member or move the date`);
-    // A remote deny (OWNER_IPC_REMOTE_DENY) fires only on a served route; in process the same member answers, so its pin is checked there.
-    if (!sites.includes(p.member) && (c.served || !Object.hasOwn(OWNER_IPC_REMOTE_DENY, p.member.split('@')[0]!))) throw new Error(`[rust] "${c.name}" has a row in test/rust-stop-pins/ for ${p.member} (${p.owner}, due ${p.due}) but no longer catches ${p.member}; remove the row`);
+    if (!sites.includes(p.member)) throw new Error(`[rust] "${c.name}" has a row in test/rust-stop-pins/ for ${p.member} (${p.owner}, due ${p.due}) but no longer catches ${p.member}; remove the row`);
   }
   const pinnedMembers = new Set(caughtPins.map((p) => p.member.split('@')[0]!));
   const stillRefusing = refusing.filter((m) => !pinnedMembers.has(m));
   expect({ backend: 'rust', case: c.name, reachesRefusingMember: stillRefusing.length > 0 && capabilities.size > 0, caughtRefusals: unpinned.length, unpinned: [...new Set(unpinned)] })
     .toEqual({ backend: 'rust', case: c.name, reachesRefusingMember: false, caughtRefusals: 0, unpinned: [] });
   for (const p of caughtPins) tally.stops?.push({ name: c.name, member: p.member, capability: refusalFacts(c.refusals.find((e) => caughtSite(e) === p.member)).capability ?? 'unknown', pinned: p, caught: true });
-  const missing = c.opts.methods.filter((m) => !c.calls.has(m));
+  const skips = c.served ? (c.opts.servedSkips ?? []) : [];
+  if (skips.length > 0 && !caughtPins.some(isRemoteDenyPin)) {
+    throw new Error(`[rust] "${c.name}" lists servedSkips (${skips.join(', ')}) but holds no remote-deny pin in test/rust-stop-pins/; remove servedSkips or pin the deny`);
+  }
+  const missing = c.opts.methods.filter((m) => !c.calls.has(m) && !skips.includes(m));
   expect({ backend: 'rust', declaredButNotCalled: missing }).toEqual({ backend: 'rust', declaredButNotCalled: [] });
   const reference = c.reference!;
   let same = true;

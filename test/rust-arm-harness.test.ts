@@ -261,6 +261,35 @@ describe('the Rust arm check', () => {
       .rejects.toThrow(`no longer catches executeRaw@${READ_LOG}; remove the row`);
   });
 
+  // A remote deny (owner-ipc/routes.ts OWNER_IPC_REMOTE_DENY) refuses only on a served route, so its pin is armed only there.
+  const DENY = 'readOwnerOnlySourcesPresent';
+  const DENY_SITE = 'src/core/access/owner-only.ts';
+  const denyAt = () => Object.assign(capabilityMissing(rustMemberCapability(DENY)! as Parameters<typeof capabilityMissing>[0], DENY), {
+    stack: `Error: refused\n    at refuse (/repo/src/core/rust-engine/errors.ts:22:3)\n    at caller (/repo/${DENY_SITE}:10:5)`,
+  });
+  const denyPin = () => pin({ member: `${DENY}@${DENY_SITE}` });
+  const denyCase = (refusals: unknown[], caughtPins: StopPin[], served: boolean) => ({
+    ...rustCase({ calls: new Set([SERVED, DENY]), refusals, caughtPins, run: async () => 1, reference: { backend: 'pglite', value: 1 } }), served });
+
+  test('a remote-deny pin is armed on a served route only: in process it neither fails unhit nor excuses a refusal', async () => {
+    expect(rustRefusal(DENY)).toBeNull(); // served in process: only the served route refuses it
+    await checkRustArm(denyCase([denyAt()], [denyPin()], true), tally());
+    await expect(checkRustArm(denyCase([], [denyPin()], true), tally())).rejects.toThrow(`no longer catches ${DENY}@${DENY_SITE}`);
+    await checkRustArm(denyCase([], [denyPin()], false), tally());
+    await expect(checkRustArm(denyCase([denyAt()], [denyPin()], false), tally())).rejects.toThrow();
+  });
+
+  test('servedSkips exempts a member from the called check on a served route only, and only with a remote-deny pin', async () => {
+    const SKIPPED = 'getTags';
+    expect(rustRefusal(SKIPPED)).toBeNull();
+    const skipCase = (served: boolean, refusals: unknown[], caughtPins: StopPin[]) => ({
+      ...rustCase({ opts: { methods: [SERVED, SKIPPED] as never, servedSkips: [SKIPPED] as never }, calls: new Set([SERVED, DENY]), refusals,
+        caughtPins, run: async () => 1, reference: { backend: 'pglite', value: 1 } }), served });
+    await checkRustArm(skipCase(true, [denyAt()], [denyPin()]), tally());
+    await expect(checkRustArm(skipCase(true, [], []), tally())).rejects.toThrow('lists servedSkips (getTags) but holds no remote-deny pin');
+    await expect(checkRustArm(skipCase(false, [], []), tally())).rejects.toThrow();
+  });
+
   test('a caught pin never excuses a different answer or a thrown error', async () => {
     await expect(checkRustArm(rustCase({ calls: new Set([SERVED, REFUSED]), refusals: [caughtAt(SPELLINGS)], caughtPins: [caughtPin(SPELLINGS)],
       run: async () => 2, reference: { backend: 'pglite', value: 1 } }), tally())).rejects.toThrow();

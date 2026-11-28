@@ -21,21 +21,17 @@
  *  - Seam: none. Pages are seeded with putPage, sealChunks, setPageAliases and addLink; the operations run as production code.
  */
 import { expect } from 'bun:test';
-import { parityArms, type EngineMethod } from './harness.ts';
-import { rustServedRequested } from './rust-arm.ts';
+import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { MEMBER_AUTH, remote, remoteView, seedEntityBrain, watchRefusals } from '../helpers/served-remote-brain.ts';
 
 const { parityTest } = parityArms(testBackends());
-
-const SEEDING: EngineMethod[] = ['putPage', 'sealChunks', 'setPageAliases', 'addLink', 'setConfig'];
-
 parityTest('a remote question that names an entity by a bare name, a title or two pages of one name answers the open pages only', {
   // On a served route the fuzzy candidates read is refused (findFuzzyEntityCandidates, a remote deny pinned in
-  // test/rust-stop-pins/l3-served-denies.tsv), so the relational seed step that follows it (readSeedTitleSlugs) runs in process only.
-  methods: [...SEEDING, 'readPageTitle', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches', 'readSiblingGroupRows',
-    ...(rustServedRequested() ? [] : ['readSeedTitleSlugs'] as const)],
+  // test/rust-stop-pins/l3-served-denies.tsv), so the relational seed step that follows it (readSeedTitleSlugs) runs in process only (servedSkips).
+  methods: ['putPage', 'sealChunks', 'setPageAliases', 'addLink', 'setConfig', 'readPageTitle', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches', 'readSiblingGroupRows', 'readSeedTitleSlugs'],
+  servedSkips: ['readSeedTitleSlugs'],
   timeout: 240_000,
 }, async (engine: BrainEngine) => {
   await seedEntityBrain(engine);
@@ -54,7 +50,7 @@ parityTest('a remote question that names an entity by a bare name, a title or tw
 });
 
 parityTest('a remote current-state query anchors on the named entity and traverse_graph resolves its anchor, with no hidden page', {
-  methods: [...SEEDING, 'readPageTitlesById', 'resolveChainAnchorRows'],
+  methods: ['putPage', 'sealChunks', 'setPageAliases', 'addLink', 'setConfig', 'readPageTitlesById', 'resolveChainAnchorRows'],
   timeout: 240_000,
 }, async (engine: BrainEngine) => {
   await seedEntityBrain(engine);
@@ -71,7 +67,7 @@ parityTest('a remote current-state query anchors on the named entity and travers
 });
 
 parityTest('a remote recall over the floor asks which sources are not readable, and answers without a hidden page', {
-  methods: [...SEEDING, 'readSourcesNotReadable'],
+  methods: ['putPage', 'sealChunks', 'setPageAliases', 'addLink', 'setConfig', 'readSourcesNotReadable'],
   timeout: 240_000,
 }, async (engine: BrainEngine) => {
   await seedEntityBrain(engine);
@@ -87,7 +83,7 @@ parityTest('a remote recall over the floor asks which sources are not readable, 
 });
 
 parityTest('a non-owner member\'s grant reads the shared set and its sources\' configs, and answers the open pages only', {
-  methods: [...SEEDING, 'readSharedSourceRows', 'readScopeSourceConfigs'],
+  methods: ['putPage', 'sealChunks', 'setPageAliases', 'addLink', 'setConfig', 'readSharedSourceRows', 'readScopeSourceConfigs'],
   timeout: 240_000,
 }, async (engine: BrainEngine) => {
   await seedEntityBrain(engine);
