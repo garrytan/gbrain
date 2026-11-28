@@ -1198,7 +1198,6 @@ readOauthClientForUpdate	owner process only: a gbrain command, a job worker or c
 readOldestPageCreatedAt	reached remotely only through run_doctor, which crosses whole: the brain server runs it as the owner (admin scope); no other remote operation reaches it
 readOldestSourceCreatedAt	reached remotely only through run_doctor, which crosses whole: the brain server runs it as the owner (admin scope); no other remote operation reaches it
 readOldestSyncHoldAt	run_doctor and write path only: run_doctor crosses whole and the brain server runs it as the owner (admin scope); a remote caller's write crosses whole and runs on the server, or is refused
-readOldestVersionAttribution	ruling A default
 readOldestWaitingAge	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 readOntologyRival	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readOpCheckpointCompletedKeys	no caller in src outside the engine and its tests: no operation reaches it
@@ -1412,7 +1411,6 @@ readWithdrawalAnchor	local owner code only: a gbrain command reads it with the o
 readWithdrawalDiscovery	ruling A default
 readWorktreeAdmission	ruling A default
 readWorktreeManifest	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
-readWriteAttributionNames	ruling A default
 readWriteRequestById	think save and take paths and write path only: a remote think forces save and take off; a remote caller's write crosses whole and runs on the server, or is refused
 readWriteRequestProgress	think save and take paths and write path only: a remote think forces save and take off; a remote caller's write crosses whole and runs on the server, or is refused
 readWriteRequestsByRequestId	ruling A default

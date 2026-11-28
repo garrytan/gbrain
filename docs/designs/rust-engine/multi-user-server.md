@@ -337,7 +337,8 @@ ruling.
 - `insertRetrievalEvents` is the retrieval event a remote search, query, recall or think stores when retrieval feedback is
   on (src/core/feedback/record.ts). The server stores a batch only when the frame carries a claim, every event's
   `client_id` equals the claim's client, every page and link end is one the caller may read, the batch is well formed and
-  bounded, and no answer id repeats in it (served/retrieval-event-policy.ts). An answer id already stored for another
+  bounded, every event's source is in the claim's allowed sources when that list is not empty (the list replaces the
+  claim's scalar source, as `sourceScopeOpts` does; with no list, no source is checked, only page readability), and no answer id repeats in it (served/retrieval-event-policy.ts). An answer id already stored for another
   client or operation refuses `answer_id_taken`; an exact retry stores nothing more. Any refusal stores nothing for the
   whole batch. The check and the insert run under an in-process lock keyed by answer id; inside a transaction frame the
   lock does not span the commit, and two server processes do not share it. The claim is the connected process's
@@ -412,11 +413,15 @@ weights of the pages they may read and store their retrieval event for the claim
 `OWNER_IPC_REMOTE_READS`. Every member a remote retrieval operation reaches is classified in one of four ways:
 
 - Served with a server guard. The closed guard tables are in served/remote-member-policy.ts, and the server applies them
-  on an ordinary frame and inside a transaction the caller holds.
+  on an ordinary frame and inside a transaction the caller holds. On the owner socket (protocol v2) a frame marked
+  remote runs as a remote caller too, so the same guards apply there.
   - `PAGE_ID_GUARDS`: the reads keyed by page ids the client chose (`readPageFeedbackWeights`, `readBriefPageVersions`,
     `readPageDateFieldsByIds`, `readSegmentedPageHead`, `readSegmentedVersionBodyBytes`, `readBodyManifestMeta`,
-    `readBodyManifestRows`, `readGuestMarks`) and the stamp. One id the caller may not read refuses the whole call
-    `permission_denied` (reason `read_out_of_scope`, or `stamp_out_of_scope` for the stamp), and the detail names no page.
+    `readBodyManifestRows`, `readGuestMarks`, `readOldestVersionAttribution`) and the stamp. One id the caller may not
+    read refuses the whole call `permission_denied` (reason `read_out_of_scope`, or `stamp_out_of_scope` for the stamp),
+    and the detail names no page. A snapshot keeps its own privacy: `readBriefPageVersions` answers only the newest
+    snapshots before the first one the caller's own versions read (`getVersions` with `excludePrivate`) does not list, so
+    a private draft of a page made public later does not cross.
   - `ARG_NARROWINGS`: `readReflexPages` and `readReflexLiveKeys` serve a remote `privacy: none` as `caller`.
   - Output guards: `nextLivePageAfter` steps past pages the caller may not read (at most 1,000 steps and the read
     deadline, then `scan_gap_hidden`, served/remote-scan-guard.ts); `readAccessMembers` answers by member id only and
@@ -425,7 +430,16 @@ weights of the pages they may read and store their retrieval event for the claim
   (for example `excludePrivate`, `sourceIds`, page or fact ids). Each such member is a row of
   `test/fixtures/served-member-lists/a1-arg-guards.tsv` with its hazard in one line.
 - Denied: an entry of `OWNER_IPC_REMOTE_DENY` with a one-line reason (a member that reads across all callers with no
-  scope argument, for example `listSourceRecords`, `readSharedSourceRows`, `getJob`, `readOauthClient`).
+  scope argument, for example `listSourceRecords`, `readSharedSourceRows`, `getJob`, `readOauthClient`). Two denies are
+  caught on the way of an answer:
+  - `readOwnerOnlySourcesPresent`: the caller counts the refusal as an owner-only source, so it fails closed. On a served
+    route a remote caller on a relaxed brain then takes the caller-scoped reads (no pinned-question list, caller-scoped
+    name variants).
+  - `findFuzzyEntityCandidates`: the refusal ends the remote entity resolution that reached the fuzzy step, so a
+    relational question skips its seed by title.
+  Their cases, whose answers stay the same, are pinned in `test/rust-stop-pins/l3-served-denies.tsv`; the harness checks
+  a remote-deny pin on served routes only. A remote `open_loops` reads its Google source freshness, its withheld senders
+  and its held coverage through `listAllSources`, which is served, not `listSourceRecords`.
 - Not reached: a `local-only.tsv` row whose reason starts `not reached:` and names the condition that keeps remote callers
   off it.
 

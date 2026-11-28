@@ -67,5 +67,6 @@ readSiblingGroupRows	sourceId, slugs and the excludePrivate flag come from the c
 readSourcesNotReadable	the readable list and the excludePrivate flag come from the client; the answer is one boolean about other sources, and a call with excludePrivate false counts private pages
 readTextMentionPages	sourceIds and slugs come from the client; no privacy or member predicate, so it lists private pages that name an entity in text
 readVolunteerUsage	sourceIds come from the client; aggregate usage counts of any source, no per-caller scoping
+readWriteAttributionNames	the request, OAuth client, token and local writer ids are client arguments; the operation, client name, token name and writer lane come back for any id named
 resolveChainAnchorRows	the slug and the page policy come from the client; a policy that hides nothing resolves a private anchor to its source
 scanExactBatch	the scan options, with excludePrivate and remote, come from the client; a call with excludePrivate false scans and returns private pages

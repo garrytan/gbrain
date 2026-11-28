@@ -22,6 +22,7 @@
  */
 import { expect } from 'bun:test';
 import { parityArms, type EngineMethod } from './harness.ts';
+import { rustServedRequested } from './rust-arm.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { MEMBER_AUTH, remote, remoteView, seedEntityBrain, watchRefusals } from '../helpers/served-remote-brain.ts';
@@ -31,7 +32,10 @@ const { parityTest } = parityArms(testBackends());
 const SEEDING: EngineMethod[] = ['putPage', 'sealChunks', 'setPageAliases', 'addLink', 'setConfig'];
 
 parityTest('a remote question that names an entity by a bare name, a title or two pages of one name answers the open pages only', {
-  methods: [...SEEDING, 'readPageTitle', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches', 'readSiblingGroupRows', 'readSeedTitleSlugs'],
+  // On a served route the fuzzy candidates read is refused (findFuzzyEntityCandidates, a remote deny pinned in
+  // test/rust-stop-pins/l3-served-denies.tsv), so the relational seed step that follows it (readSeedTitleSlugs) runs in process only.
+  methods: [...SEEDING, 'readPageTitle', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches', 'readSiblingGroupRows',
+    ...(rustServedRequested() ? [] : ['readSeedTitleSlugs'] as const)],
   timeout: 240_000,
 }, async (engine: BrainEngine) => {
   await seedEntityBrain(engine);

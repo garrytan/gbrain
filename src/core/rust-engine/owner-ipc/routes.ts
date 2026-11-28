@@ -152,6 +152,10 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // version body sizes (page-id guarded, remote-member-policy.ts); search reads the regions of a page with more than two
   // hits; search_exact scans a batch of pages for a phrase.
   'readSegmentedPageHead', 'readSegmentedVersionBodyBytes', 'readSegmentRegions', 'scanExactBatch',
+  // served-remote-context-reads: a remote get_write_attribution on a page names its first writer from the page's oldest
+  // version (readOldestVersionAttribution answers only a page id the caller may read) and names each writer
+  // (readWriteAttributionNames, ids trusted: a row of a1-arg-guards.tsv).
+  'readOldestVersionAttribution', 'readWriteAttributionNames',
   // served-remote-g1-search-probes (lane L3 S4, group 1): a remote search or query probes the page types of its `types` filter
   // and the target of its explain_target before it ranks, under the caller's read scope.
   'probePageTypes', 'probeTargetRows',

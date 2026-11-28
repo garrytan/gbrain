@@ -52,6 +52,7 @@ import * as engineCapabilitiesNamespace from '../../src/core/engine-capabilities
 const engineCapabilitiesModule = engineCapabilitiesNamespace as unknown as Record<string, unknown>;
 import { itemSetHash } from '../../src/core/generations/publish.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../src/core/persistence/sync-status-sql.ts';
+import { OWNER_IPC_REMOTE_DENY } from '../../src/core/rust-engine/owner-ipc/routes.ts';
 import {
   archiveRustSource, closeRustBrain, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed, rustMuRoute, rustServedRequested, openRustBrainAt, installMuConnect, type MuConnectable, type RustMuRoute,
   openServedPeer, assertRustCommitLogResolved, assertRustMultiuserResolved, recordServedCalls,
@@ -1318,7 +1319,8 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
   const unpinned = sites.filter((site) => !caughtPins.some((p) => p.member === site));
   for (const p of caughtPins) {
     if (p.due < today()) throw new Error(`[rust] "${c.name}": the stop pin for ${p.member} (${p.owner}) was due ${p.due} and has passed (${p.reason}); fix the member or move the date`);
-    if (!sites.includes(p.member)) throw new Error(`[rust] "${c.name}" has a row in test/rust-stop-pins/ for ${p.member} (${p.owner}, due ${p.due}) but no longer catches ${p.member}; remove the row`);
+    // A remote deny (OWNER_IPC_REMOTE_DENY) fires only on a served route; in process the same member answers, so its pin is checked there.
+    if (!sites.includes(p.member) && (c.served || !Object.hasOwn(OWNER_IPC_REMOTE_DENY, p.member.split('@')[0]!))) throw new Error(`[rust] "${c.name}" has a row in test/rust-stop-pins/ for ${p.member} (${p.owner}, due ${p.due}) but no longer catches ${p.member}; remove the row`);
   }
   const pinnedMembers = new Set(caughtPins.map((p) => p.member.split('@')[0]!));
   const stillRefusing = refusing.filter((m) => !pinnedMembers.has(m));

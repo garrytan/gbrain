@@ -17,6 +17,7 @@
  */
 import { afterAll, describe } from 'bun:test';
 import { parityArms } from './harness.ts';
+import { rustServedRequested } from './rust-arm.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { assertNotRefused, call, installFakeEmbedder, put, removeFakeEmbedder, seedEntityBrain, stable } from '../helpers/served-arg-reads.ts';
 
@@ -26,7 +27,10 @@ afterAll(() => removeFakeEmbedder());
 
 describe('served parity: pinned questions and entity ranking on a relaxed brain with no members', () => {
   parityTest('context_pack and rank_entities answer the same for a stdio client', {
-    methods: ['putPage', 'sealChunks', 'addLink', 'insertFacts', 'setConfig', 'insertPinnedQuestion', 'listPinnedQuestions', 'listNameVariantCandidates'],
+    // On a served route the owner-only probe is refused (readOwnerOnlySourcesPresent, a remote deny pinned in
+    // test/rust-stop-pins/l3-served-denies.tsv) and the caller fails closed to the caller-scoped reads, so the relaxed reads run in process only.
+    methods: ['putPage', 'sealChunks', 'addLink', 'insertFacts', 'setConfig', 'insertPinnedQuestion',
+      ...(rustServedRequested() ? [] : ['listPinnedQuestions', 'listNameVariantCandidates'] as const)],
     timeout: 120_000,
   }, async (engine) => {
     installFakeEmbedder();
