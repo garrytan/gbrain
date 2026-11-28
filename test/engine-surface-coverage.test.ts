@@ -332,7 +332,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Doctor facts, fence and trust reads (engine-sql/doctor-facts-trust.ts; covered by test/engine-parity/doctor-facts-trust.test.ts)
   'countConversationPipelinePages', 'listPersistentWriterContention', 'countRowTrustTiers', 'countLegacyUnknownBySource', 'listTrustColumns', 'listTrustClaimTargets', 'countClaimLiftedRows',
   // Doctor source reads (engine-sql/doctor-sources.ts; covered by test/engine-parity/doctor-sources.test.ts)
-  'readDoctorSources', 'listGuestSourceRows', 'listCheckoutRoots', 'listPendingRoster', 'countDefaultSourceFiles',
+  'readDoctorSources', 'listGuestSourceRows', 'listCheckoutRoots', 'listPendingRoster', 'countDefaultSourceFiles', 'listAdoptedSkillPackSourceIds',
   'upsertFactRelinkAttempt', 'listFactRelinkOutcomes', 'deleteFactRelinkMemos',
   'placeRelinkedFact', 'linkConversationFact', 'listConversationRelinkPages',
   'listActiveFactsForEntity', 'listFreshExtractionOutcomes', 'listFenceRowGroups', 'readFactSubject', 'factsOrAliasesMayMatch', 'listFactsForPage', 'countLegacyFactsPending',

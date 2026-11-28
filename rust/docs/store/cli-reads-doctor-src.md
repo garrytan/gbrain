@@ -16,7 +16,7 @@ as each statement did.
 | `brain.countDefaultSourceFiles()` | `{live, file_backed}`: the live pages of the `default` source and those that record a source path | the `COUNT(*)` and `COUNT(*) FILTER (WHERE source_path IS NOT NULL)` over `default` |
 
 The engine members are `readDoctorSources(variant, scope)`, `listGuestSourceRows`, `listCheckoutRoots`,
-`listPendingRoster`, `listOwnedContentRows` and `countDefaultSourceFiles`.
+`listPendingRoster`, `listOwnedContentRows`, `countDefaultSourceFiles` and `listAdoptedSkillPackSourceIds`.
 
 ## How each variant of `readDoctorSources` is answered
 
@@ -54,5 +54,9 @@ A source's `last_sync_at` is served as a `Date`.
 - `listOwnedContentRows`: empty. A gbrain-owned content source needs a persistence brain, a worktree binding and a shared-skills
   receipt, none of which the store has, so no source qualifies.
 - `countDefaultSourceFiles`: the store scans the `default` source's page records; a page is file-backed when it records a source path.
+- `listAdoptedSkillPackSourceIds`: the sources other than `default`, archived ones included, whose shared skill pack has at
+  least one head that is not deleted. It reads `listDoctorSources`, then `readSharedSkillPack` and `listSharedSkillHeadKeys`
+  for each source; this mirrors the `EXISTS` join of `shared_skill_packs` and `shared_skill_heads` on the source's
+  incarnation. The doctor `sync_freshness` check uses it to exempt read-only pack sources.
 
 The shared `scan_live_pages` of `cli_reads/sources.rs` supplies the live-page ids behind the two page-reading methods.

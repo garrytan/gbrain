@@ -396,6 +396,8 @@ export interface DoctorMembers {
   listPendingRoster(sourceIds: readonly string[] | null, hostId: string | null): Promise<DoctorSourcesSql.PendingRosterRow[]>;
   /** Live pages of the `default` source and how many of them record a source path. */
   countDefaultSourceFiles(): Promise<DoctorSourcesSql.DefaultSourceFiles>;
+  /** Non-default sources whose current incarnation holds a skill pack with a live head; throws the missing-schema error without the shared-skills tables. */
+  listAdoptedSkillPackSourceIds(): Promise<string[]>;
   // Doctor facts, fence and trust reads (engine-sql/doctor-facts-trust.ts).
   /** Live pages of the conversation-pipeline `types` whose slug matches none of the LIKE `slugPatterns`. */
   countConversationPipelinePages(types: readonly string[], slugPatterns: readonly string[]): Promise<number>;

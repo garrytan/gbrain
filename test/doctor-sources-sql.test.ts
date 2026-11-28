@@ -3,7 +3,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each variant's constant statements (and the roster members' text) equal, whitespace aside, the text the
- *    caller ran before the read moved, including the statements built from the guest, claim and connector-kind helpers.
+ *    caller ran before the read moved (the adopted skill-pack read byte for byte), including the statements built from the guest, claim and connector-kind helpers.
  *  - Regression: a drifted constant (a typo, a lost archived filter, a connector kind missing) changes what doctor reads
  *    on PGLite and Postgres.
  *  - Why existing coverage misses it: the parity cases compare engines, not the text against the old builders.
@@ -14,7 +14,7 @@ import { guestSourceSql } from '../src/core/guests/note.ts';
 import { CONNECTOR_KINDS_SQL } from '../src/core/persistence/connector-kinds.ts';
 import { TRUST_CLAIM_LIFTED_AT_KEY, claimedSourceSql, notConnectorSourceSql } from '../src/core/trust/claim-state.ts';
 import {
-  countDefaultSourceFiles, doctorSourceStatements, listCheckoutRoots, listGuestSourceRows, listOwnedContentRows, listPendingRoster,
+  countDefaultSourceFiles, doctorSourceStatements, listAdoptedSkillPackSourceIds, listCheckoutRoots, listGuestSourceRows, listOwnedContentRows, listPendingRoster,
   type DoctorSourceVariant,
 } from '../src/core/engine-sql/doctor-sources.ts';
 
@@ -100,5 +100,16 @@ describe('doctor source reads SQL text', () => {
     expect(owned).toStartWith('SELECT s.id,s.incarnation,s.local_path,s.config,s.last_commit,p.brain_id,c.value AS receipt, h.local_path AS owner_root,b.relative_path,');
     expect(owned).toEndWith("AND NOT EXISTS (SELECT 1 FROM source_ingestion_receipts r WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.profile='company-brain')");
     expect(owned).toContain('JOIN persistence_brain p ON p.singleton=1 AND (p.enabled OR $2::boolean) JOIN config c ON c.key=\'shared_skills.content.v1.\'||s.id||\'.\'||s.incarnation::text');
+  });
+
+  test('the adopted skill-pack read sends the text src/core/shared-skills/adopted-packs.ts ran at 88cfad0f15, byte for byte', async () => {
+    const seen: Array<{ sql: string; params: unknown }> = [];
+    await listAdoptedSkillPackSourceIds(async (sql: string, params?: unknown[]) => { seen.push({ sql, params }); return [] as never[]; });
+    expect(seen).toEqual([{ params: undefined, sql: `SELECT s.id FROM sources s
+        WHERE s.id <> 'default' AND EXISTS (
+          SELECT 1 FROM shared_skill_packs p
+            JOIN shared_skill_heads h ON h.source_id = p.source_id AND h.source_incarnation = p.source_incarnation
+                                     AND h.pack_id = p.pack_id AND NOT h.deleted
+           WHERE p.source_id = s.id AND p.source_incarnation = s.incarnation)` }]);
   });
 });

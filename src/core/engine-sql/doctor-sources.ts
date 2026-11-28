@@ -18,7 +18,7 @@ export type { EngineRawRead } from './doctor-reads.ts';
  * src/core/statement-deadline.ts keeps that bound on them (BOUNDED_TYPED_READS).
  */
 export const DOCTOR_SRC_MEMBERS: readonly string[] = ['readDoctorSources', 'listGuestSourceRows', 'listCheckoutRoots', 'listPendingRoster',
-  'listOwnedContentRows', 'countDefaultSourceFiles'];
+  'listOwnedContentRows', 'countDefaultSourceFiles', 'listAdoptedSkillPackSourceIds'];
 
 /** `id, local_path, config` of a source; `config` as the driver returns it (an object, or JSON text on a historical row). */
 export interface SourceRootRow { id: string; local_path: string | null; config: unknown }
@@ -247,4 +247,22 @@ export async function countDefaultSourceFiles(raw: EngineRawRead): Promise<Defau
          FROM pages
         WHERE source_id = 'default' AND deleted_at IS NULL`);
   return { live: Number(row?.live ?? 0), file_backed: Number(row?.file_backed ?? 0) };
+}
+
+/**
+ * Non-default sources holding an adopted skill pack (src/core/shared-skills/adopted-packs.ts): a `shared_skill_packs`
+ * row for the source's current incarnation with at least one live (`NOT deleted`) `shared_skill_heads` row, unordered.
+ * Throws the missing-table or missing-column error on a schema without the shared-skills tables or
+ * `sources.incarnation`; the caller reads that as no adopted packs.
+ */
+export async function listAdoptedSkillPackSourceIds(raw: EngineRawRead): Promise<string[]> {
+  const rows = await raw<{ id: string }>(
+    `SELECT s.id FROM sources s
+        WHERE s.id <> 'default' AND EXISTS (
+          SELECT 1 FROM shared_skill_packs p
+            JOIN shared_skill_heads h ON h.source_id = p.source_id AND h.source_incarnation = p.source_incarnation
+                                     AND h.pack_id = p.pack_id AND NOT h.deleted
+           WHERE p.source_id = s.id AND p.source_incarnation = s.incarnation)`,
+  );
+  return rows.map((r) => r.id);
 }

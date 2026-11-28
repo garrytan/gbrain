@@ -553,7 +553,6 @@ src/core/search/query-cache-gate.ts	execute_raw	2
 src/core/search/query-cache.ts	execute_raw	6
 src/core/search/safe-chunks.ts	execute_raw	1
 src/core/session-lane.ts	execute_raw	3
-src/core/shared-skills/adopted-packs.ts	execute_raw	1
 src/core/shared-skills/compatibility.ts	execute_raw	2
 src/core/shared-skills/knowledge-guard.ts	execute_raw	3
 src/core/shared-skills/migration-export.ts	execute_raw	7

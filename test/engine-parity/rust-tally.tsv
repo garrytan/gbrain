@@ -91,7 +91,7 @@ test/engine-parity/doctor-fence-census.test.ts	5	0
 test/engine-parity/doctor-join-checks.test.ts	4	0
 test/engine-parity/doctor-pages.test.ts	16	0
 test/engine-parity/doctor-persistence.test.ts	6	0
-test/engine-parity/doctor-raw-sites.test.ts	1	1
+test/engine-parity/doctor-raw-sites.test.ts	2	2
 test/engine-parity/doctor-reads.test.ts	1	0
 test/engine-parity/doctor-search.test.ts	10	0
 test/engine-parity/doctor-sources.test.ts	2	0

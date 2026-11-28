@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2517/2549
+# covered: 2518/2550
 # lifecycle: 21/22
 # pages: 141/142
 # search: 8/8
@@ -118,7 +118,7 @@
 # doctor_terminal: 4/4
 # doctor_fence_census: 12/12
 # doctor_facts_trust: 7/7
-# doctor_sources: 5/5
+# doctor_sources: 6/6
 # session_state: 7/7
 # doctor_join: 6/6
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
@@ -1018,7 +1018,7 @@ moveTwinPageChildren	persistence_journal	yes	4	no	yes	yes	serves
 moveTwinFacts	persistence_journal	yes	3	no	yes	yes	serves
 recordRenameAlias	persistence_journal	yes	3	no	yes	yes	serves
 movePageVersions	persistence_journal	yes	1	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	148	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	149	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	3	no	yes	yes	serves
 readTopologyChangeDigest	persistence_journal	yes	2	no	yes	yes	serves
 listTopologyRecoveries	persistence_journal	yes	5	no	yes	yes	serves
@@ -2653,11 +2653,12 @@ countLegacyUnknownBySource	doctor_facts_trust	yes	1	no	yes	yes	serves
 listTrustColumns	doctor_facts_trust	yes	3	no	yes	yes	serves
 listTrustClaimTargets	doctor_facts_trust	yes	2	no	yes	yes	serves
 countClaimLiftedRows	doctor_facts_trust	yes	2	no	yes	yes	serves
-readDoctorSources	doctor_sources	yes	1	no	yes	yes	serves
+readDoctorSources	doctor_sources	yes	2	no	yes	yes	serves
 listGuestSourceRows	doctor_sources	yes	2	no	yes	yes	serves
 listCheckoutRoots	doctor_sources	yes	1	no	yes	yes	serves
 listPendingRoster	doctor_sources	yes	1	no	yes	yes	serves
 countDefaultSourceFiles	doctor_sources	yes	1	no	yes	yes	serves
+listAdoptedSkillPackSourceIds	doctor_sources	yes	1	no	yes	yes	serves
 upsertSessionState	session_state	yes	11	no	yes	yes	serves
 readSessionCursor	session_state	yes	8	no	yes	yes	serves
 readDeltaSessionRow	session_state	yes	3	no	yes	yes	serves

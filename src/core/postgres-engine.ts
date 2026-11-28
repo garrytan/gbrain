@@ -1682,6 +1682,7 @@ export class PostgresEngine implements BrainEngine {
   listCheckoutRoots(hostId: string | null) { return doctorSourcesImpl.listCheckoutRoots(this.executeRaw.bind(this), hostId); }
   listPendingRoster(sourceIds: readonly string[] | null, hostId: string | null) { return doctorSourcesImpl.listPendingRoster(this.executeRaw.bind(this), sourceIds, hostId); }
   countDefaultSourceFiles() { return doctorSourcesImpl.countDefaultSourceFiles(this.executeRaw.bind(this)); }
+  listAdoptedSkillPackSourceIds() { return doctorSourcesImpl.listAdoptedSkillPackSourceIds(this.executeRaw.bind(this)); }
   countConversationPipelinePages(types: readonly string[], slugPatterns: readonly string[]) { return doctorFactsTrustImpl.countConversationPipelinePages(this.executeRaw.bind(this), types, slugPatterns); }
   listPersistentWriterContention(reason: string) { return doctorFactsTrustImpl.listPersistentWriterContention(this.executeRaw.bind(this), reason); }
   countRowTrustTiers(table: doctorFactsTrustImpl.TrustTierTable) { return doctorFactsTrustImpl.countRowTrustTiers(this.executeRaw.bind(this), table); }

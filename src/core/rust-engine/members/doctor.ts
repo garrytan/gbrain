@@ -159,6 +159,7 @@ export const DOCTOR_MEMBERS = {
   listCheckoutRoots: 'sources',
   listPendingRoster: 'sources',
   countDefaultSourceFiles: 'sources',
+  listAdoptedSkillPackSourceIds: 'sources',
 
   // doctor facts, fence and trust reads (engine-sql/doctor-facts-trust.ts)
   countConversationPipelinePages: 'pages',

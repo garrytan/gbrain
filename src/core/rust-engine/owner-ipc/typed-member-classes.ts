@@ -317,7 +317,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // as its engine-sql function and the Rust store function it calls show (test/rust-owner-ipc-read-classes.test.ts scans both).
   'accessTokenLive', 'countAtomExtractionBacklog', 'countChunkColumnCoverage', 'countClaimLiftedRows',
   'countCompactedCallerRefusals', 'countConversationPipelinePages', 'countCredentialProjectionPending',
-  'countDatedMeetingPages', 'countDefaultSourceFiles', 'countDerivedVisibility', 'countDistinctInboundLinkers',
+  'countDatedMeetingPages', 'countDefaultSourceFiles', 'listAdoptedSkillPackSourceIds', 'countDerivedVisibility', 'countDistinctInboundLinkers',
   'countImageModalityMismatches', 'countLedgerCoveredAtomRetirements', 'countLegacyUnknownBySource',
   'countLivePages', 'countLivePagesInSource', 'countMarkedPages', 'countMcpRequestLogRows',
   'countMcpRequestsLastDay', 'countMcpRequestsLastDayByToken', 'countMentionDueSince', 'countOauthAccessTokens',

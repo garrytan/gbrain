@@ -1944,6 +1944,7 @@ export class PGLiteEngine implements BrainEngine {
   listCheckoutRoots(hostId: string | null) { return doctorSourcesImpl.listCheckoutRoots(this.rawRead, hostId); }
   listPendingRoster(sourceIds: readonly string[] | null, hostId: string | null) { return doctorSourcesImpl.listPendingRoster(this.rawRead, sourceIds, hostId); }
   countDefaultSourceFiles() { return doctorSourcesImpl.countDefaultSourceFiles(this.rawRead); }
+  listAdoptedSkillPackSourceIds() { return doctorSourcesImpl.listAdoptedSkillPackSourceIds(this.rawRead); }
   countConversationPipelinePages(types: readonly string[], slugPatterns: readonly string[]) { return doctorFactsTrustImpl.countConversationPipelinePages(this.rawRead, types, slugPatterns); }
   listPersistentWriterContention(reason: string) { return doctorFactsTrustImpl.listPersistentWriterContention(this.rawRead, reason); }
   countRowTrustTiers(table: doctorFactsTrustImpl.TrustTierTable) { return doctorFactsTrustImpl.countRowTrustTiers(this.rawRead, table); }

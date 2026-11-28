@@ -10209,6 +10209,7 @@
         "listActiveTakesForPages": "none",
         "listActiveWorktreeRefreshRows": "none",
         "listAdminClientRows": "none",
+        "listAdoptedSkillPackSourceIds": "none",
         "listAgentSessionTakeCandidates": "none",
         "listAliasCandidatePages": "none",
         "listAliasDuePages": "none",

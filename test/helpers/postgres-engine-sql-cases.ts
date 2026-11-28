@@ -516,6 +516,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listPendingRoster': OOS.doctorSources,
   'listOwnedContentRows': OOS.doctorSources,
   'countDefaultSourceFiles': OOS.doctorSources,
+  'listAdoptedSkillPackSourceIds': OOS.doctorSources,
   'countFactFingerprintLeftovers': OOS.factsPurge,
   'countFactRelinkOutcomes': OOS.factsDoctor,
   'countLabelFacts': OOS.factsRepair,

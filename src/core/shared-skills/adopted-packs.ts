@@ -13,19 +13,13 @@ import { isMissingSchemaObject } from '../utils.ts';
  * row for the source's current incarnation with at least one live
  * (`NOT deleted`) `shared_skill_heads` row. A pack left behind by an earlier
  * incarnation does not count. A schema without the shared-skills tables (or
- * `sources.incarnation`) has no adopted packs; any other error throws.
+ * `sources.incarnation`) has no adopted packs; any other error throws. The
+ * engine answers it (`listAdoptedSkillPackSourceIds`, engine-sql/doctor-sources.ts;
+ * a Rust brain reads its store's pack and head records).
  */
 export async function adoptedSkillPackSourceIds(engine: BrainEngine): Promise<Set<string>> {
   try {
-    const rows = await engine.executeRaw<{ id: string }>(
-      `SELECT s.id FROM sources s
-        WHERE s.id <> 'default' AND EXISTS (
-          SELECT 1 FROM shared_skill_packs p
-            JOIN shared_skill_heads h ON h.source_id = p.source_id AND h.source_incarnation = p.source_incarnation
-                                     AND h.pack_id = p.pack_id AND NOT h.deleted
-           WHERE p.source_id = s.id AND p.source_incarnation = s.incarnation)`,
-    );
-    return new Set(rows.map((r) => r.id));
+    return new Set(await engine.listAdoptedSkillPackSourceIds());
   } catch (e) {
     if (isMissingSchemaObject(e, 'table', ['shared_skill_packs', 'shared_skill_heads']) || isMissingSchemaObject(e, 'column', 'incarnation')) return new Set();
     throw e;

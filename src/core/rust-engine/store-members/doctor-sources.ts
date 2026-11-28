@@ -104,3 +104,25 @@ export const countDefaultSourceFiles: Member<'countDefaultSourceFiles'> = async 
   const counts = await storeCall({ member: 'countDefaultSourceFiles' }, () => brain.countDefaultSourceFiles()) as { live: number; file_backed: number };
   return { live: Number(counts.live), file_backed: Number(counts.file_backed) };
 };
+
+/** Every head of a pack: the store takes the limit as an i64, and a JS number past 2^31 reaches it as a float. */
+const HEAD_SCAN_LIMIT = 2_147_483_647;
+
+/**
+ * A non-default source counts when the store keeps a pack for its current incarnation (one pack per incarnation) and
+ * that pack has a head that is not deleted. Archived sources count as on the SQL engines: the statement reads them too.
+ */
+export const listAdoptedSkillPackSourceIds: Member<'listAdoptedSkillPackSourceIds'> = async (brain) => {
+  const member = { member: 'listAdoptedSkillPackSourceIds' };
+  const rows = await storeCall(member, () => brain.listDoctorSources()) as StoreSource[];
+  const ids: string[] = [];
+  for (const s of rows) {
+    if (s.id === 'default') continue;
+    const pack = await storeCall(member, () => brain.readSharedSkillPack({ sourceId: s.id, incarnation: s.incarnation })) as { pack_id: string } | null;
+    if (!pack) continue;
+    const heads = await storeCall(member, () => brain.listSharedSkillHeadKeys({ sourceId: s.id, incarnation: s.incarnation, packId: pack.pack_id,
+      limit: HEAD_SCAN_LIMIT, names: [] })) as Array<{ deleted: boolean }>;
+    if (heads.some((h) => !h.deleted)) ids.push(s.id);
+  }
+  return ids;
+};
