@@ -6003,8 +6003,10 @@ way PGLite does, refuses `engine_capability_missing` and writes nothing. These a
 - a keyword or title search with a CJK query, a text search configuration other than `english`, a truthy
   `requireSafeChunks`, `minTrust` or `suppressFlagged`, a date bound that is not an ISO date, a malformed `where`, or a
   truthy `excludePrivate` on `searchKeywordChunks`, `countKeywordPages` or `searchKeywordPages` (`searchKeyword` and
-  `searchTitles` serve it; `rust/docs/store/keyword.md`, "Refusals"), and a link
-  batch that sets a link kind or resolution.
+  `searchTitles` serve it; `rust/docs/store/keyword.md`, "Refusals").
+
+`addLinksBatch` accepts nullable `link_kind` and `resolution_type` fields. A `link_kind` must be `plain` or
+`typed_ner`, and a `resolution_type` must be `qualified` or `unqualified`; any other value is rejected.
 
 A `putPage` that carries a `source_path` keeps it, and refuses `page_identity_changed` (detail
 `origin_already_claimed`) when another live page of the same source already records that path, as PGLite does.
