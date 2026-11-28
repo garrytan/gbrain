@@ -362,6 +362,8 @@ carries only `tier` or `only`; anything else fails closed with `outcome_unknown`
 own; like every doctor run it refreshes the fence census cache (fence_integrity's scan record), as a second call does.
 That refresh (`writeFenceScanRecord`, `clearFenceCandidateParts`) is the same effect as any second doctor call, on every
 engine, so a replay means no second write of its own, not zero commits.
+A replayed run_doctor moves the fence census times (watermark, fresh_at, checked_at) forward, as any second doctor run
+does; the census content is the same.
 `test/rust-served-remote-doctor.serial.test.ts` proves the one frame, the equal report, the scope refusal and the replay.
 On the Rust arm a doctor run catches the raw-SQL refusal of four check files (timeline-dedup-repair, report-remote,
 schema-pack-checks, calibration), pinned in `test/rust-stop-pins/l3-served-doctor.tsv`. The sites are on the main trunk
@@ -376,9 +378,10 @@ and write path only" (with `run_doctor` first for the two). `test/engine-parity/
 half on every arm: a keyless think, for the owner's pipe and for a non-owner member's read-only grant, with 0 refusals on
 both served routes; and a think asked to save and take that calls no write member, warns of no save or take, keeps the page
 and take counts, and says `remote_persisted_blocked: true` (turning off either gate alone fails it). Known loss
-until S4 (retrieval) serves the feedback weights read: on multi-user Rust with feedback turned on (off by default), a
-search, query or recall from a remote host refuses, and a remote think answers without page evidence (warning
-GATHER_HYBRID_FAILED). The parity file pins the think half to S4 (served routes only, due 2026-12-04).
+until S4 (retrieval) serves the feedback weights read and the retrieval event write: on multi-user Rust with feedback
+turned on (off by default), a search, query or recall from a remote host refuses, a remote think answers without page
+evidence (warning GATHER_HYBRID_FAILED), and a remote answer's feedback event is lost without a warning. The parity file
+pins the think half to S4 (served routes only, due 2026-12-04).
 
 **Reads that stay on the default ruling, by owning slice.** S4 (retrieval): `readFactsFtsIndexState`,
 `readSourcesNotReadable`. S5 (jobs, write requests, skills, membership): `countWaitingJobs`, `filterUnarchivedSourceIds`,
