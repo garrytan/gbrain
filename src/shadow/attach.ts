@@ -13,7 +13,7 @@ import type { FollowOptions } from './follow.ts';
 import { ShadowFollower } from './follower.ts';
 import { openReadSource, type ReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
-import { lostWriteRecorder } from './follow-child.ts';
+import { LOST_WRITE_UNRECORDED, lostWriteRecorder } from './follow-child.ts';
 import { confirmSeal, sealMark, type SealDeps } from './seal.ts';
 import { createLsnWatch, makeAskHandler, type LsnWatch } from './checks.ts';
 import { epochWatch, readEpoch } from './evidence-epoch.ts';
@@ -124,7 +124,11 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   const askConfirm = (): Promise<void> => (sealDeps ? (confirm ??= (deps.sealChecks?.confirm ?? confirmSeal)(sealDeps)) : Promise.resolve());
   // A write the child will never hear of leaves a line for whichever process owns the store next (follow-child.ts), so no
   // seal is trusted over it. One line a second is enough: the owner reads any line as "a write was lost".
-  const lost = lostWriteRecorder({ dir });
+  // A line that cannot be written is retried, and a live child is told at once (which revokes a seal it holds).
+  const lost = lostWriteRecorder({
+    dir,
+    invalidate: (reason) => { if (supervisor.active()) supervisor.send(`${JSON.stringify({ t: 'watermark', valid: false, reason })}\n`); },
+  });
   const follower = reads ? new ShadowFollower({
     reads, send: (line) => supervisor.send(line), rpc,
     onDirty: (relation) => reconciler?.markDirty(relation),
@@ -161,13 +165,14 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
       // A close that does not seal tells the child why, so status names the reason.
       try {
         if (follower && sealDeps && supervisor.active() && supervisor.childPid !== null) {
-          let refused: string | null = !settled ? 'follower_not_settled' : !follower.idle() ? 'follower_not_idle' : null;
+          let refused: string | null = !settled ? 'follower_not_settled' : !follower.idle() ? 'follower_not_idle' : !lost.flush() ? LOST_WRITE_UNRECORDED : null;
           let token: string | null = null;
           if (!refused) {
             await Promise.race([askConfirm(), new Promise((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
             const mark = await (deps.sealChecks?.mark ?? sealMark)(sealDeps);
             if ('refused' in mark) refused = mark.refused;
             else if (!follower.idle()) refused = 'follower_not_idle';
+            else if (!lost.flush()) refused = LOST_WRITE_UNRECORDED;
             else token = mark.token;
           }
           supervisor.send(JSON.stringify(refused ? { t: 'seal', db_at: null, refused } : { t: 'seal', db_at: token }) + '\n');
