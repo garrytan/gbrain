@@ -38,7 +38,7 @@ import { declarePersistence } from '../../src/core/engine-sql/persistence-declar
 import { lockEffectClaimRow } from '../../src/core/engine-sql/embedding-install.ts';
 import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../../src/core/rust-engine.ts';
-import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
+import { LOST_NONQUALIFYING, QUALIFYING_LINE_REASONS, readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
 import { encodeArgs } from '../../src/shadow/codec.ts';
 import { ensureEpoch, readEpoch } from '../../src/shadow/evidence-epoch.ts';
 import { withEnv } from './with-env.ts';
@@ -272,6 +272,25 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       const tally = await lone({ t: 'write', op: 'addLinksBatch', args: encodeArgs([[]]), pre: empty, post: { pages: [], links: [] }, moved: false });
       expect(tally).toMatchObject({ comparable: 0, unexplained_difference: 0, uncomparable: 1, uncomparable_by_reason: { target_unresolved: 1 } });
     }, 60_000);
+
+    test('a target_unresolved sample and a nothing_to_compare sample each add 1 to uncomparable and leave comparable and unexplained_difference as they were', async () => {
+      // Neither reason settles or stands for a lost page write: they are ordinary uncomparable verdicts, never a lost-line reason.
+      for (const reason of ['target_unresolved', 'nothing_to_compare']) { expect(QUALIFYING_LINE_REASONS.has(reason)).toBe(false); expect(LOST_NONQUALIFYING.has(reason)).toBe(false); }
+      const noop = (await replay(async (e) => { await e.removeLink('companies/acme-example', 'people/alice-example', 'works_at'); }, 1)).inbox[0]!; // the link runs the other way
+      const empty = { sources: [], pages: [], links: [] };
+      const unnamed: WriteEvent = { t: 'write', op: 'addLinksBatch', args: encodeArgs([[]]), pre: empty, post: { pages: [], links: [] }, moved: false };
+      const dir = ctx.tempDir(); const on = tallyOn(dir);
+      on.tally.note('comparable'); on.tally.note('unexplained_difference'); on.tally.save();
+      let before = on.counts();
+      expect(before).toMatchObject({ comparable: 1, unexplained_difference: 1, uncomparable: 0 });
+      for (const [event, reason] of [[unnamed, 'target_unresolved'], [noop, 'nothing_to_compare']] as const) {
+        await settle(createWriteComparer({ dir, tally: on.tally, alive: () => true, load: { ok: true, addon: addonOf() } as never, scratchRoot: ctx.tempDir() }), [event]);
+        const after = on.counts();
+        expect(after).toMatchObject({ comparable: before.comparable, unexplained_difference: before.unexplained_difference, uncomparable: before.uncomparable + 1, capability_missing: before.capability_missing });
+        expect(after.uncomparable_by_reason[reason]).toBe((before.uncomparable_by_reason[reason] ?? 0) + 1);
+        before = after;
+      }
+    }, 120_000);
 
     test('a link removal with no link to remove is uncomparable (nothing_to_compare), never comparable: the wrong direction, the wrong type, or no link at all', async () => {
       const out = await replay(async (e, sampled) => {

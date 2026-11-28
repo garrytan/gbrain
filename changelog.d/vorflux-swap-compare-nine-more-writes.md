@@ -8,4 +8,4 @@
 
 ### Fixed
 - A sampled write whose pages could not be named (an empty batch, a page id the brain did not know, a source left out) used to read back nothing from both engines and count as a match. It is now `uncomparable`, with the new reason `target_unresolved`.
-- A sampled write whose pages were not in the copy, or a link removal with no link to remove, used to count as a match. It is now `uncomparable` (`target_absent`, or the new reason `nothing_to_compare`). This also tightens the existing `removeLink` comparison. Both new reasons are uncomparable only: they never count as a match and never count toward criterion 5.
+- A sampled write whose pages were not in the copy, or a link removal with no link to remove, used to count as a match. It is now `uncomparable` (`target_absent`, or the new reason `nothing_to_compare`). This also tightens the existing `removeLink` comparison: a removeLink that removes nothing is booked uncomparable (nothing_to_compare), not as a match; this lowers the compared-write count toward the bar. Both new reasons are uncomparable only: they never count as a match and never count toward criterion 5.
