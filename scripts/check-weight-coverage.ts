@@ -51,6 +51,7 @@ const LANES = [
     lane: 'unit', map: 'scripts/test-weights.json', threshold: 0.05,
     files: tests.filter(f => !f.endsWith('.serial.test.ts') && !f.startsWith('test/e2e/')),
     miner: 'bun run weights:mine --lane unit --latest 5 --coverage-only',
+    refresh: 'bun run weights:mine --lane unit --latest 5',
   },
   {
     lane: 'serial', map: 'scripts/serial-weights.json', threshold: 0.10,
@@ -68,14 +69,15 @@ const listDead = (entries: string[]) => [...entries.slice(0, 10).map(e => `  ${e
 const deadHeader = (map: string, n: number) => `${map}: ${n} ${n === 1 ? 'entry names a file that no longer exists' : 'entries name files that no longer exist'}:`;
 const failures: string[] = [];
 const warnings: string[] = [];
-for (const { lane, map, threshold, files, miner } of LANES) {
+for (const { lane, map, threshold, files, miner, refresh } of LANES) {
   const weights = readMap(map);
   const dead = Object.keys(weights).filter(path => !exists(path));
   if (dead.length) failures.push(`${deadHeader(map, dead.length)}\n${listDead(dead)}\n  Fix: delete ${dead.length === 1 ? 'that entry' : 'those entries'} from ${map}, or re-mine: ${miner}`);
   const unweighted = files.filter(f => !(f in weights));
   const share = files.length ? unweighted.length / files.length : 0;
   if (share > threshold) {
-    const line = `${lane}: ${unweighted.length} of ${files.length} files (${(share * 100).toFixed(1)}%) have no weight in ${map}, above the ${threshold * 100}% bound; shards are packed blind.\n  Fix: ${miner}`;
+    const line = `${lane}: ${unweighted.length} of ${files.length} files (${(share * 100).toFixed(1)}%) have no weight in ${map}, above the ${threshold * 100}% bound; shards are packed blind.\n  Fix: ${miner}`
+      + (refresh ? `\n  That adds only the missing files and keeps every existing weight. After a large test wave, or when a shard runs 25% past the mean, refresh every weight: ${refresh}` : '');
     (SCHEDULED ? failures : warnings).push(line);
   }
 }
