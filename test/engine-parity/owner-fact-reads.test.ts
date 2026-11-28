@@ -154,7 +154,9 @@ describe('engine parity: the brain owner\'s remote fact reads judge each fact by
       for (const [label, tool, params] of reads) {
         const cell = await observe(engine, token, who, tool, params);
         expect({ who, what: label, error: cell.error, facts: cell.facts }).toEqual({ who, what: label, error: null, facts: OWNER_FACTS });
-        mine[label] = cell.payload;
+        // A plain query ranks facts on an engine with raw SQL and keeps the newest-facts read on the Rust engine (sync 21, as on
+        // master), so the query read is compared across arms by the facts it gives the owner, not by its order or ranking fields.
+        mine[label] = label === 'recall query' ? { facts: cell.facts } : cell.payload;
       }
       // get_page's fact table: compared across arms; it never carries a fact outside the owner's set.
       const page = await observe(engine, token, who, 'get_page', { slug: ENTITY });
