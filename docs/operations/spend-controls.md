@@ -154,7 +154,7 @@ line naming the cap, its source and how to remove it, e.g.
 | `onboard --auto` | `--max-usd` (per-call) | — | refuses without `--max-usd` (exit 2); manual-only steps (pack upgrade, takes bootstrap) never run, their commands are printed | `--max-usd off` | runs uncapped (still ledgered) |
 | Image-OCR per-run ceiling | `embedding_image_ocr_max_images` / `embedding_image_ocr_max_usd` | `200` images / `$1.00` (estimated) | skips OCR over-cap (import continues; skips counted in `ocr_skipped_budget`, surfaced by doctor `ocr_health`) | `0` disables that cap | **not** bypassed (per-run cap, not a tracker gate) |
 | Dream `extract_atoms` phase budget | `cycle.extract_atoms.budget_usd` | `0.30` | caps the phase's budget tracker (one tracker per drain attempt, across all its batches) | `0` = spend nothing | **not** consulted (phase budget enforces regardless) |
-| Atom auto-drain daily cap | `autopilot.auto_drain.max_usd_per_day` | `2.00` | daily cap on drain **attempts** (`floor(max / 0.30)` = 6), not a dollar ledger | `gbrain config set autopilot.auto_drain.enabled false` | **not** consulted |
+| Atom auto-drain daily cap | `autopilot.auto_drain.max_usd_per_day` | `2.00` | counts queued drain **attempts** before Autopilot submits more (`floor(max / 0.30)` = 6), not a dollar ledger | `gbrain config set autopilot.auto_drain.enabled false` | **not** consulted |
 | Connector email/meeting atoms | `cycle.extract_atoms.connector_pages` | on (unset) | Gmail/Calendar `email`/`meeting` pages are extracted like other pages, under the auto-drain cap | `false` | **not** consulted |
 | Life Chronicle event extraction | `chronicle.job_budget_usd` (per page) / `chronicle.auto_daily_limit` (calls per rolling 24 h) | `0.25` / `200` | caps one extraction call; past the daily limit pending pages wait for a free slot | `gbrain config set auto_chronicle false` | **not** consulted |
 | [Fence model repair (Tier 3)](#fence-model-repair-tier-3) | `fences.repair.max_usd_per_page` / `fences.repair.max_usd_per_day` | `0.30` / `1.00` | refuses the call: a page whose estimate is over the per-page cap or over today's remainder in the durable USD ledger (`llm_repair`/`fences`, per UTC day across every process) waits as `budget_exhausted`, and `gbrain repair fences --apply` stops there with exit 1. `--max-usd <n>` lowers a run's cap, never raises it | `gbrain config set fences.repair.llm false` (`0` on a cap = no model spend) | **not** consulted |
@@ -284,9 +284,11 @@ estimate is `delta + stale backlog`, labeled as such.
 **Say to your agent:** *"Extract atoms from my Gmail and Calendar pages too"* or
 *"Stop spending on automatic atom extraction."*
 
-When the active schema pack does not run `extract_atoms` in the routine cycle,
-autopilot (Postgres brains) submits a bounded `extract-atoms-drain` job per
-source with a backlog. Each drain **attempt** runs under one BudgetTracker
+On Postgres brains, Autopilot can submit a bounded `extract-atoms-drain` job
+when an eligible source's backlog exceeds `autopilot.auto_drain.threshold`
+(25 by default), whether or not the active schema pack declares `extract_atoms`.
+Autopilot uses one job slot per source per UTC day, subject to the brain-wide
+attempt cap. Each drain **attempt** runs under one BudgetTracker
 capped at `cycle.extract_atoms.budget_usd` ($0.30 by default), shared by all of
 its batches. The daily cap `autopilot.auto_drain.max_usd_per_day` ($2.00) is a
 count of attempts at that per-attempt estimate (6 a day), so a retried job
@@ -303,6 +305,11 @@ instead stops the run before any model call: the phase reports `warn` with
 stop counts as an expected limit rather than a halt in `extract_health`, and
 `gbrain doctor` names the command until you register the price with
 `gbrain pricing set` (see [registering a model price](#registering-a-model-price)).
+
+On the brain host, `gbrain dream --source <id> --drain --dry-run` shows the
+backlog without calling a model. Removing `--dry-run` runs the drain inline
+under the same per-attempt budget. The inline command does not enqueue a job
+or use an Autopilot submission slot.
 
 Connector pages are extracted by default. Gmail threads (`email`) and
 Calendar events (`meeting`) from a Google or GitHub connector source go

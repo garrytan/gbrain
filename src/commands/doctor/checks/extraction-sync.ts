@@ -570,18 +570,6 @@ function buildExtractAtomsDrainCommand(
   return `gbrain dream --phase extract_atoms --drain --source ${bySource[0]!.source_id} --window 120 (repeat for backlog source(s): ${sources})`;
 }
 
-function buildExtractAtomsBacklogFixHint(
-  bySource: Array<{ source_id: string; backlog: number }> | null,
-): string {
-  const drain = buildExtractAtomsDrainCommand(bySource);
-  if (bySource && bySource.length > 1) {
-    // Multi-source form already ends in a parenthetical — fold the
-    // declare-suggestion into it.
-    return drain.replace(/\)$/, '; or declare extract_atoms in your active schema pack)');
-  }
-  return `${drain} (or declare extract_atoms in your active schema pack)`;
-}
-
 /**
  * #4576 — evidence that a full routine cycle actually completes on this host.
  * Reads the most recent `last_full_cycle_at` across local_path sources — the
@@ -697,14 +685,19 @@ async function extractAtomsBacklogCheck(
       };
     }
 
-    // The incident: pack does NOT run the phase but a real backlog exists →
-    // it will grow forever without a signal. WARN with the drain command.
+    // #5028: routine Autopilot drains have their own schedule, independent of pack phases.
     if (!declared && backlog > 10) {
       const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog, opts.sourceIds);
-      const fix = gate.consent_required ? 'gbrain config set cycle.extract_atoms.enabled true' : buildExtractAtomsBacklogFixHint(backlogBySource);
+      const fix = gate.consent_required
+        ? 'gbrain config set cycle.extract_atoms.enabled true'
+        : buildExtractAtomsDrainCommand(backlogBySource);
+      const message = gate.consent_required
+        ? `${backlog} pages eligible for atom extraction but the active pack does not run extract_atoms — backlog growing. Fix: ${fix}`
+        : `${backlog} pages eligible for atom extraction. With auto-drain enabled on PostgreSQL, ` +
+          `Autopilot schedules eligible drains separately from schema pack phases. Manual drain: ${fix}`;
       return {
         name, status: 'warn',
-        message: `${backlog} pages eligible for atom extraction but the active pack does not run extract_atoms — backlog growing. Fix: ${fix}`,
+        message,
         details: { backlog, backlog_by_source: backlogBySource ?? undefined, pack_declares_phase: false, fix_hint: fix, known_approximation: approx },
       };
     }
