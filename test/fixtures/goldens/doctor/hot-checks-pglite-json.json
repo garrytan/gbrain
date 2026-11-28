@@ -538,7 +538,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 202607
+                "used_bytes": 201370
               },
               "inspected": 2,
               "outstanding": [],
@@ -548,7 +548,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 202607 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 201370 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -1149,9 +1149,9 @@
                   },
                   "worktree": {
                     "absent": 0,
-                    "clean": 18,
+                    "clean": 19,
                     "deleted": 0,
-                    "modified": 1,
+                    "modified": 0,
                     "untracked": 0
                   }
                 }
@@ -1492,14 +1492,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1416 column(s) verified against live schema",
+            "message": "1417 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 197 table(s) the applied migrations create exist.",
+            "message": "All 198 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -2838,7 +2838,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability",
+            "message": "Subagent tier resolves to default (claude-sonnet-5-5) — full tool-loop capability",
             "name": "subagent_capability",
             "status": "ok"
           },
@@ -3149,8 +3149,8 @@
                 }
               ],
               "stale_count": 1,
-              "synced_recently_count": 1,
-              "unchanged_count": 0,
+              "synced_recently_count": 0,
+              "unchanged_count": 1,
               "writer_owned_count": 1
             },
             "elapsed_ms": "<volatile>",
@@ -3436,12 +3436,6 @@
                 {
                   "age_ms": "<volatile>",
                   "checkout": "<home>/notes-src",
-                  "path": "fences/deterministic.md",
-                  "state": "modified"
-                },
-                {
-                  "age_ms": "<volatile>",
-                  "checkout": "<home>/notes-src",
                   "path": "fences/untracked.md",
                   "state": "untracked"
                 },
@@ -3470,7 +3464,7 @@
                   "state": "untracked"
                 }
               ],
-              "dirty_count": 6,
+              "dirty_count": 5,
               "dirty_warn_after_minutes": 30,
               "foreign": [],
               "partial": false,
@@ -4818,18 +4812,18 @@
                 },
                 {
                   "by_tier": {
-                    "deterministic": 2,
+                    "deterministic": 3,
                     "llm": 1,
                     "manual": 1,
                     "resolver": 0,
-                    "total": 4
+                    "total": 5
                   },
                   "files": {
-                    "deterministic": 1,
+                    "deterministic": 2,
                     "llm": 0,
                     "manual": 0,
                     "resolver": 0,
-                    "total": 1
+                    "total": 2
                   },
                   "holds": {
                     "deterministic": 0,
@@ -4847,6 +4841,15 @@
                     "total": 1
                   },
                   "sample": [
+                    {
+                      "bucket": "file",
+                      "key": "fences/deterministic",
+                      "path": "fences/deterministic.md",
+                      "reasons": [
+                        "close_fence"
+                      ],
+                      "tier": "deterministic"
+                    },
                     {
                       "bucket": "hold",
                       "key": "fences/llm",
@@ -4892,7 +4895,7 @@
                     "walking": false
                   },
                   "source_id": "notes",
-                  "total": 4
+                  "total": 5
                 },
                 {
                   "by_tier": {
@@ -4947,7 +4950,7 @@
                 }
               ],
               "timeout_ms": "<volatile>",
-              "total": 5,
+              "total": 6,
               "trend": [
                 {
                   "by_day": [],
@@ -5049,7 +5052,7 @@
               },
               "why": "Previews the repair of each malformed fence of notes (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence gbrain will not guess; it prints the apply command with --expect <hash>. They are not repaired automatically (no maintenance run has completed in the last 24 h), so apply the plan with the command the preview prints. 1 need a manual edit: make the edit the preview names in the file (or the page), commit, then sync."
             },
-            "message": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 2, llm 1, manual 1); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 1 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
+            "message": "6 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 2 unsynced file(s) (by tier: deterministic 3, llm 1, manual 1); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 1 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
             "name": "fence_integrity",
             "status": "warn"
           },
@@ -5525,7 +5528,7 @@
               },
               "why": "Previews the repair of each malformed fence of notes (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence gbrain will not guess; it prints the apply command with --expect <hash>. They are not repaired automatically (no maintenance run has completed in the last 24 h), so apply the plan with the command the preview prints. 1 need a manual edit: make the edit the preview names in the file (or the page), commit, then sync."
             },
-            "fix": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 2, llm 1, manual 1); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 1 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
+            "fix": "6 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 2 unsynced file(s) (by tier: deterministic 3, llm 1, manual 1); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 1 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
             "name": "fence_integrity",
             "status": "warn",
             "tier": "symptom"
@@ -6240,7 +6243,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 202607
+                "used_bytes": 201370
               },
               "inspected": 2,
               "outstanding": [],
@@ -6250,7 +6253,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 202607 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 201370 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -6851,9 +6854,9 @@
                   },
                   "worktree": {
                     "absent": 0,
-                    "clean": 18,
+                    "clean": 19,
                     "deleted": 0,
-                    "modified": 1,
+                    "modified": 0,
                     "untracked": 0
                   }
                 }
@@ -7194,14 +7197,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1416 column(s) verified against live schema",
+            "message": "1417 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 197 table(s) the applied migrations create exist.",
+            "message": "All 198 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -8540,7 +8543,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability",
+            "message": "Subagent tier resolves to default (claude-sonnet-5-5) — full tool-loop capability",
             "name": "subagent_capability",
             "status": "ok"
           },
@@ -8851,8 +8854,8 @@
                 }
               ],
               "stale_count": 1,
-              "synced_recently_count": 1,
-              "unchanged_count": 0,
+              "synced_recently_count": 0,
+              "unchanged_count": 1,
               "writer_owned_count": 1
             },
             "elapsed_ms": "<volatile>",
@@ -9138,12 +9141,6 @@
                 {
                   "age_ms": "<volatile>",
                   "checkout": "<home>/notes-src",
-                  "path": "fences/deterministic.md",
-                  "state": "modified"
-                },
-                {
-                  "age_ms": "<volatile>",
-                  "checkout": "<home>/notes-src",
                   "path": "fences/late.md",
                   "state": "untracked"
                 },
@@ -9184,7 +9181,7 @@
                   "state": "untracked"
                 }
               ],
-              "dirty_count": 8,
+              "dirty_count": 7,
               "dirty_warn_after_minutes": 30,
               "foreign": [],
               "partial": false,
@@ -10532,18 +10529,18 @@
                 },
                 {
                   "by_tier": {
-                    "deterministic": 1,
+                    "deterministic": 2,
                     "llm": 1,
                     "manual": 2,
                     "resolver": 0,
-                    "total": 4
+                    "total": 5
                   },
                   "files": {
-                    "deterministic": 0,
+                    "deterministic": 1,
                     "llm": 0,
                     "manual": 1,
                     "resolver": 0,
-                    "total": 1
+                    "total": 2
                   },
                   "holds": {
                     "deterministic": 0,
@@ -10561,6 +10558,15 @@
                     "total": 1
                   },
                   "sample": [
+                    {
+                      "bucket": "file",
+                      "key": "fences/deterministic",
+                      "path": "fences/deterministic.md",
+                      "reasons": [
+                        "close_fence"
+                      ],
+                      "tier": "deterministic"
+                    },
                     {
                       "bucket": "file",
                       "key": "fences/late",
@@ -10606,7 +10612,7 @@
                     "walking": false
                   },
                   "source_id": "notes",
-                  "total": 4
+                  "total": 5
                 },
                 {
                   "by_tier": {
@@ -10661,7 +10667,7 @@
                 }
               ],
               "timeout_ms": "<volatile>",
-              "total": 5,
+              "total": 6,
               "trend": [
                 {
                   "by_day": [],
@@ -10763,7 +10769,7 @@
               },
               "why": "Previews the repair of each malformed fence of notes (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence gbrain will not guess; it prints the apply command with --expect <hash>. They are not repaired automatically (no maintenance run has completed in the last 24 h), so apply the plan with the command the preview prints. 2 need a manual edit: make the edit the preview names in the file (or the page), commit, then sync."
             },
-            "message": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 1, llm 1, manual 2); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 2 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
+            "message": "6 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 2 unsynced file(s) (by tier: deterministic 2, llm 1, manual 2); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 2 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
             "name": "fence_integrity",
             "status": "warn"
           },
@@ -11239,7 +11245,7 @@
               },
               "why": "Previews the repair of each malformed fence of notes (read-only, no model call): its planned tier and diff, the estimated model cost, or the exact edit for a fence gbrain will not guess; it prints the apply command with --expect <hash>. They are not repaired automatically (no maintenance run has completed in the last 24 h), so apply the plan with the command the preview prints. 2 need a manual edit: make the edit the preview names in the file (or the page), commit, then sync."
             },
-            "fix": "5 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 1 unsynced file(s) (by tier: deterministic 1, llm 1, manual 2); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 2 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
+            "fix": "6 malformed facts or takes fence(s) wait: notes: 2 held file(s), 1 stored page(s), 2 unsynced file(s) (by tier: deterministic 2, llm 1, manual 2); oldest hold 0 h old; plain: 1 unsynced file(s) (by tier: deterministic 1). The deterministic, resolver and model-tier ones are not repaired automatically (no maintenance run has completed in the last 24 h); 2 need the manual edit the preview names. None of them blocks a sync. Preview: gbrain repair fences --source notes; gbrain repair fences --source plain. Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).",
             "name": "fence_integrity",
             "status": "warn",
             "tier": "symptom"

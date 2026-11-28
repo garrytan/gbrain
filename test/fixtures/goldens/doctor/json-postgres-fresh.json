@@ -1277,7 +1277,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "RLS enabled on 196/196 public tables",
+          "message": "RLS enabled on 197/197 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -1329,14 +1329,14 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1422 column(s) verified against live schema",
+          "message": "1423 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 196 table(s) the applied migrations create exist.",
+          "message": "All 197 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -2481,7 +2481,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability",
+          "message": "Subagent tier resolves to default (claude-sonnet-5-5) — full tool-loop capability",
           "name": "subagent_capability",
           "status": "ok"
         },

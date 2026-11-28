@@ -7,8 +7,9 @@
  * D23 (the maintainer's C1 ruling of 2026-11-19) makes the speed bar gate only turning Rust on by default, not the
  * opt-in swap.
  */
-import { DEFAULT_SHADOW_MIN_DAYS } from './policy.ts';
+import { DEFAULT_SHADOW_MIN_DAYS, effectiveShadowMin, READINESS_POLICY, type ReadinessPolicy } from './policy.ts';
 import type { SwapRefusalReason } from './refusals.ts';
+import { describeShortfall, describeWriteBar, writeBar, type QualifyingWrites } from '../../shadow/write-bar.ts';
 
 /** The fields S5a reads; S3 owns the document. Counts are epoch-scoped totals unless the name says otherwise. */
 export interface ShadowStatus {
@@ -32,13 +33,22 @@ export interface ShadowStatus {
     unexplained_difference?: number;
     uncomparable?: number;
     capability_missing?: number;
+    /** The brain's qualifying write calls by day (shadow/write-bar.ts): the source of criterion 5's bar. */
+    qualifying_writes?: QualifyingWrites | null;
     /** Sampled writes outside the page and link pilot, by family (shadow/write-compare.ts). */
     capability_missing_by_family?: Record<string, number>;
+    /** Sessions with an owed sample still unsettled, replays with no verdict and lost samples no tally has taken (shadow/follow-status.ts); the swap check waits for it to be absent. */
+    unresolved_replays?: number;
+    /** Write windows a crash of the serving process lost, of unknown sample count (shadow/follow-status.ts): no evidence for the rest of the epoch, never counted toward the write bar. */
+    write_windows_lost?: number;
+    uncomparable_by_reason?: Record<string, number>;
+    /** Paths of pending markers (`write-pending.<session>.json`, at most 8): the serving process could not make an owed record durable; status reads no evidence until the step in `PENDING_MARKER_STEP` is done. */
+    pending_markers?: string[];
   };
   fingerprints?: {
     checked_rows?: number;
     mismatches?: number;
-    probe?: { state?: 'pass' | 'fail' | 'not_run'; checked_at?: string; server_version?: string; collation?: string; mismatches?: number };
+    probe?: { state?: 'pass' | 'fail' | 'not_run'; checked_at?: string; server_version?: string; collation?: string; locale_provider?: string | null; locale?: string | null; mismatches?: number };
   };
   allocators?: { verified?: boolean; checked_at?: string };
   seed?: { seed_id?: string; finished_at?: string | null; unseeded_gap_rows_total?: number };
@@ -69,6 +79,8 @@ export interface ShadowStatus {
     /** Writer hosts seen by durable writer observations in the last 7 days; null when no observation table exists. */
     writer_hosts_7d?: number | null;
     unknown_writer_paths?: number;
+    /** Observed writers of an older build (no write_protocol, or one below this build's) in the evidence epoch; counted in `unknown_writer_paths`. */
+    legacy_write_writers?: number;
     team_brain?: boolean;
     preview_target?: boolean;
   };
@@ -97,12 +109,11 @@ export interface ReadinessVerdict {
   missing_fields: string[];
 }
 
-/** Criterion 1's minimum shadow duration: the readiness policy's default (policy.ts, frozen for the Dec 1 swap). */
+/** Criterion 1's default minimum shadow duration (policy.ts); the policy in force may shorten it for a dated window. */
 export const MIN_SHADOW_DAYS = DEFAULT_SHADOW_MIN_DAYS;
 export const MAX_LAG_P99_MS = 60_000;
 export const MIN_CLEAN_RECONCILES = 3;
 export const MIN_TOTAL_READS = 10_000;
-export const MIN_WRITE_COMPARISONS = 1_000;
 export const MIN_VECTOR_RECALL = 0.98;
 export const MIN_BENCH_PAIRS = 100;
 
@@ -134,6 +145,13 @@ export const WRITE_COVERAGE_LOSS = 'Named loss: only putPage, deletePage, addLin
 export const WRITE_PGLITE_LIMIT = 'PGLite brains record no write comparisons';
 /** And by whom: only the shadow child that owns the Rust store records; a client child adds no evidence and can never make criterion 5 pass. */
 export const WRITE_CLIENT_LIMIT = 'client shadow children record no write comparisons';
+
+/** And at what load: the child replays one sample at a time, so a brain that writes faster than it replays never has all its samples settled. */
+export const WRITE_SETTLE_LIMIT = 'the child keeps up only below ~19 samples/s on this VM; a brain that writes faster has no moment with all samples settled, so the swap check refuses';
+/** What criterion 5 says when the swap check waited 60 s (`SWAP_SETTLE_WAIT_MS`, plan.ts) and never read a moment with every sample settled. */
+export const BRAIN_BUSY = 'brain busy: no 60 s lull with all samples settled; retry when idle';
+/** What an operator does about a pending marker (`write-pending.<session>.json` in the shadow state directory): the serving process could not write an owed record down, so no one knows how many samples it holds. Nothing clears it automatically. */
+export const PENDING_MARKER_STEP = "confirm the disk is healthy, then delete the marker file, then restart shadow; on a managed or owner-operated brain, this step goes through Capy Workflow Improver, never to the brain's owner by hand";
 
 const DAY_MS = 86_400_000;
 
@@ -181,7 +199,7 @@ function guarded(r: Reader, body: () => Check): Check {
   return r.missing.length > before ? missingCheck(r.missing.slice(before)) : out;
 }
 
-function shadowDuration(r: Reader, now: Date): Check {
+function shadowDuration(r: Reader, now: Date, policy: ReadinessPolicy): Check {
   return guarded(r, () => {
     const started = r.s('epoch_started_at');
     const p99 = r.n('follower.lag_ms_p99_epoch');
@@ -197,12 +215,14 @@ function shadowDuration(r: Reader, now: Date): Check {
     if (!Number.isFinite(t)) return { state: 'fail', detail: `epoch_started_at is not a time: ${started}` };
     const days = (now.getTime() - t) / DAY_MS;
     const fails: string[] = [];
-    if (days < MIN_SHADOW_DAYS) fails.push(`${days.toFixed(1)} of ${MIN_SHADOW_DAYS} days in the epoch`);
+    // The duration is the only part of criterion 1 a policy sets (policy.ts); lag and clean reconciles always apply.
+    const min = effectiveShadowMin(policy, now);
+    if (min.required && days < min.days) fails.push(`${days.toFixed(1)} of ${min.days} days in the epoch`);
     if (p99 >= MAX_LAG_P99_MS) fails.push(`follower lag p99 ${p99} ms (needs under ${MAX_LAG_P99_MS})`);
     if (clean < MIN_CLEAN_RECONCILES) fails.push(`${clean} of ${MIN_CLEAN_RECONCILES} consecutive clean reconcile passes`);
     return fails.length
       ? { state: 'fail', detail: fails.join('; ') }
-      : { state: 'pass', detail: `${days.toFixed(1)} days, lag p99 ${p99} ms, ${clean} clean reconciles` };
+      : { state: 'pass', detail: `${days.toFixed(1)} days (minimum ${min.required ? `${min.days}` : 'not required'}), lag p99 ${p99} ms, ${clean} clean reconciles` };
   });
 }
 
@@ -269,23 +289,46 @@ function uncoveredWriteLines(byFamily: Record<string, unknown>): string[] {
   return [...lines, `other write families sampled: ${other.length ? other.join(', ') : 'none'}`, WRITE_COVERAGE_LOSS];
 }
 
-function writeComparisons(r: Reader): Check {
+/**
+ * Criterion 5: zero unexplained differences on at least the brain's own write bar of compared writes (write-bar.ts:
+ * min(1000, max(100, window x W)), the window being criterion 1's shadow minimum in force).
+ */
+function writeComparisons(r: Reader, now: Date, policy: ReadinessPolicy): Check {
   const out = guarded(r, () => {
     const state = r.s('write_comparisons.state');
     const comparable = r.n('write_comparisons.comparable');
     const unexplained = r.n('write_comparisons.unexplained_difference');
-    if (state === undefined || comparable === undefined || unexplained === undefined) return { state: 'missing', detail: '' };
+    const history = r.get<QualifyingWrites>('write_comparisons.qualifying_writes',
+      v => typeof v === 'object' && v !== null && typeof (v as QualifyingWrites).by_day === 'object' && (v as QualifyingWrites).by_day !== null);
+    if (state === undefined || comparable === undefined || unexplained === undefined || history === undefined) return { state: 'missing', detail: '' };
     // A shadow that cannot compare writes never passes (S3 rule: capability_missing refuses, like a missing field).
-    if (state === 'capability_missing') return { state: 'missing', detail: 'no evidence: write_comparisons.state is capability_missing' };
+    if (state === 'capability_missing') {
+      const lostWindows = r.peek<number>('write_comparisons.write_windows_lost');
+      if (num(lostWindows) && lostWindows > 0) return { state: 'missing', detail: `no evidence: ${lostWindows} write window(s) lost in a crash, sample count unknown; no evidence for the rest of this epoch; never counted toward the write bar` };
+      const unsettled = r.peek<number>('write_comparisons.unresolved_replays');
+      const markers = r.peek<string[]>('write_comparisons.pending_markers');
+      if (Array.isArray(markers) && markers.length) return { state: 'missing', detail: `no evidence: a pending marker holds the write count closed (${markers.join(', ')}); ${PENDING_MARKER_STEP}` };
+      if (num(unsettled) && unsettled > 0) return { state: 'missing', detail: BRAIN_BUSY }; // the swap check already waited for a lull (plan.ts)
+      return { state: 'missing', detail: 'no evidence: write_comparisons.state is capability_missing' };
+    }
+    const min = effectiveShadowMin(policy, now);
+    const bar = writeBar(history, min.required ? min.days : DEFAULT_SHADOW_MIN_DAYS, now);
+    const how = describeWriteBar(bar);
     const fails: string[] = [];
-    if (comparable < MIN_WRITE_COMPARISONS) fails.push(`${comparable} of ${MIN_WRITE_COMPARISONS} comparable write comparisons`);
+    if (comparable < bar.bar) {
+      fails.push(`${comparable} of ${bar.bar} compared writes`);
+      fails.push(describeShortfall(history, bar, comparable, r.peek<string>('epoch_started_at'), {
+        uncomparable: r.peek<number>('write_comparisons.uncomparable') ?? 0, capability_missing: r.peek<number>('write_comparisons.capability_missing') ?? 0 }, now));
+    }
     if (unexplained > 0) fails.push(`${unexplained} unexplained differences`);
-    return fails.length ? { state: 'fail', detail: fails.join('; ') } : { state: 'pass', detail: `${comparable} comparable, zero unexplained` };
+    return fails.length
+      ? { state: 'fail', detail: `${fails.join('; ')} (${how})` }
+      : { state: 'pass', detail: `${comparable} compared writes, at least ${bar.bar}, zero unexplained (${how})` };
   });
   // The coverage limit rides on every outcome. Only page and link writes are compared; every other write family is capability_missing.
   const byFamily = r.peek<Record<string, number>>('write_comparisons.capability_missing_by_family') ?? {};
   const named = Object.entries(byFamily).filter(([, n]) => num(n) && n > 0).map(([f, n]) => `${f} ${n}`);
-  const limit = `${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}; ${WRITE_COVERAGE_NAMED}`;
+  const limit = `${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}; ${WRITE_SETTLE_LIMIT}; ${WRITE_COVERAGE_NAMED}`;
   return { ...out, detail: out.detail ? `${out.detail}; ${limit}` : limit, lines: uncoveredWriteLines(typeof byFamily === 'object' && byFamily !== null ? byFamily : {}) };
 }
 
@@ -356,7 +399,10 @@ function eligibility(r: Reader): Eligibility {
   // Exactly one observed writer host: zero (or a non-count) is no writer evidence, never "one host".
   if (!Number.isInteger(hosts) || hosts < 1) return { state: 'missing', detail: `no writer host observed in the last 7 days (${hosts})`, reason: 'writer_coverage_unknown' };
   if (hosts > 1) return { state: 'fail', detail: `${hosts} writer hosts in the last 7 days`, reason: 'multiple_writer_hosts' };
-  if (unknown > 0) return { state: 'fail', detail: `${unknown} write path(s) with no observation`, reason: 'writer_coverage_unknown' };
+  if (unknown > 0) {
+    const legacy = r.peek<number>('eligibility.legacy_write_writers');
+    return { state: 'fail', detail: `${unknown} write path(s) with no observation${num(legacy) && legacy > 0 ? ` (${legacy} observed writer(s) of an older build that keeps no per-session write-sample record: no write_protocol 2)` : ''}`, reason: 'writer_coverage_unknown' };
+  }
   if (team === undefined || preview === undefined) return { state: 'missing', detail: `no evidence: ${[team === undefined ? 'eligibility.team_brain' : '', preview === undefined ? 'eligibility.preview_target' : ''].filter(Boolean).join(', ')}` };
   if (!preview) return { state: 'fail', detail: 'the shadow host is not on a preview target' };
   return { state: 'pass', detail: 'one writer host, no unknown write path, a personal brain on a preview target' };
@@ -387,15 +433,15 @@ export const CRITERIA: ReadonlyArray<{ n: number; name: string }> = [
  * Evaluates every criterion against the shadow status. `doc` null means no shadow runs for this brain: every gating
  * criterion is `missing` and the verdict is NOT READY (`no_shadow`).
  */
-export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date()): ReadinessVerdict {
+export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date(), policy: ReadinessPolicy = READINESS_POLICY): ReadinessVerdict {
   const r = new Reader(doc);
   const elig = eligibility(r);
   const checks: Check[] = [
-    shadowDuration(r, now),
+    shadowDuration(r, now, policy),
     readCoverage(r),
     zeroCounts(r, [['reads.rust_error_unresolved_7d', 'unresolved rust_error'], ['reads.diverged_unexplained_7d', 'unexplained diverged']]),
     searchArms(r),
-    writeComparisons(r),
+    writeComparisons(r, now, policy),
     zeroCounts(r, [['privacy_diverged', 'privacy_diverged']]),
     fingerprintsAndAllocators(r),
     speed(r),

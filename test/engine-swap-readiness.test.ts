@@ -11,12 +11,20 @@ import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/re
 
 const NOW = new Date('2026-12-01T00:00:00Z');
 
+/** `n` qualifying write calls on each of the 20 UTC days up to NOW. */
+function everyDay(n: number): { by_day: Record<string, number>; first_seen: string } {
+  const by_day: Record<string, number> = {};
+  for (let i = 0; i < 20; i++) by_day[new Date(NOW.getTime() - i * 86_400_000).toISOString().slice(0, 10)] = n;
+  return { by_day, first_seen: new Date(NOW.getTime() - 20 * 86_400_000).toISOString() };
+}
+
 function ready(): ShadowStatus {
   return {
     epoch_id: 'e1', epoch_started_at: '2026-11-10T00:00:00Z',
     follower: { state: 'following', lag_ms: 0, lag_ms_p99_24h: 900, lag_ms_p99_epoch: 1200, queue_depth: 0, applied_rows: 5000, coverage_watermark: { valid: true, through: 'x', invalidated_reason: null } },
     reconcile: { state: 'idle', consecutive_clean_full_passes: 3 },
-    write_comparisons: { state: 'on', sample_rate: 1, comparable: 1500, unexplained_difference: 0, uncomparable: 2, capability_missing: 0 },
+    // 100 qualifying writes a day for 20 days: criterion 5's bar is the 1,000 cap (14-day window under the base policy).
+    write_comparisons: { state: 'on', sample_rate: 1, comparable: 1500, unexplained_difference: 0, uncomparable: 2, capability_missing: 0, qualifying_writes: everyDay(100) },
     fingerprints: { checked_rows: 900, mismatches: 0, probe: { state: 'pass', checked_at: '2026-11-30T00:00:00Z', server_version: '16', collation: 'C' } },
     allocators: { verified: true, checked_at: '2026-11-30T00:00:00Z' },
     seed: { seed_id: 's', finished_at: '2026-11-10T01:00:00Z', unseeded_gap_rows_total: 0 },
@@ -105,6 +113,7 @@ describe('swap readiness', () => {
     ['reads.ops', 2, d => { d.reads!.ops = []; }],
     ['search.vector_recall_at_10', 4, d => { delete d.search!.vector_recall_at_10; }],
     ['write_comparisons.state', 5, d => { delete d.write_comparisons!.state; }],
+    ['write_comparisons.qualifying_writes', 5, d => { delete d.write_comparisons!.qualifying_writes; }],
     ['privacy_diverged', 6, d => { delete d.privacy_diverged; }],
     ['allocators.verified', 7, d => { delete d.allocators; }],
     ['child.faults', 9, d => { delete d.child!.faults; }],

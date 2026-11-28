@@ -20,7 +20,7 @@
 use super::TrustTier;
 use crate::Store;
 use crate::env::iso;
-use crate::error::Result;
+use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden, successor_withholds_reason, version_hidden};
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
@@ -345,6 +345,13 @@ impl Store {
         else {
             return Ok(json!({ "row": null }));
         };
+        // The snapshot policy of a labelled-only caller at a past time is not modelled: the TypeScript member
+        // refuses it before the store, and a policy that carries it here must not be answered wider.
+        if q.policy.labelled_only.is_some() {
+            return Err(StoreError::invalid(
+                "a labelled-only caller's past editions are not modelled",
+            ));
+        }
         let versions = page_versions(&*read, page.id)?;
 
         let mut rows: Vec<EditionRow> = versions
@@ -358,7 +365,7 @@ impl Store {
                 // (`replacedBecauseSql`). The last version's successor is the page, which the
                 // caller's own page check covers.
                 let successor_visible = versions.get(i + 1).is_none_or(|n| {
-                    !successor_withholds_reason(&n.page_type, &n.frontmatter, &q.policy)
+                    !successor_withholds_reason(&n.page_type, &n.frontmatter, &q.policy, None)
                 });
                 // A pruned successor's visibility can no longer be checked: that reason is withheld.
                 let reason = v

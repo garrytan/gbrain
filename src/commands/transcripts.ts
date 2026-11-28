@@ -21,7 +21,7 @@ import { helpFlagRequested } from '../cli/subcommands.ts';
 import type { CliDispatchContext } from '../cli/command-table.ts';
 import type { RecentTranscript } from '../core/transcripts.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import type { TranscriptFormat } from '../core/transcripts/types.ts';
+import { TRANSCRIPT_PROVIDER_ERROR, TRANSCRIPT_PROVIDER_RE, type TranscriptFormat } from '../core/transcripts/types.ts';
 import { runTranscriptsIngest, type TranscriptsIngestResult } from '../core/transcripts/ingest.ts';
 import { isOpenclawCheckpointFile } from '../core/transcripts/openclaw.ts';
 import { isGrokSessionSidecarStrict } from '../core/transcripts/grok.ts';
@@ -73,6 +73,7 @@ const FORMATS: readonly TranscriptFormat[] = [
 interface IngestCliOpts {
   paths: string[];
   format?: TranscriptFormat;
+  provider?: string;
   dryRun?: boolean;
   limit?: number;
   since?: string;
@@ -98,6 +99,7 @@ export function ingestCheckpointFingerprintInput(args: {
   sourceId: string;
   pathspec: string | string[];
   format: string;
+  provider?: string;
   version: string | number;
   maxBytes?: number;
 }): Record<string, string | number | string[]> {
@@ -105,6 +107,7 @@ export function ingestCheckpointFingerprintInput(args: {
     sourceId: args.sourceId,
     pathspec: args.pathspec,
     format: args.format,
+    ...(args.provider !== undefined ? { provider: args.provider } : {}),
     version: args.version,
     // Key present ONLY for an explicit cap (review finding, multi-specialist
     // confirmed): an unconditional `maxBytes: 'auto'` would re-hash EVERY
@@ -133,6 +136,14 @@ export function parseIngestArgs(args: string[]): IngestCliOpts | { help: true } 
         return { error: `unknown format '${v ?? ''}' (expected one of: ${FORMATS.join(', ')})` };
       }
       opts.format = v;
+      continue;
+    }
+    if (a === '--provider') {
+      const v = args[++i];
+      if (!v || !TRANSCRIPT_PROVIDER_RE.test(v)) {
+        return { error: TRANSCRIPT_PROVIDER_ERROR };
+      }
+      opts.provider = v;
       continue;
     }
     if (a === '--limit') {
@@ -198,6 +209,7 @@ const HELP = `Usage:
   gbrain transcripts status              # found vs imported gap table
   gbrain transcripts recover codex       # restore user turns lost to #5163 (preview; --apply)
   gbrain transcripts audit-secrets       # list imported pages that still carry a credential (read-only)
+  gbrain transcripts accept-fences       # review fence rows on imported transcripts in one pass (preview; --yes --expect)
   gbrain transcripts archive run|backfill|status|adopt-legacy|on|off   # day-sliced conversation archive (on by default on a personal brain, offered on a shared one)
   gbrain transcripts recent [options]
 
@@ -213,6 +225,9 @@ skip). Embedding is OFF by default; run the embed backfill later or opt in.
                     excluded by default to avoid a self-ingestion loop)
   --format F        claude-code | codex | openclaw | hermes | grok |
                     chatgpt | claude-export (auto-detected when omitted)
+  --provider SLUG   Label the origin of a converted transcript, without
+                    changing its format (e.g. muse-example; up to 40
+                    lowercase letters or digits with single hyphens)
   --dry-run         Parse + redact + report; writes nothing
   --limit N         Max sessions this run
   --since T         Only sessions newer than ISO time T; the word "last"
@@ -477,6 +492,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
       sourceId,
       pathspec: checkpointSpec,
       format: parsed.format ?? 'auto',
+      provider: parsed.provider,
       version: TRANSCRIPT_IMPORT_VERSION,
       maxBytes: parsed.maxBytes,
     })),
@@ -507,6 +523,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
     result = await runTranscriptsIngest(engine, {
       paths,
       format: parsed.format,
+      provider: parsed.provider,
       discoveredFormats,
       dryRun: parsed.dryRun,
       limit: parsed.limit,
@@ -630,6 +647,11 @@ export async function runTranscripts(engine: BrainEngine, args: string[], dispat
     await runTranscriptsAuditSecrets(engine, args.slice(1));
     return;
   }
+  if (sub === 'accept-fences') {
+    const { runTranscriptsAcceptFences } = await import('./transcripts-accept-fences.ts');
+    await runTranscriptsAcceptFences(engine, args.slice(1));
+    return;
+  }
   if (sub === 'archive') {
     const { runTranscriptsArchive } = await import('./transcripts-archive.ts');
     await runTranscriptsArchive(engine, args.slice(1), dispatch);
@@ -643,7 +665,7 @@ export async function runTranscripts(engine: BrainEngine, args: string[], dispat
   if (sub !== 'recent') {
     if (sub !== '--help' && sub !== '-h' && args.includes('--json')) {
       const { exitCliError, usageError } = await import('../cli/cli-error.ts');
-      exitCliError(usageError(sub && !sub.startsWith('-') ? `Unknown transcripts subcommand: ${sub}` : 'gbrain transcripts needs a subcommand: ingest, status, recover, audit-secrets, archive or recent.',
+      exitCliError(usageError(sub && !sub.startsWith('-') ? `Unknown transcripts subcommand: ${sub}` : 'gbrain transcripts needs a subcommand: ingest, status, recover, audit-secrets, accept-fences, archive or recent.',
         'Run `gbrain transcripts recent --json` to list recent transcripts, or `gbrain transcripts --help`.'), 'transcripts', { json: true });
     }
     console.log(HELP);

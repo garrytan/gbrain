@@ -34,12 +34,12 @@ async function recallJson(args: string[]): Promise<{ facts: Array<{ fact: string
 async function seed(opts: { entity: string; session?: string }): Promise<string> {
   const needle = `g5607 needle ${opts.entity}`;
   await engine.insertFact(
-    { fact: needle, kind: 'fact', entity_slug: opts.entity, source: 'test', source_session: opts.session },
+    { valid_from: new Date(), fact: needle, kind: 'fact', entity_slug: opts.entity, source: 'test', source_session: opts.session },
     { source_id: SRC },
   );
   for (let i = 0; i < FILLER; i++) {
     await engine.insertFact(
-      { fact: `g5607 filler ${i} ${opts.entity} (no match)`, kind: 'fact', entity_slug: opts.entity, source: 'test', source_session: opts.session },
+      { valid_from: new Date(), fact: `g5607 filler ${i} ${opts.entity} (no match)`, kind: 'fact', entity_slug: opts.entity, source: 'test', source_session: opts.session },
       { source_id: SRC },
     );
   }
@@ -119,8 +119,8 @@ describe('gbrain#5607 — local recall --grep filters in SQL before LIMIT', () =
   });
 
   test('LIKE metacharacters in --grep match literally', async () => {
-    await engine.insertFact({ fact: 'g5607 rollout at 50%_done', kind: 'fact', entity_slug: 'g5607-f', source: 'test' }, { source_id: SRC });
-    await engine.insertFact({ fact: 'g5607 rollout at 50 and more done', kind: 'fact', entity_slug: 'g5607-f', source: 'test' }, { source_id: SRC });
+    await engine.insertFact({ valid_from: new Date(), fact: 'g5607 rollout at 50%_done', kind: 'fact', entity_slug: 'g5607-f', source: 'test' }, { source_id: SRC });
+    await engine.insertFact({ valid_from: new Date(), fact: 'g5607 rollout at 50 and more done', kind: 'fact', entity_slug: 'g5607-f', source: 'test' }, { source_id: SRC });
     const out = await recallJson(['--grep', '50%_d', '--limit', String(LIMIT)]);
     expect(out.facts.map(f => f.fact)).toEqual(['g5607 rollout at 50%_done']);
     await engine.executeRaw(`DELETE FROM facts WHERE entity_slug='g5607-f'`);

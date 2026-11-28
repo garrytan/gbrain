@@ -9,10 +9,10 @@
  * base is C2 or C5, with no contradiction and no private, family or minor page, get one query per page (exa.ts).
  */
 import type { BrainEngine } from '../../engine.ts';
-import { markRestricted, scanPeople, stillSendsQuery, pageKey, type BaseClass, type CandidatePair, type PersonPage } from './people.ts';
+import { exaQueryForPerson, markRestricted, scanPeople, stillSendsQuery, pageKey, type BaseClass, type CandidatePair, type PersonPage } from './people.ts';
 import { emailSignals, readEmailIndex } from './email.ts';
 import { messagingSignals, readMessagingIndex } from './messaging.ts';
-import { exaQueryFor, resolveExa, type ExaMode, type ExaQuery, type ExaReport, type ExaSettings } from './exa.ts';
+import { resolveExa, type ExaMode, type ExaQuery, type ExaReport, type ExaSettings } from './exa.ts';
 import { PAIR_CLASSES, VERDICTS, classesOf, combine, type PairClass, type Signal, type Verdict } from './combine.ts';
 import { isKnownGivenName, nameWords } from '../name-variants.ts';
 
@@ -66,7 +66,7 @@ async function linkersOf(engine: BrainEngine, p: PersonPage, cache: Map<string, 
 }
 
 export async function classifyPairs(engine: BrainEngine, opts: ClassifyOptions = {}): Promise<{ report: ClassesReport; pairs: ClassifiedPair[] }> {
-  const scan = await scanPeople(engine);
+  const scan = await scanPeople(engine, !!opts.exa);
   const candidates = opts.sourceId ? scan.pairs.filter(p => p.a.source_id === opts.sourceId || p.b.source_id === opts.sourceId) : scan.pairs;
   const email = await readEmailIndex(engine, scan.people);
   const messaging = await readMessagingIndex(engine, scan.countryCode);
@@ -93,18 +93,22 @@ export async function classifyPairs(engine: BrainEngine, opts: ClassifyOptions =
     await markRestricted(engine, scan.people.values());
     const queries: ExaQuery[] = [];
     const blocked: ExaReport['blocked'] = {};
-    const blockedPages = new Set<string>();
+    const byPage = new Map<string, Awaited<ReturnType<typeof exaQueryForPerson>>>();
     const asked = new Map<string, [ExaQuery, ExaQuery]>();
     const pagesOf = new Map<string, PersonPage[]>();
+    const queryFor = async (p: PersonPage) => {
+      const key = pageKey(p);
+      const cached = byPage.get(key);
+      if (cached) return cached;
+      const q = await exaQueryForPerson(engine, p);
+      if ('blocked' in q) blocked[q.blocked] = (blocked[q.blocked] ?? 0) + 1;
+      byPage.set(key, q);
+      return q;
+    };
     for (const { pair, signals } of local.values()) {
       if (pair.base !== 'C2' && pair.base !== 'C5') continue;
       if (combine(evidenceOf(pair, signals)).verdict !== 'wait' || signals.has('Mx')) continue;
-      const qs = [pair.a, pair.b].map(p => {
-        const q = exaQueryFor(p);
-        if ('blocked' in q && !blockedPages.has(pageKey(p))) { blockedPages.add(pageKey(p)); blocked[q.blocked] = (blocked[q.blocked] ?? 0) + 1; }
-        return q;
-      });
-      const [qa, qb] = qs as [ReturnType<typeof exaQueryFor>, ReturnType<typeof exaQueryFor>];
+      const [qa, qb] = await Promise.all([queryFor(pair.a), queryFor(pair.b)]);
       if ('blocked' in qa || 'blocked' in qb) continue;
       if (qa.query === qb.query) { signals.add('X0'); continue; }
       queries.push(qa, qb);

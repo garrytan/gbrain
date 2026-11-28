@@ -37,6 +37,7 @@ import { partial, markCompleted, noteTypeWarning, maybeYield } from './sync-run.
 import { fileHistory } from './reasons.ts';
 import type { SyncPlan, SyncProgress, SyncRun } from './sync-run.ts';
 import { noteCommittedProgress } from '../../core/forward-progress.ts';
+import { wrapShadowSibling } from '../../shadow/state.ts';
 
 type ImportPlan = Pick<SyncPlan, 'opts' | 'filtered' | 'lastCommit' | 'pin' | 'company' | 'gitContextRoot' | 'syncImportRoot' | 'syncActivePack' | 'holds' | 'reasons'>;
 
@@ -478,26 +479,35 @@ async function drainImports(
           for (let i = 0; i < workerCount; i++) {
             const eng = new PostgresEngine();
             await connectWithRetry(eng, { database_url: databaseUrl, poolSize: workerPoolSize }, { retryConnectTimeout: true });
-            workerEngines.push(eng);
+            workerEngines.push(wrapShadowSibling(engine, eng)); // shadow mode samples, follows and observes a worker's writes as the primary's
           }
 
           // Atomic queue index — JS is single-threaded; the read-then-increment
           // happens between awaits, so no lock is needed.
           let queueIndex = 0;
-          await Promise.all(
+          let stopWorkers = false;
+          // Every worker finishes its file before any pool closes, even when one fails (runImport does the same): a failed worker stops the others taking new files.
+          const outcomes = await Promise.allSettled(
             workerEngines.map(async (eng) => {
-              while (true) {
-                // v0.41.13.0 (T2 / D-V3-2): per-iteration abort check.
-                // Each worker exits its while loop cleanly when --timeout
-                // fires. In-flight importOnePath() calls complete
-                // naturally (no mid-transaction kill).
-                if (opts.signal?.aborted || run.checkpointDead) break;
-                const idx = queueIndex++;
-                if (idx >= importsToDo.length) break;
-                await importOne(eng, importsToDo[idx]);
+              try {
+                while (true) {
+                  // v0.41.13.0 (T2 / D-V3-2): per-iteration abort check.
+                  // Each worker exits its while loop cleanly when --timeout
+                  // fires. In-flight importOnePath() calls complete
+                  // naturally (no mid-transaction kill).
+                  if (opts.signal?.aborted || run.checkpointDead || stopWorkers) break;
+                  const idx = queueIndex++;
+                  if (idx >= importsToDo.length) break;
+                  await importOne(eng, importsToDo[idx]);
+                }
+              } catch (error) {
+                stopWorkers = true;
+                throw error;
               }
             }),
           );
+          const failed = outcomes.find((outcome) => outcome.status === 'rejected');
+          if (failed?.status === 'rejected') throw failed.reason;
         } finally {
           // A2 (v0.22.13): try/finally guarantees connection cleanup even when
           // the worker loop throws (partial connect failure, OOM, mid-import

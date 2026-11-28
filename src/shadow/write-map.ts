@@ -39,6 +39,14 @@ const each = <T>(rows: readonly T[] | undefined, f: (row: T) => Target[]): Targe
 
 const linkSide = (from: string, to: string, fromSource?: string | null, toSource?: string | null, del = false): Target =>
   ({ relation: 'links', sel: { from_page_id: ref(from, fromSource), to_page_id: ref(to, toSource) }, del });
+/**
+ * The relationship state a link write refreshes inside the engine (`refreshRelationships`, which runs on the engine itself and
+ * not on the wrapper): the rows of the link's pair, which the refresh can write or remove.
+ */
+const pairState = (from: string, to: string, fromSource?: string | null, toSource?: string | null): Target =>
+  ({ relation: 'link_relationships', sel: { from_page_id: ref(from, fromSource), to_page_id: ref(to, toSource) }, del: true });
+/** Link writes whose pairs the arguments do not name (derived links by origin, links by link source): the whole state is re-read. */
+const LINK_STATE: Target[] = whole('link_relationships', 'link_transitions');
 const originLinks = (slug: string, source: string, del: boolean, extra: Record<string, string> = {}): Target[] => [
   { relation: 'links', sel: { origin_page_id: ref(slug, source), ...extra }, del },
   { relation: 'links', sel: { from_page_id: ref(slug, source), ...extra }, del },
@@ -104,25 +112,35 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   deleteChunks: { tables: ['content_chunks', 'pages'], plan: (a) => [child('content_chunks', a[0], a[1]?.sourceId, true), pages(a[0], a[1]?.sourceId)] },
   deleteChunksExcept: { tables: ['content_chunks', 'pages'], plan: (a) => [child('content_chunks', a[0], a[2]?.sourceId, true), pages(a[0], a[2]?.sourceId)] },
   moveChunkIndexes: { tables: ['content_chunks'], plan: (a) => [childById('content_chunks', a[0], true)] },
+  // The contextual-mode proof (page-state/contextual-proof.ts): it clears or stamps the embedding record of chunks of one page.
+  clearChunkEmbeddingsByIds: { tables: ['content_chunks'], plan: (a) => [childById('content_chunks', a[0])] },
+  writeChunkInputHashes: { tables: ['content_chunks'], plan: (a) => [childById('content_chunks', a[0])] },
   invalidateStaleSignatureEmbeddings: { tables: ['content_chunks'] },
   invalidateContentDriftEmbeddings: { tables: ['content_chunks'] },
   flipBodyGeneration: { tables: ['pages', 'content_chunks'], plan: (a) => [pageById(a[0]?.pageId), childById('content_chunks', a[0]?.pageId, true)] },
   stageSegmentChunks: { tables: ['content_chunks'], plan: (a) => [childById('content_chunks', a[0])] },
   sweepSegments: { tables: ['content_chunks'] },
   // Links
-  addLink: { tables: ['links'], plan: (a) => [linkSide(a[0], a[1], a[7]?.fromSourceId, a[7]?.toSourceId)] },
-  removeLink: { tables: ['links'], plan: (a) => [linkSide(a[0], a[1], a[4]?.fromSourceId, a[4]?.toSourceId, true)] },
+  addLink: { tables: ['links', 'link_relationships'], plan: (a) => [linkSide(a[0], a[1], a[7]?.fromSourceId, a[7]?.toSourceId), pairState(a[0], a[1], a[7]?.fromSourceId, a[7]?.toSourceId)] },
+  removeLink: { tables: ['links', 'link_relationships'], plan: (a) => [linkSide(a[0], a[1], a[4]?.fromSourceId, a[4]?.toSourceId, true), pairState(a[0], a[1], a[4]?.fromSourceId, a[4]?.toSourceId)] },
   removeLinksByPagesAndSource: {
-    tables: ['links'],
-    plan: (a) => each<any>(a[0], (p) => originLinks(p.slug, p.source_id, true, { link_source: a[1]?.linkSource })),
+    tables: ['links', 'link_relationships'],
+    plan: (a) => [...each<any>(a[0], (p) => originLinks(p.slug, p.source_id, true, { link_source: a[1]?.linkSource })), ...whole('link_relationships')],
   },
   addLinksBatch: {
-    tables: ['links'],
-    plan: (a) => each<any>(a[0], (l) => [{ relation: 'links', sel: { from_page_id: ref(l.from_slug, l.from_source_id) } }]),
+    tables: ['links', 'link_relationships'],
+    plan: (a) => each<any>(a[0], (l) => [
+      { relation: 'links', sel: { from_page_id: ref(l.from_slug, l.from_source_id) } },
+      pairState(l.from_slug, l.to_slug, l.from_source_id, l.to_source_id),
+    ]),
   },
-  replaceDerivedLinks: { tables: ['links', 'wanted_links', 'pages'], plan: (a) => derivedLinks(a[0]) },
-  replaceDerivedLinksBatch: { tables: ['links', 'wanted_links', 'pages'], plan: (a) => each<any>(a[0], (item) => derivedLinks(item.origin)) },
+  replaceDerivedLinks: { tables: ['links', 'wanted_links', 'pages', 'link_relationships', 'link_transitions'], plan: (a) => [...derivedLinks(a[0]), ...LINK_STATE] },
+  replaceDerivedLinksBatch: { tables: ['links', 'wanted_links', 'pages', 'link_relationships', 'link_transitions'], plan: (a) => [...each<any>(a[0], (item) => derivedLinks(item.origin)), ...LINK_STATE] },
   replaceWantedLinkRows: { tables: ['wanted_links'], plan: (a) => [{ relation: 'wanted_links', sel: { origin_page_id: id(a[0]?.pageId) }, del: true }] },
+  // remove_link's manual dated statements of the removed relationship (link-temporal-apply.ts removeManualTransitions): link_transitions only, which the
+  // write comparison does not read. It was the raw DELETE the SQL parser mapped to this relation; unmapped, every remove_link published `invalid`, which
+  // counted as another writer's page or link write and marked its own removeLink sample moved.
+  removeManualLinkTransitions: { tables: ['link_transitions'] },
   // Timeline
   addTimelineEntry: { tables: ['timeline_entries'], plan: (a) => [child('timeline_entries', a[0], a[2]?.sourceId)] },
   addTimelineEntriesBatch: { tables: ['timeline_entries'], plan: (a) => each<any>(a[0], (e) => [child('timeline_entries', e.slug, e.source_id)]) },
@@ -144,6 +162,8 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   },
   deleteFactsForPage: { tables: ['facts', 'owner_only_marks'], plan: (a) => [{ relation: 'facts', sel: { source_id: a[1], source_markdown_slug: a[0] }, del: true }, ...OWNER_MARKS] },
   expireFact: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { id: id(a[0]) } }] },
+  // repair visibility: a fenced world fact made private in place (repair/visibility.ts applyFactItem).
+  tightenFencedFactVisibility: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { id: id(a[1]) } }] },
   consolidateFact: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { id: id(a[0]) } }] },
   // The remember consumer's supersede: one UPDATE of the old fact row (expired_at, superseded_by, valid_until).
   retireSupersededFact: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { id: id(a[0]?.oldId) } }] },
@@ -179,7 +199,18 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   setPageAliases: { tables: ['page_aliases'], plan: (a) => [{ relation: 'page_aliases', sel: { source_id: a[1], slug: a[0] }, del: true }] },
   replaceDerivedAliases: { tables: ['page_aliases'], plan: (a) => [{ relation: 'page_aliases', sel: { source_id: a[1], slug: a[0] }, del: true }] },
   updateSourceConfig: { tables: ['sources', 'owner_only_marks'], plan: (a) => [{ relation: 'sources', sel: { id: a[0] } }, ...OWNER_MARKS] },
+  upsertGuestSource: { tables: ['guest_sources'], plan: (a) => [{ relation: 'guest_sources', sel: { source_id: a[0] } }] },
+  insertGuestMark: { tables: ['guest_marks'], plan: (a) => [child('guest_marks', a[0]?.slug, a[0]?.sourceId)] },
+  // The folder import's last-sync stamp on the source row: the row changes, and the sources trigger may rewrite the owner-only marks.
+  markSourceSynced: { tables: ['sources', 'owner_only_marks'], plan: (a) => [{ relation: 'sources', sel: { id: a[0] } }, ...OWNER_MARKS] },
   createVersion: { tables: ['page_versions'], plan: (a) => [child('page_versions', a[0], a[1]?.sourceId, true)] },
+  // The owner's allow rules (trust/allow-rules.ts): an add writes one row the reply names (a new one, or the active one
+  // already holding its key, which it leaves unchanged); a remove marks the rule `id` removed, keeping the row.
+  addTrustAllowRule: {
+    tables: ['trust_allow_rules'], late: true,
+    plan: (_a, r) => (r?.row?.id != null ? [{ relation: 'trust_allow_rules', sel: { id: id(r.row.id) } }] : []),
+  },
+  removeTrustAllowRule: { tables: ['trust_allow_rules'], plan: (a) => [{ relation: 'trust_allow_rules', sel: { id: id(a[0]) } }] },
   // Relation-level: no stable selector on the member's arguments
   applyIdentityDecisions: { tables: ['entity_identities', 'entity_identity_reviews'] },
   addCodeEdges: { tables: ['code_edges_chunk', 'code_edges_symbol'] },
@@ -212,6 +243,8 @@ export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   'connect', 'connectForRestore', 'connectWithHeldLock', 'disconnect', 'reconnect', 'initSchema', 'registerBeforeDisconnect',
   'closeRetainingLock', 'holdsDatastoreLock', 'batchRetry', 'applyTransactionSettings', 'applyForwardReferenceBootstrap',
   'lockPageKeys', 'lockRegisteredSourceIds', 'keywordBoundedRead', 'rewriteLinks', 'matchTakeRows',
+  // Reads a guest source's writers and sets gbrain.guest_note for the transaction; it writes no row.
+  'claimGuestNotePublication',
   // Writes only persistence_requests (a request's takeHoldersUsed), which the shadow does not copy (seed/not_copied.rs: MachineLocal).
   'recordTakeHoldersUsed',
   // Locks.
@@ -233,6 +266,9 @@ export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   // The applied-capture records (ingest_applied_captures): bookkeeping the seed does not copy (rust/docs/store/seed.md), so
   // the stale purge changes nothing the shadow follows.
   'purgeStaleAppliedCaptures',
+  // The eval harness pause (engine-sql/eval-harness-reads.ts): it calls pauseManagedPersistence and restoreManagedPersistence
+  // on the engine itself, which the unmapped-write list names; it is still a writer (IGNORED_WRITE_MEMBERS).
+  'withManagedPersistencePaused',
 ]);
 
 /**
@@ -246,6 +282,7 @@ export const IGNORED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'clearCodeTraversalCache', 'insertLocalWriterRow',
   'allocateBodyOccurrenceIds', 'stageSegmentTexts', 'stageManifestRows', 'openBodyStaging', 'setBodyStagingState',
   'upsertSegmentDerivations', 'retireSegmentDerivations',
+  'withManagedPersistencePaused',
 ]);
 
 /** Members that run caller SQL; the wrapper parses it (sql-writes.ts). */
@@ -265,6 +302,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   // The read-view digest cache read (the name carries a read prefix; listed so the class is explicit).
   'readPageViewDigest',
   // Batch 11 typed reads (page purge port, caller-links, chronicle): row locks and statements that only read.
+  // The eval harness text scan (engine-sql/eval-harness-reads.ts): SELECTs only.
+  'scanTextColumns',
   'factsOrAliasesMayMatch', 'lockHeldConcept', 'lockLiveConceptMembers', 'lockSourceForUpdate', 'relationExists', 'sweepJournalChunk', 'takeProposalCached',
   // The trunk's typed reads whose names carry no read prefix (the owner socket's read classes, owner-ipc/typed-member-classes.ts).
   'accessTokenLive', 'closedLoopWithActiveFact', 'codeChunksExist', 'computeFactFingerprints', 'currentCodeChunksExist',
@@ -353,11 +392,12 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'lockSourceRow', 'lockSourceShared', 'lockWriteRequest', 'lockWriteRequestsById', 'logChatUsage', 'logMcpRequest',
   'lowerTrustTier', 'manualLinkStore', 'markAccessRevisionsApplied', 'markBeliefCommits', 'markEdgeProposalStale', 'markEdgeProposalUndone',
   'markGenerationActivated', 'markJobWatchdogSuspect', 'markNeedsRederive', 'markProjectionRebuildFailed',
-  'markRevertedEdgeProposals', 'markSourceSynced', 'markSpendUsageUnknown', 'mintBeliefLifetime',
+  'markRevertedEdgeProposals', 'markSpendUsageUnknown', 'mintBeliefLifetime',
   'moveConversationSourceWindows', 'moveFactToPage', 'moveFactWithdrawalSubject', 'moveKeptFactRows',
+  'narrowConversationExpiredCopies',
   'openPageEmbeddingHold', 'openWakeWatch', 'parkEffectRow', 'patchOauthClient', 'pauseJob', 'persistOauthClientGrant',
-  'placeRelinkedFact', 'postInboxMessage', 'promoteDelayedJobs', 'pruneAccessReadLog', 'pruneHoldingPageVersions', 'pruneJobs',
-  'pruneMcpRequestLogBatch', 'pruneSatisfiedWantedMarkers', 'publicationJournalStore', 'purgeCalibrationProfilesByWave',
+  'placeRelinkedFact', 'postInboxMessage', 'promoteDelayedJobs', 'pruneAccessReadLog', 'pruneHoldingPageVersions', 'pruneInlineVersionsById', 'pruneJobs',
+  'persistenceUpkeepStore', 'pruneMcpRequestLogBatch', 'pruneSatisfiedWantedMarkers', 'publicationJournalStore', 'purgeCalibrationProfilesByWave',
   'purgeStaleCheckpoints', 'queuePageProjectionJob', 'queueWakeForget', 'queueWithdrawalReview', 'rearmLinksEffects',
   'reattributeSessionFacts', 'rebindSharedSkillMember', 'reclaimStalledJobs', 'recordAccessMigrationPhase',
   'recordDerivationEdges', 'recordDreamBreakerReset', 'recordEdgeProposal', 'recordGenerationActivation',
@@ -368,7 +408,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'releaseBeliefRedactions', 'releaseDeferredReplacementClaim', 'releaseDrainLeaseHolder', 'releaseNotifierLease',
   'releasePageEmbeddingLease', 'releasePurgeRedactionsForField', 'releaseSegmentedProjectionClaim',
   'releaseClaimForPause', 'releaseUnpublishedClaim', 'releaseWatchdogClaim', 'removeAccessGroupMembers', 'removeLoopSuppression',
-  'removeManualLinkTransitions', 'removePageFrontmatterKeys', 'removeWakeCron', 'renameBeliefLifetime', 'renewConsumerRow',
+  'removePageFrontmatterKeys', 'removeWakeCron', 'renameBeliefLifetime', 'renewConsumerRow',
   'renewDeferredReplacementClaim', 'renewEffectClaim', 'renewJobLease', 'renewPageEmbeddingLease',
   'renewPrivateQueueLease', 'renewSegmentedProjectionClaim', 'renewWriteClaim', 'replaceAccessInvalidCoverage',
   'replaceGitHoldRow', 'replaceSearchVectorTriggerFunction', 'replaceSourceConfig', 'replaceVersionChangeReasons',
@@ -411,7 +451,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'restoreConsolidationTie', 'restoreExtractorFact', 'supersedeDuplicateFacts', 'tightenDatabaseFactVisibility',
   // Batch 11 typed writes (page purge port, take grades, horizons and proposals, chronicle ledger, connector stamps, sync conversions,
   // source rename): not mapped to a write plan yet, so they publish invalid like the rest of the list.
-  'carryConceptIncomingLinks', 'chronicleStore', 'claimTakeProposal', 'clearQueryCache', 'continueDerivationSweep', 'deleteFactPurgesByRequests', 'deleteOriginHoldRows', 'deletePagePurgeTombstones', 'deletePageSegmentTexts', 'deletePageStagings', 'deletePurgedFeedbackRows', 'deletePurgedNameStoreRows', 'deletePurgedPageFacts', 'deletePurgedPageFiles', 'deletePurgedPageGateReceipts', 'deletePurgedPageHolds', 'deletePurgedPageTrustProposals', 'deletePurgedSlugHolds', 'deletePurgedSlugStoreRows', 'deleteTakeGrade', 'deleteTakeHorizon', 'deleteTakeProposalTombstones', 'deleteTakePurgesByRequests', 'insertConfigIfAbsent', 'insertPageFactPurges', 'insertTakeGrade', 'insertTakeNudge', 'insertTakeProposal', 'pruneChronicleReservations', 'purgeTakeNudgesByWave', 'recordConnectorSyncAttempt', 'recordDerivationPurgeRow', 'recordOwedPurgeRows', 'recordSyncConversion', 'redactWriteRequestRow', 'rejectTakeProposal', 'releaseTakeProposalClaim', 'releaseTerminalBytes', 'renameSource', 'reserveChronicleJudgeSlot', 'revertWaveTakeResolutions', 'setTakeProposalPromotedRow', 'sweepPageTextsForClaims', 'unapplyWaveTakeGrades', 'upsertDerivedOriginPark', 'upsertExtractRollupDay', 'upsertTakeHorizon', 'writeConnectorDbCursor', 'writeOpCheckpointDoc', 'writePageLabelGuard',
+  'carryConceptIncomingLinks', 'chronicleStore', 'claimTakeProposal', 'clearQueryCache', 'continueDerivationSweep', 'deleteFactPurgesByRequests', 'deleteOriginHoldRows', 'deletePurgeParkRecord', 'dropRearmedPurgeParks', 'markPurgeParksInactive', 'pruneOriginParkRecords', 'pruneOwedPurgeRecords', 'prunePurgeParkRecords', 'recordPurgeFailureRecord', 'releaseStaleOriginParkHolds', 'deletePagePurgeTombstones', 'deletePageSegmentTexts', 'deletePageStagings', 'deletePurgedFeedbackRows', 'deletePurgedNameStoreRows', 'deletePurgedPageFacts', 'deletePurgedPageFiles', 'deletePurgedPageGateReceipts', 'deletePurgedPageHolds', 'deletePurgedPageTrustProposals', 'deletePurgedSlugHolds', 'deletePurgedSlugStoreRows', 'deleteTakeGrade', 'deleteTakeHorizon', 'deleteTakeProposalTombstones', 'deleteTakePurgesByRequests', 'insertConfigIfAbsent', 'insertPageFactPurges', 'insertTakeGrade', 'insertTakeNudge', 'insertTakeProposal', 'pruneChronicleReservations', 'purgeTakeNudgesByWave', 'recordConnectorSyncAttempt', 'recordDerivationPurgeRow', 'recordOwedPurgeRows', 'recordSyncConversion', 'redactWriteRequestRow', 'rejectTakeProposal', 'releaseTakeProposalClaim', 'releaseTerminalBytes', 'renameSource', 'reserveChronicleJudgeSlot', 'revertWaveTakeResolutions', 'setTakeProposalPromotedRow', 'sweepPageTextsForClaims', 'unapplyWaveTakeGrades', 'upsertDerivedOriginPark', 'upsertExtractRollupDay', 'upsertTakeHorizon', 'writeConnectorDbCursor', 'writeOpCheckpointDoc', 'writePageLabelGuard',
   // embed --stale writes (engine-sql/embed-stale-work.ts): the content-drift sweep's cursor row and one drift batch.
   'invalidateContentDriftChunks', 'lockContentDriftState',
   // The soak counters' write (engine-sql/soak-counters.ts): one op_checkpoints row per day, which no write plan maps yet.
@@ -429,6 +469,10 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'clearPageExtractionState', 'commitPageExtraction', 'deleteVolunteerEventsOlderThan', 'writePageExtractionReceipt',
   // Lane 3 (purge-ledger-sites) typed writes (engine-sql/belief-purge-ledger.ts: the belief ledger's purge redaction and prior_hash re-chain): not mapped to a write plan yet.
   'rechainBeliefPriorHash', 'redactPurgedBeliefKeys', 'rewriteBeliefEventFields',
+  // Lane 5 eval harness pause (engine-sql/eval-harness-reads.ts): the brain row's enabled flag, not mapped to a write plan yet.
+  'pauseManagedPersistence', 'restoreManagedPersistence',
+  // The remediation impact log row (engine-sql/remediation-records.ts): not mapped to a write plan yet.
+  'insertImpactLogRow',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 

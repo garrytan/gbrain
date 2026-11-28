@@ -730,7 +730,7 @@ async function assembleCard(
     if (openThreads.length >= OPEN_THREADS_CAP) break;
     if (f.kind !== 'commitment') continue;
     if (f.id !== undefined && loopFactIds.has(f.id)) continue; // already surfaced via its loop
-    openThreads.push({ kind: 'commitment', text: f.fact, date: f.valid_from?.toISOString() ?? null, ...trustFields(f.trust_tier, f.write_origin) });
+    openThreads.push({ kind: 'commitment', text: f.fact, date: (f.valid_from ?? f.created_at).toISOString(), ...trustFields(f.trust_tier, f.write_origin) });
   }
   if (openThreads.length < OPEN_THREADS_CAP) {
     const cutoff = Date.now() - OPEN_THREAD_TIMELINE_WINDOW_DAYS * 24 * 60 * 60 * 1000;

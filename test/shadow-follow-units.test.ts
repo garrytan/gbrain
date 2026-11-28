@@ -19,6 +19,8 @@ import { countFingerprintMismatches, differingCodePoints, probeRecord, PROBE_COR
 import { FollowChild, type FollowStore } from '../src/shadow/follow-child.ts';
 import { appendPass, buildFollowStatus, lagBucket, lagP99, NOT_RUN_PROBE, readFollowerFile, type FollowStatus } from '../src/shadow/follow-status.ts';
 import { openReadSource } from '../src/shadow/read-pool.ts';
+import { ShadowFollower } from '../src/shadow/follower.ts';
+import type { Invalidation } from '../src/shadow/invalidations.ts';
 import { Reconciler } from '../src/shadow/reconcile.ts';
 import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
 import { SHADOW_STATE_VERSION, shadowBrainKey, shadowDirFor, writeShadowState, type ShadowState } from '../src/shadow/state.ts';
@@ -36,7 +38,7 @@ const RESULT = { upserted: 1, deleted: 0, skipped_older: 0, displaced: 0, droppe
 function fakeStore(over: Partial<FollowStore> = {}): FollowStore {
   return {
     replaceRelationRows: async () => RESULT, replaceInterval: async () => RESULT, relationDigest: async () => ({ rows: 0, digest: '' }),
-    relationEntries: async () => [], allocatorCheck: async () => [], factFingerprints: async (texts) => texts.map(() => ({ fingerprint: 'a', fingerprint_v1: 'b' })),
+    relationEntries: async () => [], allocatorCheck: async () => [], allocatorAdvance: async () => [], factFingerprints: async (texts) => texts.map(() => ({ fingerprint: 'a', fingerprint_v1: 'b' })),
     seedPlan: async () => ({ relations: [], carried: [], not_copied: [], gap_columns: [] }) as never, ...over,
   };
 }
@@ -318,6 +320,14 @@ describe('fingerprint probe v2: per-code-point answers', () => {
     expect(record({})).toMatchObject({ state: 'pass', differing_code_points: [], differing_code_points_total: 0 });
   });
 
+  test('purge tombstones fail the probe while code points differ: they keep only a hash, so a purged claim could be saved again', () => {
+    const meta = { differing_code_points: ['U+1680'], differing_code_points_total: 1, facts_with_differing_code_points: 0 };
+    expect(record({ ...meta, fact_purges_unverifiable: 3 })).toMatchObject({ state: 'fail', fact_purges_unverifiable: 3 });
+    expect(record({ ...meta, fact_purges_unverifiable: 0 })).toMatchObject({ state: 'pass' });
+    // No differing code point: every claim hashes alike, so tombstones are checkable and do not matter.
+    expect(record({ fact_purges_unverifiable: 3 })).toMatchObject({ state: 'pass' });
+  });
+
   test('a corpus row that differs with no differing code point to explain it still fails', () => {
     expect(record({ corpus_mismatches: 2, corpus_mismatch_rows: ['seeded 0001'] })).toMatchObject({ state: 'fail', corpus_mismatches: 2 });
     expect(record({ corpus_mismatches: 2, differing_code_points_total: 3, facts_with_differing_code_points: 0 })).toMatchObject({ state: 'pass' });
@@ -413,7 +423,8 @@ describe('status --json', () => {
       coverage_watermark: { valid: false, through: null, invalidated_reason: 'not_started' },
     });
     expect(json.reconcile.state).toBe('never_run');
-    expect(json.write_comparisons).toEqual({ state: 'capability_missing', sample_rate: 0.05, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
+    expect(json.write_comparisons).toEqual({ state: 'capability_missing', sample_rate: 0.05, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0,
+      qualifying_writes: { by_day: {}, first_seen: null, in_transaction_by_day: {} } });
     expect(json.fingerprints).toEqual({ checked_rows: 0, mismatches: 0, probe: {
       state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0, ctype: null, locale_provider: null, locale: null,
       differing_code_points: [], differing_code_points_total: 0, corpus_mismatches: 0, corpus_mismatch_rows: [], facts_with_differing_code_points: 0,
@@ -446,7 +457,7 @@ describe('shadowReadiness (the S5a reading rules)', () => {
     epoch_id: 'e', epoch_started_at: 't',
     follower: { state: 'following', action: null, lag_ms: 0, lag_ms_p99_24h: 4, lag_ms_p99_epoch: 4, queue_depth: 0, applied_rows: 1, coverage_watermark: { valid: true, through: 't', invalidated_reason: null } },
     reconcile: { state: 'ok', last_pass: null, consecutive_clean_full_passes: 1, next_full_pass_due: null },
-    write_comparisons: { state: 'capability_missing', sample_rate: 1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
+    write_comparisons: { state: 'capability_missing', sample_rate: 1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, qualifying_writes: { by_day: {}, first_seen: null } },
     fingerprints: { checked_rows: 1, mismatches: 0, probe: { ...NOT_RUN_PROBE, state: 'pass', checked_at: 't', server_version: '17', collation: 'C' } },
     seed: { seed_id: 'e', finished_at: 't', unseeded_gap_rows_total: 0 }, allocators: { verified: true, checked_at: 't' },
     primary_refreshes: { nonterminal_rows: 0, checked_at: 't' },
@@ -524,5 +535,25 @@ describe('shadow read source', () => {
       await expect(reads.read(async () => 1)).rejects.toThrow(/closed/);
       expect(connect).toHaveBeenCalledTimes(2);
     } finally { connect.mockRestore(); disconnect.mockRestore(); }
+  });
+});
+
+describe('the follower\'s two write counts', () => {
+  const follower = () => new ShadowFollower({ reads: { pauseMs: 0, read: async () => { throw new Error('no reads'); }, close: async () => {} } as never, send: () => true, rpc: async () => { throw new Error('no child'); } });
+  const batch = (seq: number, items: Invalidation[]) => ({ seq, committed_at: 0, items });
+  const rows = (relation: string): Invalidation => ({ kind: 'rows', relation, selector: { id: '1' }, before_keys: null });
+
+  test('`published` counts every batch (the stable rerun and the mirror read it); `pageLinkWrites` counts only a batch that can change a row a write comparison reads, so the process\'s own bookkeeping never moves it', async () => {
+    const f = follower();
+    f.publish(batch(1, [rows('persistence_effects'), { kind: 'relation', relation: 'persistence_requests', reason: 'raw_sql' }])); // journal rows
+    f.publish(batch(2, [rows('link_transitions'), rows('config'), { kind: 'relation', relation: 'memory_proposals', reason: 'raw_sql' }]));
+    expect([f.published, f.pageLinkWrites]).toEqual([2, 0]);
+    f.publish(batch(3, [rows('pages')]));
+    f.publish(batch(4, [rows('persistence_effects'), rows('links')]));
+    f.publish(batch(5, [{ kind: 'relation', relation: 'pages', reason: 'raw_sql' }]));
+    f.publish(batch(6, [{ kind: 'relation', relation: 'links', reason: 'raw_sql' }]));
+    f.publish(batch(7, [{ kind: 'invalid', reason: 'unmapped_write:somethingNew' }])); // a write nothing can describe may have changed them: it counts
+    expect([f.published, f.pageLinkWrites]).toEqual([7, 5]);
+    await f.settle();
   });
 });

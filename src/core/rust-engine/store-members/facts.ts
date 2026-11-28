@@ -22,8 +22,7 @@ import { clampSearchLimit, MAX_SEARCH_LIMIT, type BrainEngine, type FactListOpts
 import { escapeLikePattern } from '../../cjk.ts';
 import { valueHash } from '../../chronicle/ontology.ts';
 import { ensureWellFormed } from '../../text-safe.ts';
-import { getFtsLanguage } from '../../fts-language.ts';
-import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, storeFtsConfig, takeOptions, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
 import { storeVisibility } from './fact-visibility.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
@@ -52,7 +51,8 @@ const LIST_OPTIONS = ['activeOnly', 'unconsolidatedOnly', 'limit', 'offset', 'ki
  */
 const factPolicy = (member: string, excludePrivate: unknown) =>
   storePrivacyPolicy(member, excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true });
-const RECALL_OPTIONS = [...LIST_OPTIONS, 'entitySlug', 'sourceMarkdownSlug'] as const;
+/** `includeUndated` (#10288): an event-time `listFactsSince` also reads the facts whose `valid_from` is unknown, dated by `created_at`. */
+const RECALL_OPTIONS = [...LIST_OPTIONS, 'entitySlug', 'sourceMarkdownSlug', 'includeUndated'] as const;
 
 /** A string the SQL path binds inside a JSONB document: a lone surrogate becomes U+FFFD. */
 const wellFormed = <T>(s: T): T => (typeof s === 'string' ? ensureWellFormed(s) as T : s);
@@ -107,7 +107,7 @@ export const insertFact: Member<'insertFact'> = (brain, input, ctx) => {
   const confidence = input.confidence == null ? undefined : Number.isFinite(input.confidence) ? input.confidence : 2;
   const row = {
     fact: input.fact, kind: input.kind, entity_slug: input.entity_slug, visibility: input.visibility, context: input.context,
-    valid_from: iso(input.valid_from ?? new Date()), valid_until: iso(input.valid_until), source: input.source,
+    valid_from: iso(input.valid_from), valid_until: iso(input.valid_until), source: input.source,
     source_session: input.source_session, confidence, notability: input.notability, claim_metric: input.claim_metric,
     claim_value: input.claim_value, claim_unit: input.claim_unit, claim_period: input.claim_period,
     attributed_to: input.attributed_to,
@@ -132,7 +132,7 @@ export const insertFacts: Member<'insertFacts'> = async (brain, rows, ctx, opts)
     return {
       fact: wellFormed(input.fact), kind: input.kind, entity_slug: wellFormed(input.entity_slug),
       visibility: input.visibility, notability: input.notability, context: wellFormed(input.context),
-      valid_from: (input.valid_from ?? new Date()).toISOString(), valid_until: iso(input.valid_until),
+      valid_from: iso(input.valid_from), valid_until: iso(input.valid_until),
       expired_at: iso(input.expired_at), source: wellFormed(input.source), source_session: wellFormed(input.source_session),
       ...(Number.isFinite(confidence) ? { confidence } : { confidence_null: true }),
       row_num: input.row_num, source_markdown_slug: wellFormed(input.source_markdown_slug),
@@ -195,7 +195,8 @@ export const listFactsByEntity: Member<'listFactsByEntity'> = async (brain, sour
 export const listFactsSince: Member<'listFactsSince'> = async (brain, sourceId, since, opts) => {
   const q = listQuery('listFactsSince', sourceId, opts, true);
   const rows: Row[] = await storeCall({ member: 'listFactsSince' }, () => brain.listFactsSince({
-    ...q, since: since.toISOString(), eventTime: opts?.eventTime === true, offset: offsetOf('listFactsSince', opts?.offset),
+    ...q, since: since.toISOString(), eventTime: opts?.eventTime === true, includeUndated: opts?.includeUndated === true,
+    offset: offsetOf('listFactsSince', opts?.offset),
   }));
   return facts(rows);
 };
@@ -300,12 +301,12 @@ export const findCandidateDuplicates: Member<'findCandidateDuplicates'> = async 
     ['k', 'embedding', 'embeddingModel', 'arm', 'attributedTo', 'excludeMemberPages', 'onlyPage']) as NonNullable<typeof opts>;
   const keyword = o.arm === 'keyword';
   if (o.embedding && !o.embeddingModel) return [];
-  // The store's full-text search is the `english` configuration only.
-  if (keyword && getFtsLanguage() !== 'english') refuseMember('findCandidateDuplicates', `the keyword arm in FTS language ${getFtsLanguage()}`);
+  // The keyword arm parses both texts at query time, under a configuration the store ports.
+  const ftsConfig = keyword ? storeFtsConfig('findCandidateDuplicates', 'the keyword arm in FTS language') : undefined;
   const rows: Row[] = await storeCall({ member: 'findCandidateDuplicates' }, () => brain.findCandidateDuplicates({
     sourceId, entitySlug, k: Math.min(Math.max(o.k ?? 5, 1), 20), attributedTo: o.attributedTo || undefined,
     onlyPage: o.onlyPage || undefined, excludeMemberPages: o.excludeMemberPages === true,
-    ...(keyword ? { keyword: true, factText: wellFormed(factText) } : {}),
+    ...(keyword ? { keyword: true, factText: wellFormed(factText), ftsConfig } : {}),
     ...(o.embedding ? { embedding: vectorLiteral(o.embedding), embeddingModel: o.embeddingModel } : {}),
   }));
   return facts(rows);

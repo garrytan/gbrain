@@ -6,12 +6,12 @@
  *  - Contract: on every engine arm a registered client walks GET /authorize (a 302 to the owner's consent page, no code),
  *    the owner's approval (a code on the redirect with the original state), POST /token with the PKCE verifier (an access
  *    and a refresh token the bearer check accepts), POST /token with the refresh token (a new pair the bearer check
- *    accepts) and a second use of the old refresh token (400 invalid_grant). A public client (`none`) and a confidential
+ *    accepts) and a second use of the old refresh token (PGLite and Postgres: 200 with the pair that replaced it, inside the 60 s grace window of #9364; the Rust store keeps no refresh families, 400). A public client (`none`) and a confidential
  *    one (`client_secret_post`) answer the same way, and a wrong secret is 401 invalid_client. `revokeClient` keeps the
  *    client row with `deleted_at` set, deletes its codes and tokens, leaves another client alone, and a second revoke is
  *    a no-op; on PGLite and Postgres the raw-SQL path of the same call leaves the same state.
  *  - Regression: a client lookup or a refresh read the Rust store cannot serve (raw SQL), so /authorize or /token fails on
- *    a Rust brain; a refresh token that can be used twice; a revoke on one path that hard-deletes the row the other keeps.
+ *    a Rust brain; a refresh token replay that issues a pair other than the one that replaced it; a revoke on one path that hard-deletes the row the other keeps.
  *  - Why existing coverage misses it: test/oauth-consent-security.test.ts runs the HTTP flow on PGLite through raw SQL, and
  *    test/engine-parity/access-tokens.test.ts drives OAuthGrants directly, never the clients store or a refresh.
  *  - Seam: none. Real engines, a real express app on a loopback port; the tables are read through typed members only.
@@ -85,7 +85,7 @@ async function bearer(provider: GBrainOAuthProvider, token: string): Promise<Rec
 }
 
 /** The full code flow and refresh over HTTP for one client; the tokens' shapes, never their values. */
-async function codeFlow(base: string, provider: GBrainOAuthProvider, clientId: string, secret?: string): Promise<Record<string, unknown>> {
+async function codeFlow(base: string, provider: GBrainOAuthProvider, clientId: string, backend: string, secret?: string): Promise<Record<string, unknown>> {
   const out: Record<string, unknown> = {};
   const query = new URLSearchParams({ client_id: clientId, response_type: 'code', redirect_uri: REDIRECT,
     code_challenge: TEST_PKCE_CHALLENGE, code_challenge_method: 'S256', scope: 'read', state: 'original-state', resource: RESOURCE });
@@ -124,11 +124,17 @@ async function codeFlow(base: string, provider: GBrainOAuthProvider, clientId: s
   out.refreshed = { scope: rotated.scope, newRefresh: rotated.refresh_token !== tokens.refresh_token };
   out.rotatedAccess = await bearer(provider, rotated.access_token);
   out.oldAccessAfterRefresh = await bearer(provider, tokens.access_token);
-  out.refreshAgain = await answer(await form({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token }));
+  // #9364 (v338 refresh families): on PGLite and Postgres the immediate predecessor, replayed by its own client inside the grace
+  // window, gets back the pair that replaced it (a lost response, two tabs). The Rust store keeps no refresh families (a named loss
+  // of sync 21): its replay is plain single-use rotation, a 400 invalid_grant. Each is checked for its own backend, not compared.
+  const replayed = await answer(await form({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token }));
+  const replayBody = replayed.body as { access_token?: string; refresh_token?: string } | undefined;
+  const replayOk = backend === 'rust' ? replayed.status === 400
+    : replayed.status === 200 && replayBody?.access_token === rotated.access_token && replayBody?.refresh_token === rotated.refresh_token;
   out.unknownRefresh = await answer(await form({ grant_type: 'refresh_token', refresh_token: 'gbrain_rt_never-issued' }));
   // Not vacuous: both exchanges issued tokens the bearer check accepts, and each repeat was refused.
   if ('refused' in (out.access as object) || 'refused' in (out.rotatedAccess as object)
-    || (out.codeAgain as { status: number }).status !== 400 || (out.refreshAgain as { status: number }).status !== 400) {
+    || (out.codeAgain as { status: number }).status !== 400 || !replayOk) {
     throw new Error(`code flow: ${JSON.stringify(out)}`);
   }
   return out;
@@ -138,7 +144,7 @@ describe('engine parity: OAuth over HTTP', () => {
   parityTest('the authorization code flow and a refresh over HTTP: /authorize, owner approval, /token, a rotated refresh, and each repeat refused',
     { methods: ['insertOauthClient', 'readOauthClient', 'readOauthClientForUpdate', 'insertOauthCode',
       'readOauthCodeForUpdate', 'deleteOauthCode', 'issueOauthTokens', 'readOauthAccessTokenRows', 'readOauthRefreshTokenForUpdate', 'deleteOauthRefreshToken',
-      'insertSource', 'listAllSources', 'oauthClientHoldsAuthorization', 'persistOauthClientGrant', 'transaction'], timeout: 120_000 }, async (engine) => {
+      'insertSource', 'listAllSources', 'oauthClientHoldsAuthorization', 'persistOauthClientGrant', 'transaction'], timeout: 120_000 }, async (engine, backend) => {
       await engine.insertSource({ id: 'wikia', name: 'Wiki A', local_path: null, config: {} });
       await engine.insertSource({ id: 'wiki-b', name: 'Wiki B', local_path: null, config: {} });
       const client = (id: string, extra: Record<string, unknown> = {}) => engine.insertOauthClient({ client_id: id, client_name: `Client ${id}`, scope: 'read write',
@@ -151,8 +157,8 @@ describe('engine parity: OAuth over HTTP', () => {
       const provider = providerFor(engine);
       const http = await serve(provider);
       try {
-        const out = { public: await codeFlow(http.base, provider, 'oc-public'), confidential: await codeFlow(http.base, provider, 'oc-confidential', SECRET),
-          dcr: await codeFlow(http.base, provider, 'oc-dcr') };
+        const out = { public: await codeFlow(http.base, provider, 'oc-public', backend), confidential: await codeFlow(http.base, provider, 'oc-confidential', backend, SECRET),
+          dcr: await codeFlow(http.base, provider, 'oc-dcr', backend) };
         const dcr = await engine.readOauthClient('oc-dcr');
         return { ...out, dcrAfterConsent: { revision: dcr?.grant_revision, sourceId: dcr?.source_id } };
       } finally {

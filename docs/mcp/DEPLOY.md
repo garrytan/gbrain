@@ -66,7 +66,7 @@ Works with Claude Code, Cursor, Windsurf, and any MCP client that supports stdio
 On Claude Code, `gbrain setup claude-code` writes and verifies this registration
 for you ([setup guide](../guides/setup.md)). No server, no tunnel, no token needed. Works on both PGLite and Postgres engines.
 `--surface full` serves every operation; `--advertise verbs` lists only the seven
-memory verbs and `request_tools` in tools/list, and `request_tools` returns any
+memory verbs, `correct` and `request_tools` in tools/list, and `request_tools` returns any
 other tool's schema. A bare `gbrain serve` lists everything. For a client that cannot hold the full
 catalog, `--surface verbs` exposes exactly the seven-verb memory protocol
 (`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`,
@@ -83,7 +83,7 @@ connection per call ([warm CLI socket](../guides/cli-socket.md)).
 listing fewer tools to the agent, set `mcp.advertised_surface`:
 
 ```bash
-gbrain config set mcp.advertised_surface verbs   # list the 7 verbs; everything else stays callable
+gbrain config set mcp.advertised_surface verbs   # list the 7 verbs, correct and request_tools; everything else stays callable
 ```
 
 Unset is the recommended default. In a held-out agent benchmark, listing only
@@ -99,7 +99,7 @@ that session's list (the server sends `tools/list_changed`). On the OAuth HTTP
 server, a client that set its own surface (`request_tools` with `surface`, or
 `gbrain auth rescope-client`) has that surface listed in full, and a client an
 install default set up (`gbrain auth clients` shows `full (set by install)`)
-lists the memory verbs and `request_tools` whatever the server's `--advertise`
+lists the memory verbs, `correct` and `request_tools` whatever the server's `--advertise`
 or `mcp.advertised_surface` says; `gbrain auth rescope-client <client_id>
 --surface full` lists everything for it. Unset advertises the whole callable
 set. When `request_tools` with `surface` changes a client's surface, the OAuth
@@ -841,6 +841,18 @@ the accepted URL. A bearer token bound to another resource gets
 serves gets `invalid_grant` on refresh. Point the client at the accepted URL
 or fix `--public-url`, then reconnect. ChatGPT specifics
 are in [CHATGPT.md](CHATGPT.md#troubleshooting).
+
+**A client lost its sign-in after a refresh, or every session of a client was signed out at once**
+Each refresh rotates the refresh token. For 60 seconds after a rotation, the
+same client sending the token it just gave up gets the pair that replaced it
+again, so two tabs, parallel clients or a retry after a lost response keep
+the sign-in. Any other reuse of an old refresh token (after those 60 seconds,
+from a different client, or a token older than the one just replaced) is
+treated as a stolen token: every access and refresh token of that sign-in is
+deleted, and the client must reconnect and get owner approval again. Other
+sign-ins of the same client are not touched. A client that waits longer than
+60 seconds before retrying a refresh whose answer it never got still has to
+reconnect.
 
 **A claude.ai connector can search but not save**
 The `/mcp` challenge hints `read write`, and each token is capped to the

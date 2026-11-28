@@ -54,7 +54,7 @@ describe('engine parity: the typed-claim facts behind the superseded-claim stamp
       const ids = await fixture(engine);
       const view = async (pages: string[], entities: string[]) => sorted((await engine.listTypedClaimFactsAtPages(pages, entities)).map(r => ({
         fact: Number(r.id) === ids.older ? 'older' : Number(r.id) === ids.newer ? 'newer' : 'other', source_id: r.source_id, page: r.source_markdown_slug,
-        entity: r.entity_slug, metric: r.claim_metric, period: r.claim_period, valid_from: new Date(r.valid_from).toISOString() })), r => r.fact);
+        entity: r.entity_slug, metric: r.claim_metric, period: r.claim_period, valid_from: new Date(r.valid_from!).toISOString() })), r => r.fact);
       const out = {
         both: await view([OLD_PAGE, NEW_PAGE], [ENTITY]),
         onePage: await view([OLD_PAGE], [ENTITY]),

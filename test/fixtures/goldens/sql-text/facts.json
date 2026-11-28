@@ -89,8 +89,8 @@
               "null",
               "number"
             ],
-            "sql": "UPDATE facts SET expired_at = $1, superseded_by = COALESCE($2, superseded_by), valid_until = CASE WHEN $3::timestamptz IS NULL THEN valid_until WHEN valid_from < $4::timestamptz AND $5::timestamptz < COALESCE(valid_until, now()) THEN $6::timestamptz ELSE GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now())) END WHERE id = $7 AND expired_at IS NULL",
-            "textSha256": "62c68fe82f53ef0e4cc71c1150b5ef1f7d1eff1f23df4631d923ccb512cfb75f"
+            "sql": "UPDATE facts SET expired_at = $1, superseded_by = COALESCE($2, superseded_by), valid_until = CASE WHEN $3::timestamptz IS NULL THEN valid_until WHEN (valid_from IS NULL OR valid_from < $4::timestamptz) AND $5::timestamptz < COALESCE(valid_until, now()) THEN $6::timestamptz ELSE GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now())) END WHERE id = $7 AND expired_at IS NULL",
+            "textSha256": "1663bbd4085554f4b945a394e3d6022cfbda69073810dcdad76669e6ec21e7d7"
           }
         ],
         "supersededBy": [
@@ -105,8 +105,8 @@
               "null",
               "number"
             ],
-            "sql": "UPDATE facts SET expired_at = $1, superseded_by = COALESCE($2, superseded_by), valid_until = CASE WHEN $3::timestamptz IS NULL THEN valid_until WHEN valid_from < $4::timestamptz AND $5::timestamptz < COALESCE(valid_until, now()) THEN $6::timestamptz ELSE GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now())) END WHERE id = $7 AND expired_at IS NULL",
-            "textSha256": "62c68fe82f53ef0e4cc71c1150b5ef1f7d1eff1f23df4631d923ccb512cfb75f"
+            "sql": "UPDATE facts SET expired_at = $1, superseded_by = COALESCE($2, superseded_by), valid_until = CASE WHEN $3::timestamptz IS NULL THEN valid_until WHEN (valid_from IS NULL OR valid_from < $4::timestamptz) AND $5::timestamptz < COALESCE(valid_until, now()) THEN $6::timestamptz ELSE GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now())) END WHERE id = $7 AND expired_at IS NULL",
+            "textSha256": "1663bbd4085554f4b945a394e3d6022cfbda69073810dcdad76669e6ec21e7d7"
           }
         ]
       },
@@ -174,8 +174,8 @@
               "string",
               "number"
             ],
-            "sql": "SELECT id, valid_from, valid_until, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND facts.visibility IN ('world') AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = facts.source_id AND elig_qp.slug = facts.source_markdown_slug AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = facts.id::text) AND (claim_metric IS NULL OR claim_metric !~* $3) ORDER BY valid_from DESC, id DESC LIMIT $4",
-            "textSha256": "2da791e22efa85c78ac2c48468b4dc678bec190d8b23178a4e1757a3c91f9b5c"
+            "sql": "SELECT id, COALESCE(valid_from, created_at) AS valid_from, valid_until, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND facts.visibility IN ('world') AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = facts.source_id AND elig_qp.slug = facts.source_markdown_slug AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = facts.id::text) AND (claim_metric IS NULL OR claim_metric !~* $3) ORDER BY COALESCE(valid_from, created_at) DESC, id DESC LIMIT $4",
+            "textSha256": "0c8a2f3f5c280fd583c4bb39715c8fa63cb7ea7429c2a40eb2f1e76035b01b66"
           }
         ],
         "event": [
@@ -187,8 +187,8 @@
               "string",
               "number"
             ],
-            "sql": "SELECT id, valid_from, valid_until, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND facts.visibility IN ('world') AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = facts.source_id AND elig_qp.slug = facts.source_markdown_slug AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = facts.id::text) AND (claim_metric IS NULL OR claim_metric !~* $3) AND event_type IS NOT NULL ORDER BY valid_from DESC, id DESC LIMIT $4",
-            "textSha256": "da29e2b78869e5d30f0c0bb8b7620003b66c54ca088a83992e6415105137b0f8"
+            "sql": "SELECT id, COALESCE(valid_from, created_at) AS valid_from, valid_until, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND facts.visibility IN ('world') AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = facts.source_id AND elig_qp.slug = facts.source_markdown_slug AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = facts.id::text) AND (claim_metric IS NULL OR claim_metric !~* $3) AND event_type IS NOT NULL ORDER BY COALESCE(valid_from, created_at) DESC, id DESC LIMIT $4",
+            "textSha256": "eaddaf82bf8385dc555ed81fc016cc9284dab585db20404dd2e92ad23d1cfd01"
           }
         ],
         "sourceIds+metric+since+until": [
@@ -203,8 +203,8 @@
               "Date",
               "number"
             ],
-            "sql": "SELECT id, valid_from, valid_until, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = ANY($1::text[]) AND entity_slug = $2 AND expired_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = facts.source_id AND elig_qp.slug = facts.source_markdown_slug AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = facts.id::text) AND (claim_metric IS NULL OR claim_metric !~* $3) AND claim_metric = $4 AND claim_metric IS NOT NULL AND valid_from >= $5 AND valid_from <= $6 ORDER BY valid_from DESC, id DESC LIMIT $7",
-            "textSha256": "6be9eb9fe424ad38e6f0d5894362cf9b700e2dc95cb67e6be973f0f89383e1dc"
+            "sql": "SELECT id, COALESCE(valid_from, created_at) AS valid_from, valid_until, claim_metric, claim_value, claim_unit, claim_period, event_type, fact, source_session, source_markdown_slug, CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model') AND embedded_text_hash=md5(fact) THEN embedding::text END AS embedding FROM facts WHERE source_id = ANY($1::text[]) AND entity_slug = $2 AND expired_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = facts.source_id AND elig_qp.slug = facts.source_markdown_slug AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = facts.id::text) AND (claim_metric IS NULL OR claim_metric !~* $3) AND claim_metric = $4 AND claim_metric IS NOT NULL AND COALESCE(valid_from, created_at) >= $5 AND COALESCE(valid_from, created_at) <= $6 ORDER BY COALESCE(valid_from, created_at) DESC, id DESC LIMIT $7",
+            "textSha256": "77fcdc4580718b70ea94bb6a74a8af2c62765bb5c295f0b5ba26b0deabd2aa7e"
           }
         ]
       },
@@ -292,7 +292,7 @@
               "string",
               "string",
               "null",
-              "Date",
+              "null",
               "null",
               "string",
               "null",
@@ -336,7 +336,7 @@
               "string",
               "string",
               "null",
-              "Date",
+              "null",
               "null",
               "string",
               "null",
@@ -389,7 +389,7 @@
               "string",
               "string",
               "null",
-              "Date",
+              "null",
               "null",
               "string",
               "null",
@@ -410,13 +410,13 @@
             "lane": "tx",
             "params": [
               "number",
-              "Date",
-              "Date",
-              "Date",
+              "null",
+              "null",
+              "null",
               "number"
             ],
-            "sql": "UPDATE facts SET expired_at = now(), superseded_by = $1, valid_until = CASE WHEN valid_from < $2::timestamptz AND $3::timestamptz < COALESCE(valid_until, now()) THEN $4::timestamptz ELSE GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now())) END WHERE id = $5 AND expired_at IS NULL",
-            "textSha256": "96b77af3aec9877244bf76b54ad21c6c3f16617ffa3ea8ec42a037b7e9a77b2a"
+            "sql": "UPDATE facts SET expired_at = now(), superseded_by = $1, valid_until = CASE WHEN (valid_from IS NULL OR valid_from < $2::timestamptz) AND $3::timestamptz < COALESCE(valid_until, now()) THEN $4::timestamptz ELSE GREATEST(valid_from, LEAST(COALESCE(valid_until, now()), now())) END WHERE id = $5 AND expired_at IS NULL",
+            "textSha256": "b227e25d9a30f5f40b114fd7589ddd9a1265f3d21feb1aa1e565506571a349e0"
           },
           {
             "event": "commit",
@@ -535,11 +535,17 @@
               "array<string>",
               "string",
               "number",
+              "string",
+              "string",
+              "array<string>",
+              "array<string>",
+              "string",
+              "number",
               "number",
               "number"
             ],
-            "sql": "SELECT * FROM ((SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND consolidated_at IS NULL AND kind = ANY($3::text[]) AND facts.visibility IN ('world') AND source != ALL($4::text[]) AND fact ILIKE $5 ESCAPE '\\' AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from <= now() ORDER BY valid_from DESC, id DESC LIMIT $6) UNION ALL (SELECT * FROM facts WHERE source_id = $7 AND entity_slug = $8 AND consolidated_at IS NULL AND kind = ANY($9::text[]) AND facts.visibility IN ('world') AND source != ALL($10::text[]) AND fact ILIKE $11 ESCAPE '\\' AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from > now() ORDER BY created_at DESC, id DESC LIMIT $12)) f ORDER BY (CASE WHEN valid_from > now() THEN created_at ELSE valid_from END) DESC, id DESC LIMIT $13 OFFSET $14",
-            "textSha256": "b08ca5936fe6bd6c1ea8e3bc1e5bb131162306d21fb33a26fa7486758fdfecab"
+            "sql": "SELECT * FROM ((SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND consolidated_at IS NULL AND kind = ANY($3::text[]) AND facts.visibility IN ('world') AND source != ALL($4::text[]) AND fact ILIKE $5 ESCAPE '\\' AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from <= now() ORDER BY valid_from DESC, id DESC LIMIT $6) UNION ALL (SELECT * FROM facts WHERE source_id = $7 AND entity_slug = $8 AND consolidated_at IS NULL AND kind = ANY($9::text[]) AND facts.visibility IN ('world') AND source != ALL($10::text[]) AND fact ILIKE $11 ESCAPE '\\' AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from > now() ORDER BY created_at DESC, id DESC LIMIT $12) UNION ALL (SELECT * FROM facts WHERE source_id = $13 AND entity_slug = $14 AND consolidated_at IS NULL AND kind = ANY($15::text[]) AND facts.visibility IN ('world') AND source != ALL($16::text[]) AND fact ILIKE $17 ESCAPE '\\' AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from IS NULL ORDER BY created_at DESC, id DESC LIMIT $18)) f ORDER BY (CASE WHEN valid_from IS NULL OR valid_from > now() THEN created_at ELSE valid_from END) DESC, id DESC LIMIT $19 OFFSET $20",
+            "textSha256": "c6d9be9530731b6115336ca5228427cf8fc29225214a96467e44b19e42574e8f"
           }
         ],
         "default": [
@@ -552,11 +558,14 @@
               "string",
               "string",
               "number",
+              "string",
+              "string",
+              "number",
               "number",
               "number"
             ],
-            "sql": "SELECT * FROM ((SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from <= now() ORDER BY valid_from DESC, id DESC LIMIT $3) UNION ALL (SELECT * FROM facts WHERE source_id = $4 AND entity_slug = $5 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from > now() ORDER BY created_at DESC, id DESC LIMIT $6)) f ORDER BY (CASE WHEN valid_from > now() THEN created_at ELSE valid_from END) DESC, id DESC LIMIT $7 OFFSET $8",
-            "textSha256": "e4a14abf67764bbedeb5a93efa9adaa50e503895c38ac12cdc50f955c904f8d4"
+            "sql": "SELECT * FROM ((SELECT * FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from <= now() ORDER BY valid_from DESC, id DESC LIMIT $3) UNION ALL (SELECT * FROM facts WHERE source_id = $4 AND entity_slug = $5 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from > now() ORDER BY created_at DESC, id DESC LIMIT $6) UNION ALL (SELECT * FROM facts WHERE source_id = $7 AND entity_slug = $8 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND valid_from IS NULL ORDER BY created_at DESC, id DESC LIMIT $9)) f ORDER BY (CASE WHEN valid_from IS NULL OR valid_from > now() THEN created_at ELSE valid_from END) DESC, id DESC LIMIT $10 OFFSET $11",
+            "textSha256": "e931d3a7c9a4df0104cda1507dbba90e946738476f5d976cf32b0091be1f70bd"
           }
         ]
       },
@@ -645,8 +654,8 @@
               "number",
               "number"
             ],
-            "sql": "SELECT * FROM facts WHERE source_id = $1 AND COALESCE(valid_from, created_at) >= $2 AND entity_slug = $3 AND source_session = $4 AND source != ALL($5::text[]) AND fact ILIKE $6 ESCAPE '\\' AND consolidated_at IS NULL AND kind = ANY($7::text[]) AND facts.visibility IN ('world') AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) ORDER BY COALESCE(valid_from, created_at) DESC, id DESC LIMIT $8 OFFSET $9",
-            "textSha256": "db68556ba4c2d5393c3b9b5846176aca8447dd5047e5ee6d43571d3ef74500a6"
+            "sql": "SELECT * FROM facts WHERE source_id = $1 AND valid_from IS NOT NULL AND COALESCE(valid_from, created_at) >= $2 AND entity_slug = $3 AND source_session = $4 AND source != ALL($5::text[]) AND fact ILIKE $6 ESCAPE '\\' AND consolidated_at IS NULL AND kind = ANY($7::text[]) AND facts.visibility IN ('world') AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) ORDER BY COALESCE(valid_from, created_at) DESC, id DESC LIMIT $8 OFFSET $9",
+            "textSha256": "8a891916c4d6032a5e788776086466247c47a1e8ed283ecca4646ed3cb4d02b7"
           }
         ],
         "default": [
@@ -659,7 +668,7 @@
               "number"
             ],
             "sql": "SELECT * FROM facts WHERE source_id = $1 AND created_at >= $2 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = facts.source_id AND elig_dp.slug = ANY(ARRAY[facts.source_markdown_slug, facts.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4",
-            "textSha256": "4470d6ad169dd3ef6e6f027e56ec8af4a50455d6442442a8828bc49c39a11749"
+            "textSha256": "77a5e609c8b7a665dae727804a4aabce4833185872c5c62b52350f6539186640"
           }
         ]
       },

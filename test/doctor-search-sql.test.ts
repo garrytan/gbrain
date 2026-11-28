@@ -15,11 +15,14 @@ import { describe, expect, test } from 'bun:test';
 import { DOCTOR_SEARCH_SQL } from '../src/core/engine-sql/doctor-search.ts';
 import { readProjectionBacklog } from '../src/core/engine-sql/projection-backlog.ts';
 import {
-  ATOM_BACKLOG_ALL_CONNECTORS_OUT_SQL, ATOM_BACKLOG_ALL_SQL, ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_SQL, ATOM_BACKLOG_SCOPED_SQL, countAtomExtractionBacklog,
+  ATOM_BACKLOG_ALL_CONNECTORS_OUT_POLICY_OFF_SQL, ATOM_BACKLOG_ALL_CONNECTORS_OUT_SQL, ATOM_BACKLOG_ALL_POLICY_OFF_SQL, ATOM_BACKLOG_ALL_SQL,
+  ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_POLICY_OFF_SQL, ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_SQL, ATOM_BACKLOG_SCOPED_POLICY_OFF_SQL, ATOM_BACKLOG_SCOPED_SQL, countAtomExtractionBacklog,
 } from '../src/core/engine-sql/atom-backlog.ts';
 import { managedAtomDiscoverySql } from '../src/core/persistence/atom-maintenance.ts';
 import { connectorAtomExclusion, connectorAtomExclusionSql } from '../src/core/cycle/connector-atoms.ts';
 import { heldAtomInputExclusionSql } from '../src/core/cycle/extract-atoms-generation.ts';
+import { PAGE_ATOMS_CURRENT_EXCLUSION_SQL, scanStillCurrentSql } from '../src/core/cycle/extract-atoms-page-state.ts';
+import { SOURCE_ATOM_OPT_OUT_SQL, SOURCE_ATOM_OPTED_OUT_SQL } from '../src/core/cycle/source-atom-policy.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { buildVisibilityClause } from '../src/core/search/sql-ranking.ts';
 import { chunkGenerationFilter } from '../src/core/search/safe-chunks.ts';
@@ -136,8 +139,9 @@ SELECT source_id, type FROM pairs`);
   WHERE scan.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
     AND scan.page_id=p.id AND scan.content_hash=p.content_hash
     AND (scan.tombstoned OR scan.partial_input_chars >= ${cap})
+    AND ${scanStillCurrentSql('scan')}
 )`;
-    const original = (scoped: boolean, connectorExclusion: string, holdParam: string) => scoped
+    const original = (scoped: boolean, connectorExclusion: string, holdParam: string, policy = SOURCE_ATOM_OPT_OUT_SQL) => scoped
       ? `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.source_id = $1
            AND p.type = ANY($2::text[])
@@ -150,14 +154,9 @@ SELECT source_id, type FROM pairs`);
            ${managedAtomDiscoverySql('$4::integer')}
            ${scanState('$4::integer')}
            ${connectorExclusion}
+           ${policy}
            ${heldAtomInputExclusionSql(holdParam)}
-           AND NOT EXISTS (
-             SELECT 1 FROM pages atom
-             WHERE atom.type = 'atom' AND atom.source_id = $1
-               AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-               AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
-               AND atom.deleted_at IS NULL
-           )`
+           ${PAGE_ATOMS_CURRENT_EXCLUSION_SQL}`
       : `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.type = ANY($1::text[])
            AND p.deleted_at IS NULL
@@ -169,14 +168,9 @@ SELECT source_id, type FROM pairs`);
            ${managedAtomDiscoverySql('$3::integer')}
            ${scanState('$3::integer')}
            ${connectorExclusion}
+           ${policy}
            ${heldAtomInputExclusionSql(holdParam)}
-           AND NOT EXISTS (
-             SELECT 1 FROM pages atom
-             WHERE atom.type = 'atom' AND atom.source_id = p.source_id
-               AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-               AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
-               AND atom.deleted_at IS NULL
-           )`;
+           ${PAGE_ATOMS_CURRENT_EXCLUSION_SQL}`;
     const engineWith = (flag: string | null) => ({ getConfig: async () => flag }) as unknown as BrainEngine;
 
     test('the constants equal the composed statement, the connector lists bound instead of spliced', async () => {
@@ -193,6 +187,11 @@ SELECT source_id, type FROM pairs`);
       expect<string>(ATOM_BACKLOG_ALL_SQL).toBe(original(false, enabled, '$4'));
       expect<string>(ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_SQL).toBe(original(true, bound(true), '$7'));
       expect<string>(ATOM_BACKLOG_ALL_CONNECTORS_OUT_SQL).toBe(original(false, bound(false), '$6'));
+      // #9888: the `excluded` twins differ only in the source opt-out clause, inverted.
+      expect<string>(ATOM_BACKLOG_SCOPED_POLICY_OFF_SQL).toBe(original(true, enabled, '$5', SOURCE_ATOM_OPTED_OUT_SQL));
+      expect<string>(ATOM_BACKLOG_ALL_POLICY_OFF_SQL).toBe(original(false, enabled, '$4', SOURCE_ATOM_OPTED_OUT_SQL));
+      expect<string>(ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_POLICY_OFF_SQL).toBe(original(true, bound(true), '$7', SOURCE_ATOM_OPTED_OUT_SQL));
+      expect<string>(ATOM_BACKLOG_ALL_CONNECTORS_OUT_POLICY_OFF_SQL).toBe(original(false, bound(false), '$6', SOURCE_ATOM_OPTED_OUT_SQL));
     });
 
     test('the connector opt-out passes the page types and source kinds the old clause listed', async () => {
@@ -219,6 +218,19 @@ SELECT source_id, type FROM pairs`);
         { text: ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_SQL, params: ['a', ['note'], 500, 1000, ['email'], ['google'], ['hold-a']] },
         { text: ATOM_BACKLOG_ALL_CONNECTORS_OUT_SQL, params: [['note'], 500, 1000, ['email'], ['google'], ['hold-a']] },
       ]);
+    });
+
+    test('sourcePolicy: excluded selects the opted-out twin with the same parameters (#9888)', async () => {
+      const seen: Array<{ text: string; params: unknown[] }> = [];
+      const raw = (async (text: string, params?: unknown[]) => { seen.push({ text, params: params ?? [] }); return [{ cnt: '3' }]; }) as never;
+      const base = { types: ['note'], minChars: 500, maxInputChars: 1000, sourcePolicy: 'excluded' as const, holdIds: ['hold-a'] };
+      const connectors = { pageTypes: ['email'], sourceKinds: ['google'] };
+      expect(await countAtomExtractionBacklog(raw, { ...base, sourceId: 'a', connectorExclusion: null })).toBe(3);
+      await countAtomExtractionBacklog(raw, { ...base, sourceId: null, connectorExclusion: null });
+      await countAtomExtractionBacklog(raw, { ...base, sourceId: 'a', connectorExclusion: connectors });
+      await countAtomExtractionBacklog(raw, { ...base, sourceId: null, connectorExclusion: connectors });
+      expect(seen.map((s) => s.text)).toEqual([ATOM_BACKLOG_SCOPED_POLICY_OFF_SQL, ATOM_BACKLOG_ALL_POLICY_OFF_SQL,
+        ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_POLICY_OFF_SQL, ATOM_BACKLOG_ALL_CONNECTORS_OUT_POLICY_OFF_SQL]);
     });
   });
 });

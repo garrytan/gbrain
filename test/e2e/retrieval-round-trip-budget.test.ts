@@ -31,8 +31,15 @@ const CLI = join(import.meta.dir, '../../src/cli.ts');
  * under COVERAGE_COUNT_TIMEOUT_MS, so it is BEGIN + SET LOCAL statement_timeout, the statement and COMMIT: two more
  * wire records than the one unbounded statement it replaced (65). The three are sent in one pipelined batch on their
  * own connection, so no round trip is added to the search's wall time. Measured 67 on two cold runs.
+ * search +1 (GST-4029, sync 21): `search.long_page_unit` defaults to `section`, so a search with a non-conversation hit
+ * runs the one long-page size preflight that buys section delivery: selectLongPages' `SELECT p.id,
+ * char_length(...) AS chars, octet_length(...) AS bytes FROM pages p WHERE p.id = ANY($1)` (search/evidence-delivery.ts).
+ * Search hits carry no page size, so it cannot be skipped without one. Measured on Postgres in sync 21 (merged tree, fresh
+ * database, no provider keys): search 68, get 14, recall 26. Search's 68 is the 67 above plus that one read, so its budget
+ * is the measurement. Get and recall measure well under their 19 and 38 on this trunk (typed members replaced raw reads
+ * before sync 21); sync 21 changed neither path, so those two budgets are left for the change that claims the saving.
  */
-const BUDGET: Record<string, number> = { search: 67, get: 19, recall: 38 };
+const BUDGET: Record<string, number> = { search: 68, get: 19, recall: 38 };
 
 const run = process.env.DATABASE_URL ? describe : describe.skip;
 let home = '';

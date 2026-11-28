@@ -95,7 +95,10 @@ impl Store {
         )?;
         let mut rows: Vec<FactRecord> = source_rows(&*self.read()?, &a.source_id)?
             .into_iter()
-            .filter(|f| f.expired_at_us.is_none() && iso(f.valid_from_us)[..10] == a.day)
+            .filter(|f| {
+                f.expired_at_us.is_none()
+                    && f.valid_from().is_some_and(|from| iso(from)[..10] == a.day)
+            })
             .collect();
         rows.sort_by_key(|f| f.id);
         Ok(rows
@@ -104,7 +107,7 @@ impl Store {
                 json!({
                     "id": f.id, "entity_slug": f.entity_slug, "fact": f.fact, "row_num": f.row_num,
                     "source_markdown_slug": f.source_markdown_slug,
-                    "valid_from": timestamptz_text(f.valid_from_us),
+                    "valid_from": f.valid_from().map(timestamptz_text),
                     "valid_until_day": f.valid_until_us.map(|u| iso(u)[..10].to_string()),
                 })
             })
@@ -135,13 +138,14 @@ impl Store {
                             && g.claim_metric.as_ref() == Some(metric)
                             && g.claim_unit == f.claim_unit
                             && g.claim_period == f.claim_period
+                            && g.valid_from().is_some()
                             && g.valid_from_us == f.valid_from_us
                     })
                     .map(|g| g.id)
                     .collect();
                 out.push(json!({
                     "source_id": source, "id": f.id, "entity_slug": entity, "take_id": take,
-                    "valid_from": timestamptz_text(f.valid_from_us),
+                    "valid_from": f.valid_from().map(timestamptz_text),
                     "partners": if partners.is_empty() { Value::Null } else { json!(partners) },
                 }));
             }
@@ -205,6 +209,7 @@ impl Store {
                         && d.value_hash.is_some()
                         && d.value_hash == f.value_hash
                         && d.source_markdown_slug.as_deref() == Some(f.source.as_str())
+                        && d.valid_from().is_some()
                         && d.valid_from_us == f.valid_from_us
                 });
                 out.push((

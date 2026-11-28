@@ -358,6 +358,25 @@ describe('engine parity: the take proposal members called directly', () => {
     expect(got.deleted).toEqual(['notes/m-old']);
     return got;
   });
+
+  parityTest('listPendingTakeProposals clamps an infinite or fractional limit like the SQL and fails a NaN one with the bigint error', {
+    methods: ['putPage', 'insertTakeProposal', 'listPendingTakeProposals'],
+  }, async (engine) => {
+    await putPages(engine, [{ slug: 'notes/l-a', body: 'A.' }]);
+    for (const claimText of ['Claim one', 'Claim two', 'Claim three']) {
+      await engine.insertTakeProposal({
+        sourceId: 'default', pageSlug: 'notes/l-a', contentHash: 'h1', promptVersion: 'parity-v1', proposalRunId: 'run-l', claimText,
+        kind: 'take', holder: 'brain', weight: 0.5, domain: null, dedupAgainst: [], modelId: 'parity-model',
+      });
+    }
+    const count = async (limit: number) => (await engine.listPendingTakeProposals({ limit })).length;
+    const got = {
+      infinite: await count(Infinity), negative: await count(-Infinity), fraction: await count(2.9), zero: await count(0),
+      nan: await engine.listPendingTakeProposals({ limit: NaN }).then(() => 'answered', (e: unknown) => (e instanceof Error ? e.message : String(e))),
+    };
+    expect(got).toEqual({ infinite: 3, negative: 1, fraction: 2, zero: 1, nan: 'invalid input syntax for type bigint: "NaN"' });
+    return got;
+  });
 });
 
 const tooLong = () => Object.assign(new AIConfigError('[chat(anthropic:claude-example)] prompt is too long: 250000 tokens > 200000 maximum'), { status: 400 });

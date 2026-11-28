@@ -52,7 +52,7 @@ const bullet = (f: ProfileFact) => {
 
 /** `[YYYY-MM-DD] - fact`, one per line: the list Claude's memory import reads. */
 export function renderMemoryText(facts: ProfileFact[]): string {
-  return facts.map(f => `[${day(f)}] - ${claimText(f)}`).join('\n') + (facts.length ? '\n' : '');
+  return facts.map(f => `${f.valid_from ? `[${day(f)}] ` : ''}- ${claimText(f)}`).join('\n') + (facts.length ? '\n' : '');
 }
 
 /** The marked Muse block; rev is a digest of its body, so an unchanged profile exports the same block. */

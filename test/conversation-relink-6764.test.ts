@@ -76,11 +76,11 @@ const active = (db: BrainEngine, fact: string) => db.executeRaw<{ entity_slug: s
   'SELECT entity_slug, source_markdown_slug, context FROM facts WHERE source_id=$1 AND fact=$2 AND expired_at IS NULL ORDER BY id', ['default', fact]);
 
 /** `extract-conversation-facts --force` on MEETING, the extractor stubbed to return both claims unlinked. */
-async function reextract(db: BrainEngine) {
+async function reextract(db: BrainEngine, linkedEntity: string | null = null) {
   const spy = spyOn(process.stderr, 'write').mockImplementation(() => true);
   try {
     return await runExtractConversationFactsCore(db, { sourceId: 'default', slugs: [MEETING], sleepMs: 0, overrideDisabled: true, force: true,
-      extractor: async () => [LINKED, UNRESOLVED].map(fact => ({ fact, kind: 'event', confidence: 0.9, entity_slug: null, source: 'test', notability: 'high' }) as ExtractedFact) });
+      extractor: async () => [LINKED, UNRESOLVED].map(fact => ({ fact, kind: 'event', confidence: 0.9, entity_slug: fact === LINKED ? linkedEntity : null, source: 'test', notability: 'high' }) as ExtractedFact) });
   } finally { spy.mockRestore(); }
 }
 
@@ -160,8 +160,22 @@ describe('#6764 the link survives re-extraction and fence reconcile', () => {
       await expectKept(engine);
       await reextract(engine);
       await expectKept(engine);
+      // Each forced re-extraction expires the previous copy and keeps it as history (#10443): two reruns, two expired copies.
       const expired = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM facts WHERE fact=$1 AND expired_at IS NOT NULL`, [LINKED]);
-      expect(expired[0]!.n).toBe(1);
+      expect(expired[0]!.n).toBe(2);
+    } finally { await engine.unsetConfig('facts.entity_inference'); }
+  });
+
+  test('a later extraction that names another entity ends the relink, so an unlinked rerun does not bring it back', async () => {
+    await engine.setConfig('facts.entity_inference', 'off');
+    try {
+      await engine.putPage('people/bob-example', { type: 'person' as never, title: 'Bob Example', compiled_truth: '# Bob Example', timeline: '', frontmatter: {} });
+      await runConversationRelink(engine, config, { sourceId: 'default', slugs: [MEETING] });
+      await expectKept(engine);
+      await reextract(engine, 'people/bob-example');
+      expect((await active(engine, LINKED)).map(r => r.entity_slug)).toEqual(['people/bob-example']);
+      await reextract(engine);
+      expect((await active(engine, LINKED)).map(r => r.entity_slug)).toEqual([null]);
     } finally { await engine.unsetConfig('facts.entity_inference'); }
   });
 });

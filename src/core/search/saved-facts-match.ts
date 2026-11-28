@@ -20,7 +20,7 @@ export const FACT_MATCH_STOPWORDS = new Set(['the', 'and', 'for', 'who', 'what',
 /** Words that frame a question about a figure ("seat count", "total revenue") and that the fact stating it rarely repeats; they count toward neither side of the threshold. */
 const QUESTION_FRAME_WORDS = new Set(['count', 'number', 'total', 'amount']);
 
-export interface SavedFactMatch { id: number; fact: string; entity_slug: string | null; kind: string; valid_from: string; source: string;
+export interface SavedFactMatch { id: number; fact: string; entity_slug: string | null; kind: string; valid_from: string | null; source: string;
   /** #7043: every entity of the copies this row stands for, and how many rows it stands for. */
   entity_slugs?: string[]; collapsed_count?: number;
   /** With `search.saved_facts_supersede` on: the newer returned fact that corrects this one. */

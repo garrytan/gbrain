@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 335647,
-    "stdoutSha256": "a41fe37dfb8e2ec551db4c9a1e2b0d53a0fe23ab8ed607fb50da3a1fa8c4a5cf",
+    "stdoutBytes": 336173,
+    "stdoutSha256": "16b97302f64d2b48eaba0eb5b2909720a5549e3acd315dd7ae560f39be62939d",
     "toolNames": [
       "remember",
       "entity",
@@ -4838,7 +4838,7 @@
         "scope": "read"
       },
       {
-        "description": "The user corrected you: saves their standing rule and replaces fact_id with corrected_fact (or withdraws it). Branch on state and next.",
+        "description": "Only when the user corrects a wrong fact or asks for a standing rule: saves the rule and replaces fact_id with corrected_fact (or withdraws it); over MCP it often waits for owner approval first. Anything else to save: call remember. Branch on state and next.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -5431,7 +5431,7 @@
         "scope": "admin"
       },
       {
-        "description": "Get job status and details by ID. Agent-scoped tokens (no admin) see only jobs they own.",
+        "description": "Get job status and details by ID. Remote callers see only the jobs they submitted, unless bound to the brain owner.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5455,7 +5455,7 @@
         "scope": "admin"
       },
       {
-        "description": "Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Agent-scoped tokens (no admin) wait only on jobs they own.",
+        "description": "Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Remote callers wait only on the jobs they submitted, unless bound to the brain owner.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5484,7 +5484,7 @@
         "scope": "admin"
       },
       {
-        "description": "List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope (agent-scoped tokens see only jobs they own).",
+        "description": "List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope; remote callers (agent-scoped tokens too) see only the jobs they submitted, unless bound to the brain owner.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5587,7 +5587,7 @@
         "scope": "admin"
       },
       {
-        "description": "Get structured progress for a running job. Agent-scoped tokens (no admin) see only jobs they own.",
+        "description": "Get structured progress for a running job. Remote callers see only the jobs they submitted, unless bound to the brain owner.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5829,7 +5829,7 @@
         "scope": "admin"
       },
       {
-        "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.",
+        "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Remote callers watch only the jobs they submitted, unless bound to the brain owner. If no wake arrives, call wait_job.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -7937,7 +7937,7 @@
               "type": "string"
             },
             "valid_from": {
-              "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Default: now().",
+              "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Omitted: the event date stays unknown.",
               "type": "string"
             },
             "visibility": {
@@ -7965,6 +7965,7 @@
           "grep": "string?",
           "include_expired": "boolean?",
           "include_pending": "boolean?",
+          "include_undated": "boolean?",
           "limit": "number?",
           "max_chars": "integer?",
           "min_trust": "string?",
@@ -8009,6 +8010,10 @@
               "description": "Pending count.",
               "type": "boolean"
             },
+            "include_undated": {
+              "description": "With since: also facts with no event date saved inside the window.",
+              "type": "boolean"
+            },
             "limit": {
               "description": "Per-arm max (default 50, cap 100).",
               "type": "number"
@@ -8030,7 +8035,7 @@
               "type": "string"
             },
             "query": {
-              "description": "Also search pages (results[]).",
+              "description": "Search pages and rank facts.",
               "type": "string"
             },
             "question": {

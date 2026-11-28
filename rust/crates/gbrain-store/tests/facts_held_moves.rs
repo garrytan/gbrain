@@ -329,7 +329,8 @@ fn the_facts_home_scans_report_page_flags_age_and_missing_pages() {
             "\"people/live\"|\"slot\"|\"city\"|true|false",
         ]
     );
-    assert_eq!(scan[0]["valid_from"].as_str().unwrap().len(), 27);
+    // An undated fact keeps no valid_from (master #10288); the scan reports it as null.
+    assert!(scan[0]["valid_from"].is_null());
     let age = |days: &str| -> Vec<Value> {
         b.list_held_fact_rows(&args::<HeldAgeArgs>(
             json!({ "sourceId": "default", "days": days }),

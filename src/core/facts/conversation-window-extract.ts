@@ -41,7 +41,7 @@ export interface ConversationWindowRun {
  * stated (date-grounding variant) wins; else the segment start, except the
  * epoch fallback (no trustworthy date → the insert's now() default).
  */
-function segmentValidFrom(extracted: Date | undefined, startIso: string | undefined): { valid_from?: Date } {
+function segmentValidFrom(extracted: Date | null | undefined, startIso: string | undefined): { valid_from?: Date } {
   if (extracted) return { valid_from: extracted };
   return startIso && !startIso.startsWith('1970-') ? { valid_from: new Date(startIso) } : {};
 }

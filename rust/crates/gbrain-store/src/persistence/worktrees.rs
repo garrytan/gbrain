@@ -606,6 +606,86 @@ pub(crate) fn host_root_bindings_in(read: &dyn KvRead, host_id: &str) -> Result<
     Ok(out)
 }
 
+/// `listHostRepositoryRoots(hostId)`: every host binding of `host_id` (a stored binding always has a
+/// local path, so `local_path IS NOT NULL` holds for each), joined to the
+/// source bindings of its worktree (a binding with none gives one row with `source_id` null), by local
+/// path in byte order, then source id. `LEFT JOIN ... ORDER BY h.local_path COLLATE "C"` sets no order
+/// within one path; byte order of the source id makes it total here.
+pub(crate) fn host_repository_roots_in(read: &dyn KvRead, host_id: &str) -> Result<Vec<Value>> {
+    let host = uuid_param(host_id, "hostId")?;
+    let sources = scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?;
+    let mut rows: Vec<(String, Option<String>)> = Vec::new();
+    for h in scan_records::<HostBindingRecord>(read, HOST_BINDING, "host binding")? {
+        if h.host_id != host {
+            continue;
+        }
+        let path = h.local_path.clone();
+        let named: Vec<&SourceBindingRecord> = sources
+            .iter()
+            .filter(|s| s.worktree_id == h.worktree_id)
+            .collect();
+        if named.is_empty() {
+            rows.push((path, None));
+        } else {
+            rows.extend(
+                named
+                    .into_iter()
+                    .map(|s| (path.clone(), Some(s.source_id.clone()))),
+            );
+        }
+    }
+    rows.sort();
+    Ok(rows
+        .into_iter()
+        .map(|(local_path, source_id)| json!({ "local_path": local_path, "source_id": source_id }))
+        .collect())
+}
+
+/// `listPendingGitEffectPaths(hostId)`: per queued or running `git` effect whose data names a
+/// `relative_path`, that path (`data ->> 'relative_path'`), its source's local path, and the local
+/// path of its worktree's binding on `host_id` (none without a host or a binding), at most 10,000, in
+/// effect order (Postgres sets none). A `host_id` that is not a uuid is refused as `$1::uuid` refuses it.
+pub(crate) fn pending_git_effect_paths_in(
+    read: &dyn KvRead,
+    host_id: Option<&str>,
+) -> Result<Vec<Value>> {
+    let host = host_id.map(|h| uuid_param(h, "hostId")).transpose()?;
+    let hosts: Vec<HostBindingRecord> = match &host {
+        Some(h) => scan_records::<HostBindingRecord>(read, HOST_BINDING, "host binding")?
+            .into_iter()
+            .filter(|b| &b.host_id == h)
+            .collect(),
+        None => Vec::new(),
+    };
+    let mut out = Vec::new();
+    for e in all_effects(read)? {
+        if out.len() >= 10_000 {
+            break;
+        }
+        if e.kind != "git" || !(e.state == "queued" || e.state == "running") {
+            continue;
+        }
+        let Some(rel) = e.data.get("relative_path") else {
+            continue;
+        };
+        let source_path = match &e.source_id {
+            Some(id) => read_source(read, id)?.and_then(|s| s.local_path),
+            None => None,
+        };
+        let worktree_path = e
+            .worktree_id
+            .as_ref()
+            .and_then(|w| hosts.iter().find(|b| &b.worktree_id == w))
+            .map(|b| b.local_path.clone());
+        out.push(json!({
+            "rel": crate::timeline_queries::jsonb_field_text(rel),
+            "source_path": source_path,
+            "worktree_path": worktree_path,
+        }));
+    }
+    Ok(out)
+}
+
 /// A worktree's heartbeat, as ISO text (for tests and diagnostics).
 pub(crate) fn worktree_heartbeat_in(read: &dyn KvRead, id: &str) -> Result<Option<String>> {
     let id = uuid_param(id, "worktreeId")?;
@@ -954,6 +1034,16 @@ impl Store {
     /// `listHostTopologyRows(hostId)`.
     pub fn list_host_topology_rows(&self, host_id: &str) -> Result<Vec<Value>> {
         host_topology_rows_in(&*self.read()?, host_id)
+    }
+
+    /// `listPendingGitEffectPaths(hostId)`: the paths the queued and running git effects are about to commit.
+    pub fn list_pending_git_effect_paths(&self, host_id: Option<&str>) -> Result<Vec<Value>> {
+        pending_git_effect_paths_in(&*self.read()?, host_id)
+    }
+
+    /// `listHostRepositoryRoots(hostId)`: the host's bound local paths with the sources named on them.
+    pub fn list_host_repository_roots(&self, host_id: &str) -> Result<Vec<Value>> {
+        host_repository_roots_in(&*self.read()?, host_id)
     }
 
     /// `listWorktreeMembers(worktreeId)`.

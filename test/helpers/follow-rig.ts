@@ -12,9 +12,10 @@ import { FollowChild } from '../../src/shadow/follow-child.ts';
 import { ShadowFollower } from '../../src/shadow/follower.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
 import { Reconciler } from '../../src/shadow/reconcile.ts';
-import { writeSeedRecord } from '../../src/shadow/seed.ts';
+import { readSeedRecord, writeSeedRecord } from '../../src/shadow/seed.ts';
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
+import { join } from 'node:path';
 import { seedInto } from './shadow-seed-fixture.ts';
 
 export interface FollowRig {
@@ -33,9 +34,12 @@ export interface FollowRig {
   close(): Promise<void>;
 }
 
-export async function openFollowRig(primary: BrainEngine, addon: RustAddon, dir: string, kind: 'pglite' | 'postgres', opts: { dirty?: (relation: string) => void } = {}): Promise<FollowRig> {
-  const { record, storePath } = await seedInto(primary, addon, dir, kind);
-  writeSeedRecord(dir, record);
+export async function openFollowRig(primary: BrainEngine, addon: RustAddon, dir: string, kind: 'pglite' | 'postgres', opts: { dirty?: (relation: string) => void; reuseSeed?: boolean } = {}): Promise<FollowRig> {
+  // reuseSeed: a process restarted on a shadow seeded earlier reopens that store as it is, never reseeding it.
+  const reused = opts.reuseSeed ? readSeedRecord(dir) : null;
+  if (opts.reuseSeed && !reused) throw new Error(`no seed record in ${dir} to reuse`);
+  const { record, storePath } = reused ? { record: reused, storePath: join(dir, 'store') } : await seedInto(primary, addon, dir, kind);
+  if (!reused) writeSeedRecord(dir, record);
   const rust = openRustEngine({ addon, databasePath: storePath });
   await rust.connect({ engine: 'pglite', database_path: storePath } as never);
   const store = await (rust as unknown as { storeFor(member: string): Promise<FollowStore> }).storeFor('follow');

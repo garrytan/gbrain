@@ -98,6 +98,8 @@ export interface RustStore {
    * not reported; an unknown relation in `primaryMax` is `invalid_argument`.
    */
   allocatorCheck(seedId: string, primaryMax: Record<string, string | null>): Promise<SeedAllocatorCheck[]>;
+  /** Raises every id counter so its next id is above the floor (the primary's highest id per relation); never lowers one. Resolves the allocatorCheck report taken after the write. */
+  allocatorAdvance(seedId: string, primaryFloor: Record<string, string | null>): Promise<SeedAllocatorCheck[]>;
   /** The store's fact fingerprints of `texts`: the normalized one and the earlier raw-text one. */
   factFingerprints(texts: string[]): Promise<FactFingerprints[]>;
   /**
@@ -252,7 +254,7 @@ export interface FactFingerprints {
 /** A primary table the seed leaves behind on purpose, and the read that differs on the seeded store. */
 export interface SeedNotCopied {
   table: string;
-  kind: 'jobs' | 'telemetry' | 'cache' | 'machine_local' | 'segmented_body';
+  kind: 'jobs' | 'telemetry' | 'cache' | 'machine_local' | 'segmented_body' | 'lock_anchor';
   read: string;
   /** Rows of the table that are brain state: counted as the gap `gap`, not lost. */
   gap_rows: { gap: string; column: string; equals: string } | null;
@@ -286,7 +288,12 @@ export interface SeedImportResult {
  * Opens (or creates) the brain store at `databasePath`. A second open of the same directory rejects `rust_store_locked`.
  * A created brain records `embedding` as its embedding identity; an existing brain keeps its own.
  */
-export async function openRustStore(addon: object, databasePath: string, embedding?: { model: string; dimensions: number }): Promise<RustStore> {
+export async function openRustStore(
+  addon: object,
+  databasePath: string,
+  embedding?: { model: string; dimensions: number },
+  opts: { createMissing?: boolean } = {},
+): Promise<RustStore> {
   const { Pool, Brain } = addon as StoreAddon;
   const pool = new Pool(STORE_POOL_THREADS);
   const brain = new Brain(pool);
@@ -295,6 +302,8 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
       schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', chunkStrategy: SEED_CHUNK_STRATEGY,
       writeGateDetectorVersion: WRITE_GATE_DETECTOR_VERSION,
       ...(embedding ? { embeddingModel: embedding.model, embeddingDimensions: embedding.dimensions } : {}),
+      // Sent only when the store must already be there, so every other open sends what it always sent.
+      ...(opts.createMissing === false ? { createMissing: false } : {}),
     });
   } catch (error) {
     await pool.shutdown(0).catch(() => undefined);
@@ -318,6 +327,7 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
     relationDigest: (seedId, relation, lo, hi) => call('relationDigest', () => brain.relationDigest(seedId, relation, lo, hi)),
     relationEntries: (seedId, relation, lo, hi, limit) => call('relationEntries', () => brain.relationEntries(seedId, relation, lo, hi, limit)),
     allocatorCheck: (seedId, primaryMax) => call('allocatorCheck', () => brain.allocatorCheck(seedId, primaryMax)),
+    allocatorAdvance: (seedId, primaryFloor) => call('allocatorAdvance', () => brain.allocatorAdvance(seedId, primaryFloor)),
     factFingerprints: (texts) => call('factFingerprints', () => brain.factFingerprints(texts)),
     seedPlan: () => call('seedPlan', () => brain.seedPlan()),
     snapshotTo: (target, options) => call('snapshotTo', () => brain.snapshotTo(target, { v: 1, ...options })),

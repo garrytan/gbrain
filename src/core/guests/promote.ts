@@ -47,9 +47,7 @@ const text = (value: unknown, name: string, required = false): string | undefine
 };
 
 async function guestNote(ctx: OperationContext, slug: string, guestSource: string | undefined): Promise<{ id: number; source_id: string }> {
-  const rows = await ctx.engine.executeRaw<{ id: number; source_id: string }>(
-    'SELECT p.id, p.source_id FROM pages p JOIN guest_sources g ON g.source_id = p.source_id WHERE p.slug = $1 AND p.deleted_at IS NULL'
-      + (guestSource ? ' AND p.source_id = $2' : '') + ' ORDER BY p.source_id COLLATE "C"', guestSource ? [slug, guestSource] : [slug]);
+  const rows = await ctx.engine.listGuestNotes(slug, guestSource);
   const scope = ctx.remote === false ? null : federatedSearchScope(ctx, guestSource);
   const readable = scope ? scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null) : null;
   const found = rows.filter(r => !readable || readable.includes(r.source_id));

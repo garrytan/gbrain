@@ -47,7 +47,7 @@ type LabeledTake = LiveTake & Labels;
 const finiteIds = (values: Array<number | null | undefined>) =>
   [...new Set(values.map(Number).filter(n => Number.isSafeInteger(n) && n > 0))];
 
-async function loadChunks(engine: Pick<BrainEngine, 'executeRaw' | 'listLiveChunksByIds' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells' | 'listFenceRowTrust'>, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) {
+async function loadChunks(engine: Pick<BrainEngine, 'executeRaw' | 'listLiveChunksByIds' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells' | 'listFenceRowTrust' | 'readGuestMarks'>, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) {
   if (!ids.length) return new Map<number, LabeledChunk>();
   const rows = await engine.listLiveChunksByIds(ids, policy, floor);
   const live = rows.map(r => ({ ...r, id: Number(r.id), page_id: Number(r.page_id), judged_text: r.chunk_text } as LiveChunk & { judged_text: string; trust_tier?: string; origin?: string; unconfirmed?: true; contested?: Contested }));
@@ -84,7 +84,7 @@ function supersedeSides(f: ScopedFinding): { target: ScopedMember; winner: Scope
 
 /** Resolve stored findings for a scoped reader; findings with a hidden, missing or changed side are dropped. */
 export async function resolveScopedFindings(
-  engine: Pick<BrainEngine, 'executeRaw' | 'listLiveChunksByIds' | 'listLiveTakesByIds' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells' | 'listFenceRowTrust'>,
+  engine: Pick<BrainEngine, 'executeRaw' | 'listLiveChunksByIds' | 'listLiveTakesByIds' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells' | 'listFenceRowTrust' | 'readGuestMarks'>,
   findings: ContradictionFinding[],
   policy: PageReadPolicy,
   floor: TrustTier | undefined,

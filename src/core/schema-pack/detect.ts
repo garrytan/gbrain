@@ -21,6 +21,8 @@ export interface DetectOpts {
   minPagesPerPrefix?: number;
   /** Max candidate types in the output. Default 50. */
   maxTypes?: number;
+  /** Every distinct type per prefix instead of the first five (schema suggest's coverage check, #10433). */
+  allSampleTypes?: boolean;
 }
 
 export interface DetectResult {
@@ -122,7 +124,7 @@ export async function runDetect(
   const prefixBreakdown = prefixes.map((p, i) => ({
     prefix: p.prefix,
     page_count: p.cnt,
-    sample_types: p.sample_types.slice(0, 5),
+    sample_types: opts.allSampleTypes ? p.sample_types : p.sample_types.slice(0, 5),
     suggested_type: candidate.page_types[i]?.name ?? 'untyped',
   }));
 

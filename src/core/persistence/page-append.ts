@@ -353,7 +353,8 @@ export async function prepareSegmentedSpliceMutation(engine: BrainEngine, row: W
       apply: async tx => {
         await tx.createVersion(row.slug, source);
         applied = await applySegmentedBody(tx, { slug: row.slug, sourceId: row.source_id, pageId, prepared, promotion: false, retireMaxRows: flipRetireMaxRows,
-          meta: { title: stored.page.title, type: stored.page.type, frontmatter: frontmatter as never, page_kind: page.pageKind as never } });
+          meta: { title: stored.page.title, type: stored.page.type, frontmatter: frontmatter as never, page_kind: page.pageKind as never,
+            content_author: row.authority.remote ? `mcp:${row.operation}` : null } });
         const lowered = storedTier ? await recordAgentPageLowering(tx, row, { tier: storedTier, revision: stored.revision }) : null;
         if (applied.complete) await sealSegmentedPage(tx, pageId);
         if (gate) await recordPageGateReceipt(tx, { slug: row.slug, sourceId: row.source_id, assessment: gate, requestId: row.id });

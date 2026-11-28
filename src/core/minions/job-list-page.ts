@@ -4,7 +4,7 @@
  * resumes after the last row returned. The per-call cap for remote callers lives in ops/read-paging.ts.
  */
 import type { BrainEngine } from '../engine.ts';
-import { NO_JOB_ACTOR, rowToMinionJob, type JobActor, type MinionJob } from './types.ts';
+import { rowToMinionJob, type JobOwner, type MinionJob } from './types.ts';
 
 export class JobListCursorError extends Error {
   constructor(message: string) { super(message); this.name = 'JobListCursorError'; }
@@ -18,13 +18,13 @@ export function parseJobListCursor(raw: string): { micros: string; id: number } 
 }
 
 export async function listJobPage(engine: BrainEngine, opts: {
-  status?: string; queue?: string; name?: string; ownerClientId?: string; ownerActor?: JobActor; limit: number; cursor?: string;
+  status?: string; queue?: string; name?: string; owner?: JobOwner; limit: number; cursor?: string;
 }): Promise<{ jobs: MinionJob[]; next_cursor?: string }> {
   const rows = await engine.listJobPage({
     ...(opts.status ? { status: opts.status } : {}),
     ...(opts.queue ? { queue: opts.queue } : {}),
     ...(opts.name ? { name: opts.name } : {}),
-    ...(opts.ownerClientId ? { ownerClientId: opts.ownerClientId, ownerActor: opts.ownerActor ?? NO_JOB_ACTOR } : {}),
+    ...(opts.owner ? { owner: opts.owner } : {}),
     limit: opts.limit + 1,
     cursor: opts.cursor !== undefined ? parseJobListCursor(opts.cursor) : null,
   });
