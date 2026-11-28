@@ -274,6 +274,8 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
       try {
         const before = status(r).reconcile.consecutive_clean_full_passes;
         const passes = readPasses(r.dir).length;
+        const beforeAt = status(r).reconcile.last_clean_full_pass_at;
+        expect(typeof beforeAt).toBe('string');
         expect(before).toBeGreaterThanOrEqual(1);
         let digests = 0;
         let small: Reconciler;
@@ -288,6 +290,8 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect(status(r).reconcile.consecutive_clean_full_passes).toBe(before);
         expect(readPasses(r.dir)).toHaveLength(passes);
         expect(stopped.error).toBe('stopped');
+        // The half done is no pass: the newest clean full pass is still the one before it (criterion 1's 24 h rule reads this).
+        expect(status(r).reconcile.last_clean_full_pass_at).toBe(beforeAt);
         const progress = JSON.parse(readFileSync(join(r.dir, 'reconcile', 'progress.json'), 'utf8')) as { id: string; done: string[] };
         expect(progress.id).toBe(stopped.id);
         let resumedDigests = 0;
@@ -299,6 +303,8 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect(resumed.repaired_rows).toBe(0);
         expect(existsSync(join(r.dir, 'reconcile', 'progress.json'))).toBe(false);
         expect(status(r).reconcile.consecutive_clean_full_passes).toBe(before + 1);
+        // Only the finished pass counts, at the time it finished.
+        expect(status(r).reconcile.last_clean_full_pass_at).toBe(resumed.finished_at);
         // The resumed pass walked only what was left: a fresh pass reads every interval again.
         let freshDigests = 0;
         const fresh = await new Reconciler({ dir: r.dir, reads: base, rpc: async <T>(method: string, args?: Record<string, unknown>): Promise<T> => { if (method === 'relationDigest') freshDigests++; return r.rpc<T>(method, args); }, follower: r.follower, intervalRows: 2 }).run('full', undefined, { resume: true });

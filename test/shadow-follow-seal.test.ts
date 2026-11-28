@@ -14,7 +14,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FollowChild, noteLostWrite, type FollowStore } from '../src/shadow/follow-child.ts';
-import { readFollowerFile } from '../src/shadow/follow-status.ts';
+import { appendPass, buildFollowStatus, readFollowerFile, readPasses } from '../src/shadow/follow-status.ts';
 import type { ReadSource } from '../src/shadow/read-pool.ts';
 import { ShadowFollower } from '../src/shadow/follower.ts';
 import { confirmSeal, quietSince, sealMark } from '../src/shadow/seal.ts';
@@ -89,6 +89,16 @@ describe('a sealed close', () => {
     expect(await s.ask('confirmSeal', { db_at: 'other-mark', ok: true })).toMatchObject({ valid: false, confirmed: false }); // not this seal's mark
     expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: true, confirmed: true });
     expect(await s.ask<State>('state')).toMatchObject({ valid: true, continuity, pending_seal: null });
+  });
+
+  test('a seal carries the watermark, never a reconcile pass: no pass is appended and the newest clean full pass stays the one before', async () => {
+    const finished = '2026-01-01T00:02:00.000Z';
+    const { dir } = await sealed({ beforeSeal: (_s, d) => { appendPass(d, { id: 'p-1', kind: 'full', started_at: '2026-01-01T00:01:30.000Z', finished_at: finished, repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0 }); } });
+    const s = next(dir);
+    expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: true, confirmed: true });
+    expect(readPasses(dir).map((p) => p.id)).toEqual(['p-1']);
+    // Criterion 1's 24 h rule reads this time: carrying a seal over does not make the last pass any newer.
+    expect(buildFollowStatus(dir, STATE, new Date('2026-01-03T00:00:00.000Z')).reconcile).toMatchObject({ consecutive_clean_full_passes: 1, last_clean_full_pass_at: finished });
   });
 
   test('an obligation the sealing session still held is carried over: confirmed, the next session is still invalid until a pass', async () => {

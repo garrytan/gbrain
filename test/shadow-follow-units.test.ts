@@ -425,10 +425,10 @@ describe('follow status', () => {
     expect(buildFollowStatus(dir, STATE, NOW).follower.applied_rows).toBe(0);
   });
 
-  test('reconcile fields: state, trailing clean full passes, next full pass due', () => {
+  test('reconcile fields: state, trailing clean full passes, the newest clean full pass, next full pass due', () => {
     const dir = tmp();
     withFile(dir, {});
-    expect(buildFollowStatus(dir, STATE, NOW).reconcile).toEqual({ state: 'never_run', last_pass: null, consecutive_clean_full_passes: 0, next_full_pass_due: null });
+    expect(buildFollowStatus(dir, STATE, NOW).reconcile).toEqual({ state: 'never_run', last_pass: null, consecutive_clean_full_passes: 0, last_clean_full_pass_at: null, next_full_pass_due: null });
     const pass = (kind: 'full' | 'dirty', repaired: number, at: string, error?: string) => appendPass(dir, {
       id: `p-${at}`, kind, started_at: at, finished_at: at, repaired_rows: repaired, repaired_by_relation: repaired ? { pages: repaired } : {}, follower_misses: repaired, ...(error ? { error } : {}),
     });
@@ -438,9 +438,16 @@ describe('follow status', () => {
     pass('full', 0, '2026-01-01T04:00:00.000Z');
     const s = buildFollowStatus(dir, STATE, NOW).reconcile;
     expect(s).toMatchObject({ state: 'ok', consecutive_clean_full_passes: 2, next_full_pass_due: '2026-01-02T04:00:00.000Z' });
+    // The finish time of the newest full pass, because it is clean; the dirty pass after a full one does not change it.
+    expect(s.last_clean_full_pass_at).toBe('2026-01-01T04:00:00.000Z');
+    pass('dirty', 0, '2026-01-01T04:30:00.000Z');
+    expect(buildFollowStatus(dir, STATE, NOW).reconcile.last_clean_full_pass_at).toBe('2026-01-01T04:00:00.000Z');
     expect(s.last_pass).toMatchObject({ kind: 'full', repaired_rows: 0 });
     pass('full', 0, '2026-01-01T05:00:00.000Z', 'allocator_check:x');
-    expect(buildFollowStatus(dir, STATE, NOW).reconcile).toMatchObject({ state: 'error', consecutive_clean_full_passes: 0 });
+    // A newest full pass that errored (or repaired rows) is not clean: no clean time, even though an older one was clean.
+    expect(buildFollowStatus(dir, STATE, NOW).reconcile).toMatchObject({ state: 'error', consecutive_clean_full_passes: 0, last_clean_full_pass_at: null });
+    pass('full', 2, '2026-01-01T06:00:00.000Z');
+    expect(buildFollowStatus(dir, STATE, NOW).reconcile).toMatchObject({ state: 'repaired', consecutive_clean_full_passes: 0, last_clean_full_pass_at: null });
   });
 });
 
