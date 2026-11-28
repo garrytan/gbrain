@@ -144,7 +144,7 @@ scanTextColumns	lifecycle	yes	6	no	yes	yes	serves
 pauseManagedPersistence	lifecycle	yes	1	no	yes	yes	serves
 restoreManagedPersistence	lifecycle	no	0	no	-	-	-
 withManagedPersistencePaused	lifecycle	yes	7	no	yes	yes	serves
-getPage	pages	yes	295	yes	yes	yes	serves
+getPage	pages	yes	296	yes	yes	yes	serves
 readPageSnapshot	pages	yes	121	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
@@ -666,10 +666,10 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	202	yes	yes	yes	serves
-insertFacts	facts	yes	293	no	yes	yes	serves
+insertFacts	facts	yes	294	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	99	no	yes	yes	serves
-listFactsByEntity	facts	yes	68	yes	yes	yes	serves
+listFactsByEntity	facts	yes	69	yes	yes	yes	serves
 listFactsSince	facts	yes	49	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
@@ -1790,7 +1790,7 @@ listLivePersonTitles	facts_trust	yes	1	no	yes	yes	serves
 readLiveFactEntityPage	facts_trust	yes	2	no	yes	yes	serves
 lockAgentWritebackSetting	facts_trust	yes	2	no	yes	yes	serves
 listFactsToRetireFromPage	facts_trust	yes	2	no	yes	yes	serves
-listContestedProposalPairs	facts_trust	yes	1	no	yes	yes	serves
+listContestedProposalPairs	facts_trust	yes	2	no	yes	yes	serves
 recordDerivationEdges	facts_trust	yes	13	no	yes	yes	serves
 expireDerivedFacts	facts_trust	yes	3	no	yes	yes	serves
 deactivateDerivedTakes	facts_trust	yes	3	no	yes	yes	serves
@@ -2370,7 +2370,7 @@ isCalibrationProfileUnchanged	calibration_profiles	yes	1	no	yes	yes	serves
 insertCalibrationProfile	calibration_profiles	yes	7	no	yes	yes	serves
 readVoiceGateHealth	calibration_profiles	yes	1	no	yes	yes	serves
 purgeCalibrationProfilesByWave	calibration_profiles	yes	2	no	yes	yes	serves
-insertDecideProposal	decide_proposals	yes	14	no	yes	yes	serves
+insertDecideProposal	decide_proposals	yes	15	no	yes	yes	serves
 getDecideProposal	decide_proposals	yes	2	no	yes	yes	serves
 listDecideProposalIds	decide_proposals	yes	1	no	yes	yes	serves
 listDecideProposals	decide_proposals	yes	4	no	yes	yes	serves
@@ -2470,7 +2470,7 @@ readSharedSkillDeliveryBatch	shared_skill_members	yes	5	no	yes	yes	serves
 acknowledgeSharedSkillDeliveryBatch	shared_skill_members	yes	2	no	yes	yes	serves
 readBriefMeetingPages	brief_reads	yes	1	no	yes	yes	serves
 readBriefEmailAliasPages	brief_reads	yes	1	no	yes	yes	serves
-readBriefWorldFacts	brief_reads	yes	1	no	yes	yes	serves
+readBriefWorldFacts	brief_reads	yes	2	no	yes	yes	serves
 readBriefEditPage	brief_reads	yes	1	no	yes	yes	serves
 readBriefTimelineEntry	brief_reads	yes	1	no	yes	yes	serves
 readBriefPageVersions	brief_reads	yes	1	no	yes	yes	serves

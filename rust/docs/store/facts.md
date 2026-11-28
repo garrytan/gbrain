@@ -87,11 +87,14 @@ store hides a fact unless it sits on `memory/members/<member>` and that page nam
 `privateEntityFilterForCaller` does. A non-owner caller under `access.members_read_lineage` (ordinary or labelled-only), or an
 audience whose policy matches none of the reference renderings (including a labelled-only audience of several identities),
 is refused with `engine_capability_missing` (row 32e-b-4 for lineage; `src/core/rust-engine/store-members/private-provenance.ts`).
-The brain owner's lineage read (the opt-in off, no audience) is served: the member sends `ownerRead` and `ownerLineage`, and
-the store judges a provenance page that is neither the owner's member page nor another `memory/members/` page by the owner's
-identity under the owner read rule (`lineageAccessSql` in `privateProvenanceFilterUnderPolicy`), so the facts of the owner's own
-`readable_by` page and of a page derived from it are read while a page derived from another member's origin stays hidden; the
-member pages keep the ordinary origin test (`test/engine-parity/owner-fact-reads.test.ts`). A keyed-slug entity
+The brain owner's lineage read (the opt-in off, no audience) is served. For both fact policies the member sends `ownerRead`,
+so the store judges the entity and holding pages by the owner's lineage. For the owner fact policy
+(`privateProvenanceFilterUnderPolicy`) only, it also sends `ownerLineage`: the store then judges a provenance page that is
+neither the owner's member page nor another `memory/members/` page by the owner's identity under the owner read rule
+(`lineageAccessSql`), so the facts of the owner's own `readable_by` page and of a page derived from it are read, while a page
+derived from another member's origin stays hidden. The member pages keep the ordinary origin test. The plain policy
+(`privateFactFilterForCaller`: the brief's world facts and the decide contested pairs) judges the provenance page with no
+caller (`test/engine-parity/owner-fact-reads.test.ts`). A keyed-slug entity
 (an `entity_slug` with no `/`) is judged at the name-key page directories (`NAME_KEY_PAGE_DIRS`) by
 `facts/privacy.rs`, as `privateEntityFilterForCaller` does.
 An anonymous caller on a brain that never named readers (`restricted` false in its

@@ -102,7 +102,8 @@ export interface StorePrivacyPolicy {
   provenancePrivacyOff?: boolean;
   /**
    * The owner lineage read's fact policy (GST-2490, the opt-in off, no audience): a provenance page that is neither
-   * `memberPage` nor another member page is judged by `identity` under the owner read rule (`lineageAccessSql`).
+   * `memberPage` nor another member page is judged by `identity` under the owner read rule (`lineageAccessSql`). Sent
+   * only for the owner fact policy (privateProvenanceFilterUnderPolicy); the plain form names no caller.
    */
   ownerLineage?: boolean;
   /**
@@ -230,7 +231,9 @@ export function storePrivacyPolicy(
         // A local owner reading with privacy off renders no privacy part on the provenance page either.
         const provenancePrivacyOff = record.owner === true && !canonical.includes(privateSnapshotFilterFragment('pp'));
         const withFolders = 'satisfiedRuleIds' in record || 'folderCoverage' in record;
-        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...reference.flags, ...(record.lineage ? { ownerRead: true, ownerLineage: true } : {}) };
+        // Both forms judge the entity page by the owner's lineage (ownerRead); only the owner fact policy judges the
+        // provenance page that way too (ownerLineage). The plain form's provenance part names no caller.
+        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...reference.flags, ...(record.lineage ? (form.memberCase ? { ownerRead: true, ownerLineage: true } : { ownerRead: true }) : {}) };
       }
     }
     return undefined;
