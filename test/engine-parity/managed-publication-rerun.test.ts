@@ -16,6 +16,9 @@
  *    on a multi-user Rust engine it throws `write_conflict`, so the engine's own optimistic retry runs the body again;
  *    on the other arms it rolls the run back and runs the body again in a new transaction, as that retry does.
  *    Real engines, real Git checkouts.
+ *  - Not forced on the served Rust arm (GBRAIN_TEST_RUST_SERVED=1): there the brain's owner, behind the served client,
+ *    publishes on its own engine, out of the seam's reach. The cases still run there and check the same end state, but
+ *    nothing makes the publication run twice, so that arm proves no rerun.
  *  - The grouped cases pin the same contract for a managed file import, which the owner publishes as one group
  *    (group-publish.ts publishGroup). Their files hold text the import rewrites to canonical form, so a rerun after the
  *    files were written meets its own new bytes: the group rolls back, restores the files and requeues its members, and
@@ -28,6 +31,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms, rustArmMultiuser, type ParityBackend } from './harness.ts';
+import { rustServedRequested } from './rust-arm.ts';
 import { liftManagedHold } from './rust-managed.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -122,7 +126,9 @@ async function putWithRerun(engine: BrainEngine, backend: ParityBackend, root: s
   const request_id = randomUUID();
   const ctx = { engine, sourceId: 'work', remote: false as const, config: { engine: engine.kind, embedding_disabled: true }, dryRun: false,
     logger: { info() {}, warn() {}, error() {} } };
-  const { seen, multiuser, restore } = forceRerun(engine, at);
+  // The served arm's owner publishes where the seam cannot reach it (header): nothing is forced there.
+  const served = backend === 'rust' && rustServedRequested();
+  const { seen, multiuser, restore } = served ? { seen: null, multiuser: null, restore: () => {} } : forceRerun(engine, at);
   let thrown: string | null = null;
   try {
     await submitPageMutation(ctx as never, { operation: 'put_page',
@@ -130,43 +136,45 @@ async function putWithRerun(engine: BrainEngine, backend: ParityBackend, root: s
       .catch((error: { code?: string }) => { thrown = error?.code ?? String(error); });
   } finally { restore(); }
   // The rerun this case is about happens only where the engine runs a transaction body again: assert the arm is the one named.
-  expect(multiuser).toBe(backend === 'rust' && rustArmMultiuser() !== 'off');
+  if (!served) expect(multiuser).toBe(backend === 'rust' && rustArmMultiuser() !== 'off');
+  // Two publications where a rerun was forced: the run that lost, then the run that committed.
+  if (seen) expect({ forced: seen.forced, publications: seen.publications }).toEqual({ forced: 1, publications: 2 });
   const row = await engine.readWriteRequest('local_cli', (await readLocalWriter(engine, 'cli')).id, request_id);
   const page = await engine.getPage('notes/bob-example', { sourceId: 'work' });
   const file = join(root, 'notes', 'bob-example.md');
-  return { forced: seen.forced, publications: seen.publications, thrown, state: row?.state ?? null, error_code: row?.error_code ?? null, recovery: row?.recovery ?? null,
+  return { thrown, state: row?.state ?? null, error_code: row?.error_code ?? null, recovery: row?.recovery ?? null,
     title: page?.title ?? null, file: existsSync(file) ? readFileSync(file, 'utf8').includes(BODY) : false };
 }
 
-// Two publications: the run that lost, then the run that committed.
-const COMMITTED: Awaited<ReturnType<typeof putWithRerun>> = { forced: 1, publications: 2, thrown: null, state: 'committed', error_code: null, recovery: null, title: 'Bob Example', file: true };
+const COMMITTED: Awaited<ReturnType<typeof putWithRerun>> = { thrown: null, state: 'committed', error_code: null, recovery: null, title: 'Bob Example', file: true };
 
 const IMPORTS = ['notes/gus-example', 'notes/hope-example', 'notes/ivan-example'];
 
 /** A managed import of three files whose publication transaction loses once at `at`, and what it left. */
-async function importWithRerun(engine: BrainEngine, backend: ParityBackend, root: string, at: 'after_publication' | 'body_end') {
+async function importWithRerun(engine: BrainEngine, backend: ParityBackend, root: string, at: 'after_publication' | 'body_end', publications: number) {
   // Quoted titles and no trailing newline: the import publishes each file in canonical form, so publication changes the bytes.
   const written = IMPORTS.map(slug => {
     const text = `---\ntitle: "${slug.split('/')[1]}"\n---\n${BODY}`;
     writeFileSync(join(root, `${slug}.md`), text);
     return text;
   });
-  const { seen, multiuser, restore } = forceRerun(engine, at);
+  const served = backend === 'rust' && rustServedRequested();
+  const { seen, multiuser, restore } = served ? { seen: null, multiuser: null, restore: () => {} } : forceRerun(engine, at);
   let settled: Awaited<ReturnType<typeof importManagedFiles>>;
   try {
     settled = await importManagedFiles(engine, IMPORTS.map(slug => ({ filePath: join(root, `${slug}.md`), sourcePath: `${slug}.md` })),
       { sourceId: 'work', noEmbed: true });
   } finally { restore(); }
-  expect(multiuser).toBe(backend === 'rust' && rustArmMultiuser() !== 'off');
+  if (!served) expect(multiuser).toBe(backend === 'rust' && rustArmMultiuser() !== 'off');
+  if (seen) expect({ forced: seen.forced, publications: seen.publications }).toEqual({ forced: 1, publications });
   const files = IMPORTS.map(slug => readFileSync(join(root, `${slug}.md`), 'utf8'));
-  return { forced: seen.forced, publications: seen.publications,
+  return {
     import: settled.map(result => result.status === 'fulfilled' ? 'fulfilled' : `rejected:${(result.reason as { code?: string })?.code}`),
     titles: await Promise.all(IMPORTS.map(async slug => (await engine.getPage(slug, { sourceId: 'work' }))?.title ?? null)),
     rewritten: files.map((text, i) => text !== written[i]), body: files.map(text => text.includes(BODY)) };
 }
 
-// The group publishes once (one file, or all three), rolls back on the rerun, then each member publishes on its own.
-const IMPORTED = { forced: 1, import: ['fulfilled', 'fulfilled', 'fulfilled'], titles: ['gus-example', 'hope-example', 'ivan-example'],
+const IMPORTED = { import: ['fulfilled', 'fulfilled', 'fulfilled'], titles: ['gus-example', 'hope-example', 'ivan-example'],
   rewritten: [true, true, true], body: [true, true, true] };
 
 describe('engine parity: a managed publication whose transaction runs again after it wrote the file', () => {
@@ -192,8 +200,9 @@ describe('engine parity: a managed publication whose transaction runs again afte
     methods: ['worktreeClaimStore', 'getPage'],
     timeout: 180_000,
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (root) => {
-    const out = await importWithRerun(engine, backend, root, 'after_publication');
-    expect(out).toMatchObject({ ...IMPORTED, publications: 1 + IMPORTS.length });
+    // Where a rerun is forced, the group publishes one file, rolls back on the rerun, then each member publishes on its own.
+    const out = await importWithRerun(engine, backend, root, 'after_publication', 1 + IMPORTS.length);
+    expect(out).toEqual(IMPORTED);
     return out;
   }));
 
@@ -201,8 +210,9 @@ describe('engine parity: a managed publication whose transaction runs again afte
     methods: ['worktreeClaimStore', 'getPage'],
     timeout: 180_000,
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (root) => {
-    const out = await importWithRerun(engine, backend, root, 'body_end');
-    expect(out).toMatchObject({ ...IMPORTED, publications: 2 * IMPORTS.length });
+    // Where a rerun is forced, the group publishes all three files, rolls back on the rerun, then each member publishes alone.
+    const out = await importWithRerun(engine, backend, root, 'body_end', 2 * IMPORTS.length);
+    expect(out).toEqual(IMPORTED);
     return out;
   }));
 });
