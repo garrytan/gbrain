@@ -144,6 +144,10 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // remote-member-policy.ts) and live keys and its usage counts.
   'readReflexPages', 'readReflexLiveKeys', 'readVolunteerUsage', 'readTrustGeneration',
   'readReferrerGroupRows', 'readReferrerRecordCandidates', 'readReferrerRecordPages', 'readTextMentionPages',
+  // S4 (retrieval), served-remote-segmented: a remote get_page and get_versions of a segmented page read its head and its
+  // version body sizes (page-id guarded, remote-member-policy.ts); search reads the regions of a page with more than two
+  // hits; search_exact scans a batch of pages for a phrase.
+  'readSegmentedPageHead', 'readSegmentedVersionBodyBytes', 'readSegmentRegions', 'scanExactBatch',
 ];
 
 /**

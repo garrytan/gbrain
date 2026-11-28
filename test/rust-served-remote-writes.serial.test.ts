@@ -292,4 +292,45 @@ describeAddon('remote writes over the served wire', () => {
     }
     expect(inside).toEqual(['notes/open']);
   });
+
+  // The segmented page reads keyed by a page id the client chose (PAGE_ID_GUARDS): the id must name a page the caller may read.
+  const SEGMENTED_READS: Array<[string, (id: number) => unknown[]]> = [
+    ['readSegmentedPageHead', id => [id]],
+    ['readSegmentedVersionBodyBytes', id => [id, 1]],
+  ];
+
+  test('the segmented page head and version size reads: a page id outside the caller\'s read scope is refused, an open one answers', async () => {
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const open = (await owner.getPage('notes/open'))!.id as number;
+    const secret = (await owner.getPage('notes/secret'))!.id as number;
+    const codes: Record<string, string> = {};
+    for (const [member, args] of SEGMENTED_READS) {
+      codes[`${member}:secret`] = await codeOf(worldOnly(() => conn.request('call', member, args(secret))));
+      codes[`${member}:open`] = await codeOf(worldOnly(() => conn.request('call', member, args(open))));
+    }
+    expect(codes).toEqual({
+      'readSegmentedPageHead:secret': 'permission_denied', 'readSegmentedPageHead:open': 'ok',
+      'readSegmentedVersionBodyBytes:secret': 'permission_denied', 'readSegmentedVersionBodyBytes:open': 'ok',
+    });
+  });
+
+  test('the segmented page head and version size reads inside a transaction the caller holds: a page id outside its read scope is refused there too', async () => {
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const open = (await owner.getPage('notes/open'))!.id as number;
+    const secret = (await owner.getPage('notes/secret'))!.id as number;
+    const ref = String(await conn.txn('begin', {}));
+    const codes: Record<string, string> = {};
+    try {
+      for (const [member, args] of SEGMENTED_READS) {
+        codes[`${member}:secret`] = await codeOf(worldOnly(() => conn.request('call', member, args(secret), { txn: ref })));
+        codes[`${member}:open`] = await codeOf(worldOnly(() => conn.request('call', member, args(open), { txn: ref })));
+      }
+    } finally {
+      await conn.txn('commit', { txn: ref }).catch(() => conn.txn('rollback', { txn: ref }).catch(() => undefined));
+    }
+    expect(codes).toEqual({
+      'readSegmentedPageHead:secret': 'permission_denied', 'readSegmentedPageHead:open': 'ok',
+      'readSegmentedVersionBodyBytes:secret': 'permission_denied', 'readSegmentedVersionBodyBytes:open': 'ok',
+    });
+  });
 });
