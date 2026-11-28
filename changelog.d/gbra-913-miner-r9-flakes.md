@@ -8,5 +8,5 @@
 - The Hermes hook test that feeds a 5 MB conversation history failed at random on busy runners (51.8 ms against a 50 ms bound). It compared two wall-clock turn times, which a loaded machine stretches by however long the process waits for a CPU. It now compares the hook process's CPU time, under the same 50 ms bound, so a reader that buffers or rescans the history still fails it.
 
 ### Changed
-- `scripts/postgres-arm-weights.json` is re-mined from the per-file timings of three complete 32-shard master Test runs. 131 listed files had no weight and were packed at the 75th-percentile estimate, and on measured times the old packing put one shard at 574 s, over the 570 s budget. The new weights cover 967 of the 968 listed files and bring the largest shard to 436 s.
+- `scripts/postgres-arm-weights.json` is re-mined from the per-file timings of the four newest 32-shard master Test runs, each file's median. 132 listed files had no weight and were packed at the 75th-percentile estimate, and on measured times the old packing put one shard at 579 s, over the 570 s budget. The new weights cover all 968 listed files and bring the largest shard to 441 s.
 - Unit and E2E shard weights are refreshed from tonight's runs (35 new unit files, and a full E2E refresh from the nightly), keeping each lane's unweighted share under half a percent.
