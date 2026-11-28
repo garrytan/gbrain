@@ -169,6 +169,7 @@ Rules:
   | 12 | `rust-engine/enforced-member-writes-rust` (provisional, main's 11 plus one; the trunk renumbers at intake): the enforced member CLI's four reads in `store-members/page-mutation-reads.ts` |
   | 12 | `rust-engine/enforced-member-writes-rust` claims a provisional number (main's 11 plus one; the trunk renumbers at intake): the enforced member CLI's four reads in `store-members/page-mutation-reads.ts` |
   | 12 | `rust-engine/labelled-only-create-rust` claims a provisional number (main's 11 plus one, as the enforced-member branch's row above; the trunk renumbers both at intake): the writer's hidden-page read `readPageHiddenFromWriter` in `store-members/remote-links.ts` |
+  | 14 | `rust-engine/member-page-readable-rust` (row ec05 stop pin: the enforced member page read `readMemberPageReadable` in `store-members/page-mutation-reads.ts` sends `labelledOnlyTerms`). provisional: main is at 13, this head takes main's 13 plus one; the adapter number is provisional and the trunk assigns it at intake (the manager's ruling); `rust-engine/owner-fact-reads` and `rust-engine/lineage-fact-reads-rust` also hold 14, so whichever lands second renumbers at merge |
 
 Reserved tags:
 
