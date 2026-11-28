@@ -102,7 +102,7 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // Cat 13) — same unshipped epoch; a partial literal hashes as always.
     // 29→30 (#5889): exact-title-first title-arm order + weight-A remote
     // title predicate reorder rows for identical knobs; version-only.
-    expect(KNOBS_HASH_VERSION).toBe(31);
+    expect(KNOBS_HASH_VERSION).toBe(32);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {

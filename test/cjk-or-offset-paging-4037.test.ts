@@ -38,7 +38,7 @@ for (const backend of testBackends()) describe(`[${backend}] GST-4037 steady OFF
   beforeAll(async () => {
     if (backend === 'pglite') { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }
     else { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!); engine = pg.engine; closePostgres = pg.close; }
-    for (const id of ['long', 'alts', 'boost', 'hyb']) await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING`, [id]);
+    for (const id of ['long', 'alts', 'boost', 'hyb', 'tier']) await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING`, [id]);
     // One long page whose 40 chunks each match both terms many times, beside short all-term and partial pages.
     await page('notes/long', 'long', Array.from({ length: 40 }, (_, i) => `${'席位升级'.repeat(6)} 段落${i}`));
     for (let i = 0; i < 5; i++) await page(`notes/both-${i}`, 'long', [`席位和升级 ${i}`]);
@@ -54,6 +54,9 @@ for (const backend of testBackends()) describe(`[${backend}] GST-4037 steady OFF
     // OR alternatives where the pages matching both alternatives repeat them less often than single-alternative pages do.
     for (let i = 0; i < 40; i++) await page(`notes/both-${i}`, 'hyb', [`京都と東京 ${i}`]);
     for (let i = 0; i < 40; i++) await page(`notes/one-${i}`, 'hyb', [`東京東京東京 ${i}`]);
+    // No explicit OR: an all-term page beside a boosted partial page that repeats one term twenty times.
+    await page('notes/full', 'tier', ['席位和升级']);
+    await page('notes/heavy', 'tier', ['席位'.repeat(20)]);
   }, 120_000);
   afterAll(async () => { await engine.disconnect(); await closePostgres?.(); }, 60_000);
 
@@ -96,13 +99,21 @@ for (const backend of testBackends()) describe(`[${backend}] GST-4037 steady OFF
     expect(seen.slice(0, 40).every(slug => slug.startsWith('notes/both-'))).toBe(true);
   }, 120_000);
 
+  test('the any-term retry without OR alternatives returns scores in its row order, so a re-sort by score keeps the full match first', async () => {
+    const rows = await engine.searchKeyword('席位 升级', { sourceId: 'tier', limit: 10, source_boosts: { 'notes/': 100 }, orFallback: true });
+    expect(rows.map(r => r.slug)).toEqual(['notes/full', 'notes/heavy']);
+    expect(rows[0]!.score).toBeGreaterThan(rows[1]!.score);
+  }, 120_000);
+
   test('a boosted strict hit past 999 still outranks a weaker one, and keeps its own score', async () => {
     const source_boosts = { 'notes/': 100 };
     for (const orFallback of [false, true]) {
       const rows = await engine.searchKeyword('席位 升级', { sourceId: 'boost', limit: 10, source_boosts, orFallback });
       expect([orFallback, rows.map(r => r.slug)]).toEqual([orFallback, ['notes/stronger', 'notes/older']]);
       expect(rows[1]!.score).toBeGreaterThan(999);
-      expect(rows[0]!.score).toBeGreaterThan(rows[1]!.score);
+      // The strict pass keeps its own term-frequency score; the retry holds that part below one tier, so both may tie.
+      if (orFallback) expect(rows[0]!.score).toBeGreaterThanOrEqual(rows[1]!.score);
+      else expect(rows[0]!.score).toBeGreaterThan(rows[1]!.score);
       expect((await engine.searchKeyword('席位 升级', { sourceId: 'boost', limit: 1, offset: 1, source_boosts, orFallback })).map(r => r.slug)).toEqual(['notes/older']);
     }
   }, 120_000);

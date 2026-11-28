@@ -157,7 +157,7 @@ export const JOINED_STATEMENT_SETTINGS: Readonly<Record<string, string>> = { ena
  * materialization off the planner scored the filtered chunks exactly. Below
  * this size, and for frontmatter filters, turning it off slowed 75k-chunk
  * searches 2.3x warm and 5.9x cold, so they keep the planner's plan, as do the
- * shapes the evaluation did not measure (slug exclusions, language, symbol
+ * shapes the evaluation did not measure (caller slug or prefix exclusions, language, symbol
  * kind, compiled-truth detail, and a source scope that is narrow or whose share
  * is not known yet). Only
  * materialization moves: HNSW_ORDERED_POOL_SETTINGS and the pool's exact
@@ -443,7 +443,7 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
   const scopeScan = relaxed && share !== undefined && share < SCOPE_SCAN_MAX_SHARE && chunks !== undefined && chunks <= SCOPE_SCAN_MAX_CHUNKS;
   const walk = relaxed && !narrowed && !(scopeScan && chunks! <= SCOPE_SCAN_FIRST_MAX_CHUNKS);
   const dateFilterMaterialOff = relaxed && !!(opts?.afterDate || opts?.beforeDate)
-    && !(opts?.where || opts?.exclude_slugs?.length || opts?.language || opts?.symbolKind || opts?.detail === 'low')
+    && !(opts?.where || opts?.exclude_slugs?.length || opts?.exclude_slug_prefixes?.length || opts?.language || opts?.symbolKind || opts?.detail === 'low')
     && (opts?.sourceIds?.length || opts?.sourceId ? share !== undefined && share >= INDEX_WALK_MIN_SCOPE_SHARE : true)
     && (input.brainChunks ?? -1) >= DATE_FILTER_MATERIAL_OFF_MIN_CHUNKS;
   const overfetch = indexWalkOverfetch(share);

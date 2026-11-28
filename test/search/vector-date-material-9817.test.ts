@@ -46,6 +46,7 @@ describe('#9817 the date-bound materialization rule', () => {
       [{ where: { status: ['open'] } }, ABOVE, false],
       [{ afterDate: '2026-01-01', where: { status: ['open'] } }, ABOVE, false],
       [{ afterDate: '2026-01-01', exclude_slugs: ['notes/a'] }, ABOVE, false],
+      [{ afterDate: '2026-01-01', exclude_slug_prefixes: ['notes/'] }, ABOVE, false],
       [{ afterDate: '2026-01-01', language: 'typescript' }, ABOVE, false],
       [{ afterDate: '2026-01-01', symbolKind: 'function' }, ABOVE, false],
       [{ afterDate: '2026-01-01', detail: 'low' }, ABOVE, false],

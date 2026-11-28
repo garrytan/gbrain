@@ -126,11 +126,10 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
   // and its any-term retry share that order, so the strict rows are exactly the retry's leading rows and an OFFSET page
   // means the same rows whichever pass served it (hybrid search runs the retry only when the strict page comes back
   // short). A strict pass of one alternative has a single tier and returns the term-frequency score; a pass with tiers
-  // (the retry, or a strict pass of several alternatives) returns #10417's matched-terms score, so callers that re-sort
-  // by score (keyless hybrid search) keep the tier order.
+  // (the retry, or a strict pass of several alternatives) returns #10417's matched-terms score with the term-frequency
+  // part held below one tier, so callers that re-sort by score (keyless hybrid search) keep the tier order.
   const tierExpr = any || (terms.length > 1 && groups.length > 1) ? `(${matchedExpr})` : undefined;
-  const tfPart = groups.length > 1 ? `LEAST(tf_rank, ${MATCHED_TERM_WEIGHT - 1})` : 'tf_rank';
-  const scoreOf = tierExpr ? `(${MATCHED_TERM_WEIGHT} * match_tier + ${tfPart})` : 'tf_rank';
+  const scoreOf = tierExpr ? `(${MATCHED_TERM_WEIGHT} * match_tier + LEAST(tf_rank, ${MATCHED_TERM_WEIGHT - 1}))` : 'tf_rank';
   return assemble({ dedup, fromClause, tierExpr, tfExpr: tfScoreExpr, scoreOf, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, limitIndex, offsetIndex, params });
 }
 
