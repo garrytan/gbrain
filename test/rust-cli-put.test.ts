@@ -23,7 +23,7 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -52,11 +52,11 @@ function brain(arm: Arm): { home: string; cwd: string } {
   return { home, cwd };
 }
 
-function run(at: { home: string; cwd: string }, args: string[]): { status: number; stdout: string; stderr: string } {
+function run(at: { home: string; cwd: string }, args: string[], script: string[] = [CLI]): { status: number; stdout: string; stderr: string } {
   const base: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) base[key] = value;
   for (const key of ['DATABASE_URL', 'GBRAIN_DATABASE_URL', 'GBRAIN_BRAIN_ID', 'GBRAIN_SOURCE']) delete base[key];
-  const r = spawnSync(process.execPath, ['--no-env-file', CLI, ...args], {
+  const r = spawnSync(process.execPath, ['--no-env-file', ...script, ...args], {
     cwd: at.cwd,
     encoding: 'utf8',
     env: {
@@ -191,5 +191,71 @@ describe('gbrain delete then gbrain restore on a brain with no managed persisten
 
   test.skipIf(!HAVE_ADDON)('Rust: the delete refuses before it lands, and the page still reads', () => {
     expect(deleteThenRestore('rust', token)).toEqual({ del: { status: 1, code: 'engine_capability_missing' }, restore: null, get: 0 });
+  }, 240_000);
+});
+
+type LinkOutcome = { puts: unknown[]; links: unknown; backlinks: unknown };
+
+/**
+ * A put of a note whose body wikilinks a page the brain already holds, the common case of a page write. Admission
+ * resolves each link target through the source's slug aliases (persistence/links-preparation.ts liveSlugAliases), so
+ * on Rust that read must be served: the put commits and the link it stores is the link PGLite stores.
+ */
+function putWithWikilink(arm: Arm, token: string): LinkOutcome {
+  const at = brain(arm);
+  const target = `people/link-target-${token}`;
+  const note = `notes/link-source-${token}`;
+  const step = (args: string[]) => {
+    const r = run(at, args);
+    if (r.status !== 0) throw new Error(`${arm} ${args.slice(0, 2).join(' ')} exited ${r.status}: ${r.stdout.trim() || r.stderr.trim().slice(-2000)}`);
+    return r.stdout;
+  };
+  const puts = [
+    step(['put', target, '--content', `---\ntype: person\ntitle: Link target\n---\n# Link target\n\nA page another page links to.\n`, '--json']),
+    step(['put', note, '--content', `---\ntype: note\ntitle: Link source\n---\n# Link source\n\nA note about [[${target}]].\n`, '--json']),
+  ].map(stdout => comparable(stdout, token));
+  // The stored edge, read straight from the engine: on Rust the `links` and `backlinks` commands still refuse, since
+  // they pass a temporal read policy the Rust store does not serve yet (test/rust-cli-parity.serial.test.ts records it).
+  const stored = run(at, [note, target], [STORED_LINKS_SCRIPT]);
+  if (stored.status !== 0) throw new Error(`${arm} stored-links read exited ${stored.status}: ${stored.stderr.trim().slice(-2000)}`);
+  const { links, backlinks } = comparable(stored.stdout, token) as { links: unknown; backlinks: unknown };
+  return { puts, links, backlinks };
+}
+
+/** Prints `{links, backlinks}` of argv's note and target from the brain the home's config names, by plain engine reads. */
+const STORED_LINKS_SCRIPT = join(mkdtempSync(join(tmpdir(), 'gbrain-rust-cli-put-reader-')), 'stored-links.ts');
+writeFileSync(STORED_LINKS_SCRIPT, `
+const { loadConfig, toEngineConfig } = await import(${JSON.stringify(join(import.meta.dir, '..', 'src', 'core', 'config.ts'))});
+const { createEngine } = await import(${JSON.stringify(join(import.meta.dir, '..', 'src', 'core', 'engine-factory.ts'))});
+const [note, target] = process.argv.slice(-2);
+const config = toEngineConfig(loadConfig());
+const engine = await createEngine(config);
+await engine.connect(config);
+const pick = (rows) => rows.map(({ from_slug, from_source_id, to_slug, to_source_id, link_type, context, link_source }) =>
+  ({ from_slug, from_source_id, to_slug, to_source_id, link_type, context, link_source }));
+const out = { links: pick(await engine.getLinks(note, { sourceId: 'default' })), backlinks: pick(await engine.getBacklinks(target, { sourceId: 'default' })) };
+await engine.disconnect();
+process.stdout.write(JSON.stringify(out));
+`);
+roots.push(dirname(STORED_LINKS_SCRIPT));
+
+describe('gbrain put of a note that wikilinks a stored page, on a brain with no managed persistence', () => {
+  const token = randomUUID().slice(0, 8);
+  let baseline: LinkOutcome | undefined;
+  const pgliteBaseline = (): LinkOutcome => (baseline ??= putWithWikilink('pglite', token));
+
+  test('PGLite: the put commits and stores the link', () => {
+    const pglite = pgliteBaseline();
+    for (const put of pglite.puts) expect(put).toMatchObject({ state: 'committed', status: 'created_or_updated' });
+    expect(JSON.stringify(pglite.links)).toContain('people/link-target-TOKEN');
+    expect(JSON.stringify(pglite.backlinks)).toContain('notes/link-source-TOKEN');
+  }, 240_000);
+
+  test.skipIf(!DATABASE_URL)('Postgres: the same answers and the same stored link as PGLite', () => {
+    expect(putWithWikilink('postgres', token)).toEqual(pgliteBaseline());
+  }, 240_000);
+
+  test.skipIf(!HAVE_ADDON)('Rust: the same answers and the same stored link as PGLite', () => {
+    expect(putWithWikilink('rust', token)).toEqual(pgliteBaseline());
   }, 240_000);
 });

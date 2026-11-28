@@ -18,7 +18,7 @@ export const GHOST_RETIREMENT_INTENT = 'managed_maintenance_retire_ghost_page';
 
 type PackRoot = SharedSkillPackRoot;
 /** The typed engine reads of the screen (engine-sql/write-misc.ts); a SqlEngine here is always a whole engine or a view of one. */
-type GuardEngine = Pick<BrainEngine, 'sharedSkillPackTablePresent' | 'listSharedSkillPackRoots' | 'readSourceState'>;
+type GuardEngine = Pick<BrainEngine, 'sharedSkillPackTablePresent' | 'listSharedSkillPackRoots' | 'readSourceState' | 'readPageOrigin'>;
 const guardEngine = (engine: SqlEngine) => engine as unknown as GuardEngine;
 
 function reserved(path: string): boolean {
@@ -118,8 +118,9 @@ export async function assertKnowledgePublicationAllowed(
   const sourceRoots = [...new Set([...(source?.local_path ? [source.local_path] : []), ...(preparedFile ? [preparedFile.root] : []),
     ...(ownPack?.worktree_root !== null && ownPack?.worktree_root !== undefined && ownPack.relative_path !== null
       ? [resolve(ownPack.worktree_root, ownPack.relative_path)] : [])])];
-  const aliases = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
-    'SELECT source_path,source_uri FROM pages WHERE source_id=$1 AND slug=$2', [row.source_id, row.slug]);
+  // Where the page's file lives, if the page is stored (live or a tombstone): its recorded path and its source URI.
+  const origin = await guardEngine(engine).readPageOrigin({ sourceId: row.source_id, slug: row.slug });
+  const aliases = origin ? [origin] : [];
   for (const root of sourceRoots) {
     paths.push(resolve(root, `${row.slug}.md`));
     for (const alias of aliases) {

@@ -824,7 +824,7 @@ src/core/persistence/legacy-locks.ts	execute_raw	1
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1
 src/core/persistence/limits.ts	execute_raw	1
 src/core/persistence/links-extraction-holds.ts	execute_raw	2
-src/core/persistence/links-preparation.ts	execute_raw	3
+src/core/persistence/links-preparation.ts	execute_raw	2
 src/core/persistence/local-edit-adoption.ts	execute_raw	6
 src/core/persistence/loop-fact-retirement.ts	execute_raw	7
 src/core/persistence/connector-fact-retirement.ts	execute_raw	3	GST-3256, modeled on loop-fact-retirement.ts: reads (FOR UPDATE under publication) the facts rows a connector wrote, expires them, and reads the source row at admission; no typed engine method exists yet
@@ -1115,7 +1115,7 @@ src/core/shared-skills/adopted-packs.ts	execute_raw	1
 src/core/shared-skills/catalog.ts	execute_raw	3
 src/core/shared-skills/compatibility.ts	execute_raw	2
 src/core/shared-skills/content-freshness.ts	execute_raw	1
-src/core/shared-skills/knowledge-guard.ts	execute_raw	3
+src/core/shared-skills/knowledge-guard.ts	execute_raw	2
 src/core/shared-skills/membership-authority.ts	execute_raw	4
 src/core/shared-skills/membership.ts	execute_raw	17
 src/core/shared-skills/migration-export.ts	execute_raw	7

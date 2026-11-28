@@ -23,6 +23,8 @@ import type { OperationContext } from '../../src/core/operations.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { requestPrincipalForContext } from '../../src/core/persistence/page-mutations.ts';
 import { createSource, parityArms } from './harness.ts';
+import type { ParityBackend } from './harness.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustEngine } from '../../src/core/rust-engine.ts';
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -72,6 +74,26 @@ describe('engine parity: put_page readers key guard', () => {
  * seeded per arm: SQL into shared_skill_packs, and on Rust through the store's own publication calls (activation needs a
  * source with a local path, so the case registers one).
  */
+/** Registers a shared skillpack for source `default` (rooted at `root`) the way each arm stores one. */
+async function seedSharedSkillPack(engine: BrainEngine, backend: ParityBackend, root: string): Promise<void> {
+  await createSource(engine, backend, 'pack-root', {}, root);
+  const incarnation = (await engine.readSourceState('default'))!.incarnation;
+  const pack = { sourceId: 'default', incarnation, packId: 'pack-a', revision: randomUUID(), manifest: { skills: [] }, manifestHash: 'h' };
+  if (backend === 'rust') {
+    const { brain } = (engine as unknown as RustEngine).openStore('writeSharedSkillPack') as unknown as { brain: {
+      activateSharedSkillPublication(dryRun: boolean): Promise<unknown>; writeSharedSkillPack(write: typeof pack): Promise<null> } };
+    await brain.activateSharedSkillPublication(false);
+    await brain.writeSharedSkillPack(pack);
+  } else {
+    // The row as an adopted pack leaves it; the publication trigger (which wants protocol 2) is off for the seed only.
+    await engine.transaction(async (tx) => {
+      await tx.executeRaw('SET LOCAL session_replication_role = replica');
+      await tx.executeRaw('INSERT INTO shared_skill_packs (source_id,source_incarnation,pack_id,revision,manifest,manifest_hash) VALUES ($1,$2::uuid,$3,$4::uuid,$5::jsonb,$6)',
+        [pack.sourceId, pack.incarnation, pack.packId, pack.revision, JSON.stringify(pack.manifest), pack.manifestHash]);
+    });
+  }
+}
+
 describe('engine parity: put_page shared skillpack guard', () => {
   parityTest('put_page of a reserved skills/ page in a source with a shared skillpack is refused and stores nothing', {
     methods: ['getPage', 'readSourceState'],
@@ -80,22 +102,7 @@ describe('engine parity: put_page shared skillpack guard', () => {
     const ctx = { engine, sourceId: 'default', remote: false, dryRun: false, config: { engine: engine.kind, embedding_disabled: true },
       logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
     try {
-      await createSource(engine, backend, 'pack-root', {}, root);
-      const incarnation = (await engine.readSourceState('default'))!.incarnation;
-      const pack = { sourceId: 'default', incarnation, packId: 'pack-a', revision: randomUUID(), manifest: { skills: [] }, manifestHash: 'h' };
-      if (backend === 'rust') {
-        const { brain } = (engine as unknown as RustEngine).openStore('writeSharedSkillPack') as unknown as { brain: {
-          activateSharedSkillPublication(dryRun: boolean): Promise<unknown>; writeSharedSkillPack(write: typeof pack): Promise<null> } };
-        await brain.activateSharedSkillPublication(false);
-        await brain.writeSharedSkillPack(pack);
-      } else {
-        // The row as an adopted pack leaves it; the publication trigger (which wants protocol 2) is off for the seed only.
-        await engine.transaction(async (tx) => {
-          await tx.executeRaw('SET LOCAL session_replication_role = replica');
-          await tx.executeRaw('INSERT INTO shared_skill_packs (source_id,source_incarnation,pack_id,revision,manifest,manifest_hash) VALUES ($1,$2::uuid,$3,$4::uuid,$5::jsonb,$6)',
-            [pack.sourceId, pack.incarnation, pack.packId, pack.revision, JSON.stringify(pack.manifest), pack.manifestHash]);
-        });
-      }
+      await seedSharedSkillPack(engine, backend, root);
       const content = '---\ntitle: Planted\ntype: note\n---\nPlanted skill text.\n';
       const outcome = await (putPage.handler(ctx, { slug: 'skills/planted/skill', content, request_id: randomUUID(), wait_ms: 25_000 }) as Promise<Record<string, unknown>>)
         .then((result) => ({ code: null as string | null, status: String(result.status) }), (e: { code?: string }) => {
@@ -105,6 +112,32 @@ describe('engine parity: put_page shared skillpack guard', () => {
       const stored = (await engine.getPage('skills/planted/skill')) !== null;
       expect({ outcome, stored }).toEqual({ outcome: { code: 'skill_bundle_required', status: 'refused' }, stored: false });
       return { outcome, stored };
+    } finally {
+      await disposePersistenceConsumer(engine);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // The guard screens an ordinary page too: it reads where the page's file lives (source_path, source_uri) to check the
+  // file is outside every pack root. On every arm that read is served, so a create and a rewrite of the page both land.
+  parityTest('put_page of an ordinary page in a source with a shared skillpack commits, a create and a rewrite', {
+    methods: ['getPage', 'readSourceState', 'readPageOrigin'],
+  }, async (engine, backend) => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-pack-guard-'));
+    const ctx = { engine, sourceId: 'default', remote: false, dryRun: false, config: { engine: engine.kind, embedding_disabled: true },
+      logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+    try {
+      await seedSharedSkillPack(engine, backend, root);
+      let revision: string | undefined;
+      const put = (line: string) => (putPage.handler(ctx, { slug: 'notes/ordinary', content: `---\ntitle: Ordinary\ntype: note\n---\n${line}\n`,
+        request_id: randomUUID(), wait_ms: 25_000, ...(revision ? { expected_revision: revision } : {}) }) as Promise<Record<string, unknown>>)
+        .then((result) => { revision = String(result.revision); return { code: null as string | null, status: String(result.status) }; },
+          (e: { code?: string }) => ({ code: e.code ?? null, status: 'refused' }));
+      const outcomes = [await put('An ordinary note.'), await put('An ordinary note, rewritten.')];
+      const body = (await engine.getPage('notes/ordinary'))?.compiled_truth ?? null;
+      expect({ outcomes, body }).toEqual({ outcomes: [{ code: null, status: 'created_or_updated' }, { code: null, status: 'created_or_updated' }],
+        body: 'An ordinary note, rewritten.' });
+      return { outcomes, body };
     } finally {
       await disposePersistenceConsumer(engine);
       rmSync(root, { recursive: true, force: true });
@@ -142,6 +175,61 @@ describe('engine parity: put_page to an unbound source, database-only', () => {
     } finally {
       await disposePersistenceConsumer(engine);
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * A put of a note that wikilinks an old slug of a renamed page stores the link to the page's current slug: admission
+ * reads the source's slug aliases and which of their pages are live (persistence/links-preparation.ts liveSlugAliases).
+ * An alias whose old slug is itself a live page again is not followed. On a brain without the alias table (SQL arms
+ * only; the Rust store always keeps the alias family) the alias read answers nothing, so the write gets past link
+ * preparation and fails later, at publication, which needs the table too (as before the read became typed). The alias
+ * row is seeded per arm: on Rust the rename records it, on the SQL arms (whose engine rename does not) a fixture row.
+ */
+describe('engine parity: put_page link targets through slug aliases', () => {
+  parityTest('a wikilink to a renamed page\'s old slug links its current slug; a live old slug or a missing alias table links as written', {
+    methods: ['updateSlug', 'listSlugAliases', 'listLinkEndpointPages', 'getLinks'],
+  }, async (engine, backend) => {
+    const ctx = { engine, sourceId: 'default', remote: false, dryRun: false, config: { engine: engine.kind, embedding_disabled: true },
+      logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+    const put = async (slug: string, body: string) => {
+      const result = await (putPage.handler(ctx, { slug, content: `---\ntitle: ${slug}\ntype: note\n---\n${body}\n`, request_id: randomUUID(),
+        wait_ms: 25_000 }) as Promise<Record<string, unknown>>);
+      return String(result.status);
+    };
+    const targets = async (slug: string) => (await engine.getLinks(slug)).map(link => link.to_slug).sort();
+    try {
+      const statuses = [await put('notes/old', 'The page before its rename.'), await put('notes/other-old', 'A second page to rename.')];
+      expect(await engine.updateSlug('notes/old', 'notes/new')).toBe(1);
+      expect(await engine.updateSlug('notes/other-old', 'notes/other-new')).toBe(1);
+      if (backend !== 'rust') {
+        for (const [alias, canonical] of [['notes/old', 'notes/new'], ['notes/other-old', 'notes/other-new']]) {
+          await engine.executeRaw('INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', ['default', alias, canonical]);
+        }
+      }
+      const aliases = (await engine.listSlugAliases('default')).map(row => `${row.alias_slug}>${row.canonical_slug}`).sort();
+      // notes/other-old is a live page again, so a link to it stays on it.
+      statuses.push(await put('notes/other-old', 'A new page under the old slug.'));
+      // A folder-qualified link no page holds exactly resolves through the source's basename index to the deeper page.
+      statuses.push(await put('archive/notes/deep', 'A page one folder deeper than the link names.'));
+      statuses.push(await put('notes/source', 'About [[notes/old]], [[notes/other-old]] and [[notes/deep]].'));
+      const linked = await targets('notes/source');
+      expect({ statuses, aliases, linked }).toEqual({
+        statuses: ['created_or_updated', 'created_or_updated', 'created_or_updated', 'created_or_updated', 'created_or_updated'],
+        aliases: ['notes/old>notes/new', 'notes/other-old>notes/other-new'],
+        linked: ['archive/notes/deep', 'notes/new', 'notes/other-old'],
+      });
+      if (backend !== 'rust') {
+        await engine.executeRaw('DROP TABLE slug_aliases');
+        const missing = await put('notes/source-two', 'About [[notes/old]].').then(status => ({ status, phase: null as string | null }),
+          (e: { writeError?: string; message?: string }) => ({ status: e.writeError ?? 'refused',
+            phase: String(e.message).includes('Publication failed') && String(e.message).includes('slug_aliases') ? 'publication' : String(e.message) }));
+        expect(missing).toEqual({ status: 'storage_error', phase: 'publication' });
+      }
+      return { aliases, linked };
+    } finally {
+      await disposePersistenceConsumer(engine);
     }
   });
 });

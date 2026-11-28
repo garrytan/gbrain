@@ -6,14 +6,14 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 333/656
+# covered: 336/656
 # mention_pass: 0/1
 # belief_purge: 0/2
 # connect_gate: 0/4
 # projection_rebuild: 0/22
 # facts_cycle_sites: 0/1
 # cli_reads_ops: 0/2
-# link_reads: 0/3
+# link_reads: 1/3
 # calibration_profiles: 0/3
 # trust: 0/11
 # minion_queue: 0/2
@@ -27,7 +27,7 @@
 # trust_proposals: 0/4
 # remote_links: 0/5
 # page_visibility: 0/2
-# write_guards: 0/6
+# write_guards: 1/6
 # access_members: 0/1
 # cli_reads_import: 1/9
 # lifecycle: 9/9
@@ -61,7 +61,7 @@
 # field_usage: 1/1
 # decide_proposals: 16/16
 # decide_store: 20/20
-# alias_fanout_reads: 4/5
+# alias_fanout_reads: 5/5
 # cli_reads_export: 9/12
 # jobs_health: 8/8
 # trust_tier_reads: 1/20
@@ -112,7 +112,7 @@ listHeldFenceCells	cli_reads_ops	no	0	no	-	-	-
 readFenceOverlayRows	cli_reads_ops	no	0	no	-	-	-
 readLinkContextMatches	link_reads	no	0	no	-	-	-
 readLinkContextOriginPages	link_reads	no	0	no	-	-	-
-listLinkEndpointPages	link_reads	no	0	no	-	-	-
+listLinkEndpointPages	link_reads	yes	1	no	yes	yes	serves
 getLatestCalibrationProfile	calibration_profiles	no	0	no	-	-	-
 insertCalibrationProfile	calibration_profiles	no	0	no	-	-	-
 purgeCalibrationProfilesByWave	calibration_profiles	no	0	no	-	-	-
@@ -277,7 +277,7 @@ readLinkTargetPages	remote_links	no	0	no	-	-	-
 rearmLinksEffects	remote_links	no	0	no	-	-	-
 readWriteVisibilityProbe	page_visibility	no	0	no	-	-	-
 readWriterSlugFence	page_visibility	no	0	no	-	-	-
-readPageOrigin	write_guards	no	0	no	-	-	-
+readPageOrigin	write_guards	yes	1	no	yes	yes	serves
 sealImportedPage	write_guards	no	0	no	-	-	-
 readPageIndexingState	write_guards	no	0	no	-	-	-
 hasSegmentStorage	write_guards	no	0	no	-	-	-
@@ -302,7 +302,7 @@ transaction	lifecycle	yes	20	no	yes	yes	serves
 transactionDirect	lifecycle	yes	1	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	55	yes	yes	yes	serves
+getPage	pages	yes	56	yes	yes	yes	serves
 readPageSnapshot	pages	yes	38	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	serves
@@ -407,7 +407,7 @@ replaceDerivedLinks	links	yes	3	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	3	no	yes	yes	serves
 removeLink	links	yes	2	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	12	yes	yes	yes	serves
+getLinks	links	yes	13	yes	yes	yes	serves
 getBacklinks	links	yes	3	yes	yes	yes	serves
 listLinkSources	links	yes	1	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	5	no	yes	yes	serves
@@ -528,7 +528,7 @@ getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	24	no	yes	yes	serves
+updateSlug	sync_aliases	yes	25	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
@@ -629,7 +629,7 @@ resolveCaseSensitiveAliases	alias_fanout_reads	yes	3	no	yes	yes	refuses:raw_sql
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	refuses:raw_sql
 readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	refuses:raw_sql
 readEntityAliasRows	alias_fanout_reads	yes	1	no	yes	yes	refuses:raw_sql
-listSlugAliases	alias_fanout_reads	no	0	no	-	-	-
+listSlugAliases	alias_fanout_reads	yes	1	no	yes	yes	serves
 listExportPageKeys	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
 readExportWithdrawalLedgerBytes	cli_reads_export	no	0	no	-	-	-
 listExportWithdrawals	cli_reads_export	no	0	no	-	-	-
@@ -680,7 +680,7 @@ countOpenLoopsByCounterpartyEmail	open_loops	yes	1	no	yes	yes	serves
 purgeStaleAppliedCaptures	open_loops	no	0	no	-	-	-
 listPendingCoreEditNotices	open_loops	no	0	no	-	-	-
 readEntityOpenLoops	open_loops	yes	4	no	yes	yes	serves
-readSourceState	write_misc	yes	1	no	yes	yes	serves
+readSourceState	write_misc	yes	2	no	yes	yes	serves
 readAdmissionSource	write_misc	no	0	no	-	-	-
 sharedSkillPackTablePresent	write_misc	no	0	no	-	-	-
 listSharedSkillPackRoots	write_misc	no	0	no	-	-	-

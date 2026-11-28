@@ -352,7 +352,7 @@ describe('page origin and import seal', () => {
   test('readPageOrigin reads a page by id or by slug, live or deleted, and nothing without a target or for another source', async () => {
     const owner = await page('origin/page');
     await raw("UPDATE pages SET source_path = 'origin/page.md' WHERE id = $1", [owner.id]);
-    const expected = { id: owner.id, slug: 'origin/page', source_path: 'origin/page.md', deleted_at: null };
+    const expected = { id: owner.id, slug: 'origin/page', source_path: 'origin/page.md', source_uri: null, deleted_at: null };
     expect(await engine.readPageOrigin({ sourceId: 'default', pageId: owner.id })).toEqual(expected);
     expect(await engine.readPageOrigin({ sourceId: 'default', slug: 'origin/page' })).toEqual(expected);
     expect(await engine.readPageOrigin({ sourceId: 'other', pageId: owner.id })).toBeNull();

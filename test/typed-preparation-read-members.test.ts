@@ -53,6 +53,9 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   // The facts-backstop probes a metadata-only edit of an eligible page makes (persistence/effect-facts.ts).
   hasPendingFactsExtraction: (e) => e.hasPendingFactsExtraction(1, ['waiting']),
   hasCompletedFactsExtraction: (e) => e.hasCompletedFactsExtraction(1),
+  // A page write's link preparation (alias targets) and its shared-skillpack screen (where the page's file lives).
+  listSlugAliases: (e) => e.listSlugAliases('default'),
+  readPageOrigin: (e) => e.readPageOrigin({ sourceId: 'default', slug: 'notes/a' }),
 };
 
 test('every typed preparation read this part adds is in TYPED_PREPARATION_READS and is a member of the Postgres engine', () => {

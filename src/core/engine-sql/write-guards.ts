@@ -17,8 +17,8 @@ import type { PageKind } from '../types.ts';
 export interface LivePageBodyRow { frontmatter: unknown; compiled_truth: string | null; timeline: string | null; body_storage: string | null; content_hash: string | null }
 
 
-/** The page an origin check is about: its id, slug, recorded origin and tombstone time (null while live). */
-export interface PageOriginRow { id: number; slug: string; source_path: string | null; deleted_at: Date | string | null }
+/** The page an origin check is about: its id, slug, recorded origin (file path and source URI) and tombstone time (null while live). */
+export interface PageOriginRow { id: number; slug: string; source_path: string | null; source_uri: string | null; deleted_at: Date | string | null }
 
 /** Which page: by id within the source when `pageId` is given, else by slug. */
 export interface PageOriginTarget { sourceId: string; pageId?: number | null; slug?: string | null }
@@ -26,8 +26,8 @@ export interface PageOriginTarget { sourceId: string; pageId?: number | null; sl
 /** The page `target` names (live or a tombstone), or null when there is none or neither `pageId` nor `slug` is given. */
 export async function readPageOrigin(exec: LegacyUnscopedRead, target: PageOriginTarget): Promise<PageOriginRow | null> {
   const [row] = target.pageId != null
-    ? await exec.executeRaw<PageOriginRow>('SELECT id, slug, source_path, deleted_at FROM pages WHERE id=$1 AND source_id=$2', [target.pageId, target.sourceId])
-    : target.slug ? await exec.executeRaw<PageOriginRow>('SELECT id, slug, source_path, deleted_at FROM pages WHERE source_id=$1 AND slug=$2', [target.sourceId, target.slug]) : [];
+    ? await exec.executeRaw<PageOriginRow>('SELECT id, slug, source_path, source_uri, deleted_at FROM pages WHERE id=$1 AND source_id=$2', [target.pageId, target.sourceId])
+    : target.slug ? await exec.executeRaw<PageOriginRow>('SELECT id, slug, source_path, source_uri, deleted_at FROM pages WHERE source_id=$1 AND slug=$2', [target.sourceId, target.slug]) : [];
   return row ?? null;
 }
 

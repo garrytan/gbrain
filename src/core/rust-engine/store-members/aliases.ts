@@ -17,6 +17,7 @@ import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 import type { DerivedAliasRow } from '../../engine-sql/pages.ts';
+import type { SlugAliasRow } from '../../engine-sql/alias-fanout-reads.ts';
 
 type AliasRef = { slug: string; source_id: string };
 type SlugAliasMatch = { canonical_slug: string; source_id: string; matches: number };
@@ -120,3 +121,7 @@ export const replaceDerivedAliases: StoreMember<[slug: string, sourceId: string,
       alias_norm: a.alias_norm, origin: a.origin, case_sensitive: a.case_sensitive, alias_text: a.alias_text,
     }))));
   };
+
+/** Every `slug_aliases` row of the source: an old slug of a renamed page and the slug it resolves to, in alias byte order. */
+export const listSlugAliases: StoreMember<[sourceId: string], SlugAliasRow[]> = (brain, sourceId) =>
+  storeCall({ member: 'listSlugAliases', sourceId }, () => brain.listSlugAliases(sourceId));

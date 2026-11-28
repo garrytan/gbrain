@@ -99,6 +99,7 @@ pub struct PageOriginRow {
     pub id: u64,
     pub slug: String,
     pub source_path: Option<String>,
+    pub source_uri: Option<String>,
     pub deleted_at: Option<String>,
 }
 
@@ -199,6 +200,7 @@ impl Store {
             id: page.id,
             slug: page.slug,
             source_path: page.source_path,
+            source_uri: page.source_uri,
             deleted_at: page.deleted_at_us.map(iso),
         }))
     }

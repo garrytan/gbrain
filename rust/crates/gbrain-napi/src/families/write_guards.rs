@@ -14,7 +14,7 @@ use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {
-    /// `readPageOrigin({ sourceId, pageId?, slug? })`: `{ id, slug, source_path, deleted_at }` or `null`.
+    /// `readPageOrigin({ sourceId, pageId?, slug? })`: `{ id, slug, source_path, source_uri, deleted_at }` or `null`.
     #[napi]
     pub fn read_page_origin<'env>(
         &self,

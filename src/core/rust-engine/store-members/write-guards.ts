@@ -5,7 +5,7 @@
  */
 import type { ImportedPageSeal } from '../../engine-sql/write-guards.ts';
 import { storeCall, type StoreMember } from './common.ts';
-import type { LivePageBodyRow, PageIndexingState } from '../../engine-sql/write-guards.ts';
+import type { LivePageBodyRow, PageIndexingState, PageOriginRow, PageOriginTarget } from '../../engine-sql/write-guards.ts';
 
 /** Seals an imported page: the revision, the timeline text and the chunker version; the sealed page's id, or null. */
 export const sealImportedPage: StoreMember<[slug: string, seal: ImportedPageSeal], { id: number } | null> = async (brain, slug, seal) => {
@@ -26,3 +26,13 @@ export const readStoredPageTier: StoreMember<[sourceId: string, slug: string], s
 
 export const readPageIndexingState: StoreMember<[pageId: number], PageIndexingState | null> = (brain, pageId) =>
   storeCall({ member: 'readPageIndexingState' }, () => brain.readPageIndexingState(pageId)) as Promise<PageIndexingState | null>;
+
+/** The page `target` names, live or a tombstone, by id within the source or by its exact slug; null when there is none. */
+export const readPageOrigin: StoreMember<[target: PageOriginTarget], PageOriginRow | null> = async (brain, target) => {
+  // No page has a negative id; the store's id is unsigned, so such a target answers null, as the SQL read does.
+  if (target.pageId != null && target.pageId < 0) return null;
+  const row = await storeCall({ member: 'readPageOrigin', slug: target.slug ?? undefined, sourceId: target.sourceId }, () => brain.readPageOrigin({
+    sourceId: target.sourceId, ...(target.pageId != null ? { pageId: target.pageId } : {}), ...(target.slug ? { slug: target.slug } : {}),
+  })) as PageOriginRow | null;
+  return row && { ...row, id: Number(row.id) };
+};

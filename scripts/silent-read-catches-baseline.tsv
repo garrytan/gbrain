@@ -1494,7 +1494,6 @@ src/core/persistence/journal.ts#writeHealthFacts	promise_catch_empty	1
 src/core/persistence/label-edit.ts#withStoredLabels	catch_empty	1
 src/core/persistence/landing-gaps.ts#readLandingGaps	capability_refusal_swallowed	2
 src/core/persistence/landing-gaps.ts#readLandingGaps	promise_catch_empty	1
-src/core/persistence/links-preparation.ts#liveSlugAliases	capability_refusal_swallowed	1
 src/core/persistence/links-preparation.ts#prepareAutomaticLinks	promise_catch_empty	1
 src/core/persistence/local-edit-adoption.ts#adoptLocalEditsOn	promise_catch_empty	1
 src/core/persistence/local-edit-adoption.ts#landedAdoptionCommit	catch_empty	1

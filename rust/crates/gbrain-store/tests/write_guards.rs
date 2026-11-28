@@ -60,9 +60,10 @@ fn read_page_origin_reads_by_id_or_slug_and_keeps_tombstones() {
         (
             by_slug.id,
             by_slug.source_path.as_deref(),
+            by_slug.source_uri.as_deref(),
             by_slug.deleted_at.is_none()
         ),
-        (id, Some("notes/a.md"), true)
+        (id, Some("notes/a.md"), None, true)
     );
     assert_eq!(
         store.read_page_origin(&target(None, Some(id))).unwrap(),

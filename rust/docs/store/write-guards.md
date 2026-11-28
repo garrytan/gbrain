@@ -13,7 +13,7 @@ keys.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.readPageOrigin({ sourceId, pageId?, slug? })` | `{ id, slug, source_path, deleted_at }` for the page `pageId` names in the source, else the page `slug` names, live or a tombstone; `null` when there is none or neither is given | `readPageOrigin` |
+| `brain.readPageOrigin({ sourceId, pageId?, slug? })` | `{ id, slug, source_path, source_uri, deleted_at }` for the page `pageId` names in the source, else the page `slug` names, live or a tombstone; `null` when there is none or neither is given | `readPageOrigin` |
 | `brain.listOriginClaims(sourceId, spellings, { lockKeys, excludePageId? })` | `[{ slug, source_path }]`, the live pages of the source that record any of `spellings`, other than `excludePageId`, in slug order, once each. `lockKeys` is ignored: the store write is already exclusive | `listOriginClaims` |
 | `brain.bindPageOrigin({ sourceId, pageId?, slug?, sourcePath, onlyIfUnset, liveOnly })` | the number of pages changed, 0 or 1. A page that already records `sourcePath` (with `onlyIfUnset`: any origin) or, with `liveOnly`, a tombstone is not changed. A live page may not take an origin another live page of the source records: `origin_claimed` | `bindPageOrigin` |
 | `brain.stampPageIngest(slug, { sourceId, sourceKind, ingestedVia, ingestedAt })` | nothing. Sets the page's `source_kind`, `ingested_via` and `ingested_at`, live or a tombstone; a missing page changes nothing. `ingestedAt` that is not an ISO time is `invalid_argument` | `stampPageIngest` |

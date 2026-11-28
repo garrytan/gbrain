@@ -1999,7 +1999,7 @@ export class PostgresEngine implements BrainEngine {
   readPageTitle(sourceId: string, slug: string) { return this.engineRead(exec => aliasFanoutReadsImpl.readPageTitle(exec, sourceId, slug)); }
   readPageAliasRows(sourceIds: readonly string[], slugs: readonly string[]) { return this.engineRead(exec => aliasFanoutReadsImpl.readPageAliasRows(exec, sourceIds, slugs)); }
   readEntityAliasRows(sourceId: string, slugs: readonly string[]) { return this.engineRead(exec => aliasFanoutReadsImpl.readEntityAliasRows(exec, sourceId, slugs)); }
-  listSlugAliases(sourceId: string) { return aliasFanoutReadsImpl.listSlugAliases(this.aliasFanoutRead, sourceId); }
+  listSlugAliases(sourceId: string) { return this.engineSqlRead(exec => aliasFanoutReadsImpl.listSlugAliases(unscopedExecutor(exec, 'alias fan-out reads: master engine.executeRaw, unscoped'), sourceId)); } // link preparation reads it, so it ends at a preparation read deadline
 
   // v0.41.18.0: lazy-cached resolveBulkRetryOpts result. Constructor-time
   // resolution would force env validation at module-load, which breaks tests

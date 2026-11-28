@@ -1,5 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { isMissingSchemaObject } from '../utils.ts';
+import { hasCapability } from '../engine-capabilities.ts';
 import type { ParsedPage } from '../import-file.ts';
 import { buildBasenameIndex, extractPageLinks, isGlobalBasenameEnabled, makeResolver, type ExtractPageLinksOptions,
   type PageLinksResult } from '../link-extraction.ts';
@@ -23,18 +24,26 @@ const raced = (error: unknown): null => {
   throw error;
 };
 
+/**
+ * The targets that name an old slug of a renamed page, mapped to the page's current slug: a `slug_aliases` row of the
+ * source whose alias is not itself a live page of the source and whose canonical slug is. Two typed reads, so every
+ * engine serves it: the source's alias rows (listSlugAliases), then which of the slugs they name are live pages of the
+ * source (listLinkEndpointPages, whose rows for other sources are dropped). A brain without the alias table has none.
+ */
 async function liveSlugAliases(engine: BrainEngine, sourceId: string, targets: string[]): Promise<Map<string, string>> {
   if (!targets.length) return new Map();
+  const wanted = new Set(targets);
+  let hits: { alias_slug: string; canonical_slug: string }[];
   try {
-    const rows = await engine.executeRaw<{ alias_slug: string; canonical_slug: string }>(`SELECT a.alias_slug, a.canonical_slug FROM slug_aliases a
-      WHERE a.source_id=$1 AND a.alias_slug IN (SELECT unnest($2::text[]))
-        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id AND p.slug=a.alias_slug AND p.deleted_at IS NULL)
-        AND EXISTS (SELECT 1 FROM pages c WHERE c.source_id=a.source_id AND c.slug=a.canonical_slug AND c.deleted_at IS NULL)`, [sourceId, [...new Set(targets)]]);
-    return new Map(rows.map(row => [row.alias_slug, row.canonical_slug]));
+    hits = (await engine.listSlugAliases(sourceId)).filter(row => wanted.has(row.alias_slug));
   } catch (error) {
     if (isMissingSchemaObject(error, 'table', 'slug_aliases')) return new Map();
     throw error;
   }
+  if (!hits.length) return new Map();
+  const slugs = [...new Set(hits.flatMap(row => [row.alias_slug, row.canonical_slug]))];
+  const live = new Set((await engine.listLinkEndpointPages(sourceId, slugs, [])).filter(page => page.source_id === sourceId).map(page => page.slug));
+  return new Map(hits.filter(row => !live.has(row.alias_slug) && live.has(row.canonical_slug)).map(row => [row.alias_slug, row.canonical_slug]));
 }
 
 interface SourceSlugIndex { count: number; hash: bigint; maxId: number; index: Map<string, string[]> }
@@ -65,6 +74,8 @@ async function refreshSourceSlugIndex(engine: BrainEngine, sourceId: string, sta
  * write from any process is seen exactly as the per-page slug read saw it.
  */
 export async function sourceBasenameIndex(engine: BrainEngine, sourceId: string): Promise<Map<string, string[]>> {
+  // An engine without raw SQL (Rust) cannot run the fingerprint probe: it builds the index from the same set each time.
+  if (!hasCapability(engine, 'raw_sql')) return buildBasenameIndex(await engine.getAllSlugs({ sourceId }));
   const bySource = sourceSlugIndexes.get(engine) ?? new Map<string, Promise<SourceSlugIndex | null>>();
   sourceSlugIndexes.set(engine, bySource);
   const next = (bySource.get(sourceId) ?? Promise.resolve(null)).then(state => refreshSourceSlugIndex(engine, sourceId, state));
