@@ -236,6 +236,7 @@ test/fact-fingerprint-corpus.test.ts
 test/fact-purge-lookup-timeout-6511.test.ts
 test/fact-reads-page-access.test.ts
 test/facts-absorb-stalled-receipt-7439.test.ts
+test/facts-capture-context-9512.serial.test.ts
 test/facts-embedding-refusal-heal-8526.test.ts
 test/facts-entity-moved-7602.test.ts
 test/facts-future-valid-from-gst3170.test.ts

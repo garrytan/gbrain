@@ -36,7 +36,7 @@ import { FACTS_BATCH_INCOMPLETE_MESSAGE, isEntityMovedRefusal } from './verb-err
 import { assertAmbientCaptureAdmissible, captureGateLaneForSource } from '../facts/capture-sources.ts';
 import { declareDerivation, type DerivationDeclaration } from '../trust/taint.ts';
 import type { TaintInput, WriteTrust } from '../trust/tier.ts';
-import { withSpeakerNote } from '../facts/speaker-context.ts';
+import { factSourceContext, withSpeakerNote } from '../facts/speaker-context.ts';
 
 export interface ManagedFactsResult {
   inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; write_requests: WriteReceipt[];
@@ -653,7 +653,7 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
     await authorizeWrite(engine, session.authority, 'extract_facts', slug);
     await authorizePageVisibility(engine, session.authority, slug);
     const group = groups.get(slug) ?? [];
-    const context = options.explicitContext ? fact.context ?? null : withSpeakerNote(ctx.speaker, ctx.sourceSlug ?? pageSlug ?? null);
+    const context = options.explicitContext ? fact.context ?? null : withSpeakerNote(ctx.speaker, factSourceContext(ctx, pageSlug));
     // #5836: an inferred subject carries its provenance note into the fence cell and the row.
     group.push({ ...fact, entity_slug: attributed, visibility, context: fact.entity_inferred ? appendContextNote(context, inferenceNote(fact.entity_inferred)) : context,
       embedding: fact.embedding ? Array.from(fact.embedding) : null,
