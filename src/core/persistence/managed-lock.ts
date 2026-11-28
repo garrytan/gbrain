@@ -24,10 +24,10 @@
 import type { BrainEngine } from '../engine.ts';
 import { rustLeases, type LeaseToken } from '../rust-engine/store-members/leases.ts';
 import { storeErrorCode } from '../rust-engine/store-errors.ts';
-import { rustMultiuserFromEnv } from '../rust-engine/multiuser-switch.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { hostRegistrationOf } from './host-fence.ts';
 import { rustMultiuserEngine } from './host-registration.ts';
+import { brainMultiuserOf } from '../rust-engine/brain-multiuser.ts';
 import { ensureProcessRegistration } from './managed-registration.ts';
 import { leaseLostError, managedRoot, multiuserRustEngineOpen, registerManagedOperation, type ManagedOperation } from './managed-operations.ts';
 import type { LeaseLostReason } from '../rust-engine/store-errors.ts';
@@ -110,7 +110,7 @@ export async function managedLock(engine: BrainEngine | object | undefined, kind
   if (!managedLeasesApply(engine)) {
     // A second process that reaches a multi-user brain over its owner's socket holds no store, so it can take no lease and has no
     // registration: it refuses instead of holding a native lock alone while the owner runs the work (its whole operations run in the owner).
-    if (isOwnerClient(engine) && rustMultiuserFromEnv()) throw leaseLostError(new Error(JSON.stringify({ reason: 'fence_missing', name: managedLeaseName(kind, id), epoch: 0 })));
+    if (isOwnerClient(engine) && brainMultiuserOf(engine)) throw leaseLostError(new Error(JSON.stringify({ reason: 'fence_missing', name: managedLeaseName(kind, id), epoch: 0 })));
     return nativeLock(opts, opts.waitMs);
   }
   const root = managedRoot(engine);

@@ -10,7 +10,7 @@
  * that later loads operations.ts sees the same objects in the same state.
  */
 import { MULTIUSER_FORWARDED_OPERATIONS } from './rust-engine/owner-ipc/forwarded-names.ts';
-import { rustMultiuserFromEnv } from './rust-engine/multiuser-switch.ts';
+import { brainMultiuserOf } from './rust-engine/brain-multiuser.ts';
 import { claimedAuth, finishRemoteWholeOperation, remoteWholeOperation, remoteWholeOperationForm, servedMultiuserClient } from './rust-engine/served/remote-whole-ops.ts';
 import type { Operation } from './ops/contract.ts';
 import { withOutputRedaction } from './search/output-redaction.ts';
@@ -174,7 +174,9 @@ export function finalizeOperation(op: Operation): void {
 /** The handler, sent whole to the Rust owner when this process is its trusted local client in multi-user mode. */
 function forwardedToOwner(name: string, scoped: Operation['handler']): Operation['handler'] {
   return async (ctx, params) => {
-    if ((ctx.engine?.kind as string) !== 'rust' || ctx.remote !== false || isRemoteCaller() || !rustMultiuserFromEnv()) return scoped(ctx, params);
+    // The brain's own answer (RustEngine.brainMultiuser: the owner's, for its client), so a brain on only through its
+    // config row forwards exactly as one on through the environment switch.
+    if ((ctx.engine?.kind as string) !== 'rust' || ctx.remote !== false || isRemoteCaller() || !brainMultiuserOf(ctx.engine)) return scoped(ctx, params);
     const { forwardOwnerOperation } = await import('./rust-engine/owner-ipc/whole-op.ts');
     const forwarded = await forwardOwnerOperation(ctx, name, params);
     return forwarded ? forwarded.result : scoped(ctx, params);

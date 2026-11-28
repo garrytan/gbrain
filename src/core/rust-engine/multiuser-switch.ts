@@ -26,6 +26,21 @@ export function rustMultiuserFromEnv(env: Env = processEnv()): boolean {
   return env[RUST_MULTIUSER_ENV] === '1';
 }
 
+/**
+ * The hello capability an owner lists exactly when its store runs in multi-user mode (it then applies the remote check
+ * to marked frames: owner-ipc/remote-check.ts re-exports it as OWNER_REMOTE_CHECK_CAP).
+ */
+export const OWNER_MULTIUSER_HELLO_CAP = 'remote_check';
+
+/**
+ * The brain's mode as a client of its owner sees it (a client holds no store, so it cannot read the config row): on
+ * when the owner's hello lists OWNER_MULTIUSER_HELLO_CAP, which follows the owner's store (the environment switch or
+ * the brain's config row). The client's own environment switch also counts, as it always did.
+ */
+export function rustMultiuserOfOwner(ownerCapabilities: readonly string[], env: Env = processEnv()): boolean {
+  return ownerCapabilities.includes(OWNER_MULTIUSER_HELLO_CAP) || rustMultiuserFromEnv(env);
+}
+
 /** True for a config value that turns multi-user mode on (`true` or `1`), as the store reads it. */
 export function rustMultiuserConfigOn(value: string | null | undefined): boolean {
   return value === 'true' || value === '1';

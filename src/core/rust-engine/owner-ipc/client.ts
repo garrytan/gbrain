@@ -51,7 +51,7 @@ import {
   OWNER_IPC_CALLBACK_KEYS, OWNER_IPC_REMOTE_READS, OWNER_IPC_ROUTES, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerIpcProtocol, ownerIpcRefusal,
   ownerPeerRefused, isOwnerHandoff, ownerHandoff, ownerMemberOnlyReads,
 } from './routes.ts';
-import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
+import { rustMultiuserOfOwner } from '../multiuser-switch.ts';
 import { ownerEngineCapabilities, remoteFrameMark } from './remote-check.ts';
 import { HELD_ROW_HOOK, HELD_ROW_MEMBERS, HELD_ROW_TAG, withHeldRowHook } from './held-row.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
@@ -528,7 +528,7 @@ export function installOwnerClient(engine: object, connection: OwnerConnection, 
       // sends it), or a read in flight when the owner went away, goes to the next owner. A write whose outcome is
       // unknown is never sent again: it may have run.
       return (direct(...args) as Promise<unknown>).catch(async (error: unknown) => {
-        const readLost = ownerMemberOnlyReads(member) && connection.closed && rustMultiuserFromEnv()
+        const readLost = ownerMemberOnlyReads(member) && connection.closed && rustMultiuserOfOwner(connection.hello.capabilities)
           && error instanceof OperationError && error.code === 'owner_unavailable' && (error as { reason?: unknown }).reason === 'outcome_unknown';
         if (!isOwnerHandoff(error) && !readLost) throw error;
         await untilOwnerClosed(connection);

@@ -98,6 +98,7 @@ export async function assertRefreshesSettled(engine: BrainEngine): Promise<void>
  */
 export function rustHoldsManagedStorage(destination: DestinationOptions | undefined): boolean {
   if (!servedCapabilities().has('managed_persistence')) return false;
+  // Environment switch only without evidence: the destination store is not open before the cutover (destination.ts).
   return storeCapabilities({ multiuser: destination?.multiuser ?? rustMultiuserFromEnv() }).has('managed_persistence');
 }
 

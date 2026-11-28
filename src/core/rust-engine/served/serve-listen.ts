@@ -7,15 +7,18 @@ import type { BrainEngine } from '../../engine.ts';
 import { opError } from '../../ops/contract.ts';
 import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from '../multiuser-switch.ts';
 import { storeMultiuser } from '../access-self-check.ts';
+import { brainMultiuserOf } from '../brain-multiuser.ts';
 import type { OwnerEngineServer } from '../owner-ipc/server.ts';
 import { RUST_SERVER_LISTEN_ENV, listenServed, parseListenAddress, tlsFromEnv, type ServedListener } from './listener.ts';
 import type { ServedServerOptions } from './session.ts';
 
-/** True when this serve was asked to listen for brain clients. */
-export function rustListenRequested(args: readonly string[], env: Record<string, string | undefined> = process.env): boolean {
-  // The flag always asks (and refuses with the switch off); the environment variable acts only while the environment
-  // half of the switch is on, so with it off a serve starts exactly as before (review G13).
-  return args.includes('--rust-listen') || (!!env[RUST_SERVER_LISTEN_ENV] && rustMultiuserFromEnv(env));
+/** True when this serve, on `engine`, was asked to listen for brain clients. */
+export function rustListenRequested(args: readonly string[], env: Record<string, string | undefined> = process.env, engine: object | null = null): boolean {
+  // The flag always asks (and refuses with the switch off); the environment variable acts only while the brain runs in
+  // multi-user mode (the engine's answer: the environment switch or the brain's config row), so with the mode off a
+  // serve starts exactly as before (review G13). The environment half also counts for an engine with no answer of its
+  // own (not Rust), as before: startRustListen then refuses it.
+  return args.includes('--rust-listen') || (!!env[RUST_SERVER_LISTEN_ENV] && (brainMultiuserOf(engine) || rustMultiuserFromEnv(env)));
 }
 
 /**

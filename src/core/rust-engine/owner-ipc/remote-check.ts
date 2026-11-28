@@ -17,7 +17,7 @@
  * capability: a client never copies it into its own engine's capabilities (ownerEngineCapabilities).
  */
 import { storeMultiuser } from '../access-self-check.ts';
-import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
+import { OWNER_MULTIUSER_HELLO_CAP, rustMultiuserFromEnv, rustMultiuserOfOwner } from '../multiuser-switch.ts';
 import { OWNER_IPC_REMOTE_READS, OWNER_IPC_REMOTE_SIDE_WRITES, ownerIpcRefusal } from './routes.ts';
 import { remoteWholeOperationCall } from '../served/remote-whole-ops.ts';
 
@@ -34,7 +34,7 @@ export function ownerRemoteCheckOn(engine: object): boolean {
 }
 
 /** The hello capability an owner in multi-user mode lists: it applies the remote check to marked frames. */
-export const OWNER_REMOTE_CHECK_CAP = 'remote_check';
+export const OWNER_REMOTE_CHECK_CAP = OWNER_MULTIUSER_HELLO_CAP;
 
 /** The capabilities an owner's hello lists: its engine's, plus the remote check when it applies one. */
 export function ownerHelloCapabilities(engine: object, engineCapabilities: readonly string[]): string[] {
@@ -51,7 +51,7 @@ export function ownerEngineCapabilities(helloCapabilities: readonly string[]): s
  * own environment switch is on); none otherwise, so a v2 frame is byte-identical.
  */
 export function remoteFrameMark(remote: boolean, ownerCapabilities: readonly string[] = []): { remote?: true } {
-  return remote && (ownerCapabilities.includes(OWNER_REMOTE_CHECK_CAP) || rustMultiuserFromEnv()) ? { remote: true } : {};
+  return remote && rustMultiuserOfOwner(ownerCapabilities) ? { remote: true } : {};
 }
 
 /**

@@ -290,8 +290,10 @@ async function serveBrain(
   // that used `gbrain auth create` keep working unchanged).
   const isHttp = args.includes('--http');
   // Multi-user Rust: serve this owner's brain to other machines over protocol v3 (rust-engine/served/serve-listen.ts).
-  if (args.includes('--rust-listen') || (process.env.GBRAIN_RUST_SERVER_LISTEN && process.env.GBRAIN_RUST_MULTIUSER === '1')) {
-    await (await import('../core/rust-engine/served/serve-listen.ts')).startRustListen(engine, args, (line) => console.error(line));
+  // The listen variable acts on the brain's own mode (the environment switch or its config row: rustListenRequested).
+  if (args.includes('--rust-listen') || process.env.GBRAIN_RUST_SERVER_LISTEN) {
+    const listen = await import('../core/rust-engine/served/serve-listen.ts');
+    if (listen.rustListenRequested(args, process.env, engine)) await listen.startRustListen(engine, args, (line) => console.error(line));
   }
   // Wakeshift (docs/guides/wakeshift.md): the 5 s wake drainer for stdio and HTTP alike; a no-op tick while reporting back is off.
   (await import('../core/wakeshift/drain.ts')).startWakeDrain(engine);

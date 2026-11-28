@@ -422,8 +422,18 @@ included), and nothing more until the hello is answered; at most 32 connections 
 
 - M2: the server derives each caller's scope in the store (lane L4); until its self-check passes, owner tokens only.
 - Positions on the optimistic store and C22 (lane L2); interactive transactions without the sub-switch (lane L1).
-- The brain config key `engine.rust.multiuser` is read by `rustMultiuserOnFor` but the owner's election uses the
-  environment switch only, so a server needs `GBRAIN_RUST_MULTIUSER=1` in its environment.
+
+### One switch answer
+
+A brain is multi-user when `GBRAIN_RUST_MULTIUSER=1` is set or its config row `engine.rust.multiuser` is `true`; the
+store resolves both at open (`RustStore.multiuser`). Every site that runs after a store opens reads that answer, so a
+brain on through its config row alone behaves as one on through the environment: the owner and the next owner it
+elects run multi-user, a brain server listens (`GBRAIN_RUST_SERVER_LISTEN`), and a client on the owner socket takes the
+owner's answer from its hello (`remote_check` is listed exactly when the owner's store is multi-user;
+`rustMultiuserOfOwner`, `RustEngine.brainMultiuser`). Its own environment switch still counts. The sites that run before
+any store exists read the environment only, each named with its reason in `test/rust-multiuser-switch-callers.test.ts`:
+a client host of a brain server (`rust_server.url`) still needs `GBRAIN_RUST_MULTIUSER=1`, because the config row lives
+in the server's store, and an engine swap reads the switch because the destination store is not open before the cutover.
 
 ## M2: per-user access
 

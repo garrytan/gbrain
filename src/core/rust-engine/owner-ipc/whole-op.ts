@@ -37,7 +37,7 @@ import {
   callEndCheck, callerIsRemote, ownerConnectionFor, ownerRejoinFor, rustOwnerServesPersistence, untilCallEnds, untilOwnerClosed, type OwnerConnection,
 } from './client.ts';
 import { isOwnerHandoff, ownerGone, ownerIpcRefusal } from './routes.ts';
-import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
+import { rustMultiuserOfOwner } from '../multiuser-switch.ts';
 import { IMPORT_CLIENT_FILE, readClientFile, type ClientFilePayload } from '../served/client-files.ts';
 
 export type WholeOperationName =
@@ -169,7 +169,8 @@ const HANDOFF_RESENDS = 5;
 
 export async function forwardOwnerOperation(ctx: OperationContext, name: string, params: Record<string, unknown>, resends = 0): Promise<{ result: unknown } | undefined> {
   const connection = ownerConnectionFor(ctx.engine);
-  if (!connection || !forwardsWhole(name, rustMultiuserFromEnv())) return undefined;
+  // The brain's mode is the owner's answer (its hello), so a brain on only through its config row forwards the same.
+  if (!connection || !forwardsWhole(name, rustMultiuserOfOwner(connection.hello.capabilities))) return undefined;
   if (connection.closed) {
     const rejoin = ownerRejoinFor(connection);
     if (!rejoin) return undefined; // the engine's own members give the owner_unavailable refusal
@@ -196,7 +197,7 @@ export async function forwardOwnerOperation(ctx: OperationContext, name: string,
     .catch(async (error: unknown): Promise<ForwardedOperationResult | { rerun: true }> => {
       // Multi-user mode: an operation the old owner handed over never ran; a journaled write that carries its request id
       // (put_page) is answered by the write journal when it is sent again with that id, so it never writes twice.
-      const journaled = typeof params.request_id === 'string' && params.request_id !== '' && rustMultiuserFromEnv()
+      const journaled = typeof params.request_id === 'string' && params.request_id !== '' && rustMultiuserOfOwner(connection.hello.capabilities)
         && connection.closed && error instanceof OperationError && error.code === 'owner_unavailable'
         && (error as { reason?: unknown }).reason === 'outcome_unknown';
       if ((!isOwnerHandoff(error) && !journaled) || resends >= HANDOFF_RESENDS) throw error;

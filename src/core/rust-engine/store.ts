@@ -317,6 +317,7 @@ export async function openRustStore(
       schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', chunkStrategy: SEED_CHUNK_STRATEGY,
       writeGateDetectorVersion: WRITE_GATE_DETECTOR_VERSION,
       ...(embedding ? { embeddingModel: embedding.model, embeddingDimensions: embedding.dimensions } : {}),
+      // The environment half only: the store adds its own config row and reports the resolved answer (`multiuser`).
       ...(rustMultiuserFromEnv() ? { multiuser: true } : {}),
     };
     let info: { multiuser?: unknown; commit_log?: unknown } | null;

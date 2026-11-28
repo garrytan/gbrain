@@ -71,6 +71,7 @@ export interface DestinationOptions {
 export function usableDestination(opts: DestinationOptions | undefined): SwapDestinationEvidence | null {
   const d = opts?.destination;
   if (!d || (d.source !== 'probe' && d.source !== 'config')) return null;
+  // Environment switch only: the destination store is not open before the cutover, so it has no config row to read.
   if (!(opts.multiuser ?? rustMultiuserFromEnv())) return null;
   return d;
 }

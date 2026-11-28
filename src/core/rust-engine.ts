@@ -30,7 +30,7 @@ import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { brainWithCallDeadline, endOptimisticTransactions, runOptimisticTransaction, type OptimisticTransactions } from './rust-engine/optimistic-transaction.ts';
 import { servedCapabilities, storeCapabilities } from './rust-engine/store-capabilities.ts';
-import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './rust-engine/multiuser-switch.ts';
+import { rustMultiuserFromEnv, rustMultiuserOfOwner, rustMultiuserSubSwitch } from './rust-engine/multiuser-switch.ts';
 import { refuseUnfencedLeaseCall } from './rust-engine/fence-dispatch.ts';
 import { existingHostIdFor, hostIdFor } from './persistence/identity.ts';
 import { noteRustEngine } from './persistence/managed-operations.ts';
@@ -205,6 +205,19 @@ export class RustEngine implements BrainEngine {
    * store is open here (a client forwards to the owner).
    */
   get multiuser(): boolean { return this._store?.multiuser === true; }
+
+  /**
+   * The multi-user answer of the brain this engine reaches, in any role (I-0): the store's own answer when this process
+   * owns the brain (`multiuser`); the owner's answer when it is the owner's client (its hello lists the remote check
+   * exactly when its store is multi-user: rustMultiuserOfOwner); on for a client of a brain server, which exists only in
+   * multi-user mode (served/engine.ts). Callers that act for the brain read this, never the environment switch alone.
+   */
+  get brainMultiuser(): boolean {
+    if (this._served) return true;
+    const owner = this._owner;
+    if (!this._claiming && owner?.role === 'client') return rustMultiuserOfOwner(owner.connection.hello.capabilities);
+    return this.multiuser;
+  }
 
   /** What this engine's own store serves: the served set, plus `multi_writer` in multi-user mode. */
   private _ownCapabilities(): Capability[] {
