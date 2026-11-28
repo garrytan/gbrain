@@ -203,7 +203,8 @@ share permits, queues, bounds and the confirming-read holds.
   intersection) and `server_id`. A v2 owner answers a v3 hello with its v2 hello, so the client names both versions.
 - Transports: TCP with TLS, or plain TCP on loopback, with `u32 BE` length frames and an optional binary tail for
   large byte and float arrays; the Unix owner socket keeps JSON lines and needs no token (the kernel proved the peer).
-- `call` and `fn` frames carry `req` (UUID v7), `retry`, `remote`, `min_position`, `txn`; results carry `position`
+- `call` and `fn` frames carry `req` (UUID v7), `retry`, `remote`, `min_position`, `txn`, and `claim` when the caller set one
+  (`src/core/member-claim.ts`: client id, source, allowed sources; no token); results carry `position`
   for writes and `cid` (a correlation id the server logs) for an unexpected error. Over the network, errors cross
   without stacks or causes.
 - `cbcall` / `cbresult`: a function argument that returns a value (for example a job admission policy) runs on the
@@ -324,12 +325,31 @@ How one crosses:
 - Remote single-member writes stay refused, with one exception below. Remote reads cross only as the typed reads of
   `OWNER_IPC_REMOTE_READS`.
 
-**The one side write.** `OWNER_IPC_REMOTE_SIDE_WRITES` (owner-ipc/routes.ts) holds exactly `bumpPageRetrievals`, the usage
-stamp a remote read (`get_page`, `query`, `search`) makes in process too. It feeds ranking and sampling, so a forged stamp
-could move what other callers see: the server resolves each id to its page and stamps only when the caller may read every
-one (served/remote-member-policy.ts); one id outside the caller's read scope refuses the whole call and stamps nothing. The
-stamp stays best-effort: a failed stamp never fails the read. `test/rust-owner-ipc-remote.test.ts` pins the list to that one
-member; any addition waits for a ruling.
+**The two side writes.** `OWNER_IPC_REMOTE_SIDE_WRITES` (owner-ipc/routes.ts) holds exactly `bumpPageRetrievals` and
+`insertRetrievalEvents`. `test/rust-owner-ipc-remote.test.ts` pins the list to those two members; any addition waits for a
+ruling.
+
+- `bumpPageRetrievals` is the usage stamp a remote read (`get_page`, `query`, `search`) makes in process too. It feeds
+  ranking and sampling, so a forged stamp could move what other callers see: the server resolves each id to its page and
+  stamps only when the caller may read every one (served/remote-member-policy.ts); one id outside the caller's read scope
+  refuses the whole call and stamps nothing, on an ordinary frame and inside a transaction the caller holds. The stamp
+  stays best-effort: a failed stamp never fails the read.
+- `insertRetrievalEvents` is the retrieval event a remote search, query, recall or think stores when retrieval feedback is
+  on (src/core/feedback/record.ts). The server stores a batch only when the frame carries a claim, every event's
+  `client_id` equals the claim's client, every page and link end is one the caller may read, the batch is well formed and
+  bounded, and no answer id repeats in it (served/retrieval-event-policy.ts). An answer id already stored for another
+  client or operation refuses `answer_id_taken`; an exact retry stores nothing more. Any refusal stores nothing for the
+  whole batch. The check and the insert run under an in-process lock keyed by answer id; inside a transaction frame the
+  lock does not span the commit, and two server processes do not share it. The claim is the connected process's
+  assertion, not a credential: it narrows what a write may name and does not prove the end user.
+- The feedback queue writes each answer under the access record, remote mark and claim of the caller that made it, and
+  batches only answers with the same context.
+- A lost event is never silent. A record that throws gives the answer the warning `FEEDBACK_RECORD_FAILED`; a queue
+  overflow or a failed drain writes one stderr line (code, operation, count) and gives the same client's next answer
+  `FEEDBACK_EVENTS_LOST:<n>`; `rate_answer` on a lost id answers `answer_unavailable` reason `event_lost`. The warnings
+  are in `_meta.retrieval.feedback.warnings` (search, query, recall) and `result.warnings` (think, synthesize). No answer
+  carries the warning when a synthesize fails with no extractive result, when a degraded recall records nothing, when the
+  client never answers again (stderr only), or when the process exits with queued events.
 
 **The one transaction setting.** `OWNER_IPC_REMOTE_TXN_SETTINGS` (owner-ipc/routes.ts) holds exactly `beginSnapshotRead`.
 A remote caller may send it only on a transaction it holds (a frame with `txn`), where it makes that transaction one
@@ -377,18 +397,42 @@ crosses whole. Their rows in `test/fixtures/served-member-lists/local-only.tsv` 
 and write path only" (with `run_doctor` first for the two). `test/engine-parity/served-remote-think.test.ts` proves the think
 half on every arm: a keyless think, for the owner's pipe and for a non-owner member's read-only grant, with 0 refusals on
 both served routes; and a think asked to save and take that calls no write member, warns of no save or take, keeps the page
-and take counts, and says `remote_persisted_blocked: true` (turning off either gate alone fails it). Known loss
-until S4 (retrieval) serves the feedback weights read and the retrieval event write: on multi-user Rust with feedback
-turned on (off by default), a search, query or recall from a remote host refuses, a remote think answers without page
-evidence (warning GATHER_HYBRID_FAILED), and a remote answer's feedback event is lost without a warning. The parity file
-pins the think half to S4 (served routes only, due 2026-12-04).
+and take counts, and says `remote_persisted_blocked: true` (turning off either gate alone fails it). With retrieval
+feedback on, a remote search, query, recall and think answer on both served routes as in process: they read the feedback
+weights of the pages they may read and store their retrieval event for the claimed client
+(`test/engine-parity/served-remote-feedback-record.test.ts`, and think's case 4 asserts the stored event).
 
-**Reads that stay on the default ruling, by owning slice.** S4 (retrieval): `readFactsFtsIndexState`,
-`readSourcesNotReadable`. S5 (jobs, write requests, skills, membership): `countWaitingJobs`, `filterUnarchivedSourceIds`,
+**Reads that stay on the default ruling, by owning slice.** S5 (jobs, write requests, skills, membership): `countWaitingJobs`, `filterUnarchivedSourceIds`,
 `listAudienceAccessMembers`, `lockLegacyAccessTokens`, `readCredentialBindingForUpdate`, `readLiveAccessTokenRows`,
 `readLiveOauthClients`. S6 (pages, entities, status, code, storage, other): `countRepoBoundSources`,
 `listConnectorSources`, `listOriginTwinCounts`, `listOrphanConnectorCheckpoints`, `readDoctorSources`,
 `readOriginIndexState`, `readServerEncoding`, `sumEmbedBackfillChars`.
+
+**Remote member reads and their guards.** A remote caller's typed read crosses only when it is on
+`OWNER_IPC_REMOTE_READS`. Every member a remote retrieval operation reaches is classified in one of four ways:
+
+- Served with a server guard. The closed guard tables are in served/remote-member-policy.ts, and the server applies them
+  on an ordinary frame and inside a transaction the caller holds.
+  - `PAGE_ID_GUARDS`: the reads keyed by page ids the client chose (`readPageFeedbackWeights`, `readBriefPageVersions`,
+    `readPageDateFieldsByIds`, `readSegmentedPageHead`, `readSegmentedVersionBodyBytes`, `readBodyManifestMeta`,
+    `readBodyManifestRows`, `readGuestMarks`) and the stamp. One id the caller may not read refuses the whole call
+    `permission_denied` (reason `read_out_of_scope`, or `stamp_out_of_scope` for the stamp), and the detail names no page.
+  - `ARG_NARROWINGS`: `readReflexPages` and `readReflexLiveKeys` serve a remote `privacy: none` as `caller`.
+  - Output guards: `nextLivePageAfter` steps past pages the caller may not read (at most 1,000 steps and the read
+    deadline, then `scan_gap_hidden`, served/remote-scan-guard.ts); `readAccessMembers` answers by member id only and
+    refuses the list and email forms (`member_directory_out_of_scope`).
+- Served at in-process parity with its arguments trusted. The client chooses scope arguments the server does not check
+  (for example `excludePrivate`, `sourceIds`, page or fact ids). Each such member is a row of
+  `test/fixtures/served-member-lists/a1-arg-guards.tsv` with its hazard in one line.
+- Denied: an entry of `OWNER_IPC_REMOTE_DENY` with a one-line reason (a member that reads across all callers with no
+  scope argument, for example `listSourceRecords`, `readSharedSourceRows`, `getJob`, `readOauthClient`).
+- Not reached: a `local-only.tsv` row whose reason starts `not reached:` and names the condition that keeps remote callers
+  off it.
+
+**The A1 lock.** S4 makes no per-user security claim; per-user access must not lift while a1-arg-guards.tsv has rows.
+`test/rust-served-a1-lock.test.ts` enforces it: while the file has rows, the served admission (served/auth.ts) must refuse
+every non-owner principal `token_not_owner` and admit the owner token only as the owner's floor, and the session's
+owner-only text and the store's owner gate must stay. A row leaves the file only with a server guard for its member.
 
 **Follow-up (A1).** Once per-user access lifts, a non-owner principal's remote `put_page` needs its own privacy and
 visibility parity case (its readers, a private page it may not see, an owner-only source): today only the owner's floor sends

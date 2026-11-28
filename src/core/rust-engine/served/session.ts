@@ -474,10 +474,11 @@ function ownerFloor(principal: AuthenticatedPrincipal): boolean {
 }
 
 /**
- * The refusal for a remote caller's frame, or null when it may cross: a typed read of the remote list, the one side write,
- * or a whole operation of the closed list (served/remote-whole-ops.ts) from the owner's floor (until A1 lifts, any other
- * principal's remote whole operation is refused before anything runs). A setting of the caller's own transaction
- * (OWNER_IPC_REMOTE_TXN_SETTINGS) crosses only inside a transaction the caller holds (`inTxn`).
+ * The refusal for a remote caller's frame, or null when it may cross: a typed read of the remote list, a side write of
+ * OWNER_IPC_REMOTE_SIDE_WRITES, or a whole operation of the closed list (served/remote-whole-ops.ts) from the owner's
+ * floor (until A1 lifts, any other principal's remote whole operation is refused before anything runs). A setting of
+ * the caller's own transaction (OWNER_IPC_REMOTE_TXN_SETTINGS) crosses only inside a transaction the caller holds
+ * (`inTxn`).
  */
 function remoteCallRefusal(kind: 'call' | 'fn', member: string, args: unknown, principal: AuthenticatedPrincipal, inTxn: boolean): Error | null {
   if (remoteWholeOperationCall(kind, member, args)) {
