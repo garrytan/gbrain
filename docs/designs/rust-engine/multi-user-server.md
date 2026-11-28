@@ -438,8 +438,11 @@ weights of the pages they may read and store their retrieval event for the claim
   - `findFuzzyEntityCandidates`: the refusal ends the remote entity resolution that reached the fuzzy step, so a
     relational question skips its seed by title.
   Their cases, whose answers stay the same, are pinned in `test/rust-stop-pins/l3-served-denies.tsv`; the harness checks
-  a remote-deny pin on served routes only. A remote `open_loops` reads its Google source freshness, its withheld senders
-  and its held coverage through `listAllSources`, which is served, not `listSourceRecords`.
+  a remote-deny pin on served routes only, and a case lists in `servedSkips` the members its pinned refusal skips there.
+  A remote `open_loops` reads its Google source freshness through `listAllSources`, which is served. Its withheld senders
+  and held coverage still read `listSourceRecords`, `readSourceIncarnation` and the managed connector cursor, which stay
+  local-only: with a Google source in the caller's scope, a remote `open_loops` list (no loop id) on a served brain is
+  refused (a named limit).
 - Not reached: a `local-only.tsv` row whose reason starts `not reached:` and names the condition that keeps remote callers
   off it.
 
