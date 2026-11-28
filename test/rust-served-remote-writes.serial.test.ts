@@ -276,6 +276,9 @@ describeAddon('remote writes over the served wire', () => {
     expect(await reflexTitles('none')).toEqual(['notes/open']);
     expect(await reflexTitles('caller')).toEqual(['notes/open']);
     expect(await reflexTitles('floor')).toEqual(['notes/open']);
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const live = await worldOnly(() => conn.request('call', 'readReflexLiveKeys', [{ sourceIds: ['default'], privacy: 'none' }, ['notes/open', 'notes/secret']])) as Array<{ slug: string }>;
+    expect(live.map(r => r.slug)).toEqual(['notes/open']);
   });
 
   test('the reflex page read inside a transaction the caller holds: privacy none is narrowed there too', async () => {

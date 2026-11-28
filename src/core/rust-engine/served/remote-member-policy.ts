@@ -13,6 +13,10 @@
  * caller may read refuses the whole call with `permission_denied`, and nothing is stamped. The same page-id pre-check guards
  * the reads keyed by page ids the client chose (PAGE_ID_GUARDS), with reason `read_out_of_scope`. A local caller's call,
  * and every member off the table, runs unchanged.
+ *
+ * The reflex reads take their page privacy from the client's scope (ARG_NARROWINGS): a remote caller that sends `none`
+ * (no page policy) is served `caller` (the caller's own page policy, which itself relaxes only when an operator relaxed
+ * privacy for remote reads); `caller` and `floor` pass as sent. Their `sourceIds` stay as the client chose them.
  */
 import { opError } from '../../ops/contract.ts';
 import { isRemoteCaller } from '../../remote-caller.ts';
@@ -45,9 +49,26 @@ const PAGE_ID_GUARDS: Readonly<Record<string, PageIdGuard>> = {
   readGuestMarks: read('The guest marks read', list),
 };
 
+/** A remote caller's arguments for a member, narrowed before it runs; a shape it does not recognise passes as sent (the member refuses it). */
+type Narrowing = (args: readonly unknown[]) => unknown[];
+
+const callerPrivacy: Narrowing = args => {
+  const scope = args[0];
+  if (typeof scope !== 'object' || scope === null || (scope as { privacy?: unknown }).privacy !== 'none') return [...args];
+  return [{ ...scope, privacy: 'caller' }, ...args.slice(1)];
+};
+
+/** The closed narrowing table: members a remote caller reaches whose scope carries a privacy the client chose. */
+const ARG_NARROWINGS: Readonly<Record<string, Narrowing>> = {
+  readReflexPages: callerPrivacy,
+  readReflexLiveKeys: callerPrivacy,
+};
+
 /** The owner's call target for `member` on `engine` (the engine or a transaction handle): the remote caller's check first, else the member itself. */
 export function remoteMemberPolicy(engine: object, member: string, method: Member): Member {
   const plain: Member = (...args) => method.apply(engine, args);
+  const narrow = Object.hasOwn(ARG_NARROWINGS, member) ? ARG_NARROWINGS[member]! : undefined;
+  if (narrow) return (...args) => (isRemoteCaller() ? plain(...narrow(args)) : plain(...args));
   const guard = Object.hasOwn(PAGE_ID_GUARDS, member) ? PAGE_ID_GUARDS[member]! : undefined;
   if (!guard) return plain;
   return async (...args) => {

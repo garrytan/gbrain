@@ -134,6 +134,16 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   'readEntityCardRows', 'rankEntities', 'listNameVariantCardCandidates', 'readVisibleVariantPages',
   'listVisibleNameVariantCandidates', 'readRetirementHop', 'readEntityAliasRows', 'readRankCoverage', 'readReferrerTargetCounts',
   'listVersionReasonWriters',
+  // S4 (retrieval), served-remote-resolve: a remote query, search, recall, traverse_graph and memory_recall resolve a named entity
+  // (title, bare-name prefix family, same-name siblings, a meeting's title seed, a chain anchor, the entity anchor's titles),
+  // ask which sources the caller cannot read, and read their source configs.
+  'readPageTitle', 'readPageTitlesById', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches',
+  'readSiblingGroupRows', 'readSeedTitleSlugs', 'resolveChainAnchorRows', 'readSourcesNotReadable', 'readScopeSourceConfigs',
+  // S4 (retrieval), served-remote-entity-context: a remote entity card reads its referrer groups, record pages and text
+  // mentions; context_pack reads the trust generation; volunteer_context reads its reflex pages (privacy narrowed by
+  // remote-member-policy.ts) and live keys and its usage counts.
+  'readReflexPages', 'readReflexLiveKeys', 'readVolunteerUsage', 'readTrustGeneration',
+  'readReferrerGroupRows', 'readReferrerRecordCandidates', 'readReferrerRecordPages', 'readTextMentionPages',
 ];
 
 /**
@@ -163,6 +173,7 @@ export const OWNER_IPC_REMOTE_DENY: Readonly<Record<string, string>> = {
   ...Object.fromEntries(['readAccessReadLog', 'listAccessReadPageRefs', 'readAccessReadsOfPages', 'tallyAccessReadsOfPages'].map(m => [m, READ_LOG])),
   ...Object.fromEntries(['readDecideState', 'dailyDecideSpend', 'listDecideSpendBySlot', 'listDecideReceiptStats', 'getDecideProposal',
     'listDecideProposals', 'getDecideReviewProposal', 'listDecideCalibrations', 'getDecideCalibration'].map(m => [m, DECIDE])),
+  readSharedSourceRows: 'every live source\'s config, guest flag and owner list across all callers; the remote grant and personal-source checks need a server-side scoped form',
 };
 
 /**
