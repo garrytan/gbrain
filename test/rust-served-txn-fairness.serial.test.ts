@@ -18,19 +18,26 @@
  * 4. Seam: a real multi-user Rust brain with the commit log on, served over loopback TLS (the served arm's helpers).
  *    The contention comes from the callbacks themselves (each sleeps while it holds its snapshot), not from machine load.
  *
- * Needs the Rust addon: runs with GBRAIN_TEST_RUST_ARM=1 (as the Rust CI job does), and is skipped otherwise.
+ * Needs the Rust addon: runs whenever it is built (or GBRAIN_TEST_RUST_ARM=1 asks for it), skips without it, and fails
+ * without it under GBRAIN_TEST_RUST_ADDON_REQUIRED=1, as rust-engine-multiuser-transactions.serial.test.ts does.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { closeRustBrain, openRustBrain, openServedPeer, rustArmRequested, type RustBrainDir } from './engine-parity/rust-arm.ts';
+import { existsSync } from 'node:fs';
+import { closeRustBrain, openRustBrain, openServedPeer, rustArmAddonPath, rustArmRequested, type RustBrainDir } from './engine-parity/rust-arm.ts';
 
 const SRC = 'default';
 const HOT = 'people/charlie-example';
 const SWITCHES = ['GBRAIN_TEST_RUST_SERVED', 'GBRAIN_RUST_MULTIUSER', 'GBRAIN_RUST_COMMIT_LOG', 'GBRAIN_RUST_SERVED_SERIAL_TXN'] as const;
 
+const HAVE_ADDON = existsSync(rustArmAddonPath());
+if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
+  throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${rustArmAddonPath()} does not exist; run bun run rust:build`);
+}
+
 type Outcome = { committed: true } | { committed: false; code?: string; reason?: string };
 
-describe.skipIf(!rustArmRequested())('a transaction over the wire keeps its place in line when it runs again', () => {
+describe.skipIf(!HAVE_ADDON && !rustArmRequested())('a transaction over the wire keeps its place in line when it runs again', () => {
   const saved = new Map<string, string | undefined>();
   let brain: RustBrainDir;
   beforeAll(async () => {
