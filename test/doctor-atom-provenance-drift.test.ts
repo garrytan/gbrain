@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { computeAtomProvenanceDriftCheck } from '../src/commands/doctor.ts';
@@ -68,6 +68,17 @@ async function seedAtom(slug: string, sourceSlug: string, sourceHash: string) {
       extracted_at: new Date().toISOString(),
     },
   });
+}
+
+/** A completed managed extraction of the page's current text, as the managed extract_atoms lane records it (#5770). */
+async function completeManagedExtraction(slug: string) {
+  const [page] = await engine.executeRaw<{ id: number; source_id: string; content_hash: string; incarnation: string }>(
+    'SELECT p.id, p.source_id, p.content_hash, s.incarnation::text AS incarnation FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.slug = $1', [slug]);
+  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-atoms',$1,$2::text::jsonb)`,
+    [`fixture-${slug}`, JSON.stringify([{ sourceId: page!.source_id, incarnation: page!.incarnation, requestId: randomUUID(), kind: 'page', locator: slug,
+      pageId: page!.id, contentHash: page!.content_hash }])]);
+  await engine.putPage(`atoms/2026-01-02/${slug}-replacement`, { type: 'atom', title: `${slug} replacement`, compiled_truth: 'replacement claim',
+    frontmatter: { type: 'atom', source_slug: slug, source_hash: page!.content_hash.slice(0, 16), managed_extraction: true, extracted_at: new Date().toISOString() } });
 }
 
 describe('computeAtomProvenanceDriftCheck', () => {
@@ -274,8 +285,8 @@ describe('computeAtomProvenanceDriftCheck', () => {
   });
 
   it('warns once both the ratio and the count are exceeded', async () => {
-    // 30 drifted out of 30 → over MIN_DRIFTED (25) and over WARN_RATIO (0.1).
-    await seedSource('src-f', 'original body');
+    // 30 drifted out of 30 → over MIN_DRIFTED (25) and over WARN_RATIO (0.1). The source page is gone, so the
+    // stale-atoms repair can retire every one of them (#8848).
     for (let i = 0; i < 30; i++) {
       await seedAtom(`atoms/2026-01-01/f-${String(i).padStart(6, '0')}`, 'src-f', 'deadbeefdeadbeef');
     }
@@ -333,7 +344,6 @@ describe('computeAtomProvenanceDriftCheck', () => {
   });
 
   it('omits the slug-unbound bucket from the warn message when every drifted atom is slug-bound', async () => {
-    await seedSource('src-q', 'original body');
     for (let i = 0; i < 30; i++) {
       await seedAtom(`atoms/2026-01-01/q-${String(i).padStart(6, '0')}`, 'src-q', 'deadbeefdeadbeef');
     }
@@ -345,10 +355,12 @@ describe('computeAtomProvenanceDriftCheck', () => {
 
   it('names the slug-unbound bucket in the warn message without letting it drive the WARN or the denominator (#4806)', async () => {
     await seedSource('src-p', 'original body');
-    // 30 page-bound drifted atoms trip the WARN on their own (30/30)...
+    // 30 page-bound drifted atoms of a page that was edited and extracted again (the replacement carries its
+    // current hash) trip the WARN on their own (30/31)...
     for (let i = 0; i < 30; i++) {
       await seedAtom(`atoms/2026-01-01/pd-${String(i).padStart(6, '0')}`, 'src-p', 'deadbeefdeadbeef');
     }
+    await seedAtom('atoms/2026-01-01/pd-replacement', 'src-p', await hashOf('src-p'));
     // ...and 30 slug-unbound atoms ride along as an informational count only.
     for (let i = 0; i < 30; i++) {
       await engine.putPage(`atoms/2026-01-01/p-${String(i).padStart(6, '0')}`, {
@@ -362,10 +374,10 @@ describe('computeAtomProvenanceDriftCheck', () => {
     const c = await computeAtomProvenanceDriftCheck(engine);
     const d = c.details as Record<string, number>;
     expect(c.status).toBe('warn');
-    expect(d.total_atoms).toBe(30); // not 60
+    expect(d.total_atoms).toBe(31); // not 61
     expect(d.drifted).toBe(30);
     expect(d.slug_unbound).toBe(30);
-    expect(c.message).toContain('30/30');
+    expect(c.message).toContain('30/31');
     expect(c.message).toContain('0 whose source page is gone');
     expect(c.message).toContain('30 slug-unbound');
   }, 60_000);
@@ -380,9 +392,41 @@ describe('computeAtomProvenanceDriftCheck', () => {
     const healthy = await computeAtomProvenanceDriftCheck(engine);
     expect(healthy.details).toMatchObject({ total_atoms: 30, drifted: 0 });
     await seedSource('src-managed', 'edited body');
+    // #8848: not extracted again yet, so the repair could retire none of them; the check reports them as the backlog.
+    const waiting = await computeAtomProvenanceDriftCheck(engine);
+    expect(waiting.status).toBe('ok');
+    expect(waiting.details).toMatchObject({ drifted: 30, source_changed: 30, retirable: 0, awaiting_reextraction: 30 });
+    expect(waiting.message).toContain('extract_atoms backlog');
+    expect(waiting.message).not.toContain('gbrain repair stale-atoms');
+    await completeManagedExtraction('src-managed');
     const c = await computeAtomProvenanceDriftCheck(engine);
     expect(c.status).toBe('warn');
-    expect(c.details).toMatchObject({ drifted: 30, source_changed: 30 });
+    expect(c.details).toMatchObject({ drifted: 30, source_changed: 30, retirable: 30, retirable_changed: 30 });
     expect(c.message).toContain('gbrain repair stale-atoms');
   }, 60_000);
+
+  // #8848 acceptance: atoms of an edited page that was not extracted again are the backlog, which the advertised
+  // repair cannot retire; the check stops counting them toward its warning instead of advertising a 0-item repair.
+  it('does not warn about edited-source atoms the stale-atoms repair cannot retire (#8848)', async () => {
+    await seedSource('src-backlog', 'original body');
+    for (let i = 0; i < 30; i++) await seedAtom(`atoms/2026-01-01/backlog-${String(i).padStart(6, '0')}`, 'src-backlog', await hashOf('src-backlog'));
+    await seedSource('src-backlog', 'edited body');
+    const c = await computeAtomProvenanceDriftCheck(engine);
+    expect(c.details).toMatchObject({ drifted: 30, source_changed: 30, retirable: 0, awaiting_reextraction: 30 });
+    expect(c.status).toBe('ok');
+    expect(c.message).toContain('30 belong to edited pages not extracted again yet');
+    expect(c.message).not.toContain('Fix:');
+  });
+
+  it('warns on the retirable atoms alone and names the backlog beside them (#8848)', async () => {
+    for (let i = 0; i < 30; i++) await seedAtom(`atoms/2026-01-01/gone-${String(i).padStart(6, '0')}`, 'src-gone', 'deadbeefdeadbeef');
+    await seedSource('src-waiting', 'original body');
+    for (let i = 0; i < 40; i++) await seedAtom(`atoms/2026-01-01/waiting-${String(i).padStart(6, '0')}`, 'src-waiting', 'feedfacefeedface');
+    const c = await computeAtomProvenanceDriftCheck(engine);
+    expect(c.status).toBe('warn');
+    expect(c.details).toMatchObject({ drifted: 70, retirable: 30, retirable_gone: 30, retirable_changed: 0, awaiting_reextraction: 40 });
+    expect(c.message).toContain('30 of them (30 source gone, 0 source edited and already re-extracted) are stale and can be retired');
+    expect(c.message).toContain('40 belong to edited pages not extracted again yet');
+    expect(c.message).toContain('Fix: preview them with gbrain repair stale-atoms');
+  });
 });

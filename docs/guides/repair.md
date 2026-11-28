@@ -2209,8 +2209,10 @@ page for extraction again, so restoring a deleted page and running
 with the preview and apply commands; a stale hash refuses with
 [`preview_changed`](#preview-changed). An apply under a different `--source`
 than the preview also refuses with `preview_changed`. Doctor
-`atom_provenance_drift` names this command when drift crosses its warn
-threshold. An atom whose page changed only in its frontmatter or in gbrain's
+`atom_provenance_drift` names this command when the atoms it can retire cross
+its warn threshold. Atoms of an edited page that was not extracted again are
+the extract_atoms backlog, which this repair never retires, so the check lists
+them as `awaiting_reextraction` and does not warn about them (#8848). An atom whose page changed only in its frontmatter or in gbrain's
 facts and takes sections is not drift when one of the page's recent versions
 still holds the edition it was extracted from (#6825).
 

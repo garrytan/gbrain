@@ -348,8 +348,8 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
   {
     id: 'atom_provenance_drift', resolution: 'repair', registration: 'doctor.ts',
     hostOnly: 'Retiring stale atoms is a host-side, explicit-only repair.',
-    count: d => Number(d.drifted ?? 0),
-    impact: 'Some atoms reference a source page that is gone or was edited, and still surface in search with a quote no current page contains',
+    count: d => Number(d.retirable ?? d.drifted ?? 0),
+    impact: 'Some atoms reference a source page that is gone, or was edited and extracted again, and still surface in search with a quote no current page contains',
     run: async engine => (await import('./checks/extraction-sync.ts')).computeAtomProvenanceDriftCheck(engine),
   },
   {

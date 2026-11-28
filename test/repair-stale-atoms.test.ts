@@ -139,6 +139,9 @@ for (const kind of testBackends()) {
       await engine.putPage('notes/gone', { type: 'note', title: 'Gone', compiled_truth: 'A page the user deleted.' }, { sourceId });
       for (let i = 0; i < 30; i++) await putAtom(sourceId, `atoms/2026-01-01/gone-${i}`, { source_slug: 'notes/gone', source_hash: 'cccccccccccccccc' });
       await engine.softDeletePage('notes/gone', { sourceId });
+      // #8848: atoms of a page that was edited and not extracted again; the repair cannot retire them.
+      await engine.putPage('notes/waiting', { type: 'note', title: 'Waiting', compiled_truth: 'Edited, not extracted again yet.' }, { sourceId });
+      for (let i = 0; i < 40; i++) await putAtom(sourceId, `atoms/2026-01-01/waiting-${i}`, { source_slug: 'notes/waiting', source_hash: 'ffffffffffffffff' });
       const before = await computeAtomProvenanceDriftCheck(engine);
       expect(before.status).toBe('warn');
       const printed = before.message.match(/gbrain repair stale-atoms/)![0];
@@ -154,6 +157,9 @@ for (const kind of testBackends()) {
       expect(applied.results[0].outcomes).toEqual({ retired: 30 });
       const after = await computeAtomProvenanceDriftCheck(engine);
       expect(Number((before.details as Record<string, number>).source_gone) - Number((after.details as Record<string, number>).source_gone)).toBe(30);
+      // #8848 acceptance: after the advertised repair, the check reports ok; the backlog atoms stay listed, not counted.
+      expect(after.status).toBe('ok');
+      expect(after.message).toContain('40 belong to edited pages not extracted again yet');
     }, 60_000);
 
     test('an approved set applies only under the source selection it was previewed with', async () => {
