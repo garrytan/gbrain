@@ -901,6 +901,20 @@ function hasKatakanaMatchBoundary(
 }
 
 /**
+ * Blank out text a reader never sees as prose: a wikilink's hidden target (or
+ * a slug path), a markdown link/image destination and bare URLs. Offsets are
+ * preserved (replaced by spaces); display text stays scannable.
+ */
+function maskLinkSyntax(text: string): string {
+  const blank = (m: string) => m.replace(/[^\n]/g, ' ');
+  return text
+    .replace(/\[\[([^\]|\n]*)\|/g, (m, t: string) => '[[' + blank(t) + ' ')
+    .replace(/\[\[([^\]|\n]*\/[^\]|\n]*)\]\]/g, (m) => blank(m))
+    .replace(/\]\(([^)\n]*)\)/g, (m) => '] ' + blank(m.slice(2)))
+    .replace(/\b(?:https?:\/\/|www\.)[^\s<>)\]]+/gi, blank);
+}
+
+/**
  * Scan body text for mentions of gazetteer entities. Pure function — no
  * IO. Returns `Mention[]` ordered by offset, deduped per
  * `(fromSourceId, fromSlug → entry.source_id, entry.slug)` pair
@@ -933,7 +947,7 @@ export function findMentionedEntities(
   opts: FindMentionsOpts,
 ): Mention[] {
   if (!text || gazetteer.size === 0) return [];
-  const stripped = stripCodeBlocks(text, { onHtmlComment: () => {} });
+  const stripped = maskLinkSyntax(stripCodeBlocks(text, { onHtmlComment: () => {} }));
   const tokens = tokenizeForScan(stripped);
   if (tokens.length === 0) return [];
   const scripts = entryScriptCache();
