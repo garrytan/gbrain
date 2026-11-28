@@ -26,6 +26,8 @@ mkdirSync(join(home, '.gbrain'), { recursive: true });
 function stubEngine(dbValues: Record<string, string>): BrainEngine {
   return {
     getConfig: async (key: string) => dbValues[key] ?? null,
+    // The keyed config read (`SELECT key,value FROM config WHERE key=ANY($1)`) the persistence readers run.
+    executeRaw: async (_sql: string, params?: unknown[]) => ((params?.[0] ?? []) as string[]).filter(key => key in dbValues).map(key => ({ key, value: dbValues[key] })),
   } as unknown as BrainEngine;
 }
 
@@ -262,6 +264,14 @@ describe('GST-3449 — config get on a registered key left at its default', () =
     writeFileConfig({ engine: 'pglite' });
     expect((await runGet({}, 'persistence.sync_preparation_ms')).logs).toEqual(['120000']);
     expect((await runGet({}, 'persistence.terminal_failures.window_days')).logs).toEqual(['7']);
+  });
+
+  test('an unset key the runtime derives from its siblings prints the derived value, not the constant', async () => {
+    writeFileConfig({ engine: 'pglite' });
+    const window = await runGet({ 'persistence.receipt_retention_days': '3' }, 'persistence.terminal_failures.window_days');
+    expect(window.logs).toEqual(['3']);
+    expect(window.errs.join('\n')).toContain('capped at the 3-day receipt retention');
+    expect((await runGet({ 'persistence.sync_preparation_ms': '900000' }, 'persistence.preparation_ceiling_ms')).logs).toEqual(['930000']);
   });
 
   test('a known key with no machine-readable default stays not-found, naming it as known; an unknown key is unchanged', async () => {

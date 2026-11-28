@@ -1029,7 +1029,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       if (hasStaleDbRow) {
         console.error(`[config] a stale DB-plane row holds '${redactConfigValue(key, String(dbVal))}', but nothing reads it; the runtime default applies. Remove it: gbrain config unset ${key}`);
       }
-      if ((await import('./config/unset-default.ts')).reportUnsetKey(key)) return;
+      if (await (await import('./config/unset-default.ts')).reportUnsetKey(engine, key)) return;
       process.exit(1);
     }
   } else if (action === 'set' && key && value) {

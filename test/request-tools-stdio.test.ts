@@ -190,7 +190,7 @@ describe('request_tools {surface} on stdio', () => {
     try {
       const widened = parsed(await widenedSession.client.callTool({ name: 'request_tools', arguments: { surface: 'full' } })) as { surface: string; note: string };
       expect(widened.surface).toBe('full');
-      expect(widened.note).toContain('A client that opens a new session for every call, or never re-reads tools/list, gets these tools only when gbrain is registered with them: --surface full (or GBRAIN_SURFACE=full) and no --advertise.');
+      expect(widened.note).toContain('A client that opens a new session for every call, or never re-reads tools/list, gets these tools only when gbrain is registered with them: --surface full --advertise full (a narrower --advertise or mcp.advertised_surface still hides them from tools/list).');
       const again = parsed(await widenedSession.client.callTool({ name: 'request_tools', arguments: { surface: 'full' } })) as { widened: boolean; note: string };
       expect(again.widened).toBe(false);
       expect(again.note).toContain("a new session starts at the registered surface ('starter') again");
@@ -211,7 +211,7 @@ describe('request_tools {surface} on stdio', () => {
           const already = parsed(await s.client.callTool({ name: 'request_tools', arguments: { surface: 'full' } })) as { widened: boolean; note: string };
           expect(already.widened).toBe(false);
           expect(already.note).toContain('callable by name in this session and in every new one');
-          expect(already.note).toContain('--surface full (or GBRAIN_SURFACE=full) and no --advertise');
+          expect(already.note).toContain('--surface full --advertise full');
         }
         expect(isError(await s.client.callTool({ name: 'get_health', arguments: {} }))).toBe(false);
       } finally { await s.close(); }

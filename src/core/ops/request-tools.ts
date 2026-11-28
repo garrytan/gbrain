@@ -147,7 +147,7 @@ function midTurnReloadNote(ctx: OperationContext): string | undefined {
  * identity to bind it to), so the registration has to carry the surface.
  */
 const STATELESS_CLIENT_NOTE = (surface: string) =>
-  `A client that opens a new session for every call, or never re-reads tools/list, gets these tools only when gbrain is registered with them: --surface ${surface} (or GBRAIN_SURFACE=${surface}) and no --advertise.`;
+  `A client that opens a new session for every call, or never re-reads tools/list, gets these tools only when gbrain is registered with them: --surface ${surface} --advertise ${surface} (a narrower --advertise or mcp.advertised_surface still hides them from tools/list).`;
 
 async function widenStdioSession(ctx: OperationContext, requested: 'verbs' | 'starter' | 'full'): Promise<Record<string, unknown>> {
   const session = ctx.stdioSurface!;
