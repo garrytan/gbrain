@@ -22,7 +22,15 @@
  *    and once for real. The restore case replays the mirror with raw SQL (a PGLite or Postgres restore), so it declares
  *    `requires: 'raw_sql'` and the Rust arm refuses it by design. It stands in for a backup older than the purge by
  *    removing the requests' tombstones (fact_purges, take_purges, page_purges) before the replay. Generated values (ids, times) are compared by relation.
- *  - Not forced on the served Rust arm (GBRAIN_TEST_RUST_SERVED=1): the owner runs the transaction out of the case's reach.
+ *  - Not forced on the served Rust arm (GBRAIN_TEST_RUST_SERVED=1): the owner runs the transaction out of the case's reach,
+ *    and the served arm's PGLite reference runs unforced too, so both expect one run.
+ *  - Real contention on a multi-user or served Rust brain: the owner's background writers commit keys the purge reads,
+ *    so its transaction can run again on top of the forced run. Two writers do it: the effect runner's settlement
+ *    true-up (receipt-true-up.ts trueUpRequests, which writes the persistence counter row `brain` the purge locks), and
+ *    the purge's own publication claim stamp (consumer.ts holdClaimForPublication, renewWriteClaim on the request row),
+ *    which an effect claim read and lost, so the effect claim's retry holds that row's queue when the purge reads it
+ *    (occ_kv.rs row-lock queueing). There the case asserts at least the expected runs, and that every line names one
+ *    request and one target, which is what lets the restore replay them once.
  */
 import { afterEach, describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -64,6 +72,10 @@ function assertArm(engine: BrainEngine, backend: ParityBackend, rerun: ForcedRer
     expect(rerun?.seen.multiuser).toBe(true);
   }
 }
+
+/** A multi-user or served Rust brain, where the owner's background writers can make the purge's transaction run again. */
+const contended = (engine: BrainEngine, backend: ParityBackend) =>
+  backend === 'rust' && (rustServedRequested() || (engine as { multiuser?: boolean }).multiuser === true);
 
 const inHome = async <T>(fn: () => Promise<T>): Promise<T> => {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-page-purge-rerun-'));
@@ -111,11 +123,17 @@ describe('engine parity: a page purge whose transaction runs again', () => {
       requests: new Set(intents.map(i => i.request)).size,
       request_committed: intents.every(i => committed.has(i.request)),
       // Fields that differ between the runs' lines (none, or the restore rule could read the lost run's line as unverified).
-      differing: intents.length > 1 ? differing(intents[0]!, intents[1]!) : [],
+      differing: [...new Set(intents.slice(1).flatMap(i => differing(intents[0]!, i)))].sort(),
+      // Every run's line names one target: the restore replays the request once, whichever line it reads.
+      targets: new Set(intents.map(target)).size,
       carries: { facts: intents[0]!.facts.length > 0, lifetimes: intents[0]!.lifetimes.length > 0, content_hashes: (intents[0]!.content_hashes ?? []).length > 0 },
     };
-    expect(result).toEqual({ status: 'purged', page: 'gone', tombstoned: true, forced: rustServedRequested() ? null : 1,
-      intent_lines: rustServedRequested() ? 1 : 2, requests: 1, request_committed: true, differing: [],
+    // The forced run, plus any run real contention adds where the owner's background writers share the brain.
+    const minLines = rustServedRequested() ? 1 : 2;
+    if (contended(engine, backend)) expect(result.intent_lines).toBeGreaterThanOrEqual(minLines);
+    else expect(result.intent_lines).toBe(minLines);
+    expect({ ...result, intent_lines: null }).toEqual({ status: 'purged', page: 'gone', tombstoned: true, forced: rustServedRequested() ? null : 1,
+      intent_lines: null, requests: 1, request_committed: true, differing: [], targets: 1,
       carries: { facts: true, lifetimes: true, content_hashes: true } });
     return { ...result, forced: null, intent_lines: null };
   }));
@@ -141,7 +159,8 @@ describe('engine parity: a page purge whose transaction runs again', () => {
     const outcomeOf = (intents: PurgeMirrorIntent[]) => restore.replays.filter(r => r.request === intents[0]!.request).map(r => r.outcome);
     const result = { intent_lines: rerun.intents.length, plain: outcomeOf(plain.intents), rerun: outcomeOf(rerun.intents),
       unverified: restore.replays.filter(r => r.outcome === 'unverified').length };
-    expect(result.intent_lines).toBe(2);
+    // The served arm does not force, and its PGLite reference runs unforced too.
+    expect(result.intent_lines).toBe(rustServedRequested() ? 1 : 2);
     expect(result.rerun).toEqual(result.plain);
     expect(result.rerun).toHaveLength(1);
     expect(result.unverified).toBe(0);

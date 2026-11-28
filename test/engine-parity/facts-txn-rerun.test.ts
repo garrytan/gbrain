@@ -17,8 +17,8 @@
  *    the page held `during`, and the database kept the old body.
  *  - Why existing coverage misses it: forget-fence-path.test.ts, fence-write.test.ts and fact-fence-adoption-exits.test.ts
  *    run each writer once; the multi-user lanes meet a rerun only under contention, by chance.
- *  - Seam: none in production. force-rerun.ts wraps engine.transaction. The segmented forget forces each run that reads the
- *    page's segmented rewrite row (`readSegmentedRewritePage`); the three file writers force the run that published the
+ *  - Seam: none in production. force-rerun.ts wraps engine.transaction. The segmented forget forces the first run that
+ *    reads the page's segmented rewrite row (`readSegmentedRewritePage`, limit 1); the three file writers force the run that published the
  *    file (`after`: the file no longer holds what it held before the call, limit 1). On a multi-user Rust brain the
  *    forced run ends with a write_conflict error, so the engine's real optimistic retry runs the callback again; every
  *    other arm runs it once in a transaction it rolls back and once for real.
@@ -129,8 +129,10 @@ describe('engine parity: the facts file writers when a transaction runs again', 
     methods: ['insertFacts', 'getPage', 'readSourceState', 'readPageFileOrigin', 'readSegmentedRewritePage'],
     timeout: 600_000,
   }, async (engine, backend) => withEnv({ GBRAIN_HOME: home }, async () => {
-    // Every run of a segment rewrite is forced, so the last rewrite (the file's row, with the caller's reason) is a rerun too.
-    const out = await forgetOnFence(engine, backend, 'segmented', { members: ['readSegmentedRewritePage'] });
+    // The first transaction call that reads the segmented rewrite row is forced once. One call only: on a multi-user Rust
+    // brain a nested engine.transaction joins the open one, so each optimistic retry of the outer callback makes a new
+    // call of the forcing wrapper, and with no limit every retry was forced again until transaction_contention (attempts=9).
+    const out = await forgetOnFence(engine, backend, 'segmented', { members: ['readSegmentedRewritePage'], limit: 1 });
     expect(out.result).toEqual({ ok: true, path: 'fence', warning: undefined });
     expect(out.storage).toBe('segmented');
     expect(out.stored).toContain(`forgotten: ${REASON} \\| said at lunch`);
