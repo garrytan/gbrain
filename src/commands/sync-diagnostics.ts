@@ -44,7 +44,7 @@ export function printHoldNotes(result: SyncResult, write: (line: string) => void
   if (result.fences_normalized) write(`  Normalized fences in ${result.fences_normalized.count} file(s) (${classList(result.fences_normalized.by_class)}). ${result.fences_normalized.fix.why}`);
   if (result.fence_issues) write(`  ${result.fence_issues.why} ${result.fence_issues.sample.slice(0, 5).map(item => item.path).join(', ')}`);
   for (const line of sizeStateLines(result.size_states)) write(line);
-  for (const item of (result.would_normalize ?? []).slice(0, HOLD_LINES)) write(`  Would normalize ${item.path}: ${item.classes.join(', ')} (rewritten losslessly and committed; preparation may pick other new row numbers).`);
+  for (const item of (result.would_normalize ?? []).slice(0, HOLD_LINES)) write(`  Would normalize ${item.path}: ${item.classes.join(', ')} (rewritten losslessly, and committed where sync writes the file back; preparation may pick other new row numbers).`);
   if ((result.would_normalize_count ?? 0) > HOLD_LINES) write(`  ... and ${result.would_normalize_count! - HOLD_LINES} more would be normalized (--json lists them).`);
 }
 

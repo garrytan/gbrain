@@ -26,6 +26,8 @@ export interface FencesNormalized {
   common_prefix?: string;
   /** Single-page writes: each fix's location and class. */
   fixes?: ReturnType<typeof fenceFixesWire>;
+  /** GST-4061, sync: files whose rewrite stayed in the database because sync wrote no file back to their checkout. */
+  database_only?: number;
   fix: Action;
 }
 

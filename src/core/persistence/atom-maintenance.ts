@@ -42,6 +42,8 @@ export interface AtomOrigin {
   generation?: number;
   /** #6503: the model read only the first `partialInputChars` characters; the batch records a partial disposition, not a completion. */
   partialInputChars?: number;
+  /** GST-4061: the newest world withdrawal of the page's claims when the input was read; a later one is a new input. */
+  withdrawnAt?: string;
 }
 export interface ManagedAtomSession {
   sourceId: string;
@@ -216,8 +218,11 @@ export async function readAtomOrigin(engine: BrainEngine, session: ManagedAtomSe
       { fix: drainFix(session.sourceId) });
   }
   const generation = await atomGeneration(engine, snapshot.page.id, item.contentHash);
+  const [withdrawn] = await engine.executeRaw<{ at: string | null }>(
+    `SELECT to_json(max(withdrawn_at))#>>'{}' AS at FROM fact_withdrawals WHERE source_id=$1 AND visibility='world' AND subject IN ('*', $2)`, [session.sourceId, item.slug]);
   return { kind: item.kind, locator: item.slug, contentHash: item.contentHash, textHash: sha256(item.content), pageId: snapshot.page.id,
-    revision: snapshot.revision, visibility: effectiveVisibility({ kind: 'page', page: await withFolderRestricted(engine, snapshot.page) }), ...(generation > 0 ? { generation } : {}) };
+    revision: snapshot.revision, visibility: effectiveVisibility({ kind: 'page', page: await withFolderRestricted(engine, snapshot.page) }), ...(generation > 0 ? { generation } : {}),
+    ...(withdrawn?.at ? { withdrawnAt: withdrawn.at } : {}) };
 }
 
 export const ATOM_GENERATION_OP = 'managed-atoms-generation';
@@ -257,12 +262,13 @@ export async function bumpAtomGeneration(tx: BrainEngine, sourceId: string, inca
 /**
  * The atom input a run key covers. Revision and visibility are left out, so a
  * revision-only source change (a tag, a timeline row) is the same input for
- * the drain and for an explicit retry (#5699).
+ * the drain and for an explicit retry (#5699). GST-4061: a world withdrawal of the page's claims changes its canonical
+ * body without changing its hash, so the newest one is part of the input (only when there is one: older keys stay).
  */
 function atomInput(session: ManagedAtomSession, origin: AtomOrigin): unknown[] {
   // #6503: a cut item's run is keyed by the cap it was read under, so a raised cap is a new run (the partial checkpoint is released first).
   return ['managed-atoms-v1', session.incarnation, origin.kind, origin.locator, origin.pageId, origin.contentHash,
-    ...(origin.partialInputChars ? ['partial', origin.partialInputChars] : [])];
+    ...(origin.partialInputChars ? ['partial', origin.partialInputChars] : []), ...(origin.withdrawnAt ? ['withdrawn', origin.withdrawnAt] : [])];
 }
 
 /** A retirement's regeneration generation enters the drain's key above 0, so earlier receipts are not replayed. */
@@ -321,6 +327,8 @@ export interface ManagedAtomGeneration {
   approved?: { retire: string[]; retiredBy: DerivedRetiredBy; expect?: Record<string, string> };
   /** An operator release of the held row this result matches (gbrain repair generations --mode release-held). */
   release?: { holdId: string; reason: HeldReason };
+  /** GST-4061: the live generation the caller's decision was read from; another one refuses (generation_fenced). */
+  expectedGeneration?: number;
 }
 
 export type ManagedAtomPublication =
@@ -340,7 +348,7 @@ export async function publishManagedAtomGeneration(engine: BrainEngine, session:
   const claim = atomClaim(session, origin);
   const plan = await planManagedGeneration(engine, atomGenerationAdapter, { key: generation.key, items: atoms.map(atom => markdownItem(atom.slug, atom.content)),
     input: generation.approved ? undefined : originInput(origin, generation.content), partial: Boolean(origin.partialInputChars), context, runId: generation.runId,
-    approved: generation.approved, release: generation.release }, { retiredBy: ATOM_RETIRED_BY_REEXTRACT, scope: generation.approved ? null : claim.runKey, locator: generation.locator ?? (origin.kind === 'transcript' ? origin.locator : null) });
+    approved: generation.approved, release: generation.release, expectedGeneration: generation.expectedGeneration }, { retiredBy: ATOM_RETIRED_BY_REEXTRACT, scope: generation.approved ? null : claim.runKey, locator: generation.locator ?? (origin.kind === 'transcript' ? origin.locator : null) });
   if (plan.kind === 'held') return { state: 'held', reason: plan.outcome.reason, holdId: plan.outcome.holdId, receipts: [] };
   if (plan.kind === 'unchanged') return { state: 'unchanged', receipts: generation.approved ? [] : await publishManagedAtoms(engine, session, origin, []) };
   // #9079: a release is its own run; under the drain's key its completion collides with the drain's for this input.
@@ -878,11 +886,15 @@ export function managedAtomCompletedSql(page: { sourceId: string; pageId: string
 /**
  * #6325: discovery and the backlog skip a page whose current content completed or is held after repeated failures.
  * #7391: given the current input cap, a partial checkpoint recorded below it (one `releasePartialDispositions` clears) is not skipped.
+ * GST-4061: a completion settles the page only while no world withdrawal of its claims (subject the page or '*') was
+ * recorded after it: the extraction read a claim since withdrawn, and the content hash does not change.
  */
 export function managedAtomDiscoverySql(maxInputChars?: string): string {
   return `AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac
   WHERE ${managedAtomIdentitySql({ sourceId: 'p.source_id', pageId: 'p.id', contentHash: 'p.content_hash' })}
-    AND (ac.completed_keys->0->>'failure' IS NULL OR ac.completed_keys->0->>'held'='true')${maxInputChars ? `
+    AND ((ac.completed_keys->0->>'failure' IS NULL AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=p.source_id
+        AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > ac.updated_at))
+      OR ac.completed_keys->0->>'held'='true')${maxInputChars ? `
     AND (ac.completed_keys->0->>'partial' IS NULL OR (ac.completed_keys->0->>'partial')::integer >= ${maxInputChars})` : ''})`;
 }
 

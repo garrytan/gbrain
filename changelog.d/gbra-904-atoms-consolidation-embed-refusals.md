@@ -1,0 +1,11 @@
+**Atom extraction catches up after withdrawals and renames, doctor stops warning about atoms its repair can't touch, consolidation keeps undated facts in order, and an embedding spend refusal stops every path cleanly.**
+
+### Fixed
+- Withdrawing a claim now reaches every atom built from it. A managed source offers the page again after a world withdrawal, as an unmanaged one already did. A rescan that finds nothing retires the old atom whose verified quote the withdrawal removed (only that atom, and only for a withdrawal recorded since the page's last scan). A withdrawal recorded while a run is busy with an earlier page is read before a later page goes to the model. (GST-4061)
+- A page renamed into a restricted folder with its text unchanged is extracted again, and the world atoms still named after its old slug retire, on managed sources through the managed writer. A rename that keeps the page world stays settled, so a bulk move spends no model calls. A retirement planned against an older atom generation than the live one now changes nothing and leaves the page offered for the next run. (GST-4061)
+- `gbrain sync` no longer says a normalized facts or takes fence was committed when the rewrite stayed in the database because sync writes no file back to that checkout. The result counts those files in `fences_normalized.database_only`. (GST-4061)
+- Doctor's `atom_provenance_drift` warns only when enough atoms are ones `gbrain repair stale-atoms` can retire. Atoms of edited pages that extract_atoms has not read again are listed as `awaiting_reextraction`, so after the advertised repair the check reports ok. (#8848)
+- Consolidation places a fact with no `valid_from` in the `valid_until` chain at the time it was saved. An undated fact never ends a dated one, a close never extends an earlier `--ttl` end, and the managed path keeps sub-second precision. (GST-4049)
+- An embedding spend refusal now stops the segmented page path, the stale-takes path and the retry loop at once instead of being retried or logged as an ordinary failure. Vectors a sibling batch already paid for are still installed. (GST-4106)
+
+<!-- behavior-change: managed_atoms_reextract_after_withdrawal_gst4061 -->

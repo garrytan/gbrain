@@ -6,6 +6,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { withTrustKeep } from '../persistence/context.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { pageSnapshotKey } from '../page-snapshot-batch.ts';
+import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 
 /**
  * gbrain#4148: consecutive same-content failures of a content-deterministic
@@ -160,23 +161,70 @@ export async function reuseUnchangedAtoms(engine: BrainEngine, sourceId: string,
 }
 
 /**
- * GST-4020: the slugs a rename moved the page now at `slug` away from that live extractor atoms (unmanaged) still name,
- * where the live generation of that slug was read from this page (`pageId`, in its input pin): a later page that held
- * the slug and moved on is another origin.
+ * GST-4020: the slugs a rename moved the page now at `slug` away from that live extractor atoms (unmanaged, or GST-4061
+ * managed ones for a managed source) still name, where the live generation of that slug was read from this page
+ * (`pageId`, in its input pin): a later page that held the slug and moved on is another origin. Each comes with the
+ * generation it was read at, which its retirement expects (GST-4061: a generation replaced since is not retired).
  * Their origin is this page, so its complete re-extraction supersedes them; left live they keep the visibility the page
  * had before the rename.
  */
-export async function renamedOriginSlugs(engine: SqlEngine, sourceId: string, slug: string, pageId: number): Promise<string[]> {
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT DISTINCT a.frontmatter->>'source_slug' AS slug FROM pages a
+export async function renamedOriginSlugs(engine: SqlEngine, sourceId: string, slug: string, pageId: number,
+  managed = false): Promise<Array<{ slug: string; generation: number }>> {
+  const rows = await engine.executeRaw<{ slug: string; generation: number }>(
+    `SELECT DISTINCT a.frontmatter->>'source_slug' AS slug, dg.generation FROM pages a
+      JOIN derived_generations dg ON dg.source_id=$1 AND dg.kind='atom' AND dg.state='live'
+        AND dg.owner_key = 'source_slug:' || (a.frontmatter->>'source_slug') AND split_part(dg.input_pin, ':', 2) = $3::text
       WHERE a.source_id=$1 AND a.type='atom' AND a.deleted_at IS NULL
-        AND COALESCE(a.frontmatter->>'managed_extraction', '') <> 'true'
+        AND (COALESCE(a.frontmatter->>'managed_extraction', '') = 'true') = $4::boolean
         AND COALESCE(a.frontmatter->>'extracted_by', '') LIKE 'extract\\_atoms%'
-        AND a.frontmatter->>'source_slug' = ANY(ARRAY(${renamedFromSql}))
-        AND EXISTS (SELECT 1 FROM derived_generations dg WHERE dg.source_id=$1 AND dg.kind='atom' AND dg.state='live'
-          AND dg.owner_key = 'source_slug:' || (a.frontmatter->>'source_slug') AND split_part(dg.input_pin, ':', 2) = $3::text)`,
-    [sourceId, slug, String(pageId)]);
-  return rows.map(row => row.slug);
+        AND a.frontmatter->>'source_slug' = ANY(ARRAY(${renamedFromSql}))`,
+    [sourceId, slug, String(pageId), managed]);
+  return rows.map(row => ({ slug: row.slug, generation: Number(row.generation) }));
+}
+
+/**
+ * GST-4061: discovery and the backlog offer a page again, whatever its content hash, when it was renamed after its last
+ * completed scan, it now reads as private (privatePagesFilterFragment), and a world atom still names a slug it was renamed
+ * from whose live generation was read from this page (its input pin carries the page id). Its extraction retires those
+ * atoms (retireRenamedOriginAtoms), and the scan it stamps is newer than the rename, so the page is offered once. A rename
+ * that leaves the page world is not offered (#7462: readers follow the rename alias, and a bulk move would spend a model
+ * call per page). Built per statement: the privacy fragment reads the current configuration.
+ */
+export function renamedPrivateReofferSql(): string {
+  return `(NOT ${privatePagesFilterFragment('p')} AND EXISTS (
+    SELECT 1 FROM (SELECT old_slug AS slug, created_at FROM slug_rename_history WHERE source_id=p.source_id AND new_slug=p.slug
+      UNION ALL SELECT alias_slug, created_at FROM slug_aliases WHERE source_id=p.source_id AND canonical_slug=p.slug AND notes='rename') r
+    JOIN derived_generations dg ON dg.source_id=p.source_id AND dg.kind='atom' AND dg.state='live' AND dg.owner_key='source_slug:' || r.slug
+      AND split_part(dg.input_pin, ':', 2) = p.id::text
+    WHERE r.created_at > COALESCE((SELECT max(st.updated_at) FROM extract_atoms_page_state st
+        WHERE st.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AND st.page_id=p.id
+          AND (st.tombstoned OR st.partial_input_chars IS NOT NULL)), '-infinity'::timestamptz)
+      AND NOT EXISTS (SELECT 1 FROM pages occ WHERE occ.source_id=p.source_id AND occ.slug=r.slug AND occ.deleted_at IS NULL)
+      AND EXISTS (SELECT 1 FROM pages a WHERE a.source_id=p.source_id AND a.type='atom' AND a.deleted_at IS NULL
+        AND a.frontmatter->>'source_slug'=r.slug AND a.frontmatter->>'visibility'='world')))`;
+}
+
+/**
+ * GST-4061 (GBRA-161 D4, narrowed): the page's own live atoms (managed or not, as the source is) an empty rescan retires.
+ * An empty answer still retires nothing on its own; an atom goes only when a world withdrawal of the page's claims was
+ * recorded after the page's last completed scan and after the atom was written, and the atom's verified quote is no longer
+ * in the complete model input `promptContent` (the withdrawal took it out). An atom with no verified quote stays.
+ */
+export async function withdrawnQuoteAtoms(engine: SqlEngine, sourceId: string, item: AtomPageInput, promptContent: string,
+  managed: boolean): Promise<string[]> {
+  if (!item.identity) return [];
+  const rows = await engine.executeRaw<{ slug: string; quote: string }>(
+    `SELECT a.slug, a.frontmatter->>'source_quote' AS quote FROM pages a
+      WHERE a.source_id=$1 AND a.type='atom' AND a.deleted_at IS NULL AND a.frontmatter->>'source_slug'=$2
+        AND (COALESCE(a.frontmatter->>'managed_extraction', '') = 'true') = $5::boolean
+        AND a.frontmatter->>'source_quote_verified' = 'true' AND COALESCE(a.frontmatter->>'source_quote', '') <> ''
+        AND EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=$1 AND w.visibility='world' AND w.subject IN ('*', $2)
+          AND w.withdrawn_at > a.updated_at
+          AND w.withdrawn_at > COALESCE((SELECT max(st.updated_at) FROM extract_atoms_page_state st
+            WHERE st.source_incarnation=$3::uuid AND st.page_id=$4 AND st.tombstoned), '-infinity'::timestamptz))
+      ORDER BY a.slug`,
+    [sourceId, item.slug, item.identity.sourceIncarnation, item.identity.pageId, managed]);
+  return rows.filter(row => !promptContent.includes(row.quote)).map(row => row.slug);
 }
 
 // GST-4020: a page's state row for its current content settles it only while it is the page's newest row (a revert to
@@ -301,4 +349,20 @@ export async function transferLegacyAtomPageState(engine: SqlEngine, before: Pag
       RETURNING page_id`,
     [after.page.id, after.sourceIncarnation, after.page.content_hash, after.revision, state.fail_count, state.tombstoned]);
   return rows.length > 0;
+}
+
+/**
+ * GST-4061: a page's extraction input at dispatch. Discovery read it before the run's earlier items; when a world
+ * withdrawal of its claims (subject the page or '*') was recorded since, it is read again (canonicalPageInputs), and a page
+ * that moved meanwhile is null: it waits for the next run.
+ */
+export async function currentPageInput<T extends AtomPageInput>(engine: BrainEngine, sourceId: string, item: T,
+  opts: { signal?: AbortSignal; stopSignal?: AbortSignal }): Promise<T | null> {
+  if (!item.identity || !item.readAt) return item;
+  const [row] = await engine.executeRaw<{ found: boolean }>(`SELECT EXISTS (SELECT 1 FROM fact_withdrawals WHERE source_id=$1 AND visibility='world'
+    AND subject IN ('*', $2) AND withdrawn_at > $3::timestamptz) AS found`, [sourceId, item.slug, item.readAt]);
+  if (row?.found !== true) return item;
+  const [current] = await canonicalPageInputs(engine, sourceId, [{ id: item.identity.pageId, knowledge_revision: item.identity.revision,
+    source_incarnation: item.identity.sourceIncarnation, slug: item.slug, content_hash: item.contentHash }], opts);
+  return current ? { ...item, content: current.content, readAt: current.readAt } : null;
 }

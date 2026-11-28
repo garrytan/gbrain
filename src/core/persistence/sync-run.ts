@@ -892,7 +892,7 @@ function countCommitted(counts: Cursor['counts'], pending: Pending, outcome: Wri
   const sizeState = outcome?.size_state as PageSizeState | undefined;
   if (sizeState && typeof outcome?.slug === 'string') counts.sizeStates = addSizeState(counts.sizeStates, { slug: outcome.slug, ...(pending.intent.path ? { path: pending.intent.path } : {}), ...sizeState });
   const fences = outcome?.fences_normalized;
-  if (Array.isArray(fences) && fences.length && pending.intent.path) counts.fences = addFencesNormalized(counts.fences, pending.intent.path, fences as Array<{ class: string }>);
+  if (Array.isArray(fences) && fences.length && pending.intent.path) counts.fences = addFencesNormalized(counts.fences, pending.intent.path, fences as Array<{ class: string }>, outcome?.fences_database_only === true);
 }
 interface BulkPass { settings: BulkSettings; perMemberMs: number | null;
   /** Groups this pass formed, and the heads of window groups it admitted (saved and admitted in one transaction). */
@@ -1348,12 +1348,12 @@ function admitPendingWrite(engine: BrainEngine, key: string, admitting: Cursor, 
 /** A pass's recovered, normalized and converted totals, summed over its batches. */
 type PassTotals = { recovered?: Cursor['counts']['recovered']; fences?: FencesTally; converted: string[] };
 function foldPassTotals(totals: PassTotals, done: Cursor): void {
-  const sum = (a: Record<string, number> = {}, b: Record<string, number> = {}) => Object.fromEntries([...new Set([...Object.keys(a), ...Object.keys(b)])].map(k => [k, (a[k] ?? 0) + (b[k] ?? 0)]));
+  const stayed = (totals.fences?.database_only ?? 0) + (done.counts.fences?.database_only ?? 0), sum = (a: Record<string, number> = {}, b: Record<string, number> = {}) => Object.fromEntries([...new Set([...Object.keys(a), ...Object.keys(b)])].map(k => [k, (a[k] ?? 0) + (b[k] ?? 0)]));
   const { recovered, fences } = done.counts;
   if (recovered) totals.recovered = { count: (totals.recovered?.count ?? 0) + recovered.count, sample_paths: [...totals.recovered?.sample_paths ?? [], ...recovered.sample_paths].slice(0, 5),
     ...((totals.recovered?.comment_values ?? 0) + (recovered.comment_values ?? 0) ? { comment_values: (totals.recovered?.comment_values ?? 0) + (recovered.comment_values ?? 0) } : {}) };
   if (fences) totals.fences = { count: (totals.fences?.count ?? 0) + fences.count, by_class: sum(totals.fences?.by_class, fences.by_class),
-    sample_paths: [...totals.fences?.sample_paths ?? [], ...fences.sample_paths].slice(0, 5), dirs: sum(totals.fences?.dirs, fences.dirs) };
+    sample_paths: [...totals.fences?.sample_paths ?? [], ...fences.sample_paths].slice(0, 5), dirs: sum(totals.fences?.dirs, fences.dirs), ...(stayed ? { database_only: stayed } : {}) };
   totals.converted = [...new Set([...totals.converted, ...done.convertedFromFailed ?? []])];
 }
 

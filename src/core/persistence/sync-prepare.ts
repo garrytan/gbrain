@@ -1069,7 +1069,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
       return { status: moved ? 'renamed' : applied.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
         chunks: applied.result.chunks, noop: applied.noop && !moved, imported_file: true, ...(moved ? { renamed_from: moved.slug } : {}), ...writeState,
         ...(recovery?.length ? { recovered_frontmatter: true } : {}), ...(commentValue ? { comment_value: true } : {}),
-        ...(fenceFixes.length ? { fences_normalized: fenceFixesWire(fenceFixes) } : {}) };
+        ...(fenceFixes.length ? { fences_normalized: fenceFixesWire(fenceFixes), ...(writeback ? {} : { fences_database_only: true }) } : {}) };
     } };
   return preparedImport;
 }

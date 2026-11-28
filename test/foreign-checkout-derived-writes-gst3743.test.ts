@@ -56,7 +56,10 @@ test('a sync pass over a foreign checkout normalizes in the database only, write
   expect(await foreignCheckout(engine, s.id, await getWorktreeBinding(engine, s.id))).toBe(true);
   const before = readFileSync(join(s.root, 'people/fixable.md'), 'utf8');
   const result = await performManagedSync(engine, { sourceId: s.id, noPull: true, noEmbed: true, noExtract: true });
-  expect(result).toMatchObject({ added: 3, fences_normalized: { count: 1 } });
+  expect(result).toMatchObject({ added: 3, fences_normalized: { count: 1, database_only: 1 } });
+  // GST-4061: the summary never calls a rewrite that stayed in the database committed.
+  expect(result.fences_normalized!.fix.why).not.toContain('committed');
+  expect(result.fences_normalized!.fix.why).toContain('in the brain only');
   expect(readFileSync(join(s.root, 'people/fixable.md'), 'utf8')).toBe(before);
   expect(git(s.root, 'status', '--porcelain')).toBe('');
   const receipts = await engine.executeRaw<{ mode: string; skipped: string | null }>(
@@ -72,8 +75,10 @@ test('control: a durable checkout of the same shape still gets its normalized fi
   const s = await source({ 'people/fixable.md': fixable('Fixable') }, { durable: true });
   expect(await foreignCheckout(engine, s.id, await getWorktreeBinding(engine, s.id))).toBe(false);
   const before = readFileSync(join(s.root, 'people/fixable.md'), 'utf8');
-  await performManagedSync(engine, { sourceId: s.id, noPull: true, noEmbed: true, noExtract: true });
+  const result = await performManagedSync(engine, { sourceId: s.id, noPull: true, noEmbed: true, noExtract: true });
   expect(readFileSync(join(s.root, 'people/fixable.md'), 'utf8')).not.toBe(before);
+  expect(result.fences_normalized).not.toHaveProperty('database_only');
+  expect(result.fences_normalized!.fix.why).toContain('rewrote losslessly and committed');
   await disposePersistenceConsumer(engine);
 }), 180_000);
 
