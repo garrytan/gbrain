@@ -243,7 +243,7 @@ export interface DoctorMembers {
   /** The live page of `sourceId` with this slug and content hash: id, source incarnation and revision; null when none. */
   readAtomPageIdentity(sourceId: string, slug: string, contentHash: string): Promise<{ id: number; incarnation: string; knowledge_revision: string } | null>;
   /** The pinned page's ledger row gains `failIncrement` failures (tombstoned when `tombstone`): its fail count, or null when the page changed. */
-  writeAtomPageState(pin: ExtractAtomsStateSql.AtomPagePin, failIncrement: number, tombstone: boolean): Promise<number | null>;
+  writeAtomPageState(pin: ExtractAtomsStateSql.AtomPagePin, failIncrement: number, tombstone: boolean, inputSha256?: string | null, readAt?: string | null): Promise<number | null>;
   /** The pinned page's ledger row records the cut input cap; false when the page changed. */
   recordAtomPagePartial(pin: ExtractAtomsStateSql.AtomPagePin, maxInputChars: number): Promise<boolean>;
   /** The transcript's ledger row records the cut input cap. */

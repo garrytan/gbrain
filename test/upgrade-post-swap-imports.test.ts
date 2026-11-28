@@ -11,7 +11,7 @@ import { join } from 'node:path';
 
 // test-reads-source-ok[structural]: #6604 is a post-swap module-graph hazard a hermetic upgrade run cannot reproduce; the guard pins that no dynamic import follows the swap.
 const SRC = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'upgrade.ts'), 'utf-8');
-const SWAP_MARKER = 'const newVersion = verifyUpgrade();';
+const SWAP_MARKER = 'const newVersion = verifyUpgrade(method);';
 
 function functionBody(name: string): string | null {
   const m = new RegExp(`(?:^|\\n)(?:export )?(?:async )?function ${name}\\s*\\(`).exec(SRC);

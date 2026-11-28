@@ -729,7 +729,7 @@ export const TAKE_COLLISIONS_SQL = `SELECT k.row_num FROM takes k
     JOIN jsonb_to_recordset($2::text::jsonb) AS n(row_num integer,claim text,kind text,holder text) ON n.row_num=k.row_num
     WHERE k.page_id=$1 AND (k.claim,k.kind,k.holder) IS DISTINCT FROM (n.claim,n.kind,n.holder) ORDER BY k.row_num LIMIT $3`;
 
-const DELETE_TAKE_ROWS_SQL = 'DELETE FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])';
+export const DELETE_TAKE_ROWS_SQL = 'DELETE FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])';
 
 /** The row numbers of the page's stored takes that differ from the fence row of the same number, ascending, at most `limit` (`BrainEngine.matchTakeRows`). */
 export async function matchTakeRows(exec: LegacyUnscopedRead, pageId: number, rows: readonly TakeFenceRow[], limit: number): Promise<number[]> {

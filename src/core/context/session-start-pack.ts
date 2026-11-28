@@ -5,8 +5,9 @@
  *
  * Cat 41 first push: Claude Code spawns its MCP servers alongside SessionStart
  * (observed on 2.1.285: the server starts ~45ms before the hook, in parallel),
- * and a fresh stdio `gbrain serve` binds its socket about 2s later. Without a
- * wait the hook found no socket and a fresh session got no pack. When
+ * and a fresh stdio `gbrain serve` binds its socket about 2s later; Codex
+ * does the same. Without a wait the hook found no socket and a fresh session
+ * got no pack. When
  * `sessionStartAwaitsServe` says the harness is starting a serve for this
  * session, the request is retried until the serve answers or the deadline
  * nears; otherwise one attempt, as before.
@@ -20,7 +21,7 @@ import {
   type ContextPackResponse,
   type IpcPathConfig,
 } from './resolve-ipc.ts';
-import { claudeCodeSpawnsServe } from '../setup/local-receipts.ts';
+import { claudeCodeSpawnsServe, codexSpawnsServe } from '../setup/local-receipts.ts';
 import type { FirstSessionOutcome, SessionStartSection } from './session-start-sections.ts';
 
 const POLL_MS = 100;
@@ -28,15 +29,20 @@ const POLL_MS = 100;
 const WRITE_MARGIN_MS = 100;
 
 /**
- * True when this SessionStart belongs to a new Claude Code process (source
- * startup or resume; clear and compact run inside a process whose serve is
- * already up) and an installed `gbrain setup claude-code` receipt says that
- * process spawns a stdio serve for this directory. Fail-open: false.
+ * True when this SessionStart belongs to a new Claude Code or Codex process
+ * (source startup or resume; clear and compact run inside a process whose
+ * serve is already up) and an installed `gbrain setup` receipt for that
+ * harness says the process spawns a stdio serve (Claude Code: for this
+ * directory). Codex starts its MCP servers alongside the hook too, and a
+ * serve binds its socket only after its MCP handshake (src/mcp/server.ts), so
+ * without the wait the hook's attempt and its one retry both land before the
+ * bind. Fail-open: false.
  */
 export function sessionStartAwaitsServe(source: unknown, harness: string, cwd: string): boolean {
-  if (harness !== 'claude-code' || (source !== undefined && source !== 'startup' && source !== 'resume')) return false;
+  if (source !== undefined && source !== 'startup' && source !== 'resume') return false;
   try {
-    return claudeCodeSpawnsServe(cwd);
+    if (harness === 'codex') return codexSpawnsServe();
+    return harness === 'claude-code' && claudeCodeSpawnsServe(cwd);
   } catch {
     return false;
   }

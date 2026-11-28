@@ -37,66 +37,45 @@ this engine does not have.
 
 ## TypeScript journal members
 
-`src/core/rust-engine/store-members/persistence.ts` answers these BrainEngine members on a Rust brain.
-Each returns what PGLite returns for a brain with the same contents.
+Four persistence members are served on a Rust brain: `readManagedModeRows()` and `ownsSchemaTables()`
+(`src/core/rust-engine/store-members/persistence.ts:14-18`), `readPersistenceBrainId()`
+(`store-members/persistence-identity.ts:7`) and `readWriterAdminState` (`store-members/writer-admin.ts`, see
+[persistence.md](persistence.md)). No other module in `store-members/` exports a persistence member. Every other
+member below is classified `persistence_journal` (or the family named in the table) in
+`src/core/rust-engine/members/persistence.ts` and `members.ts`, so a call rejects with `engine_capability_missing`
+before any work, and `servedCapabilities()` (`store-capabilities.ts`) does not report `persistence_journal`. The
+native store methods in the table exist; no TypeScript member calls them.
 
-| Member | Answer | Why |
+| Member | On a Rust brain | Native store method |
 | --- | --- | --- |
-| `readManagedModeRows()` | `[{ enabled: false }]` | The store keeps no managed brains, so a brain here is always unmanaged. |
-| `readLocalWriterRow(id, opts?)` | the row from `brain.readLocalWriter`, with `revoked_at` as a `Date`, or `undefined` | `lock` changes nothing: one write transaction runs at a time, so a read never overlaps a revocation. |
-| `insertLocalWriterRow(row)` | `brain.insertLocalWriterRow` | The same two unique keys as PGLite's table. |
-| `revokeLocalWriterRow(id)` | `brain.revokeLocalWriter` | An earlier revocation time stays; `false` when no registration has the id. |
-| `readJournalLimitRows()` | the config keys that start with `persistence.limits.`, the page-body keys, then `{ key: null, value: null }` | The store keeps no segmented pages, so the largest one has no size. |
-| `readHeldPageRows(pageIds)`, `readHeldCoverageRows(sourceIds)`, `readGitHoldRecords(opts)` | `[]` | The store holds no files from a sync, so nothing is held. `readGitHoldRecords` is the git sync hold read of `persistence/sync-holds.ts` `readGitSourceHolds`; its SQL lives in `src/core/engine-sql/sync-hold-reads.ts`. |
-| `listFenceHoldRows(sourceIds, kinds, ownerKey?)` (`src/core/rust-engine/store-members/fence-holds.ts`) | `brain.listFenceHoldRows` | The held facts and takes fence rows of the derived generation family ([generations.md](generations.md)), oldest first, with `created_at` as Postgres `timestamptz` text. |
-| `readFenceOriginGone(sourceId, slug)` (same file) | page read | Whether the page is deleted or gone, from `readPageSnapshot` with deleted pages, by exact slug. |
-| `lockGenerationKey(lockKey)` (same file) | no-op | A transaction holds the store's writer gate from open to commit, so the store's write is the generation key lock. |
-| `clearFenceHoldRows(key)` (same file) | `brain.clearFenceHoldRows` | Deletes the key's held row when its reason is `fence_absent` or `no_proof`. |
-| `readFenceHoldFiles(sourceIds, slugs)` (same file) | page reads | One `readPageSnapshot` per source and slug; `database_only` when the page records no `source_path`. |
-| `readSourcePurgeEpoch(sourceId)` | the stored purge epoch for a known source, `null` otherwise | The member reads the source record's `purge_epoch` through `brain.readSourcePurgeEpoch` (0 until a purge raises it; see [sources.md](sources.md)). On PGLite and Postgres the read is the statement `reason-trailers.ts` ran through `executeRaw` (`src/core/engine-sql/sync-reason-reads.ts`). The purged change-reason pairs come from `readReasonPurgeTombstones` (see [sources.md](sources.md)). |
-| `readReasonPurgeTombstones(sourceId, pair?)`, `readSourcePurgeEpoch(sourceId)` | the pairs `writeReasonPurgeTombstones` stored; the epoch `advanceSourcePurgeEpoch` left (0 before any purge), `null` for an unknown source | A purge's storage effects (the epoch bump, then its tombstones) advance the epoch, so a cached sync reason scan from before the purge is not reused (`sources.md`). On PGLite and Postgres the reads are the statements `reason-trailers.ts` `scanSyncReasons` and `cachedSyncReasonScan` ran through `executeRaw` (`src/core/engine-sql/sync-reason-reads.ts`). |
-| `ownsSchemaTables()` | `true` | The process that opens the store owns all of it, so the schema owner of a schema-behind refusal is this caller (fix actor `agent`). |
-| `readOAuthClientWriteGrant(clientId, opts?)` | `brain.readOauthClientWriteGrant`, `deleted_at` as a `Date`, or null | The client with this id, deleted or not ([oauth-clients.md](oauth-clients.md)), so `authorizeWrite` admits a write owned by a live client and refuses a deleted or absent one with the same `permission_denied` text as PGLite. `lock` changes nothing: one write transaction runs at a time. |
-| `readAccessTokenWriteGrant(tokenId, opts?)` | `brain.readAccessTokenWriteGrant`, `revoked_at` as a `Date`, or null | The token with this id (a UUID, so any case; a non-UUID refuses as `id = $1` does), revoked or not ([access-tokens.md](access-tokens.md)); a live token is admitted and a revoked or absent one refused, as above. The private grants are not kept and read as `none`. |
-| `shareLockWriteCredential(kind, id)` | no-op | The store runs one write transaction at a time, so no revocation lands between the re-check and the write. |
-| `readOAuthClientWriteGrant(clientId, opts?)` | the grant columns, or `null` | Projected from the client's whole row (`readOauthClient`, [oauth-clients.md](oauth-clients.md)): `deleted_at`, `scope`, `source_id`, `source_grant`, `allowed_operations`, `bound_slug_prefixes`, `bound_tools`, `delegated_namespace`, `delegated_slug_prefixes`. A client the store does not have answers `null`, and `authorizeWrite` refuses `permission_denied`. `lock` holds nothing: one process owns the store. |
-| `readAccessTokenWriteGrant(tokenId, opts?)` | the grant columns, or `null` | Read from the token's stored row ([access-tokens.md](access-tokens.md)): `id`, `scopes`, `permissions`, the five grant columns, `grant_revision`, `read_shared_revision` and `revoked_at`. `private_pages` and `private_facts` are not kept, so they are left out, as on a brain whose table lacks them; `authorizeWrite` does not read them. A token the store does not have answers `null`, and `authorizeWrite` refuses `permission_denied`. |
-| `shareLockWriteCredential(kind, id)` | no-op | One process owns the store, so no other write can remove the credential between the lock and the read; a missing row locks nothing on Postgres either. |
+| `readManagedModeRows()` | served: `[{ enabled }]`, the stored brain mode (`writerReleaseRows({ kind: 'brain_mode' })`, `store-members/persistence.ts:9-15`). The mode is `false` until `setBrainEnabled(true)` records an activation, so a new brain reads unmanaged; the answer is the stored flag, not a constant | `brain_mode_in`, `set_brain_enabled_in` (`persistence/worktrees/release.rs:61,68`) |
+| `ownsSchemaTables()` | served: `true`, because the process that opens the store owns all of it | none |
+| `readLocalWriterRow(id, opts?)`, `insertLocalWriterRow(row)` | refuse (`members.ts:318-319`) | `brain.readLocalWriter`, `brain.insertLocalWriterRow` (`gbrain-store/src/journal.rs:953,912`) |
+| `revokeLocalWriterRow(id)` | not a BrainEngine member on this tree; only `src/core/engine-sql/persistence-state.ts` names it | `brain.revokeLocalWriter` (`journal.rs:965`) |
+| `readJournalLimitRows()` | refuses (`members/persistence.ts:14`) | none by that name |
+| `readHeldPageRows`, `readHeldCoverageRows`, `readGitHoldRecords` | not BrainEngine members on this tree; they appear only as names in the typed-read lists of `src/core/statement-deadline.ts:108-119` and `src/core/persistence/bounded-reads.ts:102`. The git hold read is `readGitSourceHolds` (`src/core/persistence/sync-holds.ts:579`), which takes the engine as its executor | none |
+| `listFenceHoldRows`, `clearFenceHoldRows` | no TypeScript member and no `store-members/fence-holds.ts` | `brain.listFenceHoldRows`, `brain.clearFenceHoldRows` (`gbrain-store/src/generations.rs:826,896`; [generations.md](generations.md)) |
+| `readFenceOriginGone`, `lockGenerationKey`, `readFenceHoldFiles` | no TypeScript file names them | `lockGenerationKey` is named only in `gbrain-store/src/generations/activations.rs`; the other two have no store method |
+| `readSourcePurgeEpoch(sourceId)` | refuses: classified `pages` with the comment "held: no Rust store member yet" (`members/persistence.ts:15`) | `brain.readSourcePurgeEpoch` (`gbrain-store/src/sources.rs:409`; [sources.md](sources.md)). On PGLite and Postgres the read is the statement in `src/core/engine-sql/sync-reason-reads.ts` |
+| `readReasonPurgeTombstones(sourceId, pair?)` | not a BrainEngine member on this tree | `brain.readReasonPurgeTombstones`, `writeReasonPurgeTombstones` (`gbrain-store/src/reason_tombstones.rs:90`; [sources.md](sources.md)) |
+| `readOAuthClientWriteGrant(clientId, opts?)`, `readAccessTokenWriteGrant(tokenId, opts?)` | refuse (`members/persistence.ts:21-22`) | `brain.readOauthClientWriteGrant`, `brain.readAccessTokenWriteGrant` (`gbrain-store/src/jobs/credential_binding.rs:250,264`; [oauth-clients.md](oauth-clients.md), [access-tokens.md](access-tokens.md)) |
+| `shareLockWriteCredential(kind, id)` | refuses (`members/persistence.ts:23`) | none |
 
-`src/core/rust-engine/store-members/connect-gate.ts` answers the connect gate's persistence reads the same way
-(SQL for PGLite and Postgres in `src/core/engine-sql/connect-gate.ts`):
+## The connect gate
 
-| Member | Answer | Why |
-| --- | --- | --- |
-| `hasPersistenceTable(table)` | `true` | The store keeps the persistence state of one unmanaged brain, so every table a gate probes is there and empty. |
-| `listManagedRootBindings(hostId, opts?)` | the roots of the worktrees this host binds (`listHostRootBindings`), then each source with a local path (archived ones too) with null `worktree_id` and `topology_generation`, without repeats | The two halves of PGLite's UNION; see "Worktree bindings" in [persistence.md](persistence.md). |
-| `readGraduationGateRow(opts?)` | `null` | No graduation targets or leaves this engine, so there is no custody row and no run setting to compare. |
-| `listRetiredDeactivations()` | `[]` | A brain here is never managed, so no writer deactivation committed. |
+No file `store-members/connect-gate.ts` exists. `hasPersistenceTable(table)` and `listManagedRootBindings(hostId, opts?)`
+are classified `persistence_journal` and refuse on a Rust brain (`members/persistence.ts:16-17`); their SQL for PGLite and
+Postgres is `src/core/engine-sql/connect-gate.ts`. The native `listHostRootBindings` (`gbrain-store/src/persistence/worktrees.rs:922`)
+is the worktree half of the root-bindings read; no TypeScript member calls it. `readGraduationGateRow` is a function in
+`engine-sql/connect-gate.ts` that takes an executor, not a BrainEngine member, and no store method of that name exists.
+`listRetiredDeactivations` is not a BrainEngine member; the store answers it as the `retired_deactivations` kind of the writer release rows (`gbrain-store/src/persistence/worktrees/release.rs:374`, `committed_outcomes_in` at `persistence/topology.rs:443`; [persistence.md](persistence.md)).
 
-Caller-visible change (4e0f4976c4): before these members, the graduation connect gate (`readGraduationConnectRow`,
-`assertGraduationConnectAllowed`) and the retired-marker cleanup (`cleanupRetiredManagedMarkers`) skipped their reads
-on any engine that does not report the `raw_sql` capability (`lacksRawSql`), and read that as "no custody row" and
-"nothing to clean up". The skips are gone. An engine that refuses `readGraduationGateRow` or `hasPersistenceTable`
-with `engine_capability_missing` now refuses the connect, or the cleanup, with that refusal instead of carrying on as
-if no row existed. Only a missing table (`42P01`, a brain before the migration) still reads as no row. The Rust
-engine serves both members, so its connect is unchanged. An engine or test fake that does not report `raw_sql` and
-does not serve these members now stops at connect. Refusing is the safer answer: a guessed "no row" could admit a
-connect during a graduation.
+The graduation connect gate and the retired-marker cleanup still skip their reads on an engine that does not report `raw_sql`
+(`lacksRawSql`, `src/core/engine-capabilities.ts:141`): `src/core/persistence/graduation-schema.ts:131` returns `null` and
+`src/core/persistence/deactivation.ts:361` returns its empty report. A Rust brain does not report `raw_sql`, so it takes those
+skips.
 
-`src/core/rust-engine/store-members/sync-status-reads.ts` answers the reads of `gbrain sync status` (SQL for PGLite
-and Postgres in `src/core/engine-sql/sync-status-reads.ts`). The store keeps write request, effect, worktree,
-source binding, worktree refresh and derived generation rows, but nothing on this engine yet writes the ones these reads
-join. The engine holds `managed_persistence` back (`store-capabilities.ts` `HELD_FOR_CALLERS`), so a write to a
-bound worktree refuses at admission and no refresh, request-recovery or derived-generation writer runs
-(`gbrain sources refresh` refuses `raw_sql`). A remote write that queues a mention-links effect is admitted: the
-links effect and a finished batch's re-arm are store members ([remote-links.md](remote-links.md)). Each part of a
-join. The engine reports `managed_persistence`, so a write to a bound worktree is admitted and writes a request row,
-but no refresh, request-recovery or derived-generation writer runs (`gbrain sources refresh` refuses `raw_sql`), and
-these reads do not yet see a worktree-bound request (an open item below). A remote write that would queue a mention-links effect refuses
-`raw_sql` at admission too (`requireRawSqlPublication`): the links effect and a finished batch's re-arm still read
-through raw SQL. Each part of a
-read that joins those rows still gives its empty answer below; a read that must see a worktree-bound request is an
-open item of the capability flip, not served yet:
+## Sync status reads
 
 | Member | Answer | Why |
 | --- | --- | --- |

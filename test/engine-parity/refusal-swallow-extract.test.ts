@@ -1,7 +1,8 @@
 /**
  * BrainEngine parity: the lane 6 refusal-swallow sites on the extract path (lane 8's triage, rule
- * capability_refusal_swallowed). Every site reads or writes through a typed member, so a Rust brain answers: the
- * extract_atoms ledgers are Rust store records from store format 17.
+ * capability_refusal_swallowed). Every site reads or writes through a typed member: the extract_atoms ledgers are Rust
+ * store records from store format 17. Page discovery (listExtractablePages) is sync 21's statement, which reads state
+ * the store does not keep, so on a Rust brain it refuses by name and the cases that discover pages stop there.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: `extract --explain <kind>` prints the same 7-day rollup on every arm; siblingCanonical names the same
@@ -217,6 +218,30 @@ describe('refusal-swallow extract sites', () => {
     await engine.putPage('meetings/short', page('meeting', 'Short', 'Too short to extract.'));
     const result = await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: async () => { throw new Error('no model call expected'); } });
     return { status: result.status, reason: (result.details as { reason?: string } | undefined)?.reason ?? null };
+  });
+
+  parityTest('extract-atoms page discovery refuses by name on a Rust brain before any model call (batch-17 re-merge, ruling A)', {
+    methods: ['putPage', 'listExtractablePages'],
+  }, async (engine, backend) => {
+    // Sync 21 (GST-4020 #10542, #9888 #10483) reads source opt-outs, still-current scans and canonical snapshots the
+    // Rust store does not keep, so its listExtractablePages refuses: the phase stops at discovery, before the model.
+    await engine.putPage('meetings/example', page('meeting', 'Example', 'We met and decided many durable things. '.repeat(40)));
+    let calls = 0;
+    const chat = async () => {
+      calls++;
+      if (backend === 'rust') throw new Error('a Rust brain must not reach the model');
+      return reply('[]');
+    };
+    try {
+      const result = await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: chat });
+      const details = result.details as { pages_processed?: number } | undefined;
+      return { status: result.status, pages: details?.pages_processed ?? null, calls };
+    } catch (error) {
+      const e = error as { code?: unknown; detail?: unknown };
+      expect({ code: e.code, member: String(e.detail ?? '').split(' ')[0], calls })
+        .toEqual({ code: 'engine_capability_missing', member: 'member=listExtractablePages', calls: 0 });
+      throw error;
+    }
   });
 
   parityTest('extract-atoms phase with work runs on every engine, records the page as settled and skips it on the next run', {

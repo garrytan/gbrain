@@ -241,6 +241,7 @@ export async function findBulkFactDays(raw: EngineRawRead, sourceIds: string[] |
     ), bulk AS (
       SELECT a.source_id, a.day, count(*) AS n, count(DISTINCT a.entity_slug) AS entities, t.n AS source_facts
         FROM active a JOIN totals t ON t.source_id = a.source_id
+       WHERE a.day IS NOT NULL
        GROUP BY a.source_id, a.day, t.n
       HAVING count(*) >= ${rule.min_facts}::int AND count(*) >= t.n * ${rule.min_share}::float8 AND count(DISTINCT a.entity_slug) >= ${rule.min_entities}::int
     )

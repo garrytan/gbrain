@@ -220,6 +220,13 @@ export function makeContextPackIpcHandler(
       };
     }
 
+    const isSessionStart = typeof req.trigger === 'string' && req.trigger.startsWith('session-start');
+    const wantsSections = isSessionStart && Array.isArray(req.sections);
+    // Onboarding PR 2: the first-session section is reserved before assembly and seeds the transport's budget answer, so a
+    // cold assembly that runs past the budget still delivers it; it counts only after the hook's receipt, as before.
+    const first = wantsSections && req.sections!.includes('first_session') ? await firstSessionFor(engine, req, sessionSource, sessionId, opts.firstSessionLane) : null;
+    const firstSections = first?.section ? fitSessionStartSections([first.section]).kept : [];
+    if (progress && first) progress.assembled = { text: '', pointers: [], factsCount: 0, mode: 'pack', sections: firstSections, firstSession: first.state };
     const result = await assembleContextPack(engine, {
       sourceId: sessionSource,
       entities,
@@ -238,6 +245,10 @@ export function makeContextPackIpcHandler(
         ? { checkpointLinks: (await getCheckpointManifest(engine, sessionSource, null, sessionId)) ?? [] }
         : {}),
     });
+    if (first) {
+      result.sections = firstSections;
+      result.firstSession = first.state;
+    }
     // The transport's backstop returns this pack if the work below runs past it (core lands on it when it arrives).
     if (progress) progress.assembled = result;
     const core = typeof req.trigger === 'string' && req.trigger.startsWith('session-start') ? await coreForSession(engine, sessionSource) : null;
@@ -255,14 +266,9 @@ export function makeContextPackIpcHandler(
         ...(result.degradedReason ? {} : { lastWakeAt: new Date().toISOString() }),
       });
     }
-    // Wave 5 D5 "Before you start" (default off): SessionStart only, after the
-    // pack, inside what is left of a request-start cutoff. A compaction or
-    // /clear re-entry is a context reset, so the session's ledger starts over.
-    const isSessionStart = typeof req.trigger === 'string' && req.trigger.startsWith('session-start');
     // Named sections (onboarding PR 2): a hook that declares `sections` composes them itself under one shared byte
     // budget in priority order and acknowledges the first-session section; an older hook keeps the learned line in the text.
     const sections: SessionStartSection[] = [];
-    const wantsSections = isSessionStart && Array.isArray(req.sections);
     // Nightly learning: one count line per session (a compaction re-entry is the same session, so it gets none).
     if (isSessionStart && req.trigger !== 'session-start:compact') {
       const learned = await learnedLineFromEngine(engine, sessionSource);
@@ -270,11 +276,7 @@ export function makeContextPackIpcHandler(
       else if (learned) result.text = result.text ? `${learned.text}\n\n${result.text}` : learned.text;
     }
     if (wantsSections) {
-      if (req.sections!.includes('first_session')) {
-        const first = await firstSessionFor(engine, req, sessionSource, sessionId, opts.firstSessionLane);
-        if (first.section) sections.push(first.section);
-        result.firstSession = first.state;
-      }
+      if (first?.section) sections.push(first.section);
       // C2: confirmed standing rules, only while the owner switched them on (rules.session_start, off until the eval passes).
       if (req.sections!.includes('standing_rules')) {
         const { rulesSectionFor, rulesSessionStartEnabled } = await import('../core/rules/section.ts');
@@ -283,6 +285,9 @@ export function makeContextPackIpcHandler(
       }
       result.sections = fitSessionStartSections(sections).kept;
     }
+    // Wave 5 D5 "Before you start" (default off): SessionStart only, after the
+    // pack, inside what is left of a request-start cutoff. A compaction or
+    // /clear re-entry is a context reset, so the session's ledger starts over.
     if (isSessionStart && await briefEnabled(engine)) {
       if (req.trigger === 'session-start:compact' || req.trigger === 'session-start:clear') resetBriefLedger(sessionSource, sessionId ?? undefined);
       const clock = { now: Date.now(), stopAt: startedAt + SESSION_BRIEF_CUTOFF_MS };

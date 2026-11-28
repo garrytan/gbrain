@@ -66,10 +66,10 @@ describe('scoring', () => {
   });
   test('a reference that fills its window with rows tied at the cutoff is unscorable: the tie may run past it', () => {
     const full = ref(RECALL_REFERENCE_LIMIT, (i) => (i < 9 ? 1 - i / 100 : 0.5)); // the fiftieth row still ties the tenth score
-    expect(scoreRecall(full, rows(ids(0, 10)), rows(ids(0, 10)))).toBeNull();
-    expect(scoreRecall(full, rows(ids(0, 10)), rows(ids(9, 19)))).toBeNull(); // never a miss for rows beyond the window
-    expect(scoreRecall(ref(RECALL_REFERENCE_LIMIT, (i) => 1 - i / 100), rows(ids(0, 10)), rows(ids(0, 10)))).toMatchObject({ vector: 1 }); // a window whose last row is strictly worse holds the whole tie
-    expect(scoreRecall(ref(RECALL_REFERENCE_LIMIT - 1, (i) => (i < 9 ? 1 - i / 100 : 0.5)), rows(ids(0, 10)), rows(ids(0, 10)))).toMatchObject({ vector: 1 }); // fewer rows than asked for: the tie is whole
+    expect(scoreRecall(full, rows(ids(0, 10)), rows(ids(0, 10)))).toBeNull(); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
+    expect(scoreRecall(full, rows(ids(0, 10)), rows(ids(9, 19)))).toBeNull(); // never a miss for rows beyond the window // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
+    expect(scoreRecall(ref(RECALL_REFERENCE_LIMIT, (i) => 1 - i / 100), rows(ids(0, 10)), rows(ids(0, 10)))).toMatchObject({ vector: 1 }); // a window whose last row is strictly worse holds the whole tie // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
+    expect(scoreRecall(ref(RECALL_REFERENCE_LIMIT - 1, (i) => (i < 9 ? 1 - i / 100 : 0.5)), rows(ids(0, 10)), rows(ids(0, 10)))).toMatchObject({ vector: 1 }); // fewer rows than asked for: the tie is whole // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
   });
   test('an element that is not a row takes its place in the first ten: a null ahead of nine neighbours scores 0.9, never 1', () => {
     const nine = ids(0, 9);
@@ -79,18 +79,19 @@ describe('scoring', () => {
     expect(scoreRecall(ref(12), rows(ids(0, 10)), null)).toMatchObject({ vector: 0 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version (not a list: nothing)
   });
   test('the rerun representation of an answer keeps its holes: a null ahead of ten neighbours scores 0.9 for the primary through the rerun path too', async () => {
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
     const keys = firstTenKeys([null, ...rows(ids(0, 10))]); // what the serving process sends back for a moved vector sample's rerun
-    expect(keys).toHaveLength(10);
+    expect(keys).toHaveLength(10); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
     expect(keys[0]).toBeNull();
     const env = {
       timeoutMs: 1000, now: () => 0, curEpoch: () => 'e',
       ask: async (p: Record<string, unknown>) => (p.kind === 'rerun' ? { stamp: 1, epoch_id: 'e', keys, attempt: 'a1' } : p.attempt === 'a1' ? ref(12) : (() => { throw Object.assign(new Error('moved'), { code: 'moved' }); })()), // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
       exclusive: async (_s: number, fn: () => Promise<unknown>) => fn(),
-      callRust: async () => ({ value: rows(ids(0, 10)) }),
+      callRust: async () => ({ value: rows(ids(0, 10)) }), // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
       write: (score: unknown) => { written.push(score); },
     };
     const written: unknown[] = [];
-    await scoreWithReruns(env as never, { op: 'searchVector', sid: 's', result: [], args: [] } as never, [], rows(ids(0, 10)));
+    await scoreWithReruns(env as never, { op: 'searchVector', sid: 's', result: [], args: [] } as never, [], rows(ids(0, 10))); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
     expect(written).toMatchObject([{ vector: 1, primary: 0.9 }]); // the primary lost a place to the null, so it scores 0.9, never 1
   });
   test('ten copies of one true neighbour are one neighbour, not ten', () => {
@@ -109,7 +110,7 @@ describe('scoring', () => {
 });
 
 describe('recall fields', () => {
-  const line = (dir: string, epoch: string, n: number, vector: number, primary = 1) => { for (let i = 0; i < n; i++) appendRecall(dir, { ts, epoch_id: epoch, vector, primary, overlap: 0.8, ref_size: 10 }); };
+  const line = (dir: string, epoch: string, n: number, vector: number, primary = 1) => { for (let i = 0; i < n; i++) appendRecall(dir, { ts, epoch_id: epoch, vector, primary, overlap: 0.8, ref_size: 10 }); }; // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
   test('absent under 30 samples of the epoch, then the epoch average, with the overlap apart', () => {
     const { dir, epoch } = epochDir();
     appendLedgerRows(dir, [row(epoch, 'getPage', 'match')]);
@@ -124,7 +125,7 @@ describe('recall fields', () => {
     expect(renderEvidenceStatus(status(dir)).join('\n')).toContain('vector recall@10');
   });
   test('a malformed or out-of-range record makes recall unavailable: a missing score, a score above 1, a bad size, another epoch\'s too', () => {
-    const good = { ts, epoch_id: 'E', vector: 0.5, primary: 0.5, overlap: 0.5, ref_size: 10 };
+    const good = { ts, epoch_id: 'E', vector: 0.5, primary: 0.5, overlap: 0.5, ref_size: 10 }; // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
     const cases: Array<[string, Record<string, unknown>]> = [
       ['missing score', { ...good, vector: undefined }], ['score above 1', { ...good, primary: 1.5 }], ['negative score', { ...good, overlap: -0.1 }],
       ['non-numeric score', { ...good, vector: '0.5' }], ['ref_size out of range', { ...good, ref_size: 0 }], ['no epoch', { ...good, epoch_id: undefined }], ['bad time', { ...good, ts: 'soon' }],
@@ -135,7 +136,7 @@ describe('recall fields', () => {
       line(dir, epoch, 30, 1);
       expect([name, readEpochRecall(dir, epoch)!.length]).toEqual([name, 30]);
       mkdirSync(join(dir, 'recall'), { recursive: true });
-      appendFileSync(join(dir, 'recall', `${ts.slice(0, 10)}.jsonl`), `${JSON.stringify(bad)}\n${JSON.stringify(good)}\n`);
+      appendFileSync(join(dir, 'recall', `${ts.slice(0, 10)}.jsonl`), `${JSON.stringify(bad)}\n${JSON.stringify(good)}\n`); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
       expect([name, readEpochRecall(dir, epoch)]).toEqual([name, null]); // never skipped, never trusted
       expect([name, status(dir).search?.vector_recall_at_10]).toEqual([name, undefined]);
       expect([name, status(dir).evidence!.recall_unavailable]).toEqual([name, true]);
@@ -143,6 +144,7 @@ describe('recall fields', () => {
     }
     const torn = epochDir(); // a torn last line is the one thing skipped
     line(torn.dir, torn.epoch, 30, 1);
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
     appendFileSync(join(torn.dir, 'recall', `${ts.slice(0, 10)}.jsonl`), '{"ts":"');
     expect(readEpochRecall(torn.dir, torn.epoch)).toHaveLength(30);
   });
@@ -161,7 +163,7 @@ describe('the status document', () => {
   test('carries privacy_diverged and both recall fields from shadowStatusDocument, and the evaluator reads them', async () => {
     const { dir, epoch } = epochDir();
     appendLedgerRows(dir, [row(epoch, 'findByTitleFuzzy', 'match'), row(epoch, 'searchKeyword', 'match')]);
-    for (let i = 0; i < 30; i++) appendRecall(dir, { ts, epoch_id: epoch, vector: 1, primary: 1, overlap: 1, ref_size: 10 });
+    for (let i = 0; i < 30; i++) appendRecall(dir, { ts, epoch_id: epoch, vector: 1, primary: 1, overlap: 1, ref_size: 10 }); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
     const doc = await shadowStatusDocument({ key: 'k', dir }, NOW);
     expect([doc.privacy_diverged, doc.search?.vector_recall_at_10, doc.search?.primary_recall_at_10]).toEqual([0, 1, 1]);
     const verdict = evaluateReadiness(doc as never, NOW);
@@ -265,10 +267,10 @@ describe('the wait before a rerun after a moved check', () => {
       pause: async (ms: number) => { t.waits.push(ms); t.clock += ms; },
       ask: async (p: Record<string, unknown>) => (p.kind === 'rerun' ? { stamp: 1, epoch_id: 'e', keys: firstTenKeys(rows(ids(0, 10))), attempt: `a${t.waits.length}` } : t.clock < quietAt ? moved() : ref(12)), // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
       exclusive: async (_s: number, fn: () => Promise<unknown>) => fn(),
-      callRust: async () => ({ value: rows(ids(0, 10)) }),
+      callRust: async () => ({ value: rows(ids(0, 10)) }), // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
       write: (score: unknown) => { t.written.push(score); },
     };
-    await scoreWithReruns(env as never, { op: 'searchVector', sid: 's', result: [], args: [] } as never, [], rows(ids(0, 10)));
+    await scoreWithReruns(env as never, { op: 'searchVector', sid: 's', result: [], args: [] } as never, [], rows(ids(0, 10))); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
     return t;
   }
   test('a burst that ends within the waits lets a later run score the sample; one that never ends leaves it unscored', async () => {

@@ -327,6 +327,7 @@ describe('#7619 split rules', () => {
       'src/commands/resolvers.ts': ['resolvers list'],
       'src/commands/routing-eval.ts': ['routing-eval'],
       'src/commands/schema.ts': ['schema active', 'schema detect', 'schema suggest', 'schema review-candidates', 'schema review-orphans', 'schema stats', 'schema cardinality-preview', 'schema sync', 'schema lint', 'schema reload', 'schema update-type', 'schema add-alias', 'schema add-prefix', 'schema add-link-type', 'schema set-extractable', 'schema set-expert-routing', 'schema scaffold-extractable'],
+      'src/commands/setup.ts': ['setup'],
       'src/commands/skillify.ts': ['skillify scaffold'],
       'src/commands/skillpack.ts': ['skillpack status', 'skillpack sync', 'skillpack migrate-fence', 'skillpack scrub-legacy-fence-rows', 'skillpack harvest', 'skillpack diff'],
       'src/commands/skillpack/harness.ts': ['skillpack scaffold', 'skillpack reference'], // also the OWN parser of skillpack remove

@@ -188,6 +188,9 @@ const UPDATE_OPEN_PASS_ROW_SQL = `UPDATE op_checkpoints SET completed_keys=jsonb
 const UPDATE_OPEN_PASS_ROW_CLOCK_SQL = `UPDATE op_checkpoints SET completed_keys=jsonb_build_array(jsonb_set($3::text::jsonb,'{telemetry,started_at}',to_jsonb(to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))), updated_at=now()
       WHERE op=$1 AND fingerprint=$2 AND ($4::boolean OR completed_keys->0->>'lease_token'=$5) AND completed_keys->0->'telemetry'->>'outcome'='open' RETURNING 1`;
 
+/** Every statement `writeSyncPassRow` can send (op_checkpoints only): the shadow write sampler judges the member by them (shadow/write-capture.ts). */
+export const SYNC_PASS_ROW_SQL: readonly string[] = [UPSERT_PASS_ROW_SQL, UPSERT_PASS_ROW_CLOCK_SQL, UPDATE_OPEN_PASS_ROW_SQL, UPDATE_OPEN_PASS_ROW_CLOCK_SQL];
+
 export interface SyncPassRowWrite { pin?: boolean; clock?: boolean; onlyOpen?: boolean }
 
 /**

@@ -1,11 +1,12 @@
 /** OAuth grant lifecycle. Every grant mutation locks the same client row. */
-import { createHash } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
 import { redirectUriMatches } from '@modelcontextprotocol/sdk/server/auth/handlers/authorize.js';
 import type { AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { InvalidClientError, InvalidGrantError, InvalidRequestError, InvalidTargetError, ServerError, TooManyRequestsError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { SqlQuery } from './sql-query.ts';
 import type { BrainEngine } from './engine.ts';
+import { lacksRawSql } from './engine-capabilities.ts';
 import { normalizeOauthClientRow } from './engine-sql/oauth-clients.ts';
 import { normalizeOauthCodeRow, oauthPgArray, type OauthTokenInsert } from './engine-sql/access-credentials.ts';
 import { generateToken, hashToken } from './utils.ts';
@@ -122,6 +123,42 @@ export class OAuthConsentError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
 }
 
+/**
+ * #9364: how long the immediate predecessor of a refresh token, replayed by the client it was issued to, still gets
+ * back the pair that replaced it (a response lost to a stall or timeout, two tabs, parallel MCP clients). Any other
+ * replay of a rotated token revokes the whole sign-in family (RFC 9700 §4.14.2).
+ */
+export const REFRESH_REUSE_GRACE_MS = 60_000;
+const FAMILY_REVOKED = Symbol('refresh-family-revoked');
+const GCM_TAG_BYTES = 16;
+interface SealedPair { tokens: OAuthTokens; resource: string | null; accessExpiresAt: number }
+
+/** The replacement pair is sealed with a key only the holder of the rotated token can derive; the database keeps only its hash. */
+function graceKey(token: string): Buffer {
+  return Buffer.from(hkdfSync('sha256', token, Buffer.alloc(0), 'gbrain-oauth-refresh-grace-v1', 32));
+}
+
+function sealPair(token: string, pair: SealedPair): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', graceKey(token), iv, { authTagLength: GCM_TAG_BYTES });
+  const body = Buffer.concat([cipher.update(JSON.stringify(pair), 'utf8'), cipher.final()]);
+  return ['v1', ...[iv, body, cipher.getAuthTag()].map(part => part.toString('base64url'))].join('.');
+}
+
+function openPair(token: string, sealed: unknown): SealedPair | null {
+  const [version, iv, body, tag] = typeof sealed === 'string' ? sealed.split('.') : [];
+  if (version !== 'v1' || !iv || !body || !tag) return null;
+  const authTag = Buffer.from(tag, 'base64url');
+  if (authTag.length !== GCM_TAG_BYTES) return null;
+  try {
+    const decipher = createDecipheriv('aes-256-gcm', graceKey(token), Buffer.from(iv, 'base64url'), { authTagLength: GCM_TAG_BYTES });
+    decipher.setAuthTag(authTag);
+    return JSON.parse(Buffer.concat([decipher.update(Buffer.from(body, 'base64url')), decipher.final()]).toString('utf8')) as SealedPair;
+  } catch {
+    return null;
+  }
+}
+
 /** Global ceiling on the in-memory pending store; a full store rejects new requests rather than evicting live ones. */
 const MAX_PENDING_TOTAL = 1000;
 /**
@@ -134,6 +171,7 @@ const MAX_PENDING_PER_CLIENT = 10;
 
 export class OAuthGrants {
   private readonly pending = new Map<string, PendingAuthorization>();
+  private familiesReady = false;
   constructor(private readonly options: {
     sql: SqlQuery;
     /** The brain's engine: `begin` reads the client through it, so a store with no raw SQL (the Rust engine) serves the consent. */
@@ -152,6 +190,17 @@ export class OAuthGrants {
   }
 
   private now(): number { return (this.options.now ?? Date.now)(); }
+
+  /**
+   * v338 adds refresh families; a schema without it keeps plain single-use rotation. Only a positive answer is cached.
+   * A store with no raw SQL (the Rust engine, `tx` its handle) has no `oauth_refresh_rotations` table: it keeps that plain rotation.
+   */
+  private async hasRefreshFamilies(sql: SqlQuery, tx?: BrainEngine): Promise<boolean> {
+    if (this.familiesReady) return true;
+    if (tx && lacksRawSql(tx)) return false;
+    const [row] = await sql`SELECT to_regclass('oauth_refresh_rotations') IS NOT NULL AS ready`;
+    return this.familiesReady = row?.ready === true;
+  }
   private async locked<T>(clientId: string, fn: (sql: SqlQuery, row: ClientRow, tx?: BrainEngine) => Promise<T>): Promise<T> {
     const options = this.options;
     if (!options.transaction) throw new ServerError('OAuth grant transactions are unavailable');
@@ -327,10 +376,12 @@ export class OAuthGrants {
 
   async refresh(clientId: string, token: string, requested?: string[], resource?: URL, secretHash?: string): Promise<OAuthTokens> {
     const requestedResource = this.canonicalResource(resource);
-    return this.locked(clientId, async (sql, client, tx) => {
+    const outcome = await this.locked(clientId, async (sql, client, tx) => {
       this.assertCredentialPolicy(client, secretHash);
+      const families = await this.hasRefreshFamilies(sql, tx);
       const row: Record<string, unknown> | undefined = tx ? asRow(await tx.readOauthRefreshTokenForUpdate(hashToken(token), clientId))
         : (await sql`SELECT * FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND token_type = 'refresh' AND client_id = ${clientId} FOR UPDATE`)[0];
+      if (!row && families) return this.replay(sql, clientId, token, requested, requestedResource);
       if (!row) throw new InvalidGrantError('Refresh token not found');
       if (row.expires_at == null || !Number.isFinite(Number(row.expires_at)) || Number(row.expires_at) <= Math.floor(this.now() / 1000)) throw new InvalidGrantError('Refresh token expired');
       const original = Array.isArray(row.scopes) ? row.scopes as string[] : [];
@@ -340,8 +391,52 @@ export class OAuthGrants {
       const target = this.resource(row.resource, requestedResource);
       if (tx) await tx.deleteOauthRefreshToken(hashToken(token), clientId);
       else await sql`DELETE FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND token_type = 'refresh' AND client_id = ${clientId}`;
-      return this.issue(sql, tx, client, scopes, target, true, 'refresh_token');
+      if (!families) return this.issue(sql, tx, client, scopes, target, true, 'refresh_token');
+      const family = typeof row.family_id === 'string' && row.family_id ? row.family_id : generateToken('');
+      const tokens = await this.issue(sql, tx, client, scopes, target, true, 'refresh_token', family);
+      const nowMs = this.now();
+      const sealed = sealPair(token, { tokens, resource: target?.toString() ?? null, accessExpiresAt: Math.floor(nowMs / 1000) + Number(tokens.expires_in) });
+      await sql`UPDATE oauth_refresh_rotations SET sealed_pair = NULL WHERE client_id = ${clientId} AND sealed_pair IS NOT NULL AND rotated_at_ms <= ${nowMs - REFRESH_REUSE_GRACE_MS}`;
+      await sql`INSERT INTO oauth_refresh_rotations (token_hash, client_id, family_id, replaced_by_hash, rotated_at_ms, expires_at, sealed_pair)
+        VALUES (${hashToken(token)}, ${clientId}, ${family}, ${hashToken(tokens.refresh_token!)}, ${nowMs}, ${Number(row.expires_at)}, ${sealed})`;
+      return tokens;
     });
+    if (outcome === FAMILY_REVOKED) throw new InvalidGrantError('Refresh token was already used; this sign-in has been revoked. Reconnect the client.');
+    return outcome;
+  }
+
+  /**
+   * A refresh token that is no longer live. Only the immediate predecessor of the family's live refresh token, sent
+   * by the client it was issued to inside the grace window, gets the sealed replacement pair back. Anything else that
+   * matches a rotation (another client, after the window, an older ancestor, a family already revoked) deletes every
+   * token of the family, under the owning client's row lock, and commits before the caller is refused.
+   */
+  private async replay(sql: SqlQuery, clientId: string, token: string, requested?: string[], requestedResource?: URL): Promise<OAuthTokens | typeof FAMILY_REVOKED> {
+    const [owner] = await sql`SELECT client_id FROM oauth_refresh_rotations WHERE token_hash = ${hashToken(token)}`;
+    if (!owner) throw new InvalidGrantError('Refresh token not found');
+    // Lock order is client rows, then rotation rows, as the owning client's own refresh and revocation take them.
+    if (owner.client_id !== clientId) await sql`SELECT client_id FROM oauth_clients WHERE client_id = ${String(owner.client_id)} FOR UPDATE`;
+    const [rotation] = await sql`SELECT * FROM oauth_refresh_rotations WHERE token_hash = ${hashToken(token)} FOR UPDATE`;
+    if (!rotation) throw new InvalidGrantError('Refresh token not found');
+    const family = String(rotation.family_id);
+    const nowMs = this.now();
+    const inWindow = rotation.client_id === clientId && Number(rotation.rotated_at_ms) > nowMs - REFRESH_REUSE_GRACE_MS && rotation.sealed_pair != null;
+    const [replacement] = inWindow
+      ? await sql`SELECT 1 AS live FROM oauth_tokens WHERE token_hash = ${String(rotation.replaced_by_hash)} AND token_type = 'refresh' AND client_id = ${clientId} AND family_id = ${family}`
+      : [];
+    const pair = replacement ? openPair(token, rotation.sealed_pair) : null;
+    if (!pair) {
+      await sql`DELETE FROM oauth_tokens WHERE family_id = ${family}`;
+      await sql`UPDATE oauth_refresh_rotations SET sealed_pair = NULL WHERE family_id = ${family}`;
+      return FAMILY_REVOKED;
+    }
+    const granted = new Set(parseScopeString(pair.tokens.scope));
+    const asked = new Set(requested);
+    if (requested && (asked.size !== granted.size || [...asked].some(scope => !granted.has(scope)))) {
+      throw new InvalidGrantError('Requested scope differs from the refresh this token already completed; use the refresh token it returned');
+    }
+    if (requestedResource && requestedResource.toString() !== pair.resource) throw new InvalidGrantError('Requested resource exceeds the approved grant');
+    return { ...pair.tokens, expires_in: Math.max(0, pair.accessExpiresAt - Math.floor(nowMs / 1000)) };
   }
 
   private currentScopes(client: ClientRow, original: string[]): string[] {
@@ -384,6 +479,9 @@ export class OAuthGrants {
       this.assertCredentialPolicy(client, secretHash);
       if (tx) await tx.deleteOauthTokenByHash(hashToken(token), clientId);
       else await sql`DELETE FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND client_id = ${clientId}`;
+      if (await this.hasRefreshFamilies(sql, tx)) {
+        await sql`UPDATE oauth_refresh_rotations SET sealed_pair = NULL WHERE token_hash = ${hashToken(token)} AND client_id = ${clientId} AND sealed_pair IS NOT NULL`;
+      }
     });
   }
 
@@ -396,6 +494,7 @@ export class OAuthGrants {
         await tx.softDeleteOauthClient(clientId);
         await tx.deleteOauthClientCodes(clientId);
         await tx.deleteOauthClientTokens(clientId);
+        if (await this.hasRefreshFamilies(sql, tx)) await sql`DELETE FROM oauth_refresh_rotations WHERE client_id = ${clientId}`;
         return;
       }
       const [row] = await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId} FOR UPDATE`;
@@ -405,7 +504,22 @@ export class OAuthGrants {
       else await sql`DELETE FROM oauth_clients WHERE client_id = ${clientId}`;
       await sql`DELETE FROM oauth_codes WHERE client_id = ${clientId}`;
       await sql`DELETE FROM oauth_tokens WHERE client_id = ${clientId}`;
+      if (await this.hasRefreshFamilies(sql)) await sql`DELETE FROM oauth_refresh_rotations WHERE client_id = ${clientId}`;
     });
+  }
+
+  /**
+   * Sealed pairs are wiped once their grace window passes; rotation records outlive it until the rotated token would
+   * have expired. Rows a refresh or a family revocation holds are skipped for a later sweep, so the sweep never waits
+   * on a lock and can never deadlock one of them.
+   */
+  async sweepExpiredRotations(): Promise<number> {
+    if (this.options.engine && lacksRawSql(this.options.engine)) return 0;
+    if (!await this.hasRefreshFamilies(this.options.sql)) return 0;
+    await this.options.sql`UPDATE oauth_refresh_rotations SET sealed_pair = NULL WHERE token_hash IN (SELECT token_hash FROM oauth_refresh_rotations
+      WHERE sealed_pair IS NOT NULL AND rotated_at_ms <= ${this.now() - REFRESH_REUSE_GRACE_MS} FOR UPDATE SKIP LOCKED)`;
+    return (await this.options.sql`DELETE FROM oauth_refresh_rotations WHERE token_hash IN (SELECT token_hash FROM oauth_refresh_rotations
+      WHERE expires_at < ${Math.floor(this.now() / 1000)} FOR UPDATE SKIP LOCKED) RETURNING 1`).length;
   }
 
   /**
@@ -414,7 +528,7 @@ export class OAuthGrants {
    * issues unmarked tokens, which never attest. The locked client row tells which: a failed INSERT would abort the
    * surrounding transaction, so the schema is inspected before the statement.
    */
-  private async issue(sql: SqlQuery, tx: BrainEngine | undefined, client: ClientRow, scopes: string[], resource: URL | undefined, refresh: boolean, grant: 'authorization_code' | 'refresh_token' | 'client_credentials'): Promise<OAuthTokens> {
+  private async issue(sql: SqlQuery, tx: BrainEngine | undefined, client: ClientRow, scopes: string[], resource: URL | undefined, refresh: boolean, grant: 'authorization_code' | 'refresh_token' | 'client_credentials', family?: string): Promise<OAuthTokens> {
     const clientId = client.client_id as string;
     const override = Number(client.token_ttl);
     const ttl = Math.min(Number.isFinite(override) && override > 0 ? override : this.options.tokenTtl, TOKEN_TTL_MAX_SECONDS);
@@ -432,11 +546,14 @@ export class OAuthGrants {
       // The member runs on the grant's transaction handle (never the pool): the client row is locked by this transaction,
       // and a write on another connection would wait on the foreign key to it. The Rust store runs the rows in one write.
       const rows: OauthTokenInsert[] = tokens.map(t => ({ token_hash: hashToken(t.token), token_type: t.type, client_id: clientId,
-        scopes, expires_at: t.expiresAt, resource: resource?.toString() ?? null, created_at: now, ...(marked ? { grant_type: grant } : {}) }));
+        scopes, expires_at: t.expiresAt, resource: resource?.toString() ?? null, created_at: now, ...(family ? { grant_type: grant, family_id: family } : marked ? { grant_type: grant } : {}) }));
       await tx.issueOauthTokens(rows);
       return result;
     }
-    const insert = (token: string, type: 'access' | 'refresh', expiresAt: number) => marked
+    const insert = (token: string, type: 'access' | 'refresh', expiresAt: number) => family
+      ? sql`INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at, grant_type, family_id)
+          VALUES (${hashToken(token)}, ${type}, ${clientId}, ${oauthPgArray(scopes)}, ${expiresAt}, ${resource?.toString() ?? null}, to_timestamp(${now}), ${grant}, ${family})`
+      : marked
       ? sql`INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at, grant_type)
           VALUES (${hashToken(token)}, ${type}, ${clientId}, ${oauthPgArray(scopes)}, ${expiresAt}, ${resource?.toString() ?? null}, to_timestamp(${now}), ${grant})`
       : sql`INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource, created_at)

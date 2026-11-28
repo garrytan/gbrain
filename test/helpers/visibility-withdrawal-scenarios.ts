@@ -82,32 +82,40 @@ export async function linkedForgetKeepsHiddenCopies(engine: BrainEngine): Promis
   expect(local.body.expired).toBe(true);
 }
 
-/** 1b: a withdrawal backed only by rows the caller cannot read refuses exactly as a page the caller may not see does. */
+/**
+ * 1b: a withdrawal backed only by rows the caller cannot read refuses a remote caller with the plain fact_withdrawn
+ * refusal and no `withdrawn` object, exactly as a withdrawal it can see does; a page the caller may not see still
+ * answers as an unreadable page.
+ */
 export async function hiddenWithdrawalRefusesGenerically(engine: BrainEngine): Promise<void> {
   await seedPages(engine);
   const hiddenPage = await call(engine, 'remember', { fact: CLAIM, entity: 'crm/hidden-co', provenance: 'call notes' });
   expect(hiddenPage.isError).toBe(true);
+  expect(hiddenPage.body.message).not.toBe(FACT_WITHDRAWN_MESSAGE);
   const hiddenId = await insertHiddenSourced(engine, 'crm/acme-example', 'crm/hidden-co');
   expect((await call(engine, 'forget_fact', { id: hiddenId }, 'local')).body.expired).toBe(true);
   const remote = await call(engine, 'remember', { fact: CLAIM, entity: 'crm/acme-example', provenance: 'call notes' });
   expect(remote.isError).toBe(true);
-  for (const key of ['code', 'error', 'message', 'suggestion']) expect(remote.body[key]).toEqual(hiddenPage.body[key]);
-  expect(JSON.stringify(remote.body)).not.toContain('withdrawn');
+  expect(remote.body.message).toBe(FACT_WITHDRAWN_MESSAGE);
+  expect(remote.body.withdrawn).toBeUndefined();
   const unset = await call(engine, 'remember', { fact: CLAIM, entity: 'crm/acme-example', provenance: 'call notes' }, 'unset');
-  expect(unset.body.message).toBe(hiddenPage.body.message);
+  expect(unset.body.message).toBe(FACT_WITHDRAWN_MESSAGE);
+  expect(unset.body.withdrawn).toBeUndefined();
   const batch = await call(engine, 'remember', { items: [{ fact: CLAIM, entity: 'crm/acme-example', provenance: 'call notes' }] });
   // #8621: a batch whose only item is refused is the item's refusal, prefixed with its index.
   expect(batch.isError).toBe(true);
-  expect(batch.body.code).toBe(hiddenPage.body.code);
-  expect(batch.body.message).toBe(`items[0]: ${hiddenPage.body.message} None of the 1 item(s) was saved.`);
-  expect(JSON.stringify(batch.body)).not.toContain('withdrawn');
-  // The local caller keeps fact_withdrawn.
+  expect(batch.body.code).toBe(remote.body.code);
+  expect(batch.body.message).toBe(`items[0]: ${FACT_WITHDRAWN_MESSAGE} None of the 1 item(s) was saved.`);
+  expect(batch.body.withdrawn).toBeUndefined();
+  // The local caller keeps fact_withdrawn with its object.
   const local = await call(engine, 'remember', { fact: CLAIM, entity: 'crm/acme-example', provenance: 'call notes' }, 'local');
   expect(local.body.message).toBe(FACT_WITHDRAWN_MESSAGE);
-  // A withdrawal the caller can see keeps fact_withdrawn for remote callers too.
+  expect(local.body.withdrawn).toBeDefined();
+  // A withdrawal the caller can see answers the remote caller byte-identically to the hidden one.
   const own = await call(engine, 'remember', { fact: ACTIVE, entity: 'crm/acme-example', provenance: 'call notes' });
   expect((await call(engine, 'forget', { id: String(own.body.id) })).body.expired).toBe(true);
-  expect((await call(engine, 'remember', { fact: ACTIVE, entity: 'crm/acme-example', provenance: 'call notes' })).body.message).toBe(FACT_WITHDRAWN_MESSAGE);
+  const visible = await call(engine, 'remember', { fact: ACTIVE, entity: 'crm/acme-example', provenance: 'call notes' });
+  expect(JSON.stringify(visible.body)).toBe(JSON.stringify(remote.body));
 }
 
 /** 2: the card's identity_excerpt carries the withdrawal overlay; a private primary page is never carded for a remote caller. */

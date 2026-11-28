@@ -2188,6 +2188,13 @@ impl Store {
         self.write(|tx| crate::version_prune::prune_holding(tx, &*self.env, page_id))
     }
 
+    /// `pruneInlineVersionsById(page, versionIds)` (#9737, `gbrain pages prune-history`): deletes exactly the inline
+    /// versions the approved plan named, marks the history it cut and answers how many it deleted
+    /// (`version_prune::prune_inline_by_id`).
+    pub fn prune_inline_versions_by_id(&self, spec: &PruneByIdSpec) -> Result<u64> {
+        self.write(|tx| crate::version_prune::prune_inline_by_id(tx, &*self.env, spec))
+    }
+
     /// `readLatestVersionIdAtTier(pageId, tier)`: the page's newest version whose snapshot tier is
     /// `tier`, or none (`SELECT id FROM page_versions WHERE page_id = $1 AND trust_tier = $2 ORDER BY
     /// id DESC LIMIT 1`). A version keeps the page's tier as `trust::stamp` stored it, where no tier
@@ -2346,6 +2353,22 @@ pub struct VersionReasonStamp {
     /// Versions with an id over this one take the reason.
     pub after_version_id: i64,
     pub reason: String,
+}
+
+/// `pruneInlineVersionsById`'s page argument and the versions it names (`src/core/engine-sql/version-prune.ts`, #9737).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PruneByIdSpec {
+    pub page_id: i64,
+    pub source_id: String,
+    pub slug: String,
+    /// The type a `--type` plan selected; `None` is no type fence.
+    #[serde(default, rename = "type")]
+    pub page_type: Option<String>,
+    /// Also spare the page's newest `keep` versions (of any storage); `None` spares none.
+    #[serde(default)]
+    pub keep: Option<i64>,
+    pub version_ids: Vec<i64>,
 }
 
 /// The version records of one page, in id order.

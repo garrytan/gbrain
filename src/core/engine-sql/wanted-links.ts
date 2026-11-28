@@ -18,24 +18,17 @@ export async function lockRegisteredSourceIds(exec: Pick<SqlExecutor, 'executeRa
 }
 
 /**
- * Replace one origin's wanted rows for `producers`: rows of those producers that `rows` does not name are deleted,
- * then every row of `rows` is inserted or updated in place (its first_seen_at kept). `checked_at` is `-infinity` for a
- * slug target that is a live page, `readAt` for a bare name, the current time otherwise. Returns the rows written.
+ * The two statements replaceWantedLinkRows sends (both write only wanted_links): the shadow write sampler judges the member by
+ * this text (src/shadow/write-capture.ts JOURNAL_MEMBER_STATEMENTS), as it judged the same text when it was a raw statement.
  */
-export async function replaceWantedLinkRows(exec: SqlExecutor, origin: { pageId: number; sourceId: string },
-  replacement: WantedLinkRowsReplacement): Promise<number> {
-  const { rows, producers } = replacement;
-  if (!producers.length) return 0;
-  await executeRawJsonb(exec, `DELETE FROM wanted_links w
+export const REPLACE_WANTED_LINKS_DELETE_SQL = `DELETE FROM wanted_links w
       WHERE w.origin_page_id = $1
         AND w.producer IN (SELECT jsonb_array_elements_text(($2::jsonb)->'producers'))
         AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset(($2::jsonb)->'rows')
           AS v(producer text, ref_kind text, target_source_id text, target_ref text)
           WHERE v.producer = w.producer AND v.ref_kind = w.ref_kind
-            AND v.target_source_id = w.target_source_id AND v.target_ref = w.target_ref)`,
-  [origin.pageId], [{ rows, producers }]);
-  if (!rows.length) return 0;
-  const written = await executeRawJsonb<{ id: number }>(exec, `INSERT INTO wanted_links
+            AND v.target_source_id = w.target_source_id AND v.target_ref = w.target_ref)`;
+export const REPLACE_WANTED_LINKS_INSERT_SQL = `INSERT INTO wanted_links
       (origin_page_id, source_id, producer, ref_kind, target_source_id, target_ref, link_type, context, checked_at)
     SELECT $1, $2, v.producer, v.ref_kind, v.target_source_id, v.target_ref, v.link_type, v.context,
       CASE WHEN v.ref_kind = 'slug' AND EXISTS (SELECT 1 FROM pages t WHERE t.source_id = v.target_source_id
@@ -45,6 +38,20 @@ export async function replaceWantedLinkRows(exec: SqlExecutor, origin: { pageId:
       AS v(producer text, ref_kind text, target_source_id text, target_ref text, link_type text, context text)
     ON CONFLICT ON CONSTRAINT wanted_links_reference_unique DO UPDATE
       SET link_type = EXCLUDED.link_type, context = EXCLUDED.context, checked_at = EXCLUDED.checked_at
-    RETURNING id`, [origin.pageId, origin.sourceId, replacement.readAt ?? null], [{ rows }]);
+    RETURNING id`;
+
+/**
+ * Replace one origin's wanted rows for `producers`: rows of those producers that `rows` does not name are deleted,
+ * then every row of `rows` is inserted or updated in place (its first_seen_at kept). `checked_at` is `-infinity` for a
+ * slug target that is a live page, `readAt` for a bare name, the current time otherwise. Returns the rows written.
+ */
+export async function replaceWantedLinkRows(exec: SqlExecutor, origin: { pageId: number; sourceId: string },
+  replacement: WantedLinkRowsReplacement): Promise<number> {
+  const { rows, producers } = replacement;
+  if (!producers.length) return 0;
+  await executeRawJsonb(exec, REPLACE_WANTED_LINKS_DELETE_SQL, [origin.pageId], [{ rows, producers }]);
+  if (!rows.length) return 0;
+  const written = await executeRawJsonb<{ id: number }>(exec, REPLACE_WANTED_LINKS_INSERT_SQL,
+    [origin.pageId, origin.sourceId, replacement.readAt ?? null], [{ rows }]);
   return written.length;
 }

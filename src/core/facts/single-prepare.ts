@@ -30,7 +30,7 @@ export interface SingleFactIntent {
    */
   page_slug?: string;
   /** A typed new fact's claim slot (remember): it never supersedes a typed fact in another slot (typed-claim.ts sameClaimSlot). Unset (untyped): not checked. */
-  slot?: { claim_metric: string | null; claim_unit: string | null; claim_period: string | null; valid_from: Date | string };
+  slot?: { claim_metric: string | null; claim_unit: string | null; claim_period: string | null; valid_from: Date | string | null };
 }
 /** Preparation time kept back after the embed (a quarter of what is left, at most this): the dedup reads still run. */
 const EMBED_RESERVE_MS = 5_000;
@@ -94,11 +94,13 @@ async function memberPageWithdrawal(engine: BrainEngine, sourceId: string, input
 }
 
 /**
- * The refusal for a claim `isFactWithdrawn` matched. A caller that reads private pages (`excludePrivate` off) gets the
- * `withdrawn` detail from the withdrawal ledger alone (never a purge): the most specific subject first, then the newest
- * withdrawal. It covers the exact normalized claim only. Any other caller gets the plain refusal with no detail.
+ * The refusal for a claim `isFactWithdrawn` matched. A caller that is neither remote (`remote: true`) nor barred from
+ * private pages (`excludePrivate`) gets the `withdrawn` detail from the withdrawal ledger alone (never a purge): the most specific subject first, then the newest
+ * withdrawal. It covers the exact normalized claim only. Any other caller gets the plain refusal with no detail, whether
+ * the withdrawn rows sit on pages it can read, on pages it cannot read, or on no page at all, so the refusal never tells
+ * those cases apart and never carries anything read from a page the caller may not see.
  */
-export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<OperationError> {
+export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean; remote?: boolean } = {}): Promise<OperationError> {
   // A caller that cannot read private pages gets the same plain refusal for every withdrawal (see assertFactNotWithdrawn).
   if (opts.excludePrivate === true) return withdrawnRefusal(undefined);
   const met = await engine.readClaimWithdrawal({

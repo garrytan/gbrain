@@ -5,6 +5,7 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
+use gbrain_store::access_rules::AccessRuleRecord;
 use gbrain_store::cli_reads::entities::{
     MentionDueQuery, MentionDueSinceQuery, MentionIndexRecount, MentionIndexStatusQuery,
     NameVariantCandidateQuery, SiblingCandidateQuery,
@@ -332,6 +333,55 @@ fn label_pages_carry_a_label_key_and_no_readers() {
         store
             .read_ignored_privacy_label_pages("default", &scope(json!({"since": "yesterday"})))
             .is_err()
+    );
+}
+
+#[test]
+fn label_pages_leave_out_a_page_a_folder_rule_covers() {
+    let dir = TempDir::new("cli-labels-folder");
+    let store = seeded(&dir);
+    let label = |title: &str| json!({"type": "note", "title": title, "compiled_truth": "body", "frontmatter": {"access": "team-only"}});
+    store.put_access_policy_state("default").unwrap();
+    store
+        .put_access_rule(AccessRuleRecord {
+            source_id: "default".into(),
+            rule_id: "r1".into(),
+            prefix: "secret/".into(),
+            readable_by: vec!["member:alice-example".into()],
+            revision: 1,
+            covers_derived: false,
+            created_by: None,
+        })
+        .unwrap();
+    put(&store, "default", "secret/label", label("covered"));
+    // A rule on another source does not cover this source's page.
+    put(&store, "other", "secret/label", label("other source"));
+    let scope = |v: Value| serde_json::from_value(v).unwrap();
+    let by_slug = store
+        .read_ignored_privacy_label_pages(
+            "default",
+            &scope(json!({"slugs": ["notes/label", "secret/label"]})),
+        )
+        .unwrap();
+    assert_eq!(
+        by_slug.len(),
+        1,
+        "the page under secret/ is covered by a folder rule"
+    );
+    let since = store
+        .read_ignored_privacy_label_pages(
+            "default",
+            &scope(json!({"since": "2000-01-01T00:00:00Z"})),
+        )
+        .unwrap();
+    assert_eq!(since.len(), 1);
+    let elsewhere = store
+        .read_ignored_privacy_label_pages("other", &scope(json!({"slugs": ["secret/label"]})))
+        .unwrap();
+    assert_eq!(
+        elsewhere.len(),
+        1,
+        "a source with no access state has no stamped pages"
     );
 }
 

@@ -810,7 +810,7 @@ export interface RecordedHaltReasonRow { kind: string; reason: string; n: number
 
 const RECORDED_HALT_REASONS_SQL = `SELECT r.kind, e.key AS reason, SUM(e.value::int) AS n
          FROM extract_rollup_7d r, jsonb_each_text(r.halt_reasons) e
-        WHERE r.day >= CURRENT_DATE - 7
+        WHERE r.day >= (now() AT TIME ZONE 'UTC')::date - 7
         GROUP BY r.kind, e.key`;
 
 /** The recorded halt reasons of the 7-day extract rollup, summed per kind and reason (migration v239 added the column). */

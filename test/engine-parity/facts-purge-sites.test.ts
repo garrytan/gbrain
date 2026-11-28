@@ -774,7 +774,7 @@ describe('engine parity: purge, purge receipt and held-fact move statements of t
       nobody: await engine.listBeliefEventsForPurgeProbe('nobody', 0),
     };
     expect(answers.all.map(r => r.subject_kind)).toEqual(['page', 'page', 'fact']);
-    expect(answers.all[2]!.value).toMatchObject({ fact: 'Alice likes tea', valid_from: '<time>' });
+    expect(answers.all[2]!.value).toMatchObject({ fact: 'Alice likes tea', valid_from: null }); // #10288: no event date given, none stored
     expect(answers.afterFirst.map(r => r.id)).toEqual(answers.all.slice(1).map(r => r.id));
     expect(answers.other).toBe(1);
     expect({ afterAll: answers.afterAll, nobody: answers.nobody }).toEqual({ afterAll: [], nobody: [] });

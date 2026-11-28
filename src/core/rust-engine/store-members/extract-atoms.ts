@@ -2,8 +2,8 @@
  * The extract_atoms phase's reads, release and state-store gate (engine-sql/extract-atoms-reads.ts;
  * rust/docs/store/extract-atoms.md).
  *
- * listExtractablePages, listAtomSourceHashes and listSourcePageAtomTitles are served from page and op-checkpoint
- * records (link_queries/atom_discovery.rs); releasePartialAtomDispositions deletes the source's `managed-atoms`
+ * listExtractablePages refuses by name (see below). listAtomSourceHashes and listSourcePageAtomTitles are served from
+ * page records (link_queries/atom_discovery.rs); releasePartialAtomDispositions deletes the source's `managed-atoms`
  * checkpoints recorded below the cap (persistence/op_checkpoint.rs).
  *
  * From store format 17 the store keeps the extract_atoms page and transcript ledgers (atom_state.rs): the tombstone read,
@@ -15,16 +15,15 @@ import type { AtomPagePin } from '../../engine-sql/extract-atoms-state.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
-export const listExtractablePages: Member<'listExtractablePages'> = async (brain, query) => {
-  if (!Number.isSafeInteger(query.limit) || !Number.isSafeInteger(query.minChars)) {
-    refuseMember('listExtractablePages', 'a limit or minimum length that is not an integer');
-  }
-  const rows = await storeCall({ member: 'listExtractablePages' }, () => brain.listExtractablePages({ ...query, limit: Math.max(0, query.limit), minChars: Math.max(0, query.minChars) }));
-  return (rows as Array<Record<string, unknown>>).map(r => ({
-    id: Number(r.id), knowledge_revision: String(r.knowledge_revision), source_incarnation: String(r.source_incarnation),
-    slug: String(r.slug), compiled_truth: String(r.compiled_truth), content_hash: String(r.content_hash),
-  }));
-};
+/**
+ * Refuses by name. Sync 21's discovery (GST-4020 #10542, #9888 #10483) reads state the store does not keep: the
+ * per-source opt-out, the still-current scan and atoms tests over `fact_withdrawals`, and the canonical snapshot body.
+ * Answering from page and op-checkpoint records (link_queries/atom_discovery.rs, parked) would offer pages Postgres
+ * leaves out, and the phase's later raw-SQL steps would refuse only after the model call. The phase discovers pages
+ * before any model call, so a Rust brain refuses extract_atoms here and pays for nothing.
+ */
+export const listExtractablePages: Member<'listExtractablePages'> = async () =>
+  refuseMember('listExtractablePages', 'the store keeps no sync-21 discovery state: source opt-out, still-current scans and canonical snapshots');
 
 export const listAtomSourceHashes: Member<'listAtomSourceHashes'> = async (brain, sourceId, hashes) =>
   hashes.length === 0 ? [] : storeCall({ member: 'listAtomSourceHashes' }, () => brain.listAtomSourceHashes(sourceId, [...hashes]));

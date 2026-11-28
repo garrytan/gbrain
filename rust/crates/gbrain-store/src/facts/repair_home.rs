@@ -181,7 +181,7 @@ impl Store {
                 json!({ "id": r.id, "value": {
                     "source_id": r.source_id, "entity_slug": r.entity_slug, "source_markdown_slug": r.source_markdown_slug,
                     "row_num": r.row_num, "fact": r.fact, "kind": r.kind, "visibility": r.visibility,
-                    "notability": r.notability, "context": r.context, "valid_from": jsonb_time(r.valid_from_us),
+                    "notability": r.notability, "context": r.context, "valid_from": r.valid_from().map(jsonb_time),
                     "valid_until": time(r.valid_until_us), "expired_at": time(r.expired_at_us),
                     "superseded_by": r.superseded_by, "consolidated_at": time(r.consolidated_at_us),
                     "consolidated_into": r.consolidated_into, "source": r.source, "source_session": r.source_session,

@@ -116,8 +116,8 @@ src/core/cycle/drift.ts	runPhaseDrift	call:serializeMarkdown	INLINE
 src/core/cycle/edge-contradictions.ts	removeTimelineLine	field	SEGW	
 src/core/cycle/edge-contradictions.ts	removeTimelineLine	call:serializeMarkdown	SEGW	
 src/core/cycle/extract-atoms-page-state.ts	transferLegacyAtomPageState	field	META	compares two snapshots; segmented page: getter throws page_body_segmented
+src/core/cycle/extract-atoms-page-state.ts	canonicalPageInputs	field	STREAM	the snapshot body of a page discovery found (GST-4020); a segmented page never reaches it (minCompiledTruthChars skips it); CAS is on content_hash + knowledge_revision
 src/core/cycle/extract-atoms.ts	runPhaseExtractAtoms	call:serializeMarkdown	SEGW	
-src/core/cycle/extract-atoms.ts	discoverExtractablePages	field	STREAM	see sql row; CAS is on content_hash + knowledge_revision
 src/core/cycle/extract-facts.ts	canonicalCacheState	field	INLINE	inline arm; a segmented page compares its stored regions with the canonical file by length and SHA-256 (segmentedBodyMatchesFile)
 src/core/engine-sql/facts-cycle.ts	readDeletedPageBody	sql	INLINE	lane 4 facts-cycle sites (item 4.2): moved from expireDeletedPageFacts, same statement. reads the deleted page's stored fence through readFenceBlocks, which reads a segmented page as segmented: no fence proof, so its rows expire only when a live generation recorded them (GBRA-161 PR 2)
 src/core/cycle/extract-facts.ts	planFenceReconcile	field	NONE	view.timeline is the parsed facts fence of the timeline section (FactsFenceView); a segmented page reads it from its marker segments (segmentedFactsFenceView)
@@ -177,6 +177,10 @@ src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_ALL_CONNECTORS_OUT_SQL	sql	STRE
 src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_ALL_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
 src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
 src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_SCOPED_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
+src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_SCOPED_POLICY_OFF_SQL	sql	STREAM	sync 21: the doctor policy_excluded count variant of the sibling ATOM_BACKLOG_*_SQL row above; same minCompiledTruthChars octet_length predicate (a NULL segmented body is not counted), no body read
+src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_POLICY_OFF_SQL	sql	STREAM	sync 21: the doctor policy_excluded count variant of the sibling ATOM_BACKLOG_*_SQL row above; same minCompiledTruthChars octet_length predicate (a NULL segmented body is not counted), no body read
+src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_ALL_POLICY_OFF_SQL	sql	STREAM	sync 21: the doctor policy_excluded count variant of the sibling ATOM_BACKLOG_*_SQL row above; same minCompiledTruthChars octet_length predicate (a NULL segmented body is not counted), no body read
+src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_ALL_CONNECTORS_OUT_POLICY_OFF_SQL	sql	STREAM	sync 21: the doctor policy_excluded count variant of the sibling ATOM_BACKLOG_*_SQL row above; same minCompiledTruthChars octet_length predicate (a NULL segmented body is not counted), no body read
 src/core/engine-sql/brief-reads.ts	readBriefEditPage	sql	INLINE	moved from context/proactive-brief.ts editItem: reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
 src/core/engine-sql/brief-reads.ts	readBriefPageVersions	sql	INLINE	moved from context/proactive-brief.ts editItem: reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
 src/core/engine-sql/chronicle-executor.ts	CHRONICLE_EXECUTOR_SQL	sql	STREAM	the chronicle discovery read (discoveryPages), moved unchanged from cycle/chronicle.ts discover: coalesce(compiled_truth, truth_lead), so a segmented page ships its lead
@@ -466,6 +470,7 @@ src/core/page-size-policy.ts	largePageBodyFilter	sql	META	fix lane J2: octet_len
 src/core/page-snapshot-batch.ts	readPageSnapshotsBatch	sql	STREAM	p.* feeds rowToPage; the byte budget counts a segmented row as 0 (no body shipped); fingerprint over a NULL body is empty
 src/core/page-snapshot-batch.ts	readPageSnapshotsBatch	field	STREAM	same as readPageSnapshot: overlay skipped for a segmented page
 src/core/page-state/credential-reseal.ts	PENDING	sql	STREAM	regex over NULL is false: segmented pages postdate the v189 unseal and are chunked by the credential-safe segment chunker; pem regions in PR 2
+src/core/page-state/history-prune.ts	planHistoryPrune	sql	META	size only (octet_length) of inline versions for the preview's bytes; segmented versions are excluded by body_storage and counted as kept
 src/core/page-state/import-guard.ts	canonicalFields	field	META	
 src/core/page-state/import-guard.ts	sameContentAnyKeyOrder	field	META	
 src/core/page-state/materialize.ts	materializePageSnapshot	sql	SEGW	assertInlineBody before the UPDATE
@@ -504,6 +509,7 @@ src/core/persistence/connector-google-receipts.ts	prepareGoogleReceiptPatch	call
 src/core/persistence/connector-sync.ts	ManagedConnectorSync.page	call:serializePageToMarkdown	SEGW	
 src/core/persistence/connector-sync.ts	prepareConnectorMutation	field	SEGW	
 src/core/persistence/connector-sync.ts	prepareConnectorMutation	call:serializePageToMarkdown	SEGW	
+src/core/persistence/content-author-schema.ts	text	sql	STREAM	trigger DDL: the content-author trigger compares the body columns of inline rows (both NULL on a segmented row) and body_generation for segmented rows (GST-4056)
 src/core/persistence/core-guard.ts	prepareCoreGuard	field	INLINE	
 src/core/persistence/effect-facts.ts	bodyAlreadyOffered	field	META	
 src/core/persistence/effect-links.ts	mentionTargets	field	INLINE	inline arm; a segmented page streams its compiled truth through extractSegmentedPageLinks
@@ -663,7 +669,6 @@ src/core/rules/record.ts	renderRulePage	call:serializeMarkdown	NONE	serializes a
 src/core/rust-engine/snapshot-overlay.ts	overlayStoreLead	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the seal lead of a segmented page (a bounded timeline prefix), overlaid as PGLite's seal overlays it
 src/core/rust-engine/snapshot-overlay.ts	overlayStoreSnapshots	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the body strike skips a segmented page as readSnapshotStatement does (per-window overlay in PR 2)
 src/core/rust-engine/store-members/chunks.ts	sealChunks	field	STREAM	mirrors sealPageTextProjection (text-seal.ts): sends sanitizeRemoteBody(timeline) with the seal for the page keyword vector; a segmented page (null timeline from the Rust store) sends none
-src/core/rust-engine/store-members/extract-atoms.ts	listExtractablePages	field	STREAM	maps the store's discovery rows; the store skips a page whose compiled truth is NULL (a segmented page), as the SQL does
 src/core/rust-engine/store-members/fence-projection.ts	readPageInlineBody	field	INLINE	the Rust arm of engine-sql/unwithdrawn-restore.ts readPageInlineBody: passes the store's inline compiled_truth and timeline through; a segmented page reads null columns
 src/core/rust-engine/store-members/field-usage.ts	readFieldUsageSamples	field	LEAD	the Rust arm of engine-sql/field-usage.ts readFieldUsageSamples: passes the store's sampled compiled_truth through; a segmented page samples a null body (TODOS.md)
 src/core/rust-engine/store-members/page-body.ts	refreshPageBody	call:refreshPageBody	SEGW	forwards to the Rust store, which refuses a segmented page as the body-storage CHECK does; callers assert first

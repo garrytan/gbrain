@@ -28,14 +28,14 @@ rows outlive a deleted source, as in Postgres.
 
 | Member | State |
 |---|---|
-| `listExtractablePages(query)` | served |
+| `listExtractablePages(query)` | refused, `engine_capability_missing` reason `health`: discovery is sync 21's statement (GST-4020 #10542, #9888 #10483), which reads the per-source opt-out, still-current scans, atoms-current tests and canonical snapshots the store does not keep; extract_atoms on a Rust brain stops at discovery, before any model call |
 | `listAtomSourceHashes(sourceId, hashes)` | served |
 | `listSourcePageAtomTitles(sourceId, sourceSlug)` | served |
 | `releasePartialAtomDispositions(sourceId, maxInputChars)` | served |
 | `listTombstonedTranscripts(sourceId, hashes)` | served |
 | `assertAtomStateStore()` | served: passes in the process that owns the brain; a client of the owner socket refuses it before the call, `engine_capability_missing` reason `transactions` (`OWNER_IPC_CLIENT_REFUSALS`, `src/core/rust-engine/owner-ipc/routes.ts`), so extract_atoms stops before its first model call |
 | `readAtomPageIdentity(sourceId, slug, contentHash)` | served |
-| `writeAtomPageState(pin, failIncrement, tombstone)` | served |
+| `writeAtomPageState(pin, failIncrement, tombstone)` | served, parked: it predates GST-4020 (no `input_sha256`, no read-clock `updated_at`, a tombstone is sticky) and is not reached while discovery refuses |
 | `recordAtomPagePartial(pin, maxInputChars)` | served |
 | `recordAtomTranscriptPartial`, `stampAtomTranscriptTombstone`, `strikeAtomTranscript` | served |
 | `listLiveTranscriptGenerations(sourceId, kind, keyPrefix)` | served; a prefix with a LIKE wildcard or escape is refused |
@@ -43,7 +43,7 @@ rows outlive a deleted source, as in Postgres.
 | `readLivePageSourcePath(sourceId, slug)`, `readLiveGenerationLocator(sourceId, kind, ownerKey)` | served |
 | `listConversationPageFrontmatter(sourceId)` | served |
 
-`listExtractablePages` keeps the backlog count's predicate for one source, skips a page whose current content has a
+The store still has its discovery read (`link_queries/atom_discovery.rs`), parked while the member refuses. It keeps the backlog count's predicate for one source, skips a page whose current content has a
 completed or held `managed-atoms` checkpoint, skips a page whose ledger row for its current content is tombstoned or
 partial, and skips a page whose current input is held by an atom generation (#10270; the caller passes the live
 `holdIds`). It returns the newest pages first (`updated_at` descending), at most `limit`, only of `affectedSlugs` when

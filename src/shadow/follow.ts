@@ -14,6 +14,7 @@
  * an error for the caller, and nothing awaits the sink. Outside a transaction the pre-read and the write are not on one
  * connection, so a concurrent writer can slip a delete past the pre-read; reconcile covers that narrow race.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Invalidation, InvalidationSink } from './invalidations.ts';
 import { mergeItems, publishItems } from './invalidations.ts';
 import { sqlWrites } from './sql-writes.ts';
@@ -36,6 +37,83 @@ export interface FollowContext {
   engine: any;
   frame: Frame | null;
   inTransaction: boolean;
+  /** The outermost transaction's call lane (wrapper.ts): a pre-read inside the transaction takes it, so no other statement of the transaction runs while its savepoint is open. */
+  lane?: TxLane;
+}
+
+/**
+ * The member calls of one outermost transaction, as the wrapper sees them. A savepoint that is rolled back undoes every statement sent on the
+ * connection while it was open, whoever sent it, so a pre-read takes the lane: it waits for the calls already running, holds every later call
+ * until its own write has been sent, and only then reads.
+ */
+export interface TxLane {
+  /** Calls started and not yet settled; `callback`: the call took a function (a nested transaction, a bounded read), which may be waiting for a call held behind the gate. */
+  running: Set<LaneEntry>;
+  /** Set while any hold is closed; resolves when one of them opens (a waiter then checks again whether a hold still applies to it). */
+  gate: Promise<void> | null;
+  /** The closed holds (`holdLane`). */
+  holds: LaneHold[];
+  /** Calls held while a hold applies to them, in call order, each with the lane call it was made from; opening a hold starts, in order, every one no hold applies to any more. */
+  waiters: Array<(() => void) & { entry?: LaneEntry }>;
+}
+
+/**
+ * One closed hold on a lane. A pre-read's own hold (`except` unset) holds every later call while its savepoint is open. A pre-read that first waits for running
+ * nested transactions holds every later call except those made inside one of `except`: those transactions must be able to finish, and the write waiting for them
+ * keeps its place ahead of the transaction's later calls, as the driver's queue kept it.
+ */
+export interface LaneHold { except?: LaneEntry[] }
+
+/** How long a pre-read waits for the calls already running on its transaction before it gives up (the item is then relation-level). */
+export const PRE_READ_WAIT_MS = 2_000;
+
+export const newTxLane = (): TxLane => ({ running: new Set(), gate: null, holds: [], waiters: [] });
+
+/** One member call in a lane. `parent`: the lane call it was started from (a call inside a nested transaction's callback has that transaction's entry). */
+export interface LaneEntry { callback: boolean; done: Promise<void>; parent?: LaneEntry; /** Set while this call's pre-read waits for these running nested transactions: a call started inside one of them never waits for it. */ waitingFor?: LaneEntry[] }
+/** True when `entry` is `of` or was started, at any depth, from inside it. */
+export const startedWithin = (entry: LaneEntry | undefined, of: LaneEntry): boolean => { for (let e = entry; e; e = e.parent) if (e === of) return true; return false; };
+
+/** The lane entry of the member call running now (wrapper.ts `laned` runs each call inside it), so a pre-read never counts its own call among the calls ahead of it. */
+export const laneCall = new AsyncLocalStorage<LaneEntry>();
+
+/** True when a closed hold of `lane` applies to a call made from `entry` (the lane call running where it is made; none at the transaction's own level). */
+export const laneHeld = (lane: TxLane, entry: LaneEntry | undefined): boolean => lane.holds.some((h) => !h.except?.some((n) => startedWithin(entry, n)));
+
+const gateSignals = new WeakMap<TxLane, () => void>();
+const resetGate = (lane: TxLane): void => {
+  gateSignals.get(lane)?.();
+  if (!lane.holds.length) { lane.gate = null; gateSignals.delete(lane); return; }
+  lane.gate = new Promise<void>((r) => { gateSignals.set(lane, r); });
+};
+
+/**
+ * Closes a hold on `lane` (every later call, or every later call made outside `except`); the returned function opens it (once) and starts, in call order, each
+ * held call no other hold applies to, so a call one of them starts that closes a hold again keeps the calls after it waiting.
+ */
+export function holdLane(lane: TxLane, except?: LaneEntry[]): () => void {
+  const hold: LaneHold = except ? { except } : {};
+  lane.holds.push(hold);
+  resetGate(lane);
+  let opened = false;
+  return () => {
+    if (opened) return;
+    opened = true;
+    lane.holds.splice(lane.holds.indexOf(hold), 1);
+    resetGate(lane);
+    for (let i = 0; i < lane.waiters.length;) {
+      const waiter = lane.waiters[i]!;
+      if (laneHeld(lane, waiter.entry)) { i++; continue; }
+      lane.waiters.splice(i, 1);
+      waiter();
+    }
+  };
+}
+
+/** True when every call settles within `ms`. */
+async function settledWithin(calls: Promise<void>[], ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { return await Promise.race([Promise.all(calls).then(() => true), new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), ms); })]); } finally { clearTimeout(timer); }
 }
 
 /** Selector-targeted rows beyond this many become one relation item. */
@@ -44,6 +122,8 @@ const MAX_TARGETS = 200;
 const KEY_COLUMNS: Record<string, string[]> = {
   config: ['key'], synthesis_evidence: ['synthesis_page_id', 'take_page_id', 'take_row_num'],
   chronicle_page_state: ['source_id', 'page_id', 'content_hash', 'extractor_version'],
+  link_relationships: ['from_page_id', 'to_page_id', 'link_type', 'scope'],
+  fact_purges: ['source_id', 'visibility', 'subject', 'fact_hash'],
 };
 
 const isThenable = (value: unknown): value is Promise<unknown> => !!value && typeof (value as { then?: unknown }).then === 'function';
@@ -119,8 +199,12 @@ async function resolveTargets(engine: any, targets: Target[]): Promise<Invalidat
   return items;
 }
 
-/** Plans a non-late write before its call. Never rejects: any failure is the relation-level answer. */
-function plan(ctx: FollowContext, spec: WriteSpec, args: unknown[]): Invalidation[] | Promise<Invalidation[]> {
+/**
+ * Plans a non-late write before its call. Never rejects: any failure is the relation-level answer. Inside a transaction the pre-read runs in a savepoint
+ * while it holds the transaction's lane (`hold`, opened by the caller once the write is sent): it waits for the calls already running (at most PRE_READ_WAIT_MS),
+ * and a call that runs a callback, or does not settle in time, leaves the write unread (`pre_read_busy`), because the savepoint's rollback would undo its statements.
+ */
+function plan(ctx: FollowContext, spec: WriteSpec, args: unknown[], hold: { open?: () => void } = {}): Invalidation[] | Promise<Invalidation[]> {
   const fallback = (reason: string): Invalidation[] => relationItems(spec.tables, reason);
   try {
     if (spec.late) return [];
@@ -133,9 +217,41 @@ function plan(ctx: FollowContext, spec: WriteSpec, args: unknown[]): Invalidatio
         ? { kind: 'rows', relation: t.relation, selector: t.sel as Record<string, string>, before_keys: null }
         : { kind: 'relation', relation: t.relation, reason: 'relation_level' });
     }
-    // Inside a transaction a failed pre-read would abort it and fail the caller's write: it runs in a nested transaction (a savepoint).
-    const read = ctx.inTransaction ? ctx.engine.transaction((savepoint: unknown) => resolveTargets(savepoint, targets)) as Promise<Invalidation[]> : resolveTargets(ctx.engine, targets);
-    return read.catch(() => fallback('pre_read_failed'));
+    if (!ctx.inTransaction) return resolveTargets(ctx.engine, targets).catch(() => fallback('pre_read_failed'));
+    // Inside a transaction a failed pre-read would abort it and fail the caller's write: it runs in a nested transaction (a savepoint), alone on the connection.
+    const lane = ctx.lane;
+    const inSavepoint = () => (ctx.engine.transaction((savepoint: unknown) => resolveTargets(savepoint, targets)) as Promise<Invalidation[]>).catch(() => fallback('pre_read_failed'));
+    if (!lane) return inSavepoint(); // a transaction the wrapper did not open (none today): as before
+    const self = laneCall.getStore();
+    // Never the call itself nor a transaction it runs inside: those cannot finish before it does.
+    // ... nor a call whose pre-read is waiting for a nested transaction this call runs inside (they would wait for each other until the bound).
+    const others = () => [...lane.running].filter((c) => !(self && startedWithin(self, c)) && !(self && c.waitingFor?.some((n) => startedWithin(self, n))));
+    // Takes the lane and reads, once no call that runs a callback is ahead (one could be waiting for a call the lane would hold).
+    const take = (): Invalidation[] | Promise<Invalidation[]> => {
+      const ahead = others();
+      if (ahead.some((c) => c.callback)) return fallback('pre_read_busy');
+      const waited = hold.open; // the hold taken while waiting for a nested transaction: closed only once the full one is, so no later call slips in between
+      hold.open = holdLane(lane);
+      waited?.();
+      return (async () => {
+        try {
+          if (ahead.length && !await settledWithin(ahead.map((c) => c.done), PRE_READ_WAIT_MS)) return fallback('pre_read_busy');
+          return await inSavepoint();
+        } catch { return fallback('plan_failed'); }
+      })();
+    };
+    const nested = others().filter((c) => c.callback);
+    if (!nested.length) return take();
+    // A nested transaction is running: wait for it first, as the driver's nested-transaction queue made the savepoint read wait before. Its own calls are never
+    // held, so it can finish; the transaction's later calls are, so none is sent ahead of this write (the driver queued them behind it too). Only a nested
+    // transaction still running after the bound leaves this write relation-level, sent at once, and the later calls follow it.
+    return (async () => {
+      if (self) self.waitingFor = nested;
+      hold.open = holdLane(lane, nested);
+      try { const settled = await settledWithin(nested.map((c) => c.done), PRE_READ_WAIT_MS); if (self) self.waitingFor = undefined; return settled ? await take() : fallback('pre_read_busy'); }
+      catch { return fallback('plan_failed'); }
+      finally { if (self) self.waitingFor = undefined; }
+    })();
   } catch {
     return fallback('plan_failed');
   }
@@ -174,9 +290,11 @@ export function followWrite(ctx: FollowContext, name: string, fn: Function): Fun
     }
     const spec = WRITE_MAP[name]!;
     const rejectItems = relationItems(spec.tables, 'write_rejected');
-    const early = plan(ctx, spec, args);
-    const run = (items: Invalidation[]) => track(ctx, call, items, (result) => lateItems(spec, args, result), rejectItems);
-    return isThenable(early) ? early.then(run) : run(early);
+    const hold: { open?: () => void } = {};
+    const early = plan(ctx, spec, args, hold);
+    // The lane opens once the write itself is sent, so the calls held behind it keep their order after it.
+    const run = (items: Invalidation[]) => { try { return track(ctx, call, items, (result) => lateItems(spec, args, result), rejectItems); } finally { hold.open?.(); } };
+    return isThenable(early) ? early.then(run, (error) => { hold.open?.(); throw error; }) : run(early);
   };
 }
 

@@ -416,14 +416,15 @@ export function contactIdSlug(resourceName: string, dir: string = DEFAULT_CONTAC
 }
 
 export function personSlugFromContact(c: ContactData, disambiguate = false, dir: string = DEFAULT_CONTACTS_DIR): string | null {
-  const base = c.displayName ?? c.emails[0]?.split('@')[0] ?? null;
-  if (!base) return c.phones.length > 0 ? contactIdSlug(c.resourceName, dir) : null;
+  const base = c.displayName ?? c.emails[0]?.split('@')[0] ?? '';
   const slug = base
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 64);
-  if (!slug) return null;
+  // #10450: a contact with no name, or one with no ASCII letters or digits (张三), keeps the stable id path whenever it
+  // has an email or phone; the page still carries its own display name.
+  if (!slug) return c.emails.length > 0 || c.phones.length > 0 ? contactIdSlug(c.resourceName, dir) : null;
   // Two different contacts named "John Smith" must not fight over one page —
   // the caller requests disambiguation when the base slug is already owned
   // by a DIFFERENT google_contact_id.

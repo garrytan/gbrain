@@ -82,7 +82,7 @@ export async function exerciseManagedFacts(engine: BrainEngine, scenario: Case):
         ] }), blocks: [], stopReason: 'end', usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'test:stub', providerId: 'test' };
       });
       __setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map(() => [1, ...Array(1535).fill(0)]) })) as never);
-      const params = { turn_text: 'A substantive meeting about the registered entities and their operating preferences.', session_id: 'fixture-session', request_id: randomUUID(),
+      const params = { turn_text: 'A substantive meeting about the registered entities and their operating preferences.', session_id: 'fixture-session', request_id: randomUUID(), valid_from: '2026-03-04T05:06:07Z',
         ...(scenario === 'private_hint' ? { entity_hints: [firstSlug] } : {}) };
       if (scenario === 'ipc') {
         const provider = await createPersistenceIpcProvider(engine, { engine: engine.kind });

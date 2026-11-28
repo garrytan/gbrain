@@ -267,7 +267,7 @@ describe('reads', () => {
     expect(renderEvidenceStatus(s).join('\n')).toContain('lacking samples: getBacklinks 0/100 (offered 12, sampled out 12'); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
   });
 
-  test('a class at 99 is named while the total is over 10,000; successful means a match or a collation_order', () => {
+  test('a class at 99 is named while the total is over 10,000; successful means a match or a collation_order', () => { // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
     const { dir, epoch } = epochDir();
     put(dir, rowsOf(epoch, 'getPage', { match: 10_500 }));
     put(dir, rowsOf(epoch, 'listPages', { match: 99, stale: 40, inconclusive: 3, order_diff: 5, error: 2, capability_missing: 1 }));
@@ -608,6 +608,7 @@ describe('unreadable fault history', () => {
     const { dir, epoch } = epochDir();
     writeFileSync(faultsFile(dir), good(epoch) + good(epoch));
     expect(status(dir).child).toEqual({ panics: 0, faults: 2 });
+    // pregate-literal: SHADOW_ADAPTER_VERSION=11 unrelated literal, not the adapter version
     appendFileSync(faultsFile(dir), '{"ts":"2026-11-29T00:00:00.000Z","ki'); // a writer died mid-line
     expect(status(dir).child).toEqual({ panics: 0, faults: 2 });
     for (const bad of ['not json\n', '{}\n', '[]\n', 'null\n', '{"ts":"x","kind":5}\n', JSON.stringify({ ts: 'x', kind: 'child_exit', epoch_id: 7 }) + '\n']) {

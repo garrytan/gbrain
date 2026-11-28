@@ -193,6 +193,38 @@ describe('engine parity: the candidate-pool reads of a recall', () => {
     return out;
   });
 
+  parityTest('listPooledFactRows reads the whole rows of the named ids the pool still admits, each once (the SQL sets no order: compared by fact text)', {
+    methods: ['listPooledFactRows', 'insertFact', 'expireFact'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const ids = await remember(engine, [
+      { fact: 'a world fact', visibility: 'world', entity_slug: 'people/a' },
+      { fact: 'a private fact', visibility: 'private', entity_slug: 'people/a' },
+      { fact: 'an ended fact', visibility: 'world', entity_slug: 'people/a' },
+      { fact: 'a later fact', visibility: 'world', entity_slug: 'people/b' },
+    ]);
+    const away = await remember(engine, [{ fact: 'another source', visibility: 'world', entity_slug: 'people/a' }], 'other');
+    expect(await engine.expireFact(ids.get('an ended fact')!)).toBe(true);
+    const name = namer(new Map([...ids, ...away]));
+    const id = (fact: string) => ids.get(fact)!;
+    const read = async (list: number[], extra: Record<string, unknown> = {}, filters?: Record<string, unknown>) =>
+      byFact((await engine.listPooledFactRows(scope(extra), filters as never, list)).map(view(name)));
+    const all = [id('a later fact'), id('a world fact'), id('a private fact'), id('an ended fact'), away.get('another source')!, id('a world fact'), 999_999, 0];
+    const out = {
+      pool: await read(all),
+      worldOnly: await read(all, { worldOnly: true }),
+      withExpired: await read(all, {}, { includeExpired: true }),
+      none: await read([]),
+      unknown: await read([999_999]),
+    };
+    expect(out.pool.map(r => r.name)).toEqual(['a later fact', 'a private fact', 'a world fact']);
+    expect(out.worldOnly.map(r => r.name)).toEqual(['a later fact', 'a world fact']);
+    expect(out.withExpired.map(r => r.name)).toEqual(['a later fact', 'a private fact', 'a world fact', 'an ended fact']);
+    expect(out.none).toEqual([]);
+    expect(out.unknown).toEqual([]);
+    return out;
+  });
+
   parityTest('the pool functions a search and a recall call read a whole pool: candidates, later retractions, slot windows, unbacked names and entity pairs', {
     methods: ['readFactsEmbeddingColumn', 'listNearestFacts', 'listFactsForRelevance', 'listSlotRows', 'listPoolUnbackedKeys', 'listCallOffCueFacts',
       'listPoolEntityPairs', 'insertFact', 'insertFacts', 'putPage', 'listPagesTitledIn', 'wordLexemes'],

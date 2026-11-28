@@ -6,7 +6,7 @@
  */
 import { expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
@@ -41,7 +41,8 @@ export async function legacySlugLifecycle(databaseUrl?: string, opts: { sourcePa
     const restored = (await mutate(ctx, 'restore_page', { slug: LEGACY, expected_revision: await revisionOf(engine, LEGACY) })).outcome;
     expect(restored.write_through).toMatchObject({ written: false });
     expect((await engine.readPageSnapshot(LEGACY, { sourceId: 'default' }))?.page.deleted_at ?? null).toBeNull();
-    expect(existsSync(join(root, 'people', 'jane doe.md'))).toBe(false);
+    // #10406: exact entry names; a case-insensitive volume (macOS) resolves 'jane doe.md' to the vault's 'Jane Doe.md'.
+    expect(readdirSync(join(root, 'people')).filter(name => name.toLowerCase() === 'jane doe.md')).toEqual(['Jane Doe.md']);
     const purged = (await mutate(ctx, 'delete_page', { slug: LEGACY, purge: true, expected_revision: await revisionOf(engine, LEGACY) })).outcome;
     expect(purged).toMatchObject({ status: 'purged' });
     expect(await engine.readPageSnapshot(LEGACY, { sourceId: 'default', includeDeleted: true })).toBeNull();

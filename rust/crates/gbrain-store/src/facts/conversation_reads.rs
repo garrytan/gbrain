@@ -46,8 +46,9 @@
 //! - `listUnbackedConversationRows` / `listUnlinkedConversationRows(sourceId, slugs)`: the live
 //!   derived conversation rows of the pages on an unbacked name key / with no entity, by page then
 //!   id.
-//! - `listClearedRelinkedFacts(sourceId, slug)`: the page's expired relinked conversation rows
-//!   whose entity page is live, newest first, `{ fact, entity_slug, context }`.
+//! - `listClearedRelinkedFacts(sourceId, slug)`: the page's expired conversation rows, newest
+//!   first, `{ fact, entity_slug, context, carried }` (#10443); `carried` is true for a relinked
+//!   row whose entity page is live.
 //! - `countEmbeddedFactsAmong(sourceId, ids)`: how many of the distinct `ids` are rows of the
 //!   source with an embedding.
 
@@ -511,9 +512,9 @@ impl Store {
                     && f.expired_at_us.is_none()
                     && f.superseded_by.is_none()
                     && f.conversation_slot()
-                    && f.valid_from_us <= at
+                    && f.at_us() <= at
             })
-            .max_by_key(|f| (f.valid_from_us, f.id));
+            .max_by_key(|f| (f.at_us(), f.id));
         Ok(best.map_or(Value::Null, |f| json!({ "value_hash": f.value_hash })))
     }
 
@@ -608,6 +609,7 @@ impl Store {
                     && t.entity_slug.as_deref() == Some(a.slug.as_str())
                     && t.dimension.as_deref() == Some(dimension)
                     && t.value_hash.as_deref() == Some(hash)
+                    && t.valid_from().is_some()
                     && t.valid_from_us == m.valid_from_us
             })
             .min_by_key(|t| (t.expired_at_us.is_some(), t.id));
@@ -646,15 +648,16 @@ impl Store {
         let read = self.read()?;
         let mut out = Vec::new();
         for f in page_rows(&*read, &a.source_id, &a.slug)?.into_iter().rev() {
-            if !(f.conversation_slot() && f.expired_at_us.is_some() && relinked(&f)) {
+            if !(f.conversation_slot() && f.expired_at_us.is_some()) {
                 continue;
             }
+            // `carried`: a relink had linked the row to an entity page that is still live.
             let entity = f.entity_slug.as_deref().unwrap_or_default();
-            if live_page(&*read, &a.source_id, entity)? {
-                out.push(
-                    json!({ "fact": f.fact, "entity_slug": f.entity_slug, "context": f.context }),
-                );
-            }
+            let carried = relinked(&f) && live_page(&*read, &a.source_id, entity)?;
+            out.push(json!({
+                "fact": f.fact, "entity_slug": f.entity_slug, "context": f.context,
+                "carried": carried,
+            }));
         }
         Ok(out)
     }

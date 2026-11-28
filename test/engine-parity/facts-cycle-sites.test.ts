@@ -342,7 +342,7 @@ describe('engine parity: facts cycle, phantom redirect and fence-guard statement
     await engine.softDeletePage('people/closed');
     const young = await engine.listHeldFactRows(SRC, '30');
     const aged = await engine.listHeldFactRows(SRC, '-1');
-    const shape = (rows: typeof young) => rows.map(r => `${r.entity_slug}|${r.from_slug}|${r.old}|${/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(r.held_since)}|${r.valid_from instanceof Date}`);
+    const shape = (rows: typeof young) => rows.map(r => `${r.entity_slug}|${r.from_slug}|${r.old}|${/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(r.held_since)}|${r.valid_from === null}`);
     const unfenced = (await engine.scanUnfencedFactRows(SRC)).map(r => `${r.entity_slug}|${r.fact}|${r.dimension}|${r.page_exists}|${r.page_deleted}`);
     const missing = (await engine.listFencedFactsOfMissingPages(SRC)).map(r => r.slug);
     expect(shape(young)).toEqual(['people/aaa|members/ann/memory/unattributed|false|true|true', 'people/live|memory/unattributed|false|true|true']);

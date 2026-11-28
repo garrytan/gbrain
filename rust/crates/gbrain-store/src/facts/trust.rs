@@ -74,6 +74,8 @@ pub struct PoolArgs {
     pub session_id: Option<String>,
     /// `filters.since`, an ISO time: `COALESCE(valid_from, created_at) >= since`.
     pub since: Option<String>,
+    /// With `since`: also the facts with no event date (`filters.includeUndated`, recall's `include_undated`, #10288).
+    pub include_undated: bool,
     /// `filters.grep` as the `ILIKE` pattern (`%escaped%`).
     pub grep: Option<String>,
     pub include_expired: bool,
@@ -193,7 +195,10 @@ impl<'a> Pool<'a> {
         {
             return Ok(false);
         }
-        if self.since.is_some_and(|since| row.valid_from_us < since) {
+        // `COALESCE(valid_from, created_at) >= since`, and `valid_from IS NOT NULL` unless `includeUndated`.
+        if self.since.is_some_and(|since| {
+            (!a.include_undated && row.valid_from().is_none()) || row.at_us() < since
+        }) {
             return Ok(false);
         }
         if let Some(pattern) = &a.grep
@@ -235,7 +240,7 @@ pub(super) fn pool_row(row: &FactRecord, similarity: Value) -> Value {
         "entity_slug": row.entity_slug,
         "source_id": row.source_id,
         "source": row.source,
-        "valid_from": iso(row.valid_from_us),
+        "valid_from": row.valid_from().map(iso),
         "valid_until": row.valid_until_us.map(iso),
         "created_at": iso(row.created_at_us),
         "claim_metric": row.claim_metric,
@@ -276,7 +281,8 @@ impl Store {
     /// `listFactsForRelevance` (keyword and entity arms): the pool's rows of one arm, with each
     /// row's cosine to the query vector when it is comparable. The keyword arm keeps the rows
     /// whose `to_tsvector('english', fact || ' ' || entity name)` matches the OR of the terms'
-    /// lexemes, best `ts_rank_cd` first, then `valid_from` and `id` descending; the entity arm
+    /// lexemes, a row matching every searched word (the AND `plainto_tsquery`) ahead of any partial
+    /// match, then best `ts_rank_cd` first, then `valid_from` and `id` descending; the entity arm
     /// reads the named entity's rows newest first (a future-dated row as of its `created_at`),
     /// then `id` descending.
     pub fn list_facts_for_relevance(&self, q: &RelevanceQuery) -> Result<Vec<Value>> {
@@ -301,13 +307,16 @@ impl Store {
             None => None,
         };
         let config = FtsConfig::parse(q.fts_config.as_deref())?;
-        let query = if keyword {
-            match or_of_lexemes(&plainto_tsquery_in(config, &q.terms)?) {
-                Some(query) => Some(query),
+        // The keyword arm's AND query (`plainto_tsquery`) pools a fact holding every searched word ahead
+        // of any partial match; the OR of its lexemes is what a row must match to be pooled at all.
+        let (query, every_word) = if keyword {
+            let every_word = plainto_tsquery_in(config, &q.terms)?;
+            match or_of_lexemes(&every_word) {
+                Some(query) => (Some(query), Some(every_word)),
                 None => return Ok(Vec::new()),
             }
         } else {
-            None
+            (None, None)
         };
         let read = self.read()?;
         let pool = Pool::new(OP, &q.pool, self.env.now_micros())?;
@@ -324,12 +333,12 @@ impl Store {
                 .ok_or_else(|| invalid(format!("{OP}: the entity arm needs an entity")))?;
             entity_rows(&*read, &entity.source_id, &entity.slug)?
         };
-        let mut ranked: Vec<(f32, FactRecord)> = Vec::new();
+        let mut ranked: Vec<(bool, f32, FactRecord)> = Vec::new();
         for row in candidates {
             if !pool.admits(&*read, &row)? {
                 continue;
             }
-            let rank = match &query {
+            let (full, rank) = match &query {
                 Some(query) => {
                     let document = format!(
                         "{} {}",
@@ -340,11 +349,14 @@ impl Store {
                     if !ts_matches(&vector, query) {
                         continue;
                     }
-                    ts_rank_cd(&vector, query)
+                    let full = every_word
+                        .as_ref()
+                        .is_some_and(|every| ts_matches(&vector, every));
+                    (full, ts_rank_cd(&vector, query))
                 }
-                None => 0.0,
+                None => (false, 0.0),
             };
-            ranked.push((rank, row));
+            ranked.push((full, rank, row));
         }
         // Postgres sorts `real` with NaN above every number, as `total_cmp` does for a positive NaN.
         // The keyword arm breaks ties on `valid_from`; the entity arm ranks a future-dated fact by
@@ -352,20 +364,21 @@ impl Store {
         let now = self.env.now_micros();
         let time = |r: &FactRecord| {
             if keyword {
-                r.valid_from_us
+                r.at_us()
             } else {
                 super::ranked_time(r, now)
             }
         };
-        ranked.sort_by(|(sa, a), (sb, b)| {
-            sb.total_cmp(sa)
+        ranked.sort_by(|(fa, sa, a), (fb, sb, b)| {
+            fb.cmp(fa)
+                .then(sb.total_cmp(sa))
                 .then(time(b).cmp(&time(a)))
                 .then(b.id.cmp(&a.id))
         });
         Ok(ranked
             .iter()
             .take(limit)
-            .map(|(_, row)| pool_row(row, similarity(row, &target)))
+            .map(|(_, _, row)| pool_row(row, similarity(row, &target)))
             .collect())
     }
 

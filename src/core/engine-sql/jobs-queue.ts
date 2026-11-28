@@ -12,7 +12,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { getJob, killJobs, lockParentsOrdered, type JobRow } from './jobs.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../minions/watchdog-attribution.ts';
-import { joinFragments, renderFragment, sqlFragment, type SqlFragment } from './fragment.ts';
+import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -33,16 +33,41 @@ export const UNREVIEWED_LIVE_JOBS_WHERE = `status IN ('waiting','active','delaye
 /** A caller's attested actor: system, external id, member and audience key (minions/types.ts `JobActor`). */
 export type JobActorTuple = readonly [string, string, string, string];
 
+/** The minion_jobs table aliases a fenced read names; each maps to its constant `alias.` prefix, so no caller text is spliced. */
+const JOB_ALIAS_PREFIX = { a: 'a.', c: 'c.', h: 'h.', j: 'j.', k: 'k.', p: 'p.', s: 's.' } as const;
+export type JobAlias = keyof typeof JOB_ALIAS_PREFIX;
+
 /**
  * True when the job's accepted actor and audience equal `actor`: the fragment form of `jobActorSql`
- * (minions/types.ts), which numbers its placeholders by hand.
+ * (minions/types.ts), which numbers its placeholders by hand. `alias` is one of the code-provided table aliases.
  */
-export function jobActorFragment(actor: JobActorTuple): SqlFragment {
+export function jobActorFragment(actor: JobActorTuple, alias?: JobAlias): SqlFragment {
   const [system, externalId, member, audience] = actor;
-  return sqlFragment`COALESCE(submission_authority->'grant'->'actor'->>'system', '') = ${system}::text AND COALESCE(submission_authority->'grant'->'actor'->>'external_id', '') = ${externalId}::text AND COALESCE(submission_authority->'grant'->'actor'->>'member', '') = ${member}::text AND COALESCE(CASE WHEN jsonb_typeof(submission_authority->'grant'->'actingFor') = 'array' THEN (SELECT string_agg(DISTINCT e COLLATE "C", ',' ORDER BY e COLLATE "C") FROM jsonb_array_elements_text(submission_authority->'grant'->'actingFor') e) WHEN submission_authority->'grant'->'actingFor' IS NOT NULL THEN '!' END, '') = ${audience}::text`;
+  const prefix = alias ? JOB_ALIAS_PREFIX[alias] : '';
+  const grant = trustedSql(`${prefix}submission_authority->'grant'`);
+  return sqlFragment`COALESCE(${grant}->'actor'->>'system', '') = ${system}::text AND COALESCE(${grant}->'actor'->>'external_id', '') = ${externalId}::text AND COALESCE(${grant}->'actor'->>'member', '') = ${member}::text AND COALESCE(CASE WHEN jsonb_typeof(${grant}->'actingFor') = 'array' THEN (SELECT string_agg(DISTINCT e COLLATE "C", ',' ORDER BY e COLLATE "C") FROM jsonb_array_elements_text(${grant}->'actingFor') e) WHEN ${grant}->'actingFor' IS NOT NULL THEN '!' END, '') = ${audience}::text`;
 }
 
-const NO_ACTOR: JobActorTuple = ['', '', '', ''];
+/**
+ * GST-4010: the remote caller a fenced job read or control matches (minions/types.ts `JobOwner`). `principal` is the
+ * verifier-derived credential every remote submission records as `submission_authority.principal`; `clientId` matches the
+ * `__owner_client_id` stamp of agent rows queued before submission authority existed; `actor` is the attested actor or audience.
+ */
+export interface JobOwnerSpec { principal: { kind: string; id: string } | null; clientId: string | null; actor: JobActorTuple }
+
+/**
+ * True when the job belongs to `owner` (`jobOwnedSql`, minions/types.ts, as a fragment). A job with a recorded principal
+ * matches on that principal only, so caller-visible data can never claim a remote job; a job with none (local or
+ * pre-authority rows) matches only its `__owner_client_id` stamp. Either way its actor and audience must equal the
+ * caller's. NULL when the row is missing (a LEFT JOIN), so wrap a SELECT-list use in COALESCE. `alias` is a code-provided table alias.
+ */
+export function jobOwnedFragment(owner: JobOwnerSpec, alias?: JobAlias): SqlFragment {
+  const t = alias ? JOB_ALIAS_PREFIX[alias] : '';
+  const principal = trustedSql(`${t}submission_authority->'principal'`);
+  const data = trustedSql(`${t}data`);
+  return sqlFragment`((${principal}->>'kind' = ${owner.principal?.kind ?? null}::text AND ${principal}->>'id' = ${owner.principal?.id ?? null}::text)
+      OR (${principal} IS NULL AND ${data}->>'__owner_client_id' = ${owner.clientId}::text)) AND ${jobActorFragment(owner.actor, alias)}`;
+}
 
 // ---------------------------------------------------------------- writes on one job
 
@@ -251,9 +276,8 @@ export interface CancelJobsSpec {
   reason?: string | null;
   /** Cancel a root only while it is in one of these statuses (re-checked inside the statement). */
   rootStatuses?: readonly string[] | null;
-  /** Cancel only roots whose `data.__owner_client_id` is this client and whose accepted actor is `ownerActor`. */
-  ownerClientId?: string | null;
-  ownerActor?: JobActorTuple | null;
+  /** Cancel only roots this caller owns (`jobOwnedFragment`): its principal (or, for a row with none, its client stamp) and its actor. */
+  owner?: JobOwnerSpec | null;
 }
 
 /**
@@ -264,9 +288,7 @@ export async function cancelJobs(tx: Raw, ids: readonly number[], spec: CancelJo
   if (ids.length === 0) return [];
   const idList = [...ids];
   const statusFence = spec.rootStatuses ? sqlFragment` AND status = ANY(${[...spec.rootStatuses]}::text[])` : sqlFragment``;
-  const ownerFence = spec.ownerClientId != null
-    ? sqlFragment` AND (data->>'__owner_client_id' = ${spec.ownerClientId}::text AND ${jobActorFragment(spec.ownerActor ?? NO_ACTOR)})`
-    : sqlFragment``;
+  const ownerFence = spec.owner ? sqlFragment` AND ${jobOwnedFragment(spec.owner)}` : sqlFragment``;
   const { text, params } = renderFragment(sqlFragment`WITH RECURSIVE descendants AS (
           SELECT id, 0 AS d FROM minion_jobs
            WHERE id = ANY(${idList}::int[])${statusFence}${ownerFence}
@@ -839,8 +861,8 @@ export interface JobPageSpec {
   status?: string;
   queue?: string;
   name?: string;
-  ownerClientId?: string;
-  ownerActor?: JobActorTuple;
+  /** Only the jobs this caller owns (`jobOwnedFragment`). */
+  owner?: JobOwnerSpec;
   /** Rows to read (the caller asks for one more than it returns). */
   limit: number;
   /** Resume after this `(created_at microseconds, id)`. */
@@ -857,10 +879,7 @@ export async function listJobPage(tx: Raw, spec: JobPageSpec): Promise<JobRow[]>
   if (spec.status) where.push(sqlFragment`status = ${spec.status}`);
   if (spec.queue) where.push(sqlFragment`queue = ${spec.queue}`);
   if (spec.name) where.push(sqlFragment`name = ${spec.name}`);
-  if (spec.ownerClientId) {
-    where.push(sqlFragment`data->>'__owner_client_id' = ${spec.ownerClientId}`);
-    where.push(jobActorFragment(spec.ownerActor ?? NO_ACTOR));
-  }
+  if (spec.owner) where.push(jobOwnedFragment(spec.owner));
   const filter = where.length ? sqlFragment`WHERE ${joinFragments(where, ' AND ')}` : sqlFragment``;
   const { text, params } = renderFragment(sqlFragment`SELECT *, ((EXTRACT(EPOCH FROM created_at) * 1000000)::bigint)::text AS created_us FROM minion_jobs ${filter}
       ORDER BY created_at DESC, id DESC LIMIT ${spec.limit}`);

@@ -4,8 +4,10 @@
  * the page and transcript rows of `extract_atoms_page_state` and `extract_atoms_transcript_state`, and the
  * derived-generation and page reads that resolve a transcript's key and atom slug, and the conversation-page read of the
  * transcript page index (transcripts/discover.ts indexTranscriptPages). Each statement is the text those
- * functions sent through `executeRaw`, unchanged (test/extract-atoms-state-sql-pin.test.ts pins each one against master).
- * The Rust store serves them from its ledger records (store format 17, rust/docs/store/extract-atoms.md).
+ * functions sent through `executeRaw`, unchanged; the page-state write is sync 21's text (GST-4020 #10542)
+ * (test/extract-atoms-state-sql-pin.test.ts pins each one against master). The Rust store serves them from its ledger
+ * records (store format 17, rust/docs/store/extract-atoms.md); its page-state write predates GST-4020's digest and read
+ * clock and is not reached while the Rust engine refuses `listExtractablePages`.
  */
 type Raw = { executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]> };
 
@@ -25,15 +27,16 @@ export interface LiveTranscriptGeneration { id: number; owner_key: string; locat
 export const ATOM_PAGE_IDENTITY_SQL = `SELECT p.id, s.incarnation, p.knowledge_revision FROM pages p JOIN sources s ON s.id=p.source_id
       WHERE p.source_id=$1 AND p.slug=$2 AND p.content_hash=$3 AND p.deleted_at IS NULL`;
 
-export const ATOM_PAGE_STATE_SQL = `INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned)
-      SELECT s.incarnation, p.id, p.content_hash, $7::integer, $8::boolean
+export const ATOM_PAGE_STATE_SQL = `INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned, input_sha256, updated_at)
+      SELECT s.incarnation, p.id, p.content_hash, $7::integer, $8::boolean, $9::text, CASE WHEN $8::boolean THEN COALESCE($10::timestamptz, now()) ELSE now() END
       FROM pages p JOIN sources s ON s.id=p.source_id
       WHERE p.id=$1 AND s.incarnation=$2::uuid AND p.source_id=$3 AND p.slug=$4
         AND p.content_hash=$5 AND p.knowledge_revision=$6::uuid AND p.deleted_at IS NULL
       FOR SHARE OF p, s
       ON CONFLICT (source_incarnation, page_id, content_hash) DO UPDATE
         SET fail_count=extract_atoms_page_state.fail_count + EXCLUDED.fail_count,
-            tombstoned=extract_atoms_page_state.tombstoned OR EXCLUDED.tombstoned, updated_at=now()
+            tombstoned=EXCLUDED.tombstoned, input_sha256=EXCLUDED.input_sha256,
+            updated_at=CASE WHEN EXCLUDED.tombstoned THEN EXCLUDED.updated_at ELSE extract_atoms_page_state.updated_at END
       RETURNING fail_count`;
 
 export const ATOM_PAGE_PARTIAL_SQL = `INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned, partial_input_chars)
@@ -77,12 +80,15 @@ export async function readAtomPageIdentity(raw: Raw, sourceId: string, slug: str
 }
 
 /**
- * The pinned page's row gains `failIncrement` failures and is tombstoned when `tombstone`: the row's fail count, or
- * null when the page no longer matches the pin.
+ * The pinned page's row gains `failIncrement` failures and is tombstoned (completed) when `tombstone`, and otherwise
+ * loses its completion (GST-4020): the row's fail count, or null when the page no longer matches the pin. A completion
+ * stores `inputSha256` (the model input's digest) and is stamped at `readAt`, the database time discovery read the
+ * page (now() when absent); a failure keeps the row's time. Sync 21's statement and parameters (GST-4020 #10542).
  */
-export async function writeAtomPageState(raw: Raw, pin: AtomPagePin, failIncrement: number, tombstone: boolean): Promise<number | null> {
+export async function writeAtomPageState(raw: Raw, pin: AtomPagePin, failIncrement: number, tombstone: boolean,
+  inputSha256: string | null = null, readAt: string | null = null): Promise<number | null> {
   const [row] = await raw.executeRaw<{ fail_count: number }>(ATOM_PAGE_STATE_SQL,
-    [pin.pageId, pin.sourceIncarnation, pin.sourceId, pin.slug, pin.contentHash, pin.revision, failIncrement, tombstone]);
+    [pin.pageId, pin.sourceIncarnation, pin.sourceId, pin.slug, pin.contentHash, pin.revision, failIncrement, tombstone, inputSha256, readAt]);
   return row ? Number(row.fail_count) : null;
 }
 

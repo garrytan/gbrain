@@ -26,7 +26,7 @@ Before it writes anything, setup resolves and prints:
 | Source | `--source`, else `GBRAIN_SOURCE`, else unpinned (the server uses the brain's default source). |
 | Transport | Local stdio: the harness starts `<launcher> serve --surface <surface>`, plus `--advertise verbs` on a new Claude Code registration that chose no surface. |
 | Launcher | `--gbrain-bin`, else the absolute `gbrain` on `PATH` (GUI-launched hosts inherit no `PATH`, so a bare name is never written). |
-| Surface | `--surface` (with `--advertise` to narrow its listing), else `GBRAIN_SURFACE`, else the surface already registered, else the harness default: Claude Code `starter`, listing only the seven memory verbs and `request_tools` (`--advertise verbs`); Codex `full`, listed whole, because Codex does not reload its tool list and never calls a tool `request_tools` unlocks. A chosen surface is listed in full and recorded as pinned (`surface_origin: explicit` in the Codex receipt); an existing Claude Code registration keeps its surface and listing. A Codex entry that follows the default (`surface_origin: default`) moves with it on a re-run, and setup prints the move and the line that keeps the old entry; `gbrain setup codex --surface starter --advertise verbs` pins the old registration. `gbrain config set mcp.default_surface_<claude_code\|codex\|hermes> full\|starter` turns one harness's default (the activation and rollback knob; `config unset` restores the shipped default). |
+| Surface | `--surface` (with `--advertise` to narrow its listing), else `GBRAIN_SURFACE`, else the surface already registered, else the harness default: Claude Code `starter`, listing only the seven memory verbs, `correct` and `request_tools` (`--advertise verbs`); Codex `full`, listed whole, because Codex does not reload its tool list and never calls a tool `request_tools` unlocks. A chosen surface is listed in full and recorded as pinned (`surface_origin: explicit` in the Codex receipt); an existing Claude Code registration keeps its surface and listing. A Codex entry that follows the default (`surface_origin: default`) moves with it on a re-run, and setup prints the move and the line that keeps the old entry; `gbrain setup codex --surface starter --advertise verbs` pins the old registration. `gbrain config set mcp.default_surface_<claude_code\|codex\|hermes> full\|starter` turns one harness's default (the activation and rollback knob; `config unset` restores the shipped default). |
 | Owner | Who owns the MCP name now: nobody, this setup (its receipt), or the gbrain Claude Code or Codex plugin (setup then adds hooks only). |
 
 It refuses with a coded error, before any write, when the target is not safe:
@@ -95,9 +95,9 @@ Setup reports how far the wiring is proven:
    fresh session of this harness yet. Open a new session (the harness reads
    its config at session start) and check that `/mcp` lists gbrain.
 
-In a new Claude Code session (SessionStart `startup` or `resume`) the
-SessionStart hook waits up to 4 seconds for the stdio serve Claude Code starts
-alongside it, then prints the context pack (recent world-visible facts; private
+In a new Claude Code or Codex session (SessionStart `startup` or `resume`)
+the SessionStart hook waits up to 4 seconds for the stdio serve the harness
+starts alongside it, then prints the context pack (recent world-visible facts; private
 facts are never pushed). Without the wait a fresh session got nothing, because
 the serve binds its socket about 2 seconds after spawn.
 4. `native-verified`: the capability table records an observed push for the
@@ -172,8 +172,8 @@ One bot reading for all of them with one unbound key pulls one person's notes in
 another person's answers, so setup labels each person instead:
 
 ```bash
-gbrain setup claude-code --serves several --members alice-example,bob-example
-# or --members-file people.txt (one id per line)
+gbrain setup claude-code --members alice-example,bob-example
+# or --members-file people.txt (one id per line); naming people implies --serves several
 ```
 
 For each person this adds a member (existing ones are kept), a folder rule
@@ -210,7 +210,8 @@ the preview shows it first, and an owner that is already set is kept. No key is
 rebound: the receipt lists each live token or OAuth client bound to no member with
 the `gbrain auth rescope --token|--client <name> --member <owner>` command that
 binds it, so you bind your own keys on purpose.
-Each key setup mints writes to the run's source and reads a fixed list: that source,
+Each key setup mints writes to the run's source (the source the harness is pinned to:
+`--source`, `GBRAIN_SOURCE` or a Codex setup receipt; otherwise `sources.default`) and reads a fixed list: that source,
 the `company` source when it exists (`--shape company`), and every source federated
 when the key is minted. The preview names the list and how many pages `company` holds,
 how many of them are imported calls, and that every member reads them all, calls they
@@ -224,6 +225,9 @@ the key's write source, setup blocks the key instead and names the commands that
 or revoke it. Unfederating a source does not take it away from these keys either:
 `gbrain sources unfederate <id>` lists each member key that still reads it, with the
 `gbrain auth rescope --token <name> --sources <ids>` command that drops it.
+A re-run on another source moves a key setup minted with a list to write there and
+keeps its secret; a key setup did not mint that way, or whose list was changed by hand,
+is skipped with the `gbrain auth rescope` command that moves it.
 Keys minted before this (the default grant) are never changed. When the same run
 adds the `company` source (`--shape company`), setup labels the people first and then
 gives their new keys `company`; `company` itself stays out of default search.
@@ -269,7 +273,8 @@ a brain setup cannot read refuses (`setup_serves_unreadable`).
 `gbrain doctor` fails `unlabeled_people_folders` when such a brain has a
 `people/<name>/` folder with pages and no rule naming its readers.
 `gbrain access serves several --members ...` does the labelling alone (preview, then
-`--yes`).
+`--yes`); without `--source` it labels `GBRAIN_SOURCE`, then `sources.default`, and the
+directory it runs from never decides where member keys write.
 
 ### A member's key into their harness
 

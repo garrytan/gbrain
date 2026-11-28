@@ -29,6 +29,7 @@ export const CONTENT_MEMBERS = {
   readVersionContent: 'page_versions',
   readPageVersionRow: 'page_versions',
   pruneHoldingPageVersions: 'page_versions',
+  pruneInlineVersionsById: 'page_versions',
   revertToVersion: 'page_versions',
   // page_body
   refreshPageBody: 'page_body',

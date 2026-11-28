@@ -4,9 +4,11 @@
  * the release of the partial dispositions a raised input cap supersedes. Each statement is the text those functions sent
  * through `executeRaw`, written out as a constant so no clause is spliced (test/extract-atoms-sql-pin.test.ts pins each one
  * against master's text). Discovery keeps master's four shapes: with or without the connector opt-out (its page types and
- * source kinds are the literal lists connector-atoms.ts spliced) and with or without the affected-slug filter.
- * The Rust engine answers the reads from page and op-checkpoint records and refuses `assertAtomStateStore` by name: it keeps
- * no extract_atoms page or transcript state (rust/docs/store/extract-atoms.md).
+ * source kinds are the literal lists connector-atoms.ts spliced) and with or without the affected-slug filter. Discovery is
+ * sync-21's text (GST-4020 #10542, #9888 #10483): the per-source opt-out, the still-current scan and atoms tests, and no
+ * body column (cycle/extract-atoms-page-state.ts canonicalPageInputs reads each page's canonical snapshot).
+ * The Rust engine refuses `listExtractablePages` by name (rust/docs/store/extract-atoms.md): its store keeps none of the
+ * sync-21 discovery state, so a Rust brain refuses the phase before discovery and before any model call.
  */
 type Raw = { executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]> };
 
@@ -30,13 +32,12 @@ export interface ExtractablePageQuery {
   holdIds: readonly string[];
 }
 
-/** One extractable page with the identity its state rows pin to. */
+/** One extractable page with the identity its state rows pin to (its body is read from its canonical snapshot). */
 export interface ExtractablePageRow {
   id: number;
   knowledge_revision: string;
   source_incarnation: string;
   slug: string;
-  compiled_truth: string;
   content_hash: string;
 }
 
@@ -44,7 +45,6 @@ export const EXTRACTABLE_PAGES_SQL = `
     SELECT p.id, p.knowledge_revision,
            (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
            p.slug,
-           p.compiled_truth,
            p.content_hash
     FROM pages p
     WHERE p.source_id = $1
@@ -66,22 +66,38 @@ export const EXTRACTABLE_PAGES_SQL = `
   WHERE scan.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
     AND scan.page_id=p.id AND scan.content_hash=p.content_hash
     AND (scan.tombstoned OR scan.partial_input_chars IS NOT NULL)
+    AND NOT EXISTS (
+    SELECT 1 FROM extract_atoms_page_state newer
+    WHERE newer.source_incarnation=scan.source_incarnation AND newer.page_id=scan.page_id AND newer.updated_at > scan.updated_at)
+  AND NOT EXISTS (
+    SELECT 1 FROM fact_withdrawals w
+    WHERE w.source_id=p.source_id AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > scan.updated_at)
 )
       AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false'
+      AND NOT EXISTS (SELECT 1 FROM sources xs WHERE xs.id = p.source_id AND xs.config->>'extract_atoms' = 'false')
       AND NOT EXISTS (SELECT 1 FROM derived_generations dg
         WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
           AND dg.hold_id = ANY($5::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
           AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))
       
-      AND NOT EXISTS (
-        SELECT 1
-        FROM pages atom
-        WHERE atom.type = 'atom'
-          AND atom.source_id = $1
-          AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-          AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
-          AND atom.deleted_at IS NULL
-      )
+      AND (NOT EXISTS (
+    SELECT 1 FROM pages atom
+    WHERE atom.type = 'atom' AND atom.source_id = p.source_id
+      AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+      AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
+      AND atom.deleted_at IS NULL
+  ) OR EXISTS (
+    SELECT 1 FROM extract_atoms_page_state newer
+    WHERE newer.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
+      AND newer.page_id=p.id AND newer.content_hash<>p.content_hash
+      AND newer.updated_at > COALESCE((SELECT max(cur.updated_at) FROM extract_atoms_page_state cur
+        WHERE cur.source_incarnation=newer.source_incarnation AND cur.page_id=p.id AND cur.content_hash=p.content_hash), '-infinity'::timestamptz)
+  ) OR EXISTS (
+    SELECT 1 FROM extract_atoms_page_state done
+    JOIN fact_withdrawals w ON w.source_id=p.source_id AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > done.updated_at
+    WHERE done.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
+      AND done.page_id=p.id AND done.content_hash=p.content_hash
+  ))
     ORDER BY p.updated_at DESC
     LIMIT $4
   `;
@@ -90,7 +106,6 @@ export const EXTRACTABLE_PAGES_FILTERED_SQL = `
     SELECT p.id, p.knowledge_revision,
            (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
            p.slug,
-           p.compiled_truth,
            p.content_hash
     FROM pages p
     WHERE p.source_id = $1
@@ -112,22 +127,38 @@ export const EXTRACTABLE_PAGES_FILTERED_SQL = `
   WHERE scan.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
     AND scan.page_id=p.id AND scan.content_hash=p.content_hash
     AND (scan.tombstoned OR scan.partial_input_chars IS NOT NULL)
+    AND NOT EXISTS (
+    SELECT 1 FROM extract_atoms_page_state newer
+    WHERE newer.source_incarnation=scan.source_incarnation AND newer.page_id=scan.page_id AND newer.updated_at > scan.updated_at)
+  AND NOT EXISTS (
+    SELECT 1 FROM fact_withdrawals w
+    WHERE w.source_id=p.source_id AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > scan.updated_at)
 )
       AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false'
+      AND NOT EXISTS (SELECT 1 FROM sources xs WHERE xs.id = p.source_id AND xs.config->>'extract_atoms' = 'false')
       AND NOT EXISTS (SELECT 1 FROM derived_generations dg
         WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
           AND dg.hold_id = ANY($5::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
           AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))
       AND p.slug = ANY($6::text[])
-      AND NOT EXISTS (
-        SELECT 1
-        FROM pages atom
-        WHERE atom.type = 'atom'
-          AND atom.source_id = $1
-          AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-          AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
-          AND atom.deleted_at IS NULL
-      )
+      AND (NOT EXISTS (
+    SELECT 1 FROM pages atom
+    WHERE atom.type = 'atom' AND atom.source_id = p.source_id
+      AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+      AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
+      AND atom.deleted_at IS NULL
+  ) OR EXISTS (
+    SELECT 1 FROM extract_atoms_page_state newer
+    WHERE newer.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
+      AND newer.page_id=p.id AND newer.content_hash<>p.content_hash
+      AND newer.updated_at > COALESCE((SELECT max(cur.updated_at) FROM extract_atoms_page_state cur
+        WHERE cur.source_incarnation=newer.source_incarnation AND cur.page_id=p.id AND cur.content_hash=p.content_hash), '-infinity'::timestamptz)
+  ) OR EXISTS (
+    SELECT 1 FROM extract_atoms_page_state done
+    JOIN fact_withdrawals w ON w.source_id=p.source_id AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > done.updated_at
+    WHERE done.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
+      AND done.page_id=p.id AND done.content_hash=p.content_hash
+  ))
     ORDER BY p.updated_at DESC
     LIMIT $4
   `;
@@ -136,7 +167,6 @@ export const EXTRACTABLE_PAGES_CONNECTORS_OUT_SQL = `
     SELECT p.id, p.knowledge_revision,
            (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
            p.slug,
-           p.compiled_truth,
            p.content_hash
     FROM pages p
     WHERE p.source_id = $1
@@ -158,23 +188,39 @@ export const EXTRACTABLE_PAGES_CONNECTORS_OUT_SQL = `
   WHERE scan.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
     AND scan.page_id=p.id AND scan.content_hash=p.content_hash
     AND (scan.tombstoned OR scan.partial_input_chars IS NOT NULL)
+    AND NOT EXISTS (
+    SELECT 1 FROM extract_atoms_page_state newer
+    WHERE newer.source_incarnation=scan.source_incarnation AND newer.page_id=scan.page_id AND newer.updated_at > scan.updated_at)
+  AND NOT EXISTS (
+    SELECT 1 FROM fact_withdrawals w
+    WHERE w.source_id=p.source_id AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > scan.updated_at)
 )
       AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false' AND NOT (p.type IN ('email','meeting') AND EXISTS (SELECT 1 FROM sources cs
         WHERE cs.id = p.source_id AND cs.config->>'kind' IN ('google','github','meetings','slack','imessage','apple-contacts')))
+      AND NOT EXISTS (SELECT 1 FROM sources xs WHERE xs.id = p.source_id AND xs.config->>'extract_atoms' = 'false')
       AND NOT EXISTS (SELECT 1 FROM derived_generations dg
         WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
           AND dg.hold_id = ANY($5::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
           AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))
       
-      AND NOT EXISTS (
-        SELECT 1
-        FROM pages atom
-        WHERE atom.type = 'atom'
-          AND atom.source_id = $1
-          AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-          AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
-          AND atom.deleted_at IS NULL
-      )
+      AND (NOT EXISTS (
+    SELECT 1 FROM pages atom
+    WHERE atom.type = 'atom' AND atom.source_id = p.source_id
+      AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+      AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
+      AND atom.deleted_at IS NULL
+  ) OR EXISTS (
+    SELECT 1 FROM extract_atoms_page_state newer
+    WHERE newer.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
+      AND newer.page_id=p.id AND newer.content_hash<>p.content_hash
+      AND newer.updated_at > COALESCE((SELECT max(cur.updated_at) FROM extract_atoms_page_state cur
+        WHERE cur.source_incarnation=newer.source_incarnation AND cur.page_id=p.id AND cur.content_hash=p.content_hash), '-infinity'::timestamptz)
+  ) OR EXISTS (
+    SELECT 1 FROM extract_atoms_page_state done
+    JOIN fact_withdrawals w ON w.source_id=p.source_id AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > done.updated_at
+    WHERE done.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
+      AND done.page_id=p.id AND done.content_hash=p.content_hash
+  ))
     ORDER BY p.updated_at DESC
     LIMIT $4
   `;
@@ -183,7 +229,6 @@ export const EXTRACTABLE_PAGES_CONNECTORS_OUT_FILTERED_SQL = `
     SELECT p.id, p.knowledge_revision,
            (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
            p.slug,
-           p.compiled_truth,
            p.content_hash
     FROM pages p
     WHERE p.source_id = $1
@@ -205,23 +250,39 @@ export const EXTRACTABLE_PAGES_CONNECTORS_OUT_FILTERED_SQL = `
   WHERE scan.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
     AND scan.page_id=p.id AND scan.content_hash=p.content_hash
     AND (scan.tombstoned OR scan.partial_input_chars IS NOT NULL)
+    AND NOT EXISTS (
+    SELECT 1 FROM extract_atoms_page_state newer
+    WHERE newer.source_incarnation=scan.source_incarnation AND newer.page_id=scan.page_id AND newer.updated_at > scan.updated_at)
+  AND NOT EXISTS (
+    SELECT 1 FROM fact_withdrawals w
+    WHERE w.source_id=p.source_id AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > scan.updated_at)
 )
       AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false' AND NOT (p.type IN ('email','meeting') AND EXISTS (SELECT 1 FROM sources cs
         WHERE cs.id = p.source_id AND cs.config->>'kind' IN ('google','github','meetings','slack','imessage','apple-contacts')))
+      AND NOT EXISTS (SELECT 1 FROM sources xs WHERE xs.id = p.source_id AND xs.config->>'extract_atoms' = 'false')
       AND NOT EXISTS (SELECT 1 FROM derived_generations dg
         WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
           AND dg.hold_id = ANY($5::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
           AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))
       AND p.slug = ANY($6::text[])
-      AND NOT EXISTS (
-        SELECT 1
-        FROM pages atom
-        WHERE atom.type = 'atom'
-          AND atom.source_id = $1
-          AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-          AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
-          AND atom.deleted_at IS NULL
-      )
+      AND (NOT EXISTS (
+    SELECT 1 FROM pages atom
+    WHERE atom.type = 'atom' AND atom.source_id = p.source_id
+      AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+      AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
+      AND atom.deleted_at IS NULL
+  ) OR EXISTS (
+    SELECT 1 FROM extract_atoms_page_state newer
+    WHERE newer.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
+      AND newer.page_id=p.id AND newer.content_hash<>p.content_hash
+      AND newer.updated_at > COALESCE((SELECT max(cur.updated_at) FROM extract_atoms_page_state cur
+        WHERE cur.source_incarnation=newer.source_incarnation AND cur.page_id=p.id AND cur.content_hash=p.content_hash), '-infinity'::timestamptz)
+  ) OR EXISTS (
+    SELECT 1 FROM extract_atoms_page_state done
+    JOIN fact_withdrawals w ON w.source_id=p.source_id AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > done.updated_at
+    WHERE done.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
+      AND done.page_id=p.id AND done.content_hash=p.content_hash
+  ))
     ORDER BY p.updated_at DESC
     LIMIT $4
   `;
@@ -253,8 +314,9 @@ export const RELEASE_PARTIAL_DISPOSITIONS_SQL = [
 ] as const;
 
 /**
- * Pages of `sourceId` awaiting atom extraction (no atom of their current content, no tombstoned, partial, completed or
- * held disposition, no held atom generation for their current input), newest first, at most `limit`.
+ * Pages of `sourceId` awaiting atom extraction (no current atom of their current content, no still-current tombstoned,
+ * partial, completed or held disposition, no held atom generation for their current input, not in a source with
+ * `extract_atoms` off), newest first, at most `limit`.
  */
 export async function listExtractablePages(raw: Raw, query: ExtractablePageQuery): Promise<ExtractablePageRow[]> {
   const filtered = query.affectedSlugs !== null && query.affectedSlugs.length > 0;

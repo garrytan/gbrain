@@ -82,8 +82,8 @@ Per-call params on `search`, `query`, `recall`:
 
 - `return_unit`: `chunk` | `window` | `section` | `page` | `auto`. Default from
   config `search.return_unit` (default `auto`).
-- `search.long_page_unit` (config only, default `off`): `window` | `section` |
-  `page` for long non-conversation hits under the implied `auto`; see
+- `search.long_page_unit` (config only, default `section`): `off` | `window` |
+  `section` | `page` for long non-conversation hits under the implied `auto`; see
   [Long pages](#long-pages-searchlong_page_unit).
 - `search.long_page_min_chars` (config only, default 20,000): the
   rendered-body length in characters at which a page counts as long for
@@ -272,10 +272,12 @@ changes this; see the next section.
 
 ### Long pages (`search.long_page_unit`)
 
-Off by default. `gbrain config set search.long_page_unit section` (or `window`,
-`page`; `off` turns it back off) makes `search` and `query` deliver a **long
-non-conversation hit** in that unit under the implied `auto`, the way `auto`
-already delivers conversations whole. Every other hit keeps its ranked chunk
+On by default as `section`: `search` and `query` deliver a **long
+non-conversation hit** in its section under the implied `auto`, the way `auto`
+already delivers conversations whole. `gbrain config set search.long_page_unit
+window` (or `page`) picks another unit, and `gbrain config set
+search.long_page_unit off` keeps every non-conversation hit its ranked chunk,
+as before the default changed (approved default flip, gbrain-evals#653). Every other hit keeps its ranked chunk
 unchanged. The value is a delivery unit from the table above and the unit
 algorithms are the same; nothing selects passages by term overlap, so the
 delivered unit is always the one around the ranked hit.
@@ -286,7 +288,7 @@ delivered unit is always the one around the ranked hit.
 |---|---|---|---|
 | 1 | `return_unit` on the call | always (`auto` included: an explicit `auto` keeps every non-conversation chunk) | that unit |
 | 2 | `search.return_unit` set to anything but `auto` | `return_unit` omitted | that unit, every hit |
-| 3 | `search.long_page_unit` (not `off`) | `return_unit` omitted, `search.return_unit` unset or `auto`, no explicit `token_budget`, and the hit is a long non-conversation page | that unit (`delivered.reason: "long_page"`) |
+| 3 | `search.long_page_unit` (unset is `section`; not `off`) | `return_unit` omitted, `search.return_unit` unset or `auto`, no explicit `token_budget`, and the hit is a long non-conversation page | that unit (`delivered.reason: "long_page"`) |
 | 4 | implied `auto` | everything else | conversations whole, other hits their ranked chunk |
 
 The policy is resolved at the `search`/`query` caller and passed to the
@@ -317,11 +319,12 @@ never long pages.
 **Limits.** One size preflight query reads the character and byte counts of the hit pages
 under the caller's read scope; it never reads a body. Then, in rank order, at
 most **5** long pages (`LONG_PAGE_MAX_PAGES`) holding at most **1,000,000**
-stored-body bytes together (`LONG_PAGE_MAX_INPUT_BYTES`) are fetched in one
+stored-body bytes together (`LONG_PAGE_MAX_INPUT_BYTES`, the timeline counted
+even under `detail: "low"`, since the read returns it) are fetched in one
 bounded batched call of their own, so they can neither slow nor fail the
 conversation fetch. A page that would cross a limit is skipped whole, never
-sliced: bodies are sanitized whole before any cut. Preflight plus fetch share
-a cooperative **2,000 ms** deadline (`LONG_PAGE_DEADLINE_MS`). A long page that
+sliced: bodies are sanitized whole before any cut. Preflight plus fetch,
+fence-overlay reads included, share a cooperative **2,000 ms** deadline (`LONG_PAGE_DEADLINE_MS`). A long page that
 cannot be delivered in its unit keeps its ranked chunk, byte-identical to the
 off path, with `delivered.reason: "long_page_chunk"` and a fallback code
 saying why (below). A preflight that fails or misses the deadline leaves the
@@ -333,7 +336,9 @@ remote callers): unchanged chunks are paid for first, then conversations and
 long pages reserve their matching span and grow in rank order. A long page
 whose matching span no longer fits keeps its ranked chunk
 (`long_page_chunk`, fallback `long_page_over_budget`), so the key never returns
-less than `chunk` would.
+less than `chunk` would. Only a block's first ranked passage is reserved: a later
+ranked passage on the same page (or conversation) that the budget leaves out
+comes back as its own ranked-chunk row the same way, never dropped.
 
 **Response.** A long-page block is an ordinary delivered row (`delivered.unit`
 is the unit that ran; a `section` with no structure falls back to `window`
@@ -527,7 +532,7 @@ delivered text and each result gains `delivered`.
 | `date_header_unavailable` | Date headers are on but the page dates could not be read. | Every header reads `[observed unknown]`. |
 | `long_page_pages` / `long_page_bytes` | `search.long_page_unit`: the long page came after 5 long pages, or would cross 1,000,000 stored-body bytes. | Its ranked chunk (`reason: long_page_chunk`). |
 | `long_page_over_budget` | `search.long_page_unit`: the long page's matching span no longer fit the budget. | Its ranked chunk (`reason: long_page_chunk`). |
-| `long_page_deadline` / `long_page_fetch_failed` / `long_page_preflight_failed` | `search.long_page_unit`: the size preflight or the long-page fetch missed the 2,000 ms deadline or failed. | Its ranked chunk (`reason: long_page_chunk`); a failed preflight leaves the call on the off path. |
+| `long_page_deadline` / `long_page_fetch_failed` / `long_page_preflight_failed` | `search.long_page_unit`: the size preflight or the long-page fetch (its fence-overlay reads included) missed the 2,000 ms deadline or failed. | Its ranked chunk (`reason: long_page_chunk`); a failed preflight leaves the call on the off path. |
 | drop `not_readable` | The page is no longer readable by this caller (deleted, private, grant revoked, quarantined, archived source, source outside scope). | Result removed. Never falls back to cached text. |
 | `snippet_marker_omitted` | Under an explicit `auto` budget, a row's allocation could not hold the snippet recovery marker. | Capped block without the marker, `truncated: true`. |
 | drop `budget_floor` | Not even the block's matching span fits the remaining budget. | Result removed (rank one is instead cut to fit). Under `auto` without an explicit budget nothing is dropped for budget: the conversation keeps its ranked chunks. |
@@ -578,8 +583,9 @@ warning naming the minimum server version.
 - **Non-mutation.** The stage returns new result objects and never mutates or
   caches expanded text.
 - **Bounded work.** One engine query per request (with `search.long_page_unit`
-  on and a long page among the hits: plus one size preflight and one bounded
-  long-page fetch, see [Long pages](#long-pages-searchlong_page_unit)). It reads each hit page's
+  on, the default: plus one size preflight when a non-conversation hit is
+  present, and one bounded long-page fetch when a long page is among the hits,
+  see [Long pages](#long-pages-searchlong_page_unit)). It reads each hit page's
   body once (bounded by the import size cap) plus the chunks within
   ±`return_window` of each hit; each block ≤ 60,000 characters (under the
   64 KiB output-redaction field limit).
@@ -598,7 +604,10 @@ warning naming the minimum server version.
    `serializeMarkdown` writes); `project` is `credentialSafeProjection`
    (`src/core/credential-projection.ts`), the function the markdown and code
    chunkers apply before splitting, so chunks and page text agree on every
-   redacted key. Each fetched chunk is located in that text in
+   redacted key. Each fetched chunk is placed by its stored byte span when the
+   span still holds the chunk's text, so text repeated under two headings is
+   placed where it was cut. A chunk with no span or a stale one is located in
+   that text in
    `chunk_index` order: exact match first, then a whitespace-insensitive match
    (the chunker trims chunks and folds some whitespace-only runs, so chunk text
    is not always verbatim). A fenced-code hit is placed by its code without the

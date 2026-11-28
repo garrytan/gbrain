@@ -132,9 +132,9 @@ export const claudeCli: Recipe = {
   aliases: {
     'claude-haiku-4-5': 'claude-haiku-4-5-20251001',
     'claude-sonnet-4-6-20250929': 'claude-sonnet-4-6',
-    'sonnet': 'claude-sonnet-4-6',
-    'haiku': 'claude-haiku-4-5-20251001',
-    'opus': 'claude-opus-4-7',
+    'sonnet': 'claude-sonnet-5-5',
+    'haiku': 'claude-haiku-5-5',
+    'opus': 'claude-opus-5-5',
   },
   setup_hint:
     'Install Claude Code (`claude` CLI) and run `claude` once to log in. ' +

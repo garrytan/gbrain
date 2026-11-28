@@ -7,14 +7,17 @@
  * criterion 11 is `missing` (NOT READY), never a pass. Regression it catches: a producer field name that drifts from
  * the ShadowStatus interface, or an omission that reads as zero hosts.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { buildEligibilityStatus } from '../src/shadow/eligibility.ts';
+import * as epochModule from '../src/shadow/evidence-epoch.ts';
+import * as eligibilityModule from '../src/shadow/eligibility.ts';
+import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { WriterObserver } from '../src/shadow/writer-observations.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { readConfiguredShadowStatus } from '../src/shadow/status-document.ts';
@@ -50,9 +53,9 @@ async function observe(host: string, app: string): Promise<void> {
   o.stop();
 }
 
-async function criterion11(input: { engine?: BrainEngine; unknown?: number; brain?: string; target?: string | null }) {
+async function criterion11(input: { engine?: BrainEngine; unknown?: number; brain?: string; target?: string | null; dir?: string }) {
   const out = await buildEligibilityStatus({
-    dir, state: null, engine: input.engine, source: { name: 'test', unknownPaths: () => input.unknown ?? 0 },
+    dir: input.dir ?? dir, state: null, engine: input.engine, source: { name: 'test', unknownPaths: () => input.unknown ?? 0 },
     brainId: () => input.brain ?? 'host', addonTarget: () => (input.target === undefined ? 'linux-x64-glibc' : input.target),
   });
   const verdict = evaluateReadiness({ eligibility: out.eligibility } as ShadowStatus);
@@ -236,5 +239,127 @@ describe('the status document the swap reads', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe('criterion 11 counts writers of an older build (write_protocol)', () => {
+  const HOST = '11111111-1111-4111-8111-111111111111';
+  const epochDir = (startedAtMs: number): string => {
+    const d = mkdtempSync(join(tmpdir(), 'gbrain-elig-protocol-'));
+    ensureEpoch(d, { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 4, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' }, startedAtMs);
+    return d;
+  };
+  const insertRow = (app: string, protocol: number | null, lastSeen: string): Promise<unknown> =>
+    primary.executeRaw(`INSERT INTO engine_writer_observations (host_id, application_name, process_kind, gbrain_version, write_protocol, last_seen) VALUES ($1, $2, 'cli', 'old', $3, $4::timestamptz)`, [HOST, app, protocol, lastSeen]);
+
+  test('M1: a row with no write_protocol seen in the epoch is an unknown writer path: criterion 11 fails, and the producer names it', async () => {
+    const d = epochDir(Date.now() - 3_600_000);
+    await observe(HOST, 'gbrain cli:1:aaaaaaaa');
+    await insertRow('gbrain cli:2:old00000', null, new Date().toISOString());
+    const { out, row, verdict } = await criterion11({ engine: primary, dir: d });
+    expect(out.eligibility).toMatchObject({ legacy_write_writers: 1, unknown_writer_paths: 1 });
+    expect(row.state).toBe('fail');
+    expect(row.detail).toContain('older build');
+    expect(verdict.reason).toBe('writer_coverage_unknown');
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  test('M1: a row with a lower write_protocol is the same, and a row of this build (write_protocol 2) passes', async () => {
+    const d = epochDir(Date.now() - 3_600_000);
+    await observe(HOST, 'gbrain cli:1:aaaaaaaa'); // written by this build: protocol 2
+    expect((await primary.executeRaw<{ write_protocol: number }>('SELECT write_protocol FROM engine_writer_observations'))[0]!.write_protocol).toBe(2);
+    expect((await criterion11({ engine: primary, dir: d })).row.state).toBe('pass');
+    await insertRow('gbrain cli:3:lower000', 1, new Date().toISOString());
+    const { out, row } = await criterion11({ engine: primary, dir: d });
+    expect(out.eligibility.legacy_write_writers).toBe(1);
+    expect(row.state).toBe('fail');
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  test('M1: an older writer last seen before the epoch started (less the 10 minute refresh slack) is ignored; one inside the slack counts', async () => {
+    const started = Date.now() - 3_600_000; const d = epochDir(started);
+    await observe(HOST, 'gbrain cli:1:aaaaaaaa');
+    await insertRow('gbrain cli:4:before00', null, new Date(started - 11 * 60_000).toISOString());
+    expect((await criterion11({ engine: primary, dir: d })).row.state).toBe('pass');
+    await insertRow('gbrain cli:5:slack000', null, new Date(started - 5 * 60_000).toISOString());
+    expect((await criterion11({ engine: primary, dir: d })).out.eligibility.legacy_write_writers).toBe(1);
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  test('M1: the epoch window has no 7-day clamp: a legacy writer seen early in a 15-day epoch still fails criterion 11, however many days ago it wrote', async () => {
+    const day = 86_400_000; const started = Date.now() - 15 * day; const d = epochDir(started);
+    await observe(HOST, 'gbrain cli:1:modern000'); // this build, seen now: supplies the one host
+    await insertRow('gbrain cli:2:legacy000', null, new Date(started + day).toISOString()); // an older build, last seen 14 days ago, inside the epoch
+    const { out, row } = await criterion11({ engine: primary, dir: d });
+    expect(out.eligibility.legacy_write_writers).toBe(1); // was 0: the rolling 7-day window cut it off and criterion 11 could pass
+    expect(row.state).toBe('fail');
+    await insertRow('gbrain cli:3:before000', null, new Date(started - 11 * 60_000).toISOString()); // still ignored: before the epoch began, less the slack
+    expect((await criterion11({ engine: primary, dir: d })).out.eligibility.legacy_write_writers).toBe(1);
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  test('F2: the manifest read is three-way for criterion 11: a torn manifest fails closed (one unknown path), no manifest at all keeps the window start, and a readable one binds the epoch', async () => {
+    const day = 86_400_000; const started = Date.now() - 15 * day; const d = epochDir(started);
+    await observe(HOST, 'gbrain cli:1:modern000');
+    await insertRow('gbrain cli:2:legacy000', null, new Date(started + day).toISOString()); // an older writer seen 14 days ago, inside the epoch
+    expect((await criterion11({ engine: primary, dir: d })).out.eligibility).toMatchObject({ legacy_write_writers: 1 });
+    const file = join(d, 'evidence', 'epoch.json'); const text = readFileSync(file, 'utf8');
+    writeFileSync(file, '{"version":1,"epoch_id"'); // torn for a moment
+    const torn = await criterion11({ engine: primary, dir: d });
+    expect(torn.out.eligibility.unknown_writer_paths).toBeGreaterThanOrEqual(1); // was 0: with no readable epoch the query fell back to the 7-day window and the 14-day-old writer was dropped
+    expect(torn.row.state).toBe('fail');
+    rmSync(file); mkdirSync(file); // a read error (EISDIR stands for EIO) is the same as torn
+    expect((await criterion11({ engine: primary, dir: d })).out.eligibility.unknown_writer_paths).toBeGreaterThanOrEqual(1);
+    rmSync(file, { recursive: true });
+    expect((await criterion11({ engine: primary, dir: d })).out.eligibility.unknown_writer_paths).toBe(0); // no manifest at all: no epoch yet, the window start applies as before
+    writeFileSync(file, text);
+    expect((await criterion11({ engine: primary, dir: d })).out.eligibility.legacy_write_writers).toBe(1);
+    const input = { dir: d, state: null, engine: primary, source: { name: 'test', unknownPaths: () => 0 }, brainId: () => 'host', addonTarget: () => 'linux-x64-glibc' };
+    expect((await buildEligibilityStatus({ ...input, epoch: { kind: 'unreadable' } })).eligibility.unknown_writer_paths).toBeGreaterThanOrEqual(1); // a handed-in read is the one used, whatever is on disk now
+    writeFileSync(file, '{"torn"'); // torn on disk, but the caller's read was good
+    const good = epochModule.readEpochState(d); expect(good.kind).toBe('unreadable');
+    expect((await buildEligibilityStatus({ ...input, epoch: { kind: 'absent' } })).eligibility.unknown_writer_paths).toBe(0);
+    writeFileSync(file, text);
+    rmSync(d, { recursive: true, force: true });
+  });
+
+  // pregate-literal: SHADOW_ADAPTER_VERSION=11 unrelated literal, not the adapter version
+  test('F2: the status document reads the manifest once and hands it to eligibility: a read that fails only for that one read fails criterion 11 closed, whatever the later epoch-bound reads find', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-elig-doc2-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        const config = { engine: 'pglite' as const, database_path: join(home, 'brain.pglite') };
+        const sdir = shadowDirFor(shadowBrainKey(config)!); const day = 86_400_000; const started = Date.now() - 15 * day;
+        mkdirSync(sdir, { recursive: true });
+        writeShadowState(sdir, { version: SHADOW_STATE_VERSION, enabled: true, started_at: new Date(started).toISOString(), sample_rate: 1, queue_bound: 8, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' });
+        ensureEpoch(sdir, { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 4, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' }, started);
+        await observe(HOST, 'gbrain cli:1:modern000');
+        await insertRow('gbrain cli:2:legacy000', null, new Date(started + day).toISOString());
+        const calls = spyOn(epochModule, 'readEpochState');
+        const once = calls.mockImplementationOnce(() => ({ kind: 'unreadable' }) as never);
+        const real = eligibilityModule.buildEligibilityStatus; let readsInside = -1;
+        const wrapped = spyOn(eligibilityModule, 'buildEligibilityStatus').mockImplementation(async (input) => { const before = calls.mock.calls.length; const out = await real(input); readsInside = calls.mock.calls.length - before; return out; });
+        const doc = await readConfiguredShadowStatus(() => config, new Date(), primary);
+        wrapped.mockRestore();
+        expect(doc?.eligibility?.unknown_writer_paths).toBeGreaterThanOrEqual(1); // the one failed read is the one eligibility used
+        expect(doc?.epoch_id).not.toBeNull(); // and the later epoch-bound reads found the epoch
+        expect(readsInside).toBe(0); // eligibility did not read the manifest itself: the status document's single read was handed in
+        once.mockRestore();
+        const ok = await readConfiguredShadowStatus(() => config, new Date(), primary);
+        expect(ok?.eligibility).toMatchObject({ legacy_write_writers: 1 }); // a readable manifest counts the 14-day-old writer
+      });
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  test('M1: with no epoch on disk the window start bounds it; and where the migration has not run (no write_protocol column) the read fails and criterion 11 is missing, never a pass', async () => {
+    await observe(HOST, 'gbrain cli:1:aaaaaaaa');
+    await insertRow('gbrain cli:6:oldnoepo', null, new Date().toISOString());
+    expect((await criterion11({ engine: primary })).out.eligibility.legacy_write_writers).toBe(1);
+    await primary.executeRaw('ALTER TABLE engine_writer_observations DROP COLUMN write_protocol');
+    try {
+      const { out, row } = await criterion11({ engine: primary });
+      expect(out.eligibility_evidence).toMatchObject({ state: 'read_failed' });
+      expect(row.state).toBe('missing');
+    } finally { await primary.executeRaw('ALTER TABLE engine_writer_observations ADD COLUMN IF NOT EXISTS write_protocol INTEGER'); }
   });
 });

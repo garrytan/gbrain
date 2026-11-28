@@ -11,7 +11,12 @@
 //! The statement's disposition exclusions: a page whose current content has a completed or held
 //! `managed-atoms` checkpoint (whose `partial`, when set, is at or above `maxInputChars`), and a page whose
 //! `extract_atoms_page_state` row for its current content (`atom_state.rs`) is tombstoned or records a partial cap at or
-//! above `maxInputChars`.
+//! above `maxInputChars`. GST-4020's "still current" and "atoms current" tests (a newer scan row, a world
+//! withdrawal after the scan) are not read here: the phase writes no page-state row on a Rust brain while
+//! `listExtractablePages` refuses (src/core/rust-engine/store-members/extract-atoms.ts), so no row reaches them.
+//!
+//! #9888: a page of a source whose config says `extract_atoms: false` is left out; with `sourcePolicy: "excluded"` only
+//! those pages count (doctor's `policy_excluded` note).
 //!
 //! A page whose input is held (#10270) is left out too: a held `atom` generation whose hold id is one of the
 //! query's `holdIds`, that is not a partial hold, and whose input pin is the page's content hash or
@@ -55,6 +60,10 @@ pub struct AtomBacklogQuery {
     /// The hold ids of the held atom generations whose input is still current (`currentHoldIds(engine, 'atom')`).
     #[serde(default)]
     pub hold_ids: Vec<String>,
+    /// `apply` (or absent) leaves out the pages of a source whose config turns `extract_atoms` off (#9888); `excluded`
+    /// counts only those pages, for doctor's `policy_excluded` note.
+    #[serde(default)]
+    pub source_policy: Option<String>,
 }
 
 /// The first 16 characters of the content hash: `substring(p.content_hash from 1 for 16)`.
@@ -134,6 +143,12 @@ impl Store {
             .map(|s| (s.id, fm_text(&s.config, "kind")))
             .collect();
         let skips = managed_atom_skips(&*read)?;
+        let opted_out: BTreeSet<String> = all_sources(&*read)?
+            .into_iter()
+            .filter(|s| fm_text(&s.config, "extract_atoms").as_deref() == Some("false"))
+            .map(|s| s.id)
+            .collect();
+        let only_opted_out = query.source_policy.as_deref() == Some("excluded");
         let atoms: BTreeSet<(&str, String)> = pages
             .iter()
             .filter(|p| is_unmanaged_atom(p))
@@ -153,6 +168,9 @@ impl Store {
                 || page.deleted_at_us.is_some()
                 || !query.types.contains(&page.page_type)
             {
+                continue;
+            }
+            if opted_out.contains(&page.source_id) != only_opted_out {
                 continue;
             }
             let Some(hash) = page.content_hash.as_deref() else {

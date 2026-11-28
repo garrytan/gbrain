@@ -36,8 +36,8 @@ export const listClearedRelinkedFacts: Member<'listClearedRelinkedFacts'> = (bra
 /** PGLite reads `valid_from` as a `Date`; the store answers its ISO text. */
 export const listHeldFactSlots: Member<'listHeldFactSlots'> = (brain, sourceId, slug) =>
   storeCall({ member: 'listHeldFactSlots' }, async () => {
-    const rows = await brain.listHeldFactSlots({ sourceId, slug }) as Array<{ entity_slug: string; dimension: string; value_hash: string; valid_from: string }>;
-    return rows.map(r => ({ ...r, valid_from: new Date(r.valid_from) }));
+    const rows = await brain.listHeldFactSlots({ sourceId, slug }) as Array<{ entity_slug: string; dimension: string; value_hash: string; valid_from: string | null }>;
+    return rows.map(r => ({ ...r, valid_from: r.valid_from == null ? null : new Date(r.valid_from) }));
   });
 
 export const countConversationWindowFacts: Member<'countConversationWindowFacts'> = (brain, sourceId, slug, key) =>
@@ -62,6 +62,12 @@ export const clearConversationPageFacts: Member<'clearConversationPageFacts'> = 
   storeCall({ member: 'clearConversationPageFacts' }, () => brain.clearConversationPageFacts({
     sourceId, slug, windows: windows ? { keys: [...windows.keys], keep: windows.keep, unanchored: windows.unanchored } : null,
   }));
+
+/** #10443: the page's wider expired extractor copies of these claims go private (facts/conversation.rs narrow_conversation_expired_copies). */
+export const narrowConversationExpiredCopies: Member<'narrowConversationExpiredCopies'> = (brain, sourceId, slug, facts) =>
+  storeCall({ member: 'narrowConversationExpiredCopies' }, async () => {
+    await brain.narrowConversationExpiredCopies({ sourceId, slug, facts: [...facts] });
+  });
 
 export const findSpentConversationRequest: Member<'findSpentConversationRequest'> = (brain, principalKind, principalId, requestId, digest) =>
   storeCall({ member: 'findSpentConversationRequest' }, () => brain.findSpentConversationRequest({ principalKind, principalId, requestId, digest }));

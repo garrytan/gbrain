@@ -105,7 +105,7 @@ function parseFlags(args: string[]): BookMirrorFlags {
   const slug = parseFlag(args, '--slug');
   const title = parseFlag(args, '--title');
   const author = parseFlag(args, '--author');
-  const model = parseFlag(args, '--model') ?? 'claude-opus-4-7';
+  const model = parseFlag(args, '--model') ?? 'claude-opus-5-5';
   // #5909 (D4): a present flag needs a positive safe integer (usage error, exit 2), never a parseInt NaN.
   const positiveInt = (flag: string, example: number) =>
     hasFlag(args, flag) ? intFlagValue(parseFlag(args, flag), flag, { min: 1, example }) : undefined;
@@ -150,7 +150,7 @@ OPTIONAL
                             Defaults to slug if omitted.
   --author "<author>"       Book author (used in frontmatter + page header).
   --model <id>              Anthropic model id for chapter analysis.
-                            Default: claude-opus-4-7. Sonnet works but the
+                            Default: claude-opus-5-5. Sonnet works but the
                             right-column quality drops.
   --max-turns <n>           Per-chapter subagent turn budget. Default ${DEFAULT_MAX_TURNS}.
   --timeout-ms <n>          Per-chapter wall-clock timeout.

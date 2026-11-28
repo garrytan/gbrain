@@ -279,6 +279,26 @@ describe('source scope strategy: walk overfetch, walk skip and scope scan', () =
     expect(sourceScope({ ...stats, chunk_reltuples: -1 }, { sourceId: 'sessions' }, { pages: 0, sampled: 0, sample_chunks: 0 })).toEqual({ share: 0.25 });
   });
 
+  test('without planner statistics (row security hides pg_stats, #10500) the counted pages give the share', async () => {
+    const counted = { pages: 2_000, sampled: 400, sample_chunks: 4_000, all_pages: 8_000 };
+    expect(sourceScope(undefined, { sourceId: 'sessions' }, counted)).toEqual({ share: 0.25, chunks: 20_000 });
+    expect(sourceScope(undefined, { sourceIds: ['a', 'b'] }, { ...counted, pages: 8_000 })).toEqual({ share: 1, chunks: 80_000 });
+    expect(sourceScope(undefined, { sourceId: 'sessions' }, { ...counted, all_pages: 0 })).toBeUndefined();
+    expect(sourceScope(undefined, { sourceId: 'sessions' }, { ...counted, pages: 0, sampled: 0, sample_chunks: 0 })).toBeUndefined();
+    expect(sourceScope(undefined, { sourceId: 'sessions' })).toBeUndefined();
+    expect(sourceScope(undefined, {}, counted)).toBeUndefined();
+    expect(sourceScope(stats, { sourceId: 'sessions' }, counted)).toEqual({ share: 0.25, chunks: 20_000 });
+    const asked: Array<[string[], boolean]> = [];
+    const scope = vectorScopeLoader(async () => [], async (ids, total) => { asked.push([ids, total]); return [{ ...counted, pages: 6_000 }]; });
+    expect(await scope({ sourceId: 'notes' })).toBeUndefined();
+    await Bun.sleep(0);
+    expect(await scope({ sourceId: 'notes' })).toEqual({ share: 0.75, chunks: 60_000 });
+    expect(asked).toEqual([[['notes'], true]]);
+    const withStats: Array<[string[], boolean]> = [];
+    await vectorScopeLoader(async () => [stats], async (ids, total) => { withStats.push([ids, total]); return []; })({ sourceId: 'sessions' });
+    expect(withStats).toEqual([[['sessions'], false]]);
+  });
+
   test('a scope of long pages routes on its counted chunks: walk first with the scan as fallback instead of scan first', () => {
     const estimated = sourceScope(stats, { sourceId: 'sessions' })!;
     const counted = sourceScope(stats, { sourceId: 'sessions' }, { pages: 250, sampled: 250, sample_chunks: 100_000 })!;

@@ -77,6 +77,19 @@ export const pruneHoldingPageVersions: StoreMember<[pageId: number], number> = a
   return storeCall({ member }, () => brain.pruneHoldingPageVersions(pageId));
 };
 
+/** #9737: the versions a `gbrain pages prune-history` plan named, removed when the page is still the one the plan named (engine-sql/version-prune.ts pruneInlineVersionsById); answers how many it deleted. */
+export const pruneInlineVersionsById: StoreMember<[page: { pageId: number; sourceId: string; slug: string; type?: string | null; keep?: number | null }, versionIds: readonly number[]], number> = async (brain, page, versionIds) => {
+  const member = 'pruneInlineVersionsById';
+  requireInteger(member, 'page id', page.pageId);
+  if (typeof page.sourceId !== 'string' || typeof page.slug !== 'string') refuseMember(member, 'a source or slug that is not text');
+  if (page.type != null && typeof page.type !== 'string') refuseMember(member, 'a type that is not text');
+  if (page.keep != null) requireInteger(member, 'keep', page.keep);
+  for (const id of versionIds) requireInteger(member, 'version id', id);
+  return storeCall({ member }, () => brain.pruneInlineVersionsById({
+    pageId: page.pageId, sourceId: page.sourceId, slug: page.slug, type: page.type ?? null, keep: page.keep ?? null, versionIds: [...versionIds],
+  }));
+};
+
 /** The page's newest version id stamped with `tier`, or null (engine-sql/version-reasons.ts readLatestVersionIdAtTier). */
 export const readLatestVersionIdAtTier: StoreMember<[pageId: number, tier: string], number | null> = async (brain, pageId, tier) => {
   const member = 'readLatestVersionIdAtTier';
