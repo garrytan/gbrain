@@ -731,8 +731,8 @@ impl Store {
             keyword::check_index_state(&*kv.snapshot()?)?;
             (false, access_flag::scan_without_write(&*kv)?)
         } else {
-            page_body::purge_record::backfill_source_index(&*kv)?;
-            let index = keyword::open_index(&*kv)?;
+            page_body::purge_record::backfill_source_index(&*kv, &|_| Ok(()))?;
+            let index = keyword::open_index(&*kv, &|_| Ok(()))?;
             (
                 index.needs_build,
                 !created && access_flag::scan_at_open(&*kv)?,
@@ -753,8 +753,10 @@ impl Store {
         // other store is never armed and reads nothing more.
         let primary_state = if fail_closed {
             primary::PrimaryState::Lost(primary::PRIMARY_NOT_SERVED)
-        } else {
+        } else if commit_log_on && !read_only {
             primary::PrimaryState::NeverArmed
+        } else {
+            primary::PrimaryState::Unwatched
         };
         Ok(Store {
             kv,
@@ -815,9 +817,9 @@ impl Store {
     /// The open-time upkeep a fail-closed open leaves (`open_kv_in`), run by `serve_as_primary` before the fence is
     /// armed: the sweep-record index backfill and the keyword index repair. Returns whether the keyword index build
     /// should run. On a store that ran it at open, each step reads one record and writes nothing.
-    fn finish_open_upkeep(&self) -> Result<bool> {
-        page_body::purge_record::backfill_source_index(&*self.kv)?;
-        Ok(keyword::open_index(&*self.kv)?.needs_build)
+    fn finish_open_upkeep(&self, fence: &dyn Fn(&mut dyn KvWrite) -> Result<()>) -> Result<bool> {
+        page_body::purge_record::backfill_source_index(&*self.kv, fence)?;
+        Ok(keyword::open_index(&*self.kv, fence)?.needs_build)
     }
 
     /// Starts the background build unless one is running on this store.

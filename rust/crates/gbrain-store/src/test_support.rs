@@ -242,3 +242,24 @@ fn mu_store_over(kv: RedbKv) -> Store {
     )
     .unwrap()
 }
+
+/// A multi-user store with the commit log on the concurrent store over an in-memory file, on `env` (the primary
+/// fence's unit tests, `primary/tests.rs`).
+pub(crate) fn mu_logged_store(env: Arc<dyn Env>) -> Store {
+    let kv = RedbKv::open_backend(Box::<MemFile>::default()).unwrap();
+    Store::open_kv(
+        Arc::new(crate::occ_kv::OccKv::new(kv).unwrap()),
+        env,
+        OpenOptions {
+            multiuser: true,
+            keyword_index_builder: false,
+            multiuser_writes: crate::MultiUserWrites {
+                commit_log: true,
+                host_id: Some("d0000000-0000-4000-8000-0000000000d1".into()),
+                ..Default::default()
+            },
+            ..OpenOptions::default()
+        },
+    )
+    .unwrap()
+}

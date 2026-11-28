@@ -133,8 +133,13 @@ pub(crate) fn repair_done_key() -> Vec<u8> {
 /// returns, so no write is admitted before every record is covered. A completed run leaves a marker, after which an open reads that
 /// one key. It works in write transactions of `REPAIR_BATCH` records each, discovering and writing inside the same transaction, and
 /// writes the marker in the one that reaches the end. A read-only open (its write is refused with `read_only_transaction`) does not
-/// scan and leaves the records for the next writable open; any other failure to write fails the open.
-pub(crate) fn backfill_source_index(kv: &dyn crate::kv::Kv) -> Result<()> {
+/// scan and leaves the records for the next writable open; any other failure to write fails the open. `before_commit` runs
+/// inside each write right before it commits (the primary fence of a store that finishes this upkeep when it starts
+/// serving, `primary.rs`); its error ends the run.
+pub(crate) fn backfill_source_index(
+    kv: &dyn crate::kv::Kv,
+    before_commit: &dyn Fn(&mut dyn crate::kv::KvWrite) -> Result<()>,
+) -> Result<()> {
     let done = repair_done_key();
     if kv.snapshot()?.get(&done)?.is_some() {
         return Ok(());
@@ -178,6 +183,7 @@ pub(crate) fn backfill_source_index(kv: &dyn crate::kv::Kv) -> Result<()> {
             from = last.clone();
             from.push(0);
         }
+        before_commit(&mut *tx)?;
         tx.commit()?;
         if finished {
             return Ok(());
@@ -525,7 +531,7 @@ mod tests {
         let kv = crate::test_support::mem_kv();
         unindexed(&kv, 3);
         let (read_only, [scans, _, begins]) = watched(&kv, Some(READ_ONLY_TRANSACTION));
-        backfill_source_index(&read_only).unwrap();
+        backfill_source_index(&read_only, &|_| Ok(())).unwrap();
         assert_eq!(
             (count(&scans), count(&begins)),
             (0, 1),
@@ -538,10 +544,10 @@ mod tests {
     fn once_the_repair_has_run_an_open_reads_only_the_marker() {
         let kv = crate::test_support::mem_kv();
         unindexed(&kv, 3);
-        backfill_source_index(&*kv).unwrap();
+        backfill_source_index(&*kv, &|_| Ok(())).unwrap();
         assert_eq!(indexed(&kv), 3);
         let (second, [scans, gets, begins]) = watched(&kv, None);
-        backfill_source_index(&second).unwrap();
+        backfill_source_index(&second, &|_| Ok(())).unwrap();
         assert_eq!((count(&scans), count(&gets), count(&begins)), (0, 1, 0));
     }
 
@@ -552,7 +558,7 @@ mod tests {
         let n = 2 * REPAIR_BATCH + 44;
         unindexed(&kv, n);
         let (counted, [_, _, begins]) = watched(&kv, None);
-        backfill_source_index(&counted).unwrap();
+        backfill_source_index(&counted, &|_| Ok(())).unwrap();
         assert_eq!(indexed(&kv), n);
         assert_eq!(count(&begins), 3, "one write transaction per batch");
         assert!(

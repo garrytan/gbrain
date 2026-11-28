@@ -180,18 +180,27 @@ transaction, and the record file accepts the commit only while its commit time i
 (`commit_log::CommitFence`, checked in the pipeline's batch write after its conflict checks, and in the single-writer
 commit). A transaction's commit reads the lease again inside the commit, whatever its statements saw; an optimistic
 one whose snapshot predates the lease it would commit under conflicts and runs again. The id-sequence write of a
-refused or rolled-back transaction carries the fence, and is skipped when the store must not write. So a primary whose
+refused or rolled-back transaction carries the fence, and is skipped when the store must not write. A logged store that
+never served reads the lease record in every write, so a lease taken while one of its commits is in flight makes that
+commit conflict. So a primary whose
 lease lapsed, was released or was taken over is refused `lease_lost` at commit and writes nothing. A store opened on
 records that hold a primary lease refuses writes (`lease_lost`, reason `primary_not_served`) until it serves, and its
 open writes nothing: the open-time upkeep (sweep-record index backfill, keyword index repair and build) runs in
-`serve_as_primary` after it takes the lease, and an open that would upgrade the format or switch the brain to the log
-is refused with the same reason. A store whose records never held one is never fenced.
+`serve_as_primary` after it takes the lease, each upkeep commit under the lease's fence, and an open that would upgrade
+the format or switch the brain to the log is refused with the same reason. A serve that fails after it took the lease
+hands the lease back and leaves the store refusing writes. A transaction's store cannot hand the lease over
+(`invalid_state`). A store whose records never held one is never fenced.
 
-Open cases of the write fence: the upkeep `serve_as_primary` finishes writes derived records unfenced, right after
-it takes the lease; a fail-closed open leaves the access flag scan unstored (it judges the flag from a read, as an
-open that cannot write does); a brain that holds a primary lease and needs a format upgrade opens only read-only; and
-on the single-writer record adapter, which keeps no durable id reservation, ids handed to a transaction the fence
-refused can be handed out again after the store serves again (as across a promotion).
+Only the concurrent record store serves as a primary: `serve_as_primary` (and so a takeover) refuses the single-writer
+adapter with `invalid_state`, naming `GBRAIN_RUST_CONCURRENT_WRITES=1` or multi-user mode, and writes no lease. On the
+single-writer adapter, ids a refused or rolled-back transaction took are not durably reserved; that is safe only
+because that adapter never serves as a primary, which
+`tests/takeover.rs::the_single_writer_store_never_serves_as_primary_and_writes_no_lease` enforces. Multi-user mode
+already opens a brain directory on the concurrent store.
+
+Open cases of the write fence: a fail-closed open leaves the access flag scan unstored (it judges the flag from a
+read, as an open that cannot write does); and a brain that holds a primary lease and needs a format upgrade opens only
+read-only.
 
 The lease record replicates with the data, and a promotion judges it on the promoting machine's clock:
 
@@ -221,6 +230,9 @@ promotion fence (live, lapsed, attested with margin 0 and the default margin, ha
 both record adapters and every write kind (lapse, commit after the lease's end, release, reopen), a transaction begun
 before the store served, a second store written while one serves, refused and rolled-back transactions that write
 nothing after the lease's end, a reopen that writes nothing and finishes its upkeep and keyword build when it serves,
-a write that raced a renewal, invalid inputs, `promotion_partial` recovery, stale-primary lineage, and the
-no-product-path guards. `tests/follower.rs`: a crash at every I/O call of a promotion's durable step, where a
+a write that raced a renewal, a lease taken over (`lease_lost`, not a conflict), a hand-over inside a transaction,
+the single-writer refusal, ids not handed out again after a refused rollback, invalid inputs, `promotion_partial` recovery, stale-primary lineage, and the
+no-product-path guards. `src/primary/tests.rs` (unit tests on seams): upkeep that outlives the lease is refused, a
+serve whose upkeep failed leaves the store refusing writes, and a commit judged before the lease was taken conflicts.
+`tests/follower.rs`: a crash at every I/O call of a promotion's durable step, where a
 promotion on disk that returned an error names it `promotion_partial`.

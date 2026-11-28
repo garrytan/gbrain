@@ -28,7 +28,7 @@ use crate::Store;
 use crate::commit_log::CommitFence;
 use crate::env::Env;
 use crate::error::{LEASE_LOST, Result, StoreError};
-use crate::kv::KvRead;
+use crate::kv::{Kv, KvRead, KvWrite};
 use crate::leases::{LeaseToken, assert_held, read_lease_record};
 use crate::write_origin::WriteOrigin;
 use std::sync::{Arc, Mutex};
@@ -41,7 +41,12 @@ pub const PRIMARY_NOT_SERVED: &str = "primary_not_served";
 /// Where a store stands as primary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PrimaryState {
-    /// It never served and its records held no primary lease at open: writes are not fenced.
+    /// A store without the commit log, read-only, or the lease writes of `serve_as_primary` / `release_primary`
+    /// (`Store::unfenced`): writes are not fenced and read nothing more.
+    Unwatched,
+    /// A logged store that never served, on records that held no primary lease at open. Its writes are not fenced
+    /// while the records hold no primary lease: each write reads the lease record, so a lease taken first makes it
+    /// conflict (or, once written, refuses it).
     NeverArmed,
     /// It holds the primary lease under this token: every write is fenced by it.
     Armed(LeaseToken),
@@ -68,12 +73,35 @@ impl PrimarySlot {
     }
 }
 
-/// What a write consults for its commit's fence: the store's primary state, and the clock its lease is judged on. A
-/// transaction keeps one from its begin, so its commit and its rollback are fenced like any write of the store.
+/// What a write consults for its commit's fence: the store's primary state, the clock its lease is judged on, and the
+/// records (for the latest lease, when an optimistic commit's snapshot cannot tell). A transaction keeps one from its
+/// begin, so its commit and its rollback are fenced like any write of the store.
 #[derive(Clone)]
 pub(crate) struct Fencer {
     slot: Arc<PrimarySlot>,
     env: Arc<dyn Env>,
+    kv: Arc<dyn Kv>,
+}
+
+/// Inside a write: `lease_lost` unless `token` holds the primary lease now; the commit's fence otherwise.
+fn token_fence(read: &dyn KvRead, token: &LeaseToken, now: i64) -> Result<CommitFence> {
+    assert_held(read, token, now)?;
+    let record = read_lease_record(read, &token.name)?.ok_or_else(|| {
+        StoreError::new(
+            crate::error::STORE_CORRUPT,
+            "the primary lease record vanished inside the write",
+        )
+    })?;
+    Ok(CommitFence {
+        name: token.name.clone(),
+        epoch: token.epoch,
+        expires_at_us: record.expires_at_us,
+    })
+}
+
+/// True when `record` is the lease `token` took, not released.
+fn holds(record: Option<&crate::leases::LeaseRecord>, token: &LeaseToken) -> bool {
+    record.is_some_and(|r| r.epoch == token.epoch && r.token == token.token && !r.released)
 }
 
 impl Fencer {
@@ -82,21 +110,15 @@ impl Fencer {
     /// write's read set, so a renewal, release or takeover committed first makes the write conflict and run again.
     pub(crate) fn fence(&self, read: &dyn KvRead) -> Result<Option<CommitFence>> {
         match self.slot.get() {
-            PrimaryState::NeverArmed => Ok(None),
+            PrimaryState::Unwatched => Ok(None),
+            // The read puts the lease record in the write's read set: a lease taken after it conflicts the write.
+            PrimaryState::NeverArmed => match read_lease_record(read, PRIMARY_LEASE)? {
+                None => Ok(None),
+                Some(_) => Err(not_served(PRIMARY_NOT_SERVED)),
+            },
             PrimaryState::Lost(reason) => Err(not_served(reason)),
             PrimaryState::Armed(token) => {
-                assert_held(read, &token, self.env.clock_micros())?;
-                let record = read_lease_record(read, &token.name)?.ok_or_else(|| {
-                    StoreError::new(
-                        crate::error::STORE_CORRUPT,
-                        "the primary lease record vanished inside the write",
-                    )
-                })?;
-                Ok(Some(CommitFence {
-                    name: token.name.clone(),
-                    epoch: token.epoch,
-                    expires_at_us: record.expires_at_us,
-                }))
+                token_fence(read, &token, self.env.clock_micros()).map(Some)
             }
         }
     }
@@ -115,28 +137,47 @@ impl Fencer {
         let PrimaryState::Armed(token) = self.slot.get() else {
             return self.fence(read);
         };
-        match read_lease_record(read, &token.name)? {
-            Some(record)
-                if record.epoch == token.epoch
-                    && record.token == token.token
-                    && !record.released =>
-            {
-                Ok(Some(CommitFence {
-                    name: token.name.clone(),
-                    epoch: token.epoch,
-                    expires_at_us: record.expires_at_us,
-                }))
-            }
-            _ if snapshot => Err(StoreError::new(
+        let record = read_lease_record(read, &token.name)?;
+        if let Some(record) = record.as_ref().filter(|r| holds(Some(r), &token)) {
+            return Ok(Some(CommitFence {
+                name: token.name.clone(),
+                epoch: token.epoch,
+                expires_at_us: record.expires_at_us,
+            }));
+        }
+        // Not the holder in what the base reads. An optimistic snapshot may only predate the lease: if the latest
+        // records still hold it, the commit conflicts and a rerun reads it; otherwise the lease is gone.
+        let latest = if snapshot {
+            Some(self.kv.snapshot()?)
+        } else {
+            None
+        };
+        if let Some(latest) = &latest
+            && holds(read_lease_record(&**latest, &token.name)?.as_ref(), &token)
+        {
+            return Err(StoreError::new(
                 crate::error::WRITE_CONFLICT,
                 "the transaction's snapshot predates the primary lease this store holds now: run it again",
-            )),
-            _ => {
-                // `assert_held` names why (judged at the start of time: never as expired, which is the commit's).
-                assert_held(read, &token, i64::MIN)?;
-                Err(not_served("epoch_moved"))
-            }
+            ));
         }
+        // `assert_held` names why (judged at the start of time: never as expired, which is the commit's).
+        let now = latest.as_deref().map_or(read, |l| l as &dyn KvRead);
+        assert_held(now, &token, i64::MIN)?;
+        Err(not_served("epoch_moved"))
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test seam: runs in `serve_as_primary` right after the lease is taken, before the open-time upkeep.
+    pub(crate) static AFTER_ACQUIRE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+fn after_acquire() {
+    #[cfg(test)]
+    if let Some(hook) = AFTER_ACQUIRE.with(|h| h.borrow_mut().take()) {
+        hook();
     }
 }
 
@@ -178,6 +219,25 @@ impl Store {
         Fencer {
             slot: self.primary.clone(),
             env: self.env.clone(),
+            kv: self.kv.clone(),
+        }
+    }
+
+    /// The hook the open-time upkeep runs before each of its commits while `serve_as_primary` finishes it: the commit
+    /// carries the fence of `token` (read inside the commit, judged at its accept), so upkeep that outlives the lease
+    /// is refused and stops.
+    fn upkeep_fence<'t>(
+        &self,
+        token: &'t LeaseToken,
+    ) -> impl Fn(&mut dyn KvWrite) -> Result<()> + 't {
+        let env = self.env.clone();
+        move |w: &mut dyn KvWrite| {
+            let fence = token_fence(&*w, token, env.clock_micros())?;
+            w.set_commit_meta(crate::commit_log::CommitMeta {
+                fence: Some(Box::new(fence)),
+                ..Default::default()
+            });
+            Ok(())
         }
     }
 
@@ -186,7 +246,7 @@ impl Store {
     /// only for that one write; no other store or thread is affected.
     fn unfenced(&self) -> Store {
         let mut store = self.sibling();
-        store.primary = Arc::new(PrimarySlot::new(PrimaryState::NeverArmed));
+        store.primary = Arc::new(PrimarySlot::new(PrimaryState::Unwatched));
         store
     }
 
@@ -211,15 +271,31 @@ impl Store {
                 "a store bound to a transaction cannot start serving as a primary",
             ));
         }
-        let Some(token) = self
-            .unfenced()
-            .acquire_lease(PRIMARY_LEASE, holder, ttl_ms)?
-        else {
-            return Ok(None);
+        // The single-writer record adapter keeps no durable id reservation, so a transaction the fence refuses could
+        // not keep its ids from being handed out again: only the concurrent store serves (ruling B).
+        if self.kv.occ_stats().is_none() {
+            return Err(StoreError::new(
+                crate::error::INVALID_STATE,
+                "only the concurrent record store serves as a primary: open the brain with GBRAIN_RUST_CONCURRENT_WRITES=1 or in multi-user mode (GBRAIN_RUST_MULTIUSER=1)",
+            ));
+        }
+        let previous = self.primary.get();
+        // Fail-closed from here until the lease is held and the upkeep done, and so on every failure below: the
+        // records hold a primary lease record from the acquisition on (ours, or the live holder's).
+        self.primary.set(PrimaryState::Lost(PRIMARY_NOT_SERVED));
+        // A store that took no lease goes back to where it was: a never-armed store reads the lease record in every
+        // write, so it refuses writes once the records hold one.
+        let token = match self.unfenced().acquire_lease(PRIMARY_LEASE, holder, ttl_ms) {
+            Ok(Some(token)) => token,
+            other => {
+                self.primary.set(previous);
+                return other;
+            }
         };
-        // The open-time upkeep a fail-closed open left (`open_kv_in`), before the first write is admitted. It writes
-        // derived records only, unfenced, right after the lease was taken. A failure hands the lease back.
-        let needs_build = match self.finish_open_upkeep() {
+        after_acquire();
+        // The open-time upkeep a fail-closed open left (`open_kv_in`), before the first write is admitted. Each of
+        // its commits carries this lease's fence. A failure hands the lease back.
+        let needs_build = match self.finish_open_upkeep(&self.upkeep_fence(&token)) {
             Ok(needs_build) => needs_build,
             Err(e) => {
                 let _ = self.unfenced().release_lease(&token);
@@ -237,7 +313,7 @@ impl Store {
     pub fn renew_primary(&self, ttl_ms: u64) -> Result<()> {
         match self.primary.get() {
             PrimaryState::Armed(token) => self.renew_lease(&token, ttl_ms),
-            PrimaryState::NeverArmed => Err(StoreError::new(
+            PrimaryState::Unwatched | PrimaryState::NeverArmed => Err(StoreError::new(
                 crate::error::INVALID_STATE,
                 "this store does not serve as a primary",
             )),
@@ -248,6 +324,13 @@ impl Store {
     /// Hands the primary lease over (lane L5's `release_lease`): a follower that applied the release may promote at
     /// once. From then on this store refuses every write (`lease_lost`, reason `released`) until it serves again.
     pub fn release_primary(&self) -> Result<()> {
+        // A transaction's store would wait on its own transaction's writer: refused before anything changes.
+        if self.bound.is_some() {
+            return Err(StoreError::new(
+                crate::error::INVALID_STATE,
+                "a store bound to a transaction cannot hand the primary lease over; end the transaction first",
+            ));
+        }
         let PrimaryState::Armed(token) = self.primary.get() else {
             return Err(StoreError::new(
                 crate::error::INVALID_STATE,
@@ -267,3 +350,6 @@ impl Store {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

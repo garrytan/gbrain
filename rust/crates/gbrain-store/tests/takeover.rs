@@ -628,6 +628,10 @@ fn adapter_store(path: &Path, optimistic: bool, clock: &Arc<HandClock>) -> Store
     store
 }
 
+/// The record adapters a primary serves on: the concurrent store only (ruling B; the single-writer adapter is refused,
+/// `the_single_writer_store_never_serves_as_primary_and_writes_no_lease`).
+const SERVING: [bool; 1] = [true];
+
 fn sequence_of(store: &Store) -> u64 {
     store
         .read_commit_log(None, 0)
@@ -640,7 +644,7 @@ fn sequence_of(store: &Store) -> u64 {
 /// lease's end passed, and nothing is written.
 #[test]
 fn a_primary_whose_lease_lapsed_refuses_every_write_kind() {
-    for optimistic in MODES {
+    for optimistic in SERVING {
         let dir = TempDir::new("primary-lapse");
         let clock = HandClock::new();
         let store = adapter_store(dir.path(), optimistic, &clock);
@@ -707,7 +711,7 @@ fn a_primary_whose_lease_lapsed_refuses_every_write_kind() {
 /// optimistic one on the optimistic adapter.
 #[test]
 fn a_write_that_commits_after_the_lease_end_is_refused_at_commit() {
-    for optimistic in MODES {
+    for optimistic in SERVING {
         let modes: &[TxnMode] = if optimistic {
             &[TxnMode::Serialized, TxnMode::Optimistic]
         } else {
@@ -746,7 +750,7 @@ fn a_write_that_commits_after_the_lease_end_is_refused_at_commit() {
 /// is refused (`released`); serving again takes the next epoch.
 #[test]
 fn a_primary_that_handed_over_refuses_writes_until_it_serves_again() {
-    for optimistic in MODES {
+    for optimistic in SERVING {
         let dir = TempDir::new("primary-release");
         let clock = HandClock::new();
         let store = adapter_store(dir.path(), optimistic, &clock);
@@ -775,7 +779,7 @@ fn a_primary_that_handed_over_refuses_writes_until_it_serves_again() {
 /// primary, and while the old lease is live it cannot take it. A brain that never held one is never fenced.
 #[test]
 fn a_reopened_primary_refuses_writes_until_it_serves() {
-    for optimistic in MODES {
+    for optimistic in SERVING {
         let dir = TempDir::new("primary-reopen");
         let clock = HandClock::new();
         let store = adapter_store(dir.path(), optimistic, &clock);
@@ -895,7 +899,7 @@ impl Env for HookClock {
 /// write reads) wrote unfenced. The switch is gone: the other store is still refused and writes nothing.
 #[test]
 fn a_write_on_another_store_while_one_serves_is_still_fenced() {
-    for optimistic in MODES {
+    for optimistic in SERVING {
         let dir = TempDir::new("primary-two-stores");
         for sub in ["a", "b"] {
             std::fs::create_dir_all(dir.path().join(sub)).unwrap();
@@ -954,7 +958,7 @@ fn a_write_on_another_store_while_one_serves_is_still_fenced() {
 /// is skipped when the store must not write: the records, the log position and the commit time are as they were.
 #[test]
 fn a_refused_or_rolled_back_transaction_writes_nothing_after_the_lease_end() {
-    for optimistic in MODES {
+    for optimistic in SERVING {
         let modes: &[TxnMode] = if optimistic {
             &[TxnMode::Serialized, TxnMode::Optimistic]
         } else {
@@ -1001,7 +1005,7 @@ fn a_refused_or_rolled_back_transaction_writes_nothing_after_the_lease_end() {
 /// forward, under the fence.
 #[test]
 fn a_rollback_while_the_lease_holds_writes_its_sequences_forward() {
-    for optimistic in MODES {
+    for optimistic in SERVING {
         let dir = TempDir::new("primary-rollback-held");
         let clock = HandClock::new();
         let store = adapter_store(dir.path(), optimistic, &clock);
@@ -1028,7 +1032,7 @@ fn a_rollback_while_the_lease_holds_writes_its_sequences_forward() {
 fn a_reopened_primary_writes_nothing_at_open_and_finishes_its_upkeep_when_it_serves() {
     let backfill = gbrain_store::keys::meta("derivation_purge_source_index");
     let scan = gbrain_store::keys::meta("access_flag_scan");
-    for optimistic in MODES {
+    for optimistic in SERVING {
         let dir = TempDir::new("primary-reopen-upkeep");
         let clock = HandClock::new();
         let kv = adapter_kv(dir.path(), optimistic);
@@ -1121,7 +1125,7 @@ fn a_write_that_raced_a_renewal_conflicts_and_is_not_refused_as_expired() {
 /// the store serves.
 #[test]
 fn a_reopened_primary_builds_its_keyword_index_once_it_serves() {
-    for optimistic in MODES {
+    for optimistic in SERVING {
         let dir = TempDir::new("primary-builder");
         let clock = HandClock::new();
         let kv = adapter_kv(dir.path(), optimistic);
@@ -1155,6 +1159,198 @@ fn a_reopened_primary_builds_its_keyword_index_once_it_serves() {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
     }
+}
+
+// --- Round 2 of the code review, and ruling B ------------------------------------------------------------------------
+
+/// Ruling B (fail-first on a19ee62774, where it served): the single-writer record adapter keeps no durable id
+/// reservation, so it never serves as a primary: `serve_as_primary` is refused `invalid_state`, naming the switch, and
+/// writes nothing (no lease record). Regression pin: a single-writer store that is not a primary writes, commits and
+/// rolls back as before, writing its id sequences forward on a rollback.
+#[test]
+fn the_single_writer_store_never_serves_as_primary_and_writes_no_lease() {
+    let dir = TempDir::new("primary-single-writer");
+    let clock = HandClock::new();
+    let (kv, store) = adapter_pair(dir.path(), false, &clock);
+    assert!(store.occ_stats().is_none());
+    let before = (sequence_of(&store), image_of(&*kv));
+    let e = store.serve_as_primary(&origin("p"), 60_000).unwrap_err();
+    assert_eq!(e.code, "invalid_state", "{e}");
+    assert!(e.message.contains("GBRAIN_RUST_CONCURRENT_WRITES=1"), "{e}");
+    assert_eq!((sequence_of(&store), image_of(&*kv)), before);
+    assert!(
+        read_lease_record(&*kv.snapshot().unwrap(), PRIMARY_LEASE)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(store.primary_token(), None);
+    // Not a primary: writes as before.
+    store.set_config("k", "1").unwrap();
+    put_page(&store, "notes/kept").unwrap();
+    let tx = store.begin_with(TxnOptions::default()).unwrap();
+    put_page(tx.store(), "notes/rolled").unwrap();
+    let at = sequence_of(&store);
+    tx.rollback().unwrap();
+    assert!(
+        sequence_of(&store) > at,
+        "the rollback did not write its sequences forward"
+    );
+    let tx = store.begin_with(TxnOptions::default()).unwrap();
+    put_page(tx.store(), "notes/committed").unwrap();
+    tx.commit().unwrap();
+    assert_eq!(store.get_config("k").unwrap().as_deref(), Some("1"));
+}
+
+/// Ruling B (a): a promotion or takeover with neither multi-user mode nor concurrent writes is refused before the
+/// lineage write (the promotion's existing `invalid_argument` check, which runs before anything is written), and
+/// leaves the follower unchanged. (b) with multi-user mode on (concurrent writes off) it lands on the concurrent store
+/// and serves.
+#[test]
+fn a_takeover_serves_only_on_the_concurrent_store() {
+    let (s, follower) = served("takeover-adapter", false, 5_000);
+    let dir = s.root.join("follower");
+    let before = state_of(&follower);
+    s.clock.set(s.expires_at_us + 10_000_000);
+    let stopped = attest();
+    let plain = OpenOptions {
+        multiuser: false,
+        concurrent_writes: false,
+        ..mu(false)
+    };
+    let e = take_over_with(
+        follower,
+        &origin("new"),
+        plain,
+        60_000,
+        s.clock.clone(),
+        &TakeoverSettings::default(),
+        Some(&stopped),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(e.code, "invalid_argument", "{e}");
+    let follower = Follower::open(&dir).unwrap();
+    assert_eq!(
+        state_of(&follower),
+        before,
+        "a refused takeover changed the follower"
+    );
+    let e = promote_at(&s, follower, false, 0, Some(&stopped));
+    assert!(e.is_ok(), "multi-user options promote: {:?}", e.err());
+    // (b): the promoted brain is on the concurrent store and serves.
+    let (s2, follower) = served("takeover-adapter-b", false, 5_000);
+    s2.clock.set(s2.expires_at_us + 10_000_000);
+    let (store, token) = take_over_with(
+        follower,
+        &origin("new"),
+        mu(false),
+        60_000,
+        s2.clock.clone(),
+        &TakeoverSettings::default(),
+        Some(&stopped),
+    )
+    .unwrap();
+    assert!(
+        store.occ_stats().is_some(),
+        "a takeover served on the single-writer store"
+    );
+    assert_eq!(store.primary_token(), Some(token));
+}
+
+/// Round-2 finding 4 (fail-first on a19ee62774, where it deadlocked): handing the primary lease over through a
+/// transaction's store waited on that transaction's own writer. It is refused `invalid_state` before anything changes;
+/// the store still serves and the transaction commits.
+#[test]
+fn handing_the_lease_over_inside_a_transaction_is_refused_and_does_not_hang() {
+    let dir = TempDir::new("primary-release-in-tx");
+    let clock = HandClock::new();
+    let store = Arc::new(adapter_store(dir.path(), true, &clock));
+    store
+        .serve_as_primary(&origin("p"), 60_000)
+        .unwrap()
+        .unwrap();
+    let (done, wait) = std::sync::mpsc::channel();
+    let inner = store.clone();
+    std::thread::spawn(move || {
+        let tx = inner.begin_with(TxnOptions::default()).unwrap();
+        tx.store().set_config("in-tx", "1").unwrap();
+        let released = tx.store().release_primary();
+        let committed = tx.commit();
+        let _ = done.send((released, committed.map(|_| ())));
+    });
+    let (released, committed) = wait
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("release_primary inside a transaction deadlocked");
+    assert_eq!(released.unwrap_err().code, "invalid_state");
+    committed.unwrap();
+    assert!(store.primary_token().is_some());
+    assert_eq!(store.get_config("in-tx").unwrap().as_deref(), Some("1"));
+}
+
+/// Round-2 finding 6 (fail-first on a19ee62774, where it returned write_conflict): an optimistic transaction begun
+/// after another store took the primary lease over, on a store still holding the old token, was answered with a
+/// retryable conflict that no rerun could clear. It is refused `lease_lost` (epoch moved).
+#[test]
+fn a_lease_taken_over_is_lease_lost_not_a_conflict() {
+    let dir = TempDir::new("primary-moved");
+    let clock = HandClock::new();
+    let (kv, old) = adapter_pair(dir.path(), true, &clock);
+    old.serve_as_primary(&origin("old"), 5_000)
+        .unwrap()
+        .unwrap();
+    clock.set(clock.now_micros() + 5_000_001);
+    let new = Store::open_kv(kv.clone(), clock.clone(), mu(true)).unwrap();
+    new.serve_as_primary(&origin("new"), 60_000)
+        .unwrap()
+        .unwrap();
+    let tx = old
+        .begin_with(TxnOptions {
+            mode: TxnMode::Optimistic,
+            ..TxnOptions::default()
+        })
+        .unwrap();
+    let _ = tx.store().get_config("anything").unwrap();
+    let e = tx.commit().unwrap_err();
+    assert_eq!(e.code, "lease_lost", "{e}");
+    assert_eq!(lost_reason(&e).as_deref(), Some("epoch_moved"), "{e}");
+}
+
+/// Round-2 finding 5: a rollback after the lease's end writes nothing, and the id sequences are still not handed out
+/// again once the store serves again (the concurrent store's durable reservation; the single-writer store never
+/// serves, ruling B).
+#[test]
+fn ids_a_refused_rollback_took_are_not_handed_out_again() {
+    let dir = TempDir::new("primary-ids");
+    let clock = HandClock::new();
+    let store = adapter_store(dir.path(), true, &clock);
+    store
+        .serve_as_primary(&origin("p"), 5_000)
+        .unwrap()
+        .unwrap();
+    let tx = store.begin_with(TxnOptions::default()).unwrap();
+    let rolled = put_page_id(tx.store(), "notes/rolled");
+    clock.set(clock.now_micros() + 5_000_001);
+    tx.rollback().unwrap();
+    store
+        .serve_as_primary(&origin("p"), 60_000)
+        .unwrap()
+        .unwrap();
+    let next = put_page_id(&store, "notes/next");
+    assert!(
+        next > rolled,
+        "id {next} was handed out again (rolled back {rolled})"
+    );
+}
+
+fn put_page_id(store: &Store, slug: &str) -> i64 {
+    let input: PageInput = serde_json::from_value(serde_json::json!({
+        "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": {}
+    }))
+    .unwrap();
+    let opts: PutPageOptions =
+        serde_json::from_value(serde_json::json!({"sourceId": "default"})).unwrap();
+    let page = store.put_page(slug, &input, &opts).unwrap();
+    page["id"].as_i64().expect("a page has an id")
 }
 
 // --- Guards ------------------------------------------------------------------------------------------------------------

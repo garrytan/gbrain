@@ -594,6 +594,21 @@ thread_local! {
         std::cell::RefCell::new(None);
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test seam: runs in an optimistic commit right after its primary fence was judged, before the commit is handed
+    /// to the pipeline.
+    pub(crate) static AFTER_COMMIT_FENCE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+fn after_commit_fence() {
+    #[cfg(test)]
+    if let Some(hook) = AFTER_COMMIT_FENCE.with(|h| h.borrow_mut().take()) {
+        hook();
+    }
+}
+
 fn after_savepoint_merge() {
     #[cfg(test)]
     if let Some(hook) = AFTER_SAVEPOINT_MERGE.with(|h| h.borrow_mut().take()) {
@@ -1621,6 +1636,7 @@ impl Store {
                 Err(error) => return abort(&mut state, error),
             }
         };
+        after_commit_fence();
         let base = state.base.take().ok_or_else(closed)?;
         state.root_locks.clear();
         state.undo.clear();

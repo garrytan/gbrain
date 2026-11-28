@@ -82,8 +82,12 @@ pub(crate) struct IndexOpen {
 
 /// Run by every open, after the format upgrade: refuses an index of a newer layout, writes an
 /// incomplete state when a format-4 brain has none (a self-heal; the build fills it) and resets an
-/// index of an older layout.
-pub(crate) fn open_index(kv: &dyn Kv) -> Result<IndexOpen> {
+/// index of an older layout. `before_commit` runs inside its write right before the commit (the primary fence of a store
+/// that finishes this upkeep when it starts serving, `primary.rs`).
+pub(crate) fn open_index(
+    kv: &dyn Kv,
+    before_commit: &dyn Fn(&mut dyn crate::kv::KvWrite) -> Result<()>,
+) -> Result<IndexOpen> {
     let state = check_state(&*kv.snapshot()?)?;
     if state
         .as_ref()
@@ -104,6 +108,7 @@ pub(crate) fn open_index(kv: &dyn Kv) -> Result<IndexOpen> {
             true
         }
     };
+    before_commit(&mut *tx)?;
     tx.commit()?;
     Ok(IndexOpen { needs_build })
 }
