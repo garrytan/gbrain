@@ -4,7 +4,7 @@
 # d0a230d4ac), local-only because no served parity file proves the member for a remote caller. That reason is frozen:
 # its rows only leave. A new row names its own reason. Keep rows sorted (LC_ALL=C) and unique.
 member	reason
-accessTokenLive	ruling A default
+accessTokenLive	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 closedLoopWithActiveFact	write path and shadow write map only: a write or purge reads it, and the shadow wrapper after the owner's write commits
 codeChunksExist	ruling A default
 countAccessFolderDrift	ruling A default
@@ -13,17 +13,17 @@ countActiveConversationFacts	ruling A default
 countArchivedEmbeddingWork	ruling A default
 countAtomExtractionBacklog	ruling A default
 countAtomFacts	ruling A default
-countBeliefBaselineSlugs	ruling A default
+countBeliefBaselineSlugs	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 countBrainLivePages	ruling A default
 countChunkColumnCoverage	ruling A default
 countChunkVectorCoverage	ruling A default
 countChunksBySource	ruling A default
-countClaimConflictPairs	ruling A default
+countClaimConflictPairs	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 countClaimLiftedRows	ruling A default
-countCoalescibleSynthJobs	ruling A default
+countCoalescibleSynthJobs	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 countCodeChunkPages	ruling A default
 countCompactedCallerRefusals	ruling A default
-countCompanyPages	ruling A default
+countCompanyPages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 countConnectorCheckpointsKeyed	ruling A default
 countConversationFactsOutsideWindows	ruling A default
 countConversationPagesToExtract	ruling A default
@@ -38,7 +38,7 @@ countDerivedFactTaint	ruling A default
 countDerivedRowTaint	ruling A default
 countDerivedVisibility	ruling A default
 countDistinctInboundLinkers	ruling A default
-countDreamProvenancePages	ruling A default
+countDreamProvenancePages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 countEmbedPendingProjections	ruling A default
 countEmbedSkipNullChunks	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 countEmbeddedFactsAmong	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
@@ -64,9 +64,9 @@ countLabelFacts	ruling A default
 countLeasePressure	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countLedgerCoveredAtomRetirements	ruling A default
 countLegacyDerivedPages	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
-countLegacyFactsPending	ruling A default
+countLegacyFactsPending	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 countLegacyUnknownBySource	ruling A default
-countLineageClosingRules	ruling A default
+countLineageClosingRules	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 countLiveFileBackedPages	ruling A default
 countLivePages	no caller in src outside the engine and its tests: no operation reaches it
 countLivePagesAtPathPrefix	ruling A default
@@ -79,9 +79,9 @@ countMcpRequestLogRows	ruling A default
 countMcpRequestsLastDay	HTTP admin routes only: the serve process reads it as the owner, outside any remote caller's operation
 countMcpRequestsLastDayByToken	HTTP admin routes only: the serve process reads it as the owner, outside any remote caller's operation
 countMcpResolvedTakes	ruling A default
-countMemberBoundCredentials	ruling A default
-countMemberPage	ruling A default
-countMemberPageFacts	ruling A default
+countMemberBoundCredentials	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+countMemberPage	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+countMemberPageFacts	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 countMentionDueSince	ruling A default
 countMentionLinksTo	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 countOauthAccessTokens	HTTP admin routes only: the serve process reads it as the owner, outside any remote caller's operation
@@ -106,7 +106,7 @@ countPageTrustTiers	ruling A default
 countPageVersionRows	ruling A default
 countPagesBySlugPrefix	ruling A default
 countPagesByTypeAndOwner	reached remotely only through run_doctor (admin scope); skipped for a remote caller
-countPagesByTypeForSource	ruling A default
+countPagesByTypeForSource	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 countPagesDueForMentions	ruling A default
 countPagesHiddenByPrefix	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 countPagesWithMentionLinks	ruling A default
@@ -123,7 +123,7 @@ countPurgedPageFacts	ruling A default
 countReadersNoncanonicalHolds	ruling A default
 countRecentChronicleReservations	ruling A default
 countRecentCompletedJobs	ruling A default
-countRecentDreamSynthSubmissions	ruling A default
+countRecentDreamSynthSubmissions	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 countRedactedFacts	ruling A default
 countRelinkCandidates	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 countRepoBoundSources	ruling A default
@@ -141,15 +141,15 @@ countSegmentedVersionsOfPage	ruling A default
 countSharedSkillMembers	ruling A default
 countSourcePages	ruling A default
 countStaleFactEmbeddings	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
-countSubagentMessages	ruling A default
+countSubagentMessages	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 countSynopsisTierPages	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 countTakes	ruling A default
 countTimelineCommentMarkupRows	ruling A default
 countTranscriptImportPages	ruling A default
-countTtlCancelledByName	ruling A default
-countTtlExpiredWaiting	ruling A default
+countTtlCancelledByName	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+countTtlExpiredWaiting	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 countUncomparableFacts	ruling A default
-countUnconsolidatedFactsBySource	ruling A default
+countUnconsolidatedFactsBySource	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 countUnembeddedLiveFacts	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 countUnfencedFactGroups	ruling A default
 countUnfilledAttribution	ruling A default
@@ -161,16 +161,16 @@ countUnverifiedExtractions	ruling A default
 countValidityLapsedFacts	ruling A default
 countVisibilityNoncanonicalHolds	ruling A default
 countWaitingJobs	ruling A default
-countWaitingJobsForNames	ruling A default
+countWaitingJobsForNames	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 countWakeWatches	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 countWorldFacts	ruling A default
 countZeroWeightWithTakes	ruling A default
 currentCodeChunksExist	ruling A default
-edgeClosureLanded	ruling A default
+edgeClosureLanded	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 edgeValidityCounts	ruling A default
 entityFeatureCoverage	ruling A default
 entityGraphCoverage	ruling A default
-factReadableUnder	ruling A default
+factReadableUnder	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 factRelinkAttemptsTableExists	ruling A default
 factsOrAliasesMayMatch	local owner code and shadow write map only: a gbrain command, and the shadow wrapper after the owner's write commits
 filterPagesAtRevision	local owner code and shadow write map only: a gbrain command, and the shadow wrapper after the owner's write commits
@@ -181,9 +181,9 @@ findBulkFactDays	reached remotely only through run_doctor (admin scope); skipped
 findCardRows	ruling A default
 findCodeDefinitions	ruling A default
 findCodeRefChunks	ruling A default
-findConsolidatedTakeIds	ruling A default
-findConsolidatedTakes	ruling A default
-findConsolidationPageIds	ruling A default
+findConsolidatedTakeIds	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+findConsolidatedTakes	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+findConsolidationPageIds	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 findExactBasenameCandidates	ruling A default
 findFuzzyEntityCandidates	ruling A default
 findLiveFactsByText	no caller in src outside the engine and its tests: no operation reaches it
@@ -200,10 +200,10 @@ getJobAttachment	ruling A default
 getLatestCalibrationProfile	ruling A default
 getTrustProposal	ruling A default
 getWriteGateHoldRow	ruling A default
-hasAccessPolicyState	ruling A default
+hasAccessPolicyState	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 hasActiveAuditMarker	ruling A default
 hasActiveFactText	ruling A default
-hasBeliefBaseline	ruling A default
+hasBeliefBaseline	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 hasBeliefEvents	ruling A default
 hasBodylessPageVersion	ruling A default
 hasChronicleSkipDecision	ruling A default
@@ -226,7 +226,7 @@ hasGuestSourceRow	local owner code only: a gbrain command reads it with the owne
 hasHiddenFactCopy	ruling A default
 hasLabelledOnlyMember	ruling A default
 hasLabelledOnlyMemberAmong	ruling A default
-hasLiveFileBackedPage	ruling A default
+hasLiveFileBackedPage	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 hasLiveSegmentedPage	ruling A default
 hasMcpLogRowsPastWindow	ruling A default
 hasOverdueWatchdogSuspect	ruling A default
@@ -241,20 +241,20 @@ hasSegmentedHistory	ruling A default
 hasSegmentedPage	ruling A default
 hasStaleSegmentChunks	ruling A default
 hasStoredVectors	ruling A default
-hasSubagentToolExecution	ruling A default
+hasSubagentToolExecution	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 hasSynopsisFrontmatterOverride	no caller in src outside the engine and its tests: no operation reaches it
 hasTable	no caller in src outside the engine and its tests: no operation reaches it
 hasTakeClaim	ruling A default
 hasWakeCron	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
-hasWakeTermsAcceptance	ruling A default
+hasWakeTermsAcceptance	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 heldEntityPageDeleted	ruling A default
 heldGenerationRowsForInput	ruling A default
 heldMoveDue	ruling A default
 heldTargetPageLive	ruling A default
-holdsNotifierLease	ruling A default
+holdsNotifierLease	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 inboundLinkCoverage	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 isAccessStateUnreadable	ruling A default
-isCalibrationProfileUnchanged	ruling A default
+isCalibrationProfileUnchanged	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 isConceptStillHeld	ruling A default
 isDeferredReplacementHeld	ruling A default
 isDrainClockPast	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
@@ -268,27 +268,27 @@ listAbandonedTakes	HTTP admin routes only: the serve process reads it as the own
 listAcceptedTakeRemovals	ruling A default
 listAccessCoverage	ruling A default
 listAccessGroupMemberships	ruling A default
-listAccessMemberLinks	ruling A default
+listAccessMemberLinks	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listAccessMemberRows	no caller in src outside the engine and its tests: no operation reaches it
 listAccessMemberStatuses	ruling A default
 listAccessPolicySourceIds	ruling A default
 listAccessPolicySources	no caller in src outside the engine and its tests: no operation reaches it
-listAccessPrefixSlugs	ruling A default
+listAccessPrefixSlugs	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listAccessReaderDrift	ruling A default
 listAccessRules	ruling A default
 listAccessTokenRows	HTTP admin routes only: the serve process reads it as the owner, outside any remote caller's operation
-listAccessTokens	ruling A default
+listAccessTokens	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listActiveAccessMembers	ruling A default
 listActiveAccessTokenRows	ruling A default
 listActiveFactIdsOfPage	ruling A default
 listActiveFactsForEntity	no caller in src outside the engine and its tests: no operation reaches it
 listActiveOauthClientRows	ruling A default
 listActivePositionedFactIds	ruling A default
-listActiveSourceIds	ruling A default
-listActiveWorktreeRefreshRows	ruling A default
+listActiveSourceIds	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listActiveWorktreeRefreshRows	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listAdminClientRows	HTTP admin routes only: the serve process reads it as the owner, outside any remote caller's operation
 listAgentSessionTakeCandidates	ruling A default
-listAliasCandidatePages	ruling A default
+listAliasCandidatePages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listAliasDuePages	ruling A default
 listAliasOnlyPrivatePages	ruling A default
 listAliasTargets	ruling A default
@@ -298,7 +298,7 @@ listAmendmentsNotApplied	ruling A default
 listAppliedEdgeProposalIds	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listAppliedPolicyRevisions	ruling A default
 listArchivedSourceIds	ruling A default
-listArchivedSourceRows	ruling A default
+listArchivedSourceRows	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listAtomBacklogSourceIds	ruling A default
 listAtomFenceCandidates	ruling A default
 listAtomLineageRows	ruling A default
@@ -308,7 +308,7 @@ listAttendedOriginSlugs	ruling A default
 listAudienceAccessMembers	ruling A default
 listAudienceMemberIds	ruling A default
 listAwaitingMemoryProposals	ruling A default
-listBeliefBaselinePending	ruling A default
+listBeliefBaselinePending	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listBeliefCarrierEvents	ruling A default
 listBeliefDriftCandidates	ruling A default
 listBeliefEventsForPurgeProbe	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
@@ -319,7 +319,7 @@ listBodyRecheckGroups	ruling A default
 listBodyRecheckVersions	ruling A default
 listBracketPathPages	ruling A default
 listBudgetLimitedRows	ruling A default
-listBudgetOwners	ruling A default
+listBudgetOwners	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listBuildSkewStacktraceLines	ruling A default
 listCallOffCueFacts	ruling A default
 listCallerRefusalRows	ruling A default
@@ -334,27 +334,27 @@ listCheckoutFiles	ruling A default
 listCheckoutRoots	ruling A default
 listCheckpointBlockedSources	ruling A default
 listChronicleCoverageGapRows	ruling A default
-listChronicleEventSlotRows	ruling A default
+listChronicleEventSlotRows	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listChronicleEventVisibilityRows	ruling A default
 listChronicleOwnedHashes	ruling A default
 listChunkTextsForRedaction	ruling A default
 listChunkedOccurrences	ruling A default
-listClaimConflictPairs	ruling A default
+listClaimConflictPairs	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listClaimPendingSourceIds	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listClearDependents	ruling A default
 listClearedRelinkedFacts	ruling A default
 listClosedConsolidationTies	ruling A default
-listCommittedOutputRequests	ruling A default
+listCommittedOutputRequests	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listCommittedRestorePages	ruling A default
 listCompactableReceipts	ruling A default
-listCompletedSynthJobs	ruling A default
-listConceptIncomingLinks	ruling A default
+listCompletedSynthJobs	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listConceptIncomingLinks	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listConceptInputRows	ruling A default
 listConceptLineageRows	ruling A default
 listConnectorFencePages	ruling A default
 listConnectorSources	ruling A default
-listConsolidationClaimShapes	ruling A default
-listConsolidationClaimValues	ruling A default
+listConsolidationClaimShapes	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listConsolidationClaimValues	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listConsumerOwners	ruling A default
 listContactRowPages	ruling A default
 listContentBlockedReceipts	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
@@ -371,25 +371,25 @@ listCredentialResealHoldRows	ruling A default
 listDanglingFederatedReads	ruling A default
 listDateBulletPages	ruling A default
 listDeadFactsAbsorbJobsByKeys	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
-listDeletedPageSlugsWithActiveFacts	ruling A default
+listDeletedPageSlugsWithActiveFacts	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listDerivationClaimForms	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listDerivationPurgeSweeps	ruling A default
 listDerivedAliasRows	ruling A default
 listDerivedOriginParks	ruling A default
 listDerivedRows	ruling A default
 listDerivedStreamSlugs	ruling A default
-listDreamAtomPages	ruling A default
-listDreamChildJobTimings	ruling A default
-listDreamJobCreatedAt	ruling A default
-listDreamPageIds	ruling A default
-listDreamQueueCandidates	ruling A default
+listDreamAtomPages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listDreamChildJobTimings	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listDreamJobCreatedAt	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listDreamPageIds	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listDreamQueueCandidates	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listDriftConflictGroups	ruling A default
 listDriftLiveRows	ruling A default
 listDriftVersionRows	ruling A default
-listDueWakeWatches	ruling A default
+listDueWakeWatches	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listDuplicateFactRows	ruling A default
 listDurableManagedSyncFailureKeys	no caller in src outside the engine and its tests: no operation reaches it
-listEdgeContradictionCandidates	ruling A default
+listEdgeContradictionCandidates	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listEdgeProposalCliRows	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listEffectRecoveries	ruling A default
 listEmailAliasPages	ruling A default
@@ -404,9 +404,9 @@ listEvalCandidateQueries	local owner code only: a gbrain command reads it with t
 listEventProjectionRows	ruling A default
 listExactRescanChunks	ruling A default
 listExpirableFactIdsOfDeletedPage	ruling A default
-listExpiredArchivedSources	ruling A default
+listExpiredArchivedSources	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listExpiredFactIds	ruling A default
-listExpiringOriginPages	ruling A default
+listExpiringOriginPages	purge_deleted_pages and owner code only: that operation is localOnly and cliOnly, so the MCP dispatch refuses it for a remote caller
 listExportPageKeys	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listExportWithdrawals	ruling A default
 listExtractionInputReceipts	ruling A default
@@ -424,7 +424,7 @@ listFactsAboveWriter	ruling A default
 listFactsAbsorbFailureGroups	ruling A default
 listFactsAbsorbJobsByKeyPrefix	ruling A default
 listFactsAbsorbJobsStillDead	ruling A default
-listFactsFencePages	ruling A default
+listFactsFencePages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listFactsForPage	ruling A default
 listFactsHomeCandidates	ruling A default
 listFactsOnValidDay	ruling A default
@@ -467,8 +467,8 @@ listGuardedTakeRows	ruling A default
 listGuestNotes	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listGuestSourceIds	ruling A default
 listGuestSourceRows	ruling A default
-listHandoverPrefixPages	ruling A default
-listHandoverReaderPages	ruling A default
+listHandoverPrefixPages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listHandoverReaderPages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listHeldFactRows	no caller in src outside the engine and its tests: no operation reaches it
 listHeldFactSlots	ruling A default
 listHeldFenceFactRows	ruling A default
@@ -495,29 +495,29 @@ listJobAttachments	ruling A default
 listJobPage	ruling A default
 listJobs	ruling A default
 listJunkEntityHubs	ruling A default
-listKeysReadingSource	ruling A default
+listKeysReadingSource	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listKnownBeliefSubjectKeys	ruling A default
-listKnownEdgeProposals	ruling A default
+listKnownEdgeProposals	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listLabelFactCandidates	ruling A default
 listLabelledOnlyMemberIds	ruling A default
 listLabelledPages	ruling A default
-listLaterPersistenceRequests	ruling A default
+listLaterPersistenceRequests	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listLatestTakeGrades	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listLegacyOriginPairs	ruling A default
 listLexicalContestCandidates	ruling A default
 listLifetimeClaimEvents	ruling A default
 listLifetimeCounters	ruling A default
-listLinkCandidatePages	ruling A default
-listLinkContexts	ruling A default
+listLinkCandidatePages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listLinkContexts	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listLinkEndpointPages	ruling A default
 listLinkIdsOnPage	ruling A default
 listLinkPageMetadata	ruling A default
 listLinkPageMetadataForSlugs	ruling A default
 listLiveChunksByIds	ruling A default
-listLiveConceptMemberRevisions	ruling A default
-listLiveDreamCycleLocks	ruling A default
+listLiveConceptMemberRevisions	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listLiveDreamCycleLocks	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listLiveDuplicateRows	ruling A default
-listLiveEmbedSegments	ruling A default
+listLiveEmbedSegments	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listLiveFencePageIds	ruling A default
 listLiveGenerationItems	ruling A default
 listLiveGenerationRetirements	ruling A default
@@ -551,7 +551,7 @@ listManagedSyncPassStops	ruling A default
 listManualLinkTransitions	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listMarkdownPageSlugs	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listMaterializedMarkerPages	ruling A default
-listMemberSourceRows	ruling A default
+listMemberSourceRows	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listMemoryProposalRows	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listMentionCandidatePages	ruling A default
 listMentionDuePages	ruling A default
@@ -565,7 +565,7 @@ listNameVariantCandidates	ruling A default
 listNamedVisibilityRows	ruling A default
 listNearestFacts	ruling A default
 listNearestFactsForPurge	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
-listNotifierHostSourceRows	ruling A default
+listNotifierHostSourceRows	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listOauthClientAuthShapes	ruling A default
 listOauthClients	ruling A default
 listOauthGrantAudit	no caller in src outside the engine and its tests: no operation reaches it
@@ -574,7 +574,7 @@ listOccurrenceChunks	jobs and maintenance only: a worker, cycle phase or embeddi
 listOlderDriftReceiptSlugs	ruling A default
 listOnboardingSources	ruling A default
 listOntologyFactCandidates	ruling A default
-listOntologyObservationSlugs	ruling A default
+listOntologyObservationSlugs	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listOntologyStreamSlugs	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listOpenFactsWindow	ruling A default
 listOpenIdentityDowngrades	no caller in src outside the engine and its tests: no operation reaches it
@@ -593,7 +593,7 @@ listOrphanGenerationCandidates	no caller in src outside the engine and its tests
 listOrphanLifetimes	ruling A default
 listOrphanWorkspaceSources	ruling A default
 listOrphanedAliasCounts	no caller in src outside the engine and its tests: no operation reaches it
-listOrphanedChronicleOwners	ruling A default
+listOrphanedChronicleOwners	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listOrphanedFenceRows	ruling A default
 listOtherAttributedFactIds	ruling A default
 listOutsideContentFenceCounts	ruling A default
@@ -603,7 +603,7 @@ listOversizedPages	ruling A default
 listOversizedStaleFacts	ruling A default
 listOverwriteCandidates	ruling A default
 listOverwriteLivePages	ruling A default
-listOwedPurgeRecords	ruling A default
+listOwedPurgeRecords	purge_deleted_pages and owner code only: that operation is localOnly and cliOnly, so the MCP dispatch refuses it for a remote caller
 listOwnLinkIds	ruling A default
 listOwnedContentRows	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listOwnedGenerationItems	ruling A default
@@ -628,7 +628,7 @@ listPageProseHits	write path only: a write or purge operation reads it; a remote
 listPagePurgeLiveClaims	ruling A default
 listPagePurgeRows	ruling A default
 listPagePurgeTombstones	ruling A default
-listPageRefsForSlugs	ruling A default
+listPageRefsForSlugs	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listPageSegmentShas	ruling A default
 listPageSourcePathsForPurge	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listPageStates	ruling A default
@@ -642,8 +642,8 @@ listPageVersionFenceBodies	ruling A default
 listPageVersionSourcePaths	ruling A default
 listPagelessEntityFacts	ruling A default
 listPagesByOriginPath	ruling A default
-listPagesForPurgeRewrite	ruling A default
-listPagesNamingReader	ruling A default
+listPagesForPurgeRewrite	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
+listPagesNamingReader	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listPagesReadByNobody	ruling A default
 listParkedEffects	ruling A default
 listParkedGroupRows	ruling A default
@@ -666,7 +666,7 @@ listPrivilegedDcrClients	ruling A default
 listProducerVersionRows	ruling A default
 listProjectedFenceRows	ruling A default
 listProjectionDrainPreview	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
-listProposeTakesCandidatePages	ruling A default
+listProposeTakesCandidatePages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listProvenAttributionTargets	ruling A default
 listPurgeCarrierVersions	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listPurgeClaimFacts	ruling A default
@@ -681,7 +681,7 @@ listPurgeSegmentClaims	ruling A default
 listPurgeStreamSlugs	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listPurgeTombstoneMatches	ruling A default
 listPurgeTombstones	no caller in src outside the engine and its tests: no operation reaches it
-listPurgeVersionBodies	ruling A default
+listPurgeVersionBodies	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listPurgedPageFactCandidates	ruling A default
 listPurgedPageRevisions	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listPurgedTakeRows	ruling A default
@@ -696,16 +696,16 @@ listReadableFilePaths	localOnly file operations and the CLI only: the MCP dispat
 listReadableFileRows	localOnly file operations and the CLI only: the MCP dispatch refuses file_* for a remote caller
 listReadablePageSlugs	ruling A default
 listReaderCandidatePages	ruling A default
-listReadersSourcedFactIds	ruling A default
+listReadersSourcedFactIds	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listReceiptCompactionCandidates	ruling A default
 listRecentDriftReceiptSlugs	ruling A default
-listRecentFailedJobErrors	ruling A default
+listRecentFailedJobErrors	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listRecentLeasePressure	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 listRecentPageBodies	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listRecentPurgeRequests	ruling A default
 listRecentReaderNarrowings	ruling A default
-listRecentSourceCycleFailures	ruling A default
-listRecentSynthesisCompletions	ruling A default
+listRecentSourceCycleFailures	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listRecentSynthesisCompletions	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listRecentWriterVersions	no caller in src outside the engine and its tests: no operation reaches it
 listRecordMetadataRows	ruling A default
 listRecordedFenceItemKeys	ruling A default
@@ -714,7 +714,7 @@ listRecordedTombstones	ruling A default
 listRedactedFactCandidates	ruling A default
 listRefusalBreakerRows	ruling A default
 listRejectedDeclarationPages	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
-listRejectedTakeProposalClaims	ruling A default
+listRejectedTakeProposalClaims	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listRekeyLosers	ruling A default
 listRelationshipNoteRows	ruling A default
 listReleasedPurgeOrigins	ruling A default
@@ -722,7 +722,7 @@ listRelinkCandidateRows	local owner code only: a gbrain command reads it with th
 listRepairScanPages	ruling A default
 listRequestsCarryingClaim	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listRequestsForSlugs	ruling A default
-listRequestsHoldingStagings	ruling A default
+listRequestsHoldingStagings	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listRequestsRecordingReasons	ruling A default
 listReservationsAfter	ruling A default
 listRestatedPrivateCopies	ruling A default
@@ -730,20 +730,20 @@ listRestorableAtomRetirements	ruling A default
 listRestorableAtoms	ruling A default
 listRestorableGenerationRows	ruling A default
 listResumableRefreshes	ruling A default
-listRetainedDreamOutputSources	ruling A default
+listRetainedDreamOutputSources	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listRetainedVersionBodies	ruling A default
-listRetiredDeactivations	ruling A default
+listRetiredDeactivations	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listRetiredFenceItems	ruling A default
 listRetiredGenerationItemKeys	ruling A default
 listRetryTrackedEffects	ruling A default
 listRevivalPages	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
-listRootPageSlugsAfter	ruling A default
+listRootPageSlugsAfter	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listRulePagesReadByNobody	ruling A default
 listRunningClaimOwners	ruling A default
 listRunningRequestStalls	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listSafeChunksPending	ruling A default
 listScraperJunkCandidates	ruling A default
-listSegmentChunkRows	ruling A default
+listSegmentChunkRows	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listSegmentedLabelPages	ruling A default
 listSegmentedPageBodies	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listSegmentedPageSlugs	ruling A default
@@ -751,37 +751,37 @@ listSegmentedPagesBySlug	no caller in src outside the engine and its tests: no o
 listSegmentedRechunkCandidates	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 listSegmentedStaleRows	ruling A default
 listSegmentedVersionBodies	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
-listSegmentedVersionsForPurge	ruling A default
+listSegmentedVersionsForPurge	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listSessionFactTwins	ruling A default
 listSessionFactsForClassification	ruling A default
 listSettledSessionFacts	ruling A default
 listSharedMemberMigrationRows	ruling A default
 listSharedSkillCatalogHeads	ruling A default
 listSharedSkillFollowSources	ruling A default
-listSimilarActiveFacts	ruling A default
+listSimilarActiveFacts	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listSingleFactMetadata	ruling A default
 listSlugAliases	ruling A default
 listSlugPathCandidates	ruling A default
 listSlugSpellingCandidates	ruling A default
 listSourceBindingsForMovement	reached remotely only through run_doctor (admin scope); skipped for a remote caller
-listSourceChangedPagesAfter	ruling A default
+listSourceChangedPagesAfter	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listSourceCheckpointRecords	ruling A default
 listSourceHoldRecords	ruling A default
 listSourceIds	ruling A default
 listSourceIncarnations	ruling A default
 listSourceLastCommits	ruling A default
 listSourceManagedSyncFailures	ruling A default
-listSourceOAuthClients	ruling A default
+listSourceOAuthClients	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listSourcePathPages	ruling A default
-listSourcePathRows	ruling A default
+listSourcePathRows	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listSourceRecords	ruling A default
 listSourceRequestsByRequestId	ruling A default
 listSourceRoutingRows	ruling A default
 listSourceSlugSpellingCandidates	ruling A default
 listSourceWantedMarkers	ruling A default
 listSplitFactsPages	ruling A default
-listStagingPartEdges	ruling A default
-listStagingsHoldingClaim	ruling A default
+listStagingPartEdges	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
+listStagingsHoldingClaim	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listStaleAtoms	ruling A default
 listStaleChunkVectors	ruling A default
 listStaleDerivedAliasSlugs	ruling A default
@@ -797,24 +797,24 @@ listStoredTimelineRowsOrdered	ruling A default
 listStruckHeldRows	ruling A default
 listStuckActiveJobsByName	ruling A default
 listStuckWorktreeRefreshes	ruling A default
-listSubagentMessages	ruling A default
-listSubagentOneshotLedger	ruling A default
-listSubagentPutPageSlugs	ruling A default
-listSubagentPutPageWrites	ruling A default
-listSubagentRetainedPutPages	ruling A default
-listSubagentStagedPages	ruling A default
-listSubagentTimelineAppendCalls	ruling A default
-listSubagentToolExecutions	ruling A default
-listSubagentWriteOutcomes	ruling A default
+listSubagentMessages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listSubagentOneshotLedger	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
+listSubagentPutPageSlugs	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listSubagentPutPageWrites	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listSubagentRetainedPutPages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listSubagentStagedPages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listSubagentTimelineAppendCalls	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listSubagentToolExecutions	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listSubagentWriteOutcomes	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 listSupportedChunkIds	ruling A default
-listSweepDeferredPages	ruling A default
-listSweepStalePages	ruling A default
+listSweepDeferredPages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listSweepStalePages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listSymbolChunkIds	ruling A default
 listSymbolLanguages	ruling A default
 listSymbolTypesForName	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listSynopsisSourceIds	no caller in src outside the engine and its tests: no operation reaches it
-listSynthesisCompletionKeys	ruling A default
-listSynthesisPageBodies	ruling A default
+listSynthesisCompletionKeys	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+listSynthesisPageBodies	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listTakeHoldersAtRows	ruling A default
 listTakeHorizons	ruling A default
 listTakeIdsLeavingFence	ruling A default
@@ -826,7 +826,7 @@ listTakeRowNums	ruling A default
 listTakeRowsForPage	ruling A default
 listTakeSupersedeReceipts	ruling A default
 listTakeSupersessionCandidates	ruling A default
-listTerminalFailureBatch	ruling A default
+listTerminalFailureBatch	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listTextBearingColumns	no caller in src outside the engine and its tests: no operation reaches it
 listTimelineDedupRows	ruling A default
 listTimelineHistoryBatch	no caller in src outside the engine and its tests: no operation reaches it
@@ -847,12 +847,12 @@ listTrustedPrivateCopies	ruling A default
 listTwinMergeLosers	ruling A default
 listTypeOrphanRows	ruling A default
 listTypedClaimFactsAtPages	ruling A default
-listUnarchivedSourceRows	ruling A default
+listUnarchivedSourceRows	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listUnattributedFacts	ruling A default
 listUnbackedConversationRows	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
-listUnboundClientIds	ruling A default
+listUnboundClientIds	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listUnboundSourcePages	reached remotely only through run_doctor (admin scope); skipped for a remote caller
-listUnboundTokenNames	ruling A default
+listUnboundTokenNames	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listUnembeddedChunkIndexes	ruling A default
 listUnembeddedChunkPages	ruling A default
 listUnexpiredFactIds	ruling A default
@@ -871,7 +871,7 @@ listUnreviewedJobs	ruling A default
 listUnreviewedSyncTombstones	ruling A default
 listUntiledSegmentedPageRows	no caller in src outside the engine and its tests: no operation reaches it
 listUntiledSegmentedPages	ruling A default
-listUnverifiedArchivedSourceIds	ruling A default
+listUnverifiedArchivedSourceIds	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listUnwithdrawnFacts	ruling A default
 listValidTimeIdentities	ruling A default
 listVectorlessChunkIndexes	ruling A default
@@ -884,7 +884,7 @@ listVisibleBeliefLifetimes	ruling A default
 listVisiblePageSlugs	ruling A default
 listVolunteerChannels	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 listWaitingByQueue	ruling A default
-listWaitingChildJobIds	ruling A default
+listWaitingChildJobIds	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 listWakeCrons	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 listWakeWatches	ruling A default
 listWalkChunkRows	ruling A default
@@ -900,18 +900,18 @@ listWriteGateHoldRows	jobs and maintenance only: a worker, cycle phase or embedd
 listWriteGateReceiptsFor	ruling A default
 listWriteRequestsByRequestId	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 listWriteRequestsByRequestIds	ruling A default
-listWriterVersions	ruling A default
+listWriterVersions	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 liveGenerationForOperation	ruling A default
 loadPurgeTarget	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
-lockActiveAccessTokens	ruling A default
+lockActiveAccessTokens	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 lockAllSourceRows	ruling A default
 lockBodyStagingState	ruling A default
 lockEffectRow	ruling A default
-lockHeldConcept	ruling A default
+lockHeldConcept	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 lockLegacyAccessTokens	ruling A default
 lockLiveConceptMembers	ruling A default
 lockLivePagesByKey	ruling A default
-lockSegmentedGenerationPage	ruling A default
+lockSegmentedGenerationPage	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 lockSharedSkillBrainId	ruling A default
 lockSourceForUpdate	ruling A default
 loopFactDrift	ruling A default
@@ -919,37 +919,37 @@ markTransactionReadOnly	ruling A default
 matchHeadStems	ruling A default
 maxConversationRowNum	ruling A default
 maxFenceRowNum	ruling A default
-maxFenceRowNumOfPage	ruling A default
+maxFenceRowNumOfPage	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 nextLivePageAfter	ruling A default
 normalizeFenceLines	ruling A default
 oauthClientHoldsAuthorization	ruling A default
-oauthClientLive	ruling A default
+oauthClientLive	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 originIndexPresent	shadow write map only: the shadow wrapper reads it after the owner's write commits, never in a remote caller's read
 ownerReachesFact	ruling A default
 ownsSchemaTables	ruling A default
 pageHasFrontmatterKey	jobs and shadow write map only: a worker or cycle phase, and the shadow wrapper after the owner's write commits
 pageHasTimelineEntries	ruling A default
-pagePrefixSamples	ruling A default
+pagePrefixSamples	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 pageSlugExists	ruling A default
-pageTypeTotals	ruling A default
+pageTypeTotals	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 pendingTrustProposalsFor	ruling A default
 pickValidTimeEdition	ruling A default
 pingStore	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 planFactPurgeIds	write path and shadow write map only: a write or purge reads it, and the shadow wrapper after the owner's write commits
 planFactPurgeTakes	write path and shadow write map only: a write or purge reads it, and the shadow wrapper after the owner's write commits
 probeIdleWork	ruling A default
-probeLiveConsumerRows	ruling A default
+probeLiveConsumerRows	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 probeNoopEmbeddingSettle	ruling A default
 probePageTypes	ruling A default
 probeProjectionWindowCandidates	ruling A default
 probePurgeDerivations	write path and shadow write map only: a write or purge reads it, and the shadow wrapper after the owner's write commits
-probeRetypeRows	ruling A default
+probeRetypeRows	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 probeTargetRows	ruling A default
 probeTornPages	ruling A default
-probeUntypedPathPrefix	ruling A default
+probeUntypedPathPrefix	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 purgeSubjectPageLive	write path and shadow write map only: a write or purge reads it, and the shadow wrapper after the owner's write commits
 readAccessGroups	ruling A default
-readAccessMemberLink	ruling A default
+readAccessMemberLink	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readAccessMembers	ruling A default
 readAccessPolicyMarks	ruling A default
 readAccessPolicyRevisions	ruling A default
@@ -984,9 +984,9 @@ readBodyManifestRows	ruling A default
 readBodyRecheckPage	ruling A default
 readBrainMaturity	ruling A default
 readBriefEditPage	ruling A default
-readBriefEmailAliasPages	ruling A default
+readBriefEmailAliasPages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readBriefEntityPages	ruling A default
-readBriefMeetingPages	ruling A default
+readBriefMeetingPages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readBriefPageVersions	ruling A default
 readBriefTimelineEntry	ruling A default
 readBriefWorldFacts	ruling A default
@@ -998,7 +998,7 @@ readCapacityForecastInputs	ruling A default
 readCatalogSchemaVersion	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readChatCensusRows	ruling A default
 readChatUsage	ruling A default
-readCheckpointManifestRow	ruling A default
+readCheckpointManifestRow	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readChildCompletions	ruling A default
 readChronicleBackfillBatch	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readChronicleDepthRow	ruling A default
@@ -1017,7 +1017,7 @@ readClockMillisText	local owner code only: a gbrain command reads it with the ow
 readCompanyBrainEvidenceRows	ruling A default
 readConceptStatedKinds	ruling A default
 readConfigForUpdate	ruling A default
-readConsolidationTakesMaxRowNum	ruling A default
+readConsolidationTakesMaxRowNum	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readContentReceiptBinding	ruling A default
 readConversationSlotValueHash	ruling A default
 readCounterDrift	reached remotely only through run_doctor (admin scope); skipped for a remote caller
@@ -1026,7 +1026,7 @@ readCredentialBindingForUpdate	ruling A default
 readCredentialMemberId	ruling A default
 readCurrentWriteTrust	ruling A default
 readCursorEdition	ruling A default
-readCycleListingInstant	ruling A default
+readCycleListingInstant	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readDatabaseClock	ruling A default
 readDeletePageRequest	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readDeletedPageBody	ruling A default
@@ -1037,18 +1037,18 @@ readDoctorSources	ruling A default
 readDrainHolderProgress	ruling A default
 readDrainLeaseBeacon	ruling A default
 readDrainRunStart	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
-readDreamDeferralReceipt	ruling A default
-readDreamJobStatus	ruling A default
+readDreamDeferralReceipt	purge_deleted_pages and owner code only: that operation is localOnly and cliOnly, so the MCP dispatch refuses it for a remote caller
+readDreamJobStatus	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readDreamPreRunRevision	ruling A default
-readDreamSourceIncarnation	ruling A default
-readDreamVerifyEpoch	ruling A default
+readDreamSourceIncarnation	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+readDreamVerifyEpoch	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readDriftConflictBounds	ruling A default
 readDriftConflictDetails	ruling A default
 readDriftSchema	ruling A default
-readDueWantedMarkers	ruling A default
-readEdgeProposal	ruling A default
-readEdgeProposalEvidence	ruling A default
-readEdgeProposalHash	ruling A default
+readDueWantedMarkers	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+readEdgeProposal	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+readEdgeProposalEvidence	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+readEdgeProposalHash	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readEdgeProposalSourceId	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readEffectBytes	ruling A default
 readEmbedBackfillBySource	ruling A default
@@ -1072,14 +1072,14 @@ readExplainScanPage	local owner code only: a gbrain command reads it with the ow
 readExportPageRows	ruling A default
 readExportWithdrawalLedgerBytes	ruling A default
 readExtractKindRollup7d	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
-readExtractReceiptSeal	ruling A default
-readExtractReceiptSlot	ruling A default
+readExtractReceiptSeal	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+readExtractReceiptSlot	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readExtractRollup7d	ruling A default
 readExtractionLagCounts	ruling A default
 readFactActivity	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readFactCacheWatermark	ruling A default
-readFactEntitySlug	ruling A default
-readFactEntitySlugById	ruling A default
+readFactEntitySlug	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
+readFactEntitySlugById	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 readFactForForget	ruling A default
 readFactForOwnerAction	ruling A default
 readFactLiveVisibility	ruling A default
@@ -1096,7 +1096,7 @@ readFactWithdrawnRow	no caller in src outside the engine and its tests: no opera
 readFactsEmbeddingColumn	ruling A default
 readFactsFtsIndexState	ruling A default
 readFalseStampedChunkCounts	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
-readFederationExposedPages	ruling A default
+readFederationExposedPages	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readFeedbackStatus	ruling A default
 readFenceHoldFiles	ruling A default
 readFenceOriginGone	ruling A default
@@ -1116,12 +1116,12 @@ readGenerationActivationState	ruling A default
 readGenerationFenceBlocks	ruling A default
 readGenerationItemsByIds	ruling A default
 readGenerationPageRows	ruling A default
-readGenerationRestored	ruling A default
+readGenerationRestored	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readGenerationValve	ruling A default
 readGitGapPageBatch	ruling A default
 readGitGapSourceRow	ruling A default
 readGitGapSourceRows	ruling A default
-readGitHoldCodeCountRows	ruling A default
+readGitHoldCodeCountRows	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readGitHoldListingRows	ruling A default
 readGitHoldRecords	ruling A default
 readGitHoldReportInputs	ruling A default
@@ -1134,11 +1134,11 @@ readGroupSpendTotals	ruling A default
 readGuestDeleteRow	ruling A default
 readGuestMarks	ruling A default
 readGuestSourceRow	ruling A default
-readHandoverRow	ruling A default
+readHandoverRow	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readHeadBlockerRows	ruling A default
 readHealthMemoClock	ruling A default
 readHeldAccessState	ruling A default
-readHeldConcept	ruling A default
+readHeldConcept	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readHeldConceptRows	ruling A default
 readHeldConfigValue	ruling A default
 readHeldGenerationContext	ruling A default
@@ -1173,8 +1173,8 @@ readLastCompletedJobAt	ruling A default
 readLastContradictionsPromptVersion	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readLastFailedGlobalMaintenanceJob	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readLastFinishedJobAt	ruling A default
-readLastUndoneHandoverId	ruling A default
-readLatestBeliefCoverage	ruling A default
+readLastUndoneHandoverId	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+readLatestBeliefCoverage	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readLatestCatalogProvenanceAudit	ruling A default
 readLatestConnectorReceipt	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readLatestTakeGrades	ruling A default
@@ -1187,7 +1187,7 @@ readLinkRelationshipEvidence	ruling A default
 readLinkTargetPages	ruling A default
 readLinkedFactCopies	ruling A default
 readLinkedMember	ruling A default
-readLiveAccessToken	ruling A default
+readLiveAccessToken	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readLiveAccessTokenRows	ruling A default
 readLiveAccessTokenScope	ruling A default
 readLiveConsumerSummary	reached remotely only through run_doctor (admin scope); skipped for a remote caller
@@ -1197,12 +1197,12 @@ readLiveFenceFactAt	ruling A default
 readLiveGenerationId	ruling A default
 readLiveGenerationRow	ruling A default
 readLiveIdentityHolders	ruling A default
-readLiveJobIds	ruling A default
+readLiveJobIds	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readLiveMember	ruling A default
 readLiveOauthClients	ruling A default
 readLivePageBody	ruling A default
 readLivePageByPath	ruling A default
-readLivePageFrontmatter	ruling A default
+readLivePageFrontmatter	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readLivePageIdBySlug	ruling A default
 readLivePageTypes	ruling A default
 readLivePagesByIds	ruling A default
@@ -1211,7 +1211,7 @@ readLiveSlugs	ruling A default
 readLiveStoredBody	ruling A default
 readLiveSyncJobId	ruling A default
 readLiveSyncPassRows	ruling A default
-readLiveTakePage	ruling A default
+readLiveTakePage	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readLocalWriterMemberGrant	ruling A default
 readLongPageSizes	ruling A default
 readLoopFactState	ruling A default
@@ -1225,7 +1225,7 @@ readMaxRequestSequence	ruling A default
 readMaxTimelineEntryId	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readMayActFor	ruling A default
 readMcpLifetimeUsage	HTTP admin routes only: the serve process reads it as the owner, outside any remote caller's operation
-readMcpLogPruneCutoff	ruling A default
+readMcpLogPruneCutoff	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readMcpRequestLogBytes	ruling A default
 readMcpRequestLogPage	HTTP admin routes only: the serve process reads it as the owner, outside any remote caller's operation
 readMcpRollupPrunedBefore	ruling A default
@@ -1248,14 +1248,14 @@ readNewestTimelineEntryId	ruling A default
 readNoopEmbeddingCandidates	ruling A default
 readNotifierFirstDue	no caller in src outside the engine and its tests: no operation reaches it
 readNotifierLease	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
-readNotifierSources	ruling A default
+readNotifierSources	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readNotifierStatusRows	ruling A default
 readOAuthClientMemberGrant	ruling A default
 readOAuthClientReceiptGrant	ruling A default
-readOauthAccessTokenRows	ruling A default
+readOauthAccessTokenRows	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readOauthClient	ruling A default
 readOauthClientAttest	ruling A default
-readOauthClientColumns	ruling A default
+readOauthClientColumns	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readOauthClientForUpdate	ruling A default
 readOldestPageCreatedAt	ruling A default
 readOldestSourceCreatedAt	ruling A default
@@ -1264,7 +1264,7 @@ readOldestVersionAttribution	ruling A default
 readOldestWaitingAge	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 readOntologyRival	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readOpCheckpointCompletedKeys	no caller in src outside the engine and its tests: no operation reaches it
-readOpCheckpointDoc	ruling A default
+readOpCheckpointDoc	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readOpCheckpointKeys	ruling A default
 readOpCheckpointRecord	ruling A default
 readOpCheckpointRecords	ruling A default
@@ -1275,7 +1275,7 @@ readOrphanedManagedSyncFailureRows	ruling A default
 readOwnedLinks	ruling A default
 readOwnerHostBinding	ruling A default
 readOwnerOnlySourcesPresent	ruling A default
-readPageAccessAllowed	ruling A default
+readPageAccessAllowed	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readPageAliasRows	ruling A default
 readPageChunkerVersion	ruling A default
 readPageCompiledTruths	no caller in src outside the engine and its tests: no operation reaches it
@@ -1286,7 +1286,7 @@ readPageExtractionReceipt	ruling A default
 readPageExtractionWatermark	ruling A default
 readPageFeedbackWeights	ruling A default
 readPageFileOrigin	ruling A default
-readPageFolderRulesAllowed	ruling A default
+readPageFolderRulesAllowed	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readPageHiddenFromCaller	ruling A default
 readPageHiddenFromWriter	ruling A default
 readPageIdInSource	ruling A default
@@ -1308,7 +1308,7 @@ readPageRevisionWriter	ruling A default
 readPageRevisions	ruling A default
 readPageSizeRows	ruling A default
 readPageSlugInSource	ruling A default
-readPageStampTimes	ruling A default
+readPageStampTimes	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readPageSynopses	ruling A default
 readPageTierRef	ruling A default
 readPageTierRows	ruling A default
@@ -1329,7 +1329,7 @@ readPersistenceBrainIdText	ruling A default
 readPinnedQuestion	ruling A default
 readPlainSyncSource	ruling A default
 readPredictionLedgerEvents	ruling A default
-readPrefixAnchoredPages	ruling A default
+readPrefixAnchoredPages	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readPrefixCandidates	ruling A default
 readPrefixDirs	ruling A default
 readPrefixTitleMatches	ruling A default
@@ -1342,12 +1342,12 @@ readProjectionJobReason	ruling A default
 readPublicationRefusals	ruling A default
 readPurgePageBody	ruling A default
 readPurgeReceiptSourcePath	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
-readPurgeReplaySchema	ruling A default
+readPurgeReplaySchema	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readPurgeSourceLocalPath	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readQueueDivergence	ruling A default
 readQueueFamilyStats	ruling A default
 readQueueHealthSignals	reached remotely only through run_doctor (admin scope); skipped for a remote caller
-readQueuedPageChars	ruling A default
+readQueuedPageChars	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readQueuedSpendRows	ruling A default
 readRawDataValue	ruling A default
 readRawProvenanceGaps	reached remotely only through run_doctor (admin scope); skipped for a remote caller
@@ -1355,7 +1355,7 @@ readReadableFileForUrl	localOnly file operations and the CLI only: the MCP dispa
 readReadableFileForVerify	localOnly file operations and the CLI only: the MCP dispatch refuses file_* for a remote caller
 readReadablePageId	localOnly file operations and the CLI only: the MCP dispatch refuses file_* for a remote caller
 readReasonPurgeTombstones	ruling A default
-readRebuildAccess	ruling A default
+readRebuildAccess	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readReceiptBudget	ruling A default
 readReceiptCompactionWindow	ruling A default
 readRecoveringHeadRow	ruling A default
@@ -1367,10 +1367,10 @@ readReferrerTypes	ruling A default
 readReflexLiveKeys	ruling A default
 readReflexPages	ruling A default
 readRefreshTiming	ruling A default
-readReindexSpendInputs	ruling A default
+readReindexSpendInputs	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readRelinkSource	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 readRemirrorEffects	ruling A default
-readRemoteForgetTier	ruling A default
+readRemoteForgetTier	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readRenameIdentityRows	ruling A default
 readRepairBrainId	no caller in src outside the engine and its tests: no operation reaches it
 readRepairBusyRows	ruling A default
@@ -1403,7 +1403,7 @@ readSegmentedRechunkPage	jobs and maintenance only: a worker, cycle phase or emb
 readSegmentedRewritePage	ruling A default
 readSegmentedVersionBodyBytes	ruling A default
 readServerEncoding	ruling A default
-readSessionCursor	ruling A default
+readSessionCursor	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readSharedSkillDeliveryBatch	ruling A default
 readSharedSkillMember	ruling A default
 readSharedSkillPolicyRow	ruling A default
@@ -1419,12 +1419,12 @@ readSoakCounterRows	ruling A default
 readSoftDeletedAliasCounts	no caller in src outside the engine and its tests: no operation reaches it
 readSoleSourceId	ruling A default
 readSourceArchivedForShare	ruling A default
-readSourceAttestState	ruling A default
+readSourceAttestState	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readSourceCheckoutPath	ruling A default
 readSourceCheckoutRoot	ruling A default
 readSourceChunkerVersion	ruling A default
 readSourceCloneRow	ruling A default
-readSourceDeleteImpact	ruling A default
+readSourceDeleteImpact	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readSourceIncarnation	ruling A default
 readSourceIncarnationArchived	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readSourceJobCounts	ruling A default
@@ -1437,7 +1437,7 @@ readSourcePurgeFlags	ruling A default
 readSourceRequestById	ruling A default
 readSourceSlugProbe	ruling A default
 readSourceState	ruling A default
-readSourceSyncShape	ruling A default
+readSourceSyncShape	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readSourceWriteRow	ruling A default
 readSourcesNotReadable	ruling A default
 readSpellingKeyPages	ruling A default
@@ -1449,10 +1449,10 @@ readStoredPageHead	ruling A default
 readStoredPageLabels	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readStoredPageTier	ruling A default
 readStrandedTakeProposalClaim	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
-readSupersessionReplacement	ruling A default
+readSupersessionReplacement	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 readSyncAdmissionEffects	ruling A default
 readSyncAdmissionSettingRow	ruling A default
-readSyncConversionRows	ruling A default
+readSyncConversionRows	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readSyncDispatchRow	ruling A default
 readSyncHeadRequestRow	ruling A default
 readSyncImportPageRows	ruling A default
@@ -1462,7 +1462,7 @@ readSyncStatusCommittedRow	ruling A default
 readSyncStatusSourceRow	ruling A default
 readSynopsisTierSources	ruling A default
 readTakeClaim	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
-readTakeGrade	ruling A default
+readTakeGrade	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readTakeHorizonRows	no caller in src outside the engine and its tests: no operation reaches it
 readTakePreimages	ruling A default
 readTakeProposal	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
@@ -1477,15 +1477,15 @@ readTimelineVersionBody	ruling A default
 readTokenLifetimeClampedClients	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readTombstoneWindow	ruling A default
 readTopologyChange	ruling A default
-readTopologyChangeDigest	ruling A default
+readTopologyChangeDigest	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readTrigramCandidates	ruling A default
 readTrustAllowRule	ruling A default
 readTrustGeneration	ruling A default
 readTrustScanCeilings	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readTrustScanCursor	ruling A default
 readUnembeddedPageSummary	ruling A default
-readUnfinishedAccessMigration	ruling A default
-readUntakenWaitingJobs	ruling A default
+readUnfinishedAccessMigration	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
+readUntakenWaitingJobs	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readUploadSessionByRequest	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readVersionAttributions	ruling A default
 readVersionContent	ruling A default
@@ -1493,24 +1493,24 @@ readVersionSourcePath	ruling A default
 readVoiceGateHealth	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 readVolunteerUsage	ruling A default
 readWaitingQueueDepths	ruling A default
-readWaitingScopeState	ruling A default
+readWaitingScopeState	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readWakeDoctor	ruling A default
 readWantedMarkers	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
-readWedgeSignals	ruling A default
-readWhoCanReadRows	ruling A default
+readWedgeSignals	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
+readWhoCanReadRows	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readWindowChunk	ruling A default
 readWithdrawalAnchor	local owner code only: a gbrain command reads it with the owner's view (remote: false); no remote-callable operation reaches it
 readWithdrawalDiscovery	ruling A default
 readWorktreeAdmission	ruling A default
-readWorktreeManifest	ruling A default
+readWorktreeManifest	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readWriteAttributionNames	ruling A default
 readWriteRequestById	ruling A default
 readWriteRequestProgress	ruling A default
 readWriteRequestsByRequestId	ruling A default
 readWriteWatermarkRow	ruling A default
 readWriterAdminState	ruling A default
-readWriterDiagnosticRows	ruling A default
-readWriterStatusRows	ruling A default
+readWriterDiagnosticRows	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
+readWriterStatusRows	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readWriterVersionCutoff	reached remotely only through run_doctor (admin scope); skipped for a remote caller
 recentWriterVersions	ruling A default
 relationExists	ruling A default
@@ -1530,6 +1530,6 @@ staleLinkRelationshipKeys	ruling A default
 storedTimelineRowsByPageIds	ruling A default
 sumClientSpendSince	jobs and maintenance only: a worker, cycle phase or embedding migration reads it in the owner's process; no remote-callable operation reaches it
 sumEmbedBackfillChars	ruling A default
-summarizeSubagentToolExecutions	ruling A default
+summarizeSubagentToolExecutions	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 sweepJournalChunk	ruling A default
-takeProposalCached	ruling A default
+takeProposalCached	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
