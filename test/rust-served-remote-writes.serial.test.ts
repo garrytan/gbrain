@@ -276,12 +276,13 @@ describeAddon('remote writes over the served wire', () => {
       links: [] as unknown[],
     });
     /** A raw call frame, as the claim's caller (null: no claim) with the world's read scope, on the connection or inside `txn`. */
-    const send = (claim: ReturnType<typeof claimOf> | null, events: unknown[], txn?: string) => {
+    type Claim = { clientId: string; sourceId: string; allowedSources: string[] | null };
+    const send = (claim: Claim | null, events: unknown[], txn?: string) => {
       const conn = servedConnectionOf(client) as unknown as Conn;
       const run = () => worldOnly(() => conn.request('call', 'insertRetrievalEvents', [events], txn ? { txn } : {}));
       return codeOf(claim ? withMemberClaim(claim, run) : run());
     };
-    const inTxn = async (claim: ReturnType<typeof claimOf> | null, events: unknown[]) => {
+    const inTxn = async (claim: Claim | null, events: unknown[]) => {
       const conn = servedConnectionOf(client) as unknown as Conn;
       const ref = String(await conn.txn('begin', {}));
       let code = '';
@@ -336,6 +337,19 @@ describeAddon('remote writes over the served wire', () => {
         retryInTxn: await inTxn(claimOf('client-a'), [eventOf(id, 'client-a', 'search', ['notes/open', 'notes/other'])]),
       }).toEqual({ otherClient: 'permission_denied', otherOp: 'permission_denied', retry: 'ok', retryInTxn: 'ok' });
       expect(await stored(id)).toEqual({ client_id: 'client-a', op: 'search', pages: ['notes/open'] });
+    });
+
+    test('a claim with a source allowlist covers only those sources: an event naming a page of its scalar source outside the list is refused and stores nothing', async () => {
+      const outside = mintAnswerId();
+      const inside = mintAnswerId();
+      const federated = (allowedSources: string[]) => ({ clientId: 'client-a', sourceId: 'default', allowedSources });
+      expect({
+        outsidePlain: await send(federated(['team-example']), [eventOf(outside, 'client-a', 'search', ['notes/open'])]),
+        outsideTxn: await inTxn(federated(['team-example']), [eventOf(outside, 'client-a', 'search', ['notes/open'])]),
+        inside: await send(federated(['default']), [eventOf(inside, 'client-a', 'search', ['notes/open'])]),
+      }).toEqual({ outsidePlain: 'permission_denied', outsideTxn: 'permission_denied', inside: 'ok' });
+      expect(await stored(outside)).toBeNull();
+      expect(await stored(inside)).toEqual({ client_id: 'client-a', op: 'search', pages: ['notes/open'] });
     });
 
     test('an id repeated inside one batch is refused and stores nothing', async () => {
@@ -459,6 +473,18 @@ describeAddon('remote writes over the served wire', () => {
       expect(refused.plain.value).toContain('read_out_of_scope');
       expect(refused.held.value).toContain('read_out_of_scope');
     }
+  });
+
+  test('the page versions read returns no snapshot the caller may not read: a private draft of a page made public later does not cross, on an ordinary frame and in a held transaction', async () => {
+    await owner.putPage('notes/history-made-open', NOTE('History', 'Private draft text of the history page.', { visibility: 'private' }));
+    await owner.createVersion('notes/history-made-open');
+    await owner.putPage('notes/history-made-open', NOTE('History', 'Public text of the history page.'));
+    const id = (await owner.getPage('notes/history-made-open'))!.id;
+    const all = await owner.readBriefPageVersions(id, '1970-01-01T00:00:00.000Z', 65536, 10);
+    expect(all.some(v => String(v.compiled_truth).includes('Private draft text'))).toBe(true);
+    const r = await sendMember('readBriefPageVersions', [id, '1970-01-01T00:00:00.000Z', 65536, 10]);
+    expect(codes(r)).toEqual(['ok', 'ok']);
+    for (const x of [r.plain, r.held]) expect(JSON.stringify(x.value)).not.toContain('Private draft text');
   });
 
   test('nextLivePageAfter answers only a page the caller may read: a hidden page is stepped past, a cursor of 0 or one that names no page is valid', async () => {

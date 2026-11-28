@@ -113,6 +113,35 @@ describe('the owner refuses a remote caller\'s write itself under the check', ()
   });
 });
 
+describe('a remote-marked read on the owner socket runs under the remote caller\'s guards (served/remote-member-policy.ts)', () => {
+  /** An owner whose readReflexPages records the scope it was called with. */
+  async function reflexOwner(): Promise<{ raw: ReturnType<typeof rawSession>; scopes: unknown[] }> {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-remote-guard-'));
+    const scopes: unknown[] = [];
+    const engine = {
+      kind: 'pglite', capabilities: new Set<string>(),
+      readReflexPages: async (scope: unknown) => { scopes.push(scope); return []; },
+    } as unknown as BrainEngine;
+    const server = await serveOwnerEngine(engine, join(dir, 'owner.sock'));
+    if (!server) throw new Error('no socket');
+    cleanups.push(async () => { await server.close(); rmSync(dir, { recursive: true, force: true }); });
+    const raw = rawSession(server.socketPath);
+    cleanups.push(() => { raw.destroy(); });
+    await raw.send(hello);
+    return { raw, scopes };
+  }
+
+  test('a reflex page read marked remote that sends privacy none is narrowed to caller; the same read unmarked runs as sent', async () => {
+    on();
+    const { raw, scopes } = await reflexOwner();
+    await raw.send(call(1, 'readReflexPages', [{ sourceIds: ['default'], privacy: 'none' }, { kind: 'titles', titlesLc: ['x'] }], { remote: true }));
+    expect((await raw.next(f => f.t === 'result' && f.id === 1))?.ok).toBe(true);
+    await raw.send(call(2, 'readReflexPages', [{ sourceIds: ['default'], privacy: 'none' }, { kind: 'titles', titlesLc: ['x'] }]));
+    expect((await raw.next(f => f.t === 'result' && f.id === 2))?.ok).toBe(true);
+    expect(scopes).toEqual([{ sourceIds: ['default'], privacy: 'caller' }, { sourceIds: ['default'], privacy: 'none' }]);
+  });
+});
+
 describe('with the switches off nothing changes', () => {
   test('the same remote-marked write runs as before, and the client adds no mark', async () => {
     const { raw, ran } = await owner();
