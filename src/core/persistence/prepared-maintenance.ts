@@ -395,18 +395,37 @@ export async function verifyMaintenanceOutputs(engine: BrainEngine, authority: M
 export interface FactSnapshot { id: number; value: Record<string, unknown>; }
 
 /**
- * Which members of a chronological consolidation cluster end, and at which later member's valid_from: the first one
- * that says something else. A restatement (the same claim text and typed value said again later) is the value still
- * holding, so it never ends the member before it, and a member with no differing successor stays open. A cluster's typed
- * members already share metric, unit and period, so the value is the typed part that can differ under the same text.
+ * Which members of a consolidation cluster end, and at which later member's effective time: the first one that says
+ * something else. A restatement (the same claim text and typed value said again later) is the value still holding, so it
+ * never ends the member before it, and a member with no differing successor stays open. A cluster's typed members already
+ * share metric, unit and period, so the value is the typed part that can differ under the same text.
+ *
+ * GST-4049: a member's effective time is its valid_from, or its save time when it has no event date (`at`). An undated
+ * member takes its place in the chain at its save time, but it never ends a dated one: a fact extracted today from an
+ * old document carries today's save time, which says nothing about when the dated value stopped holding. Members at one
+ * instant keep row-id order, as dated ones always have; typed ones at one instant are held as a tie before this runs.
  */
-export function consolidationCloses<T>(chronological: readonly T[], claim: (member: T) => { text: string; value: unknown }): Array<{ member: T; next: T }> {
-  const key = (member: T) => { const { text, value } = claim(member); return JSON.stringify([normalizeClaimWhitespace(text), value == null ? null : Number(value)]); };
-  return chronological.flatMap((member, i) => {
-    const own = key(member);
-    const next = chronological.slice(i + 1).find(later => key(later) !== own);
-    return next ? [{ member, next }] : [];
+export function consolidationCloses<T>(members: readonly T[],
+  claim: (member: T) => { text: string; value: unknown; at: number; dated: boolean }): Array<{ member: T; next: T }> {
+  const read = (member: T) => { const c = claim(member); return { ...c, key: JSON.stringify([normalizeClaimWhitespace(c.text), c.value == null ? null : Number(c.value)]) }; };
+  const chronological = members.map((member, index) => ({ member, index, ...read(member) })).sort((a, b) => a.at - b.at || a.index - b.index);
+  return chronological.flatMap((own, i) => {
+    const next = chronological.slice(i + 1).find(later => later.key !== own.key && (later.dated || !own.dated));
+    return next ? [{ member: own.member, next: next.member }] : [];
   });
+}
+
+/** GST-4049: the save time of each fact, as Postgres prints it (microseconds kept), for undated members of a chain. */
+export async function factSaveTimes(engine: BrainEngine, sourceId: string, ids: number[]): Promise<Map<number, string>> {
+  const rows = await engine.executeRaw<{ id: number; created_at: string }>(
+    `SELECT id, to_json(created_at)#>>'{}' AS created_at FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[])`, [sourceId, ids]);
+  return new Map(rows.map(row => [Number(row.id), row.created_at]));
+}
+
+/** A fence cell for a chain close: milliseconds kept when present, since a close to the second can end a fact before it began. */
+function fenceCloseInstant(at: string): string {
+  const d = new Date(at);
+  return d.getUTCMilliseconds() ? d.toISOString() : formatFenceDate(d);
 }
 interface EvidencePage { slug: string; revision: string; id: number; }
 
@@ -421,7 +440,7 @@ export async function readFacts(engine: BrainEngine, sourceId: string, ids: numb
       'claim_metric',f.claim_metric,'claim_value',f.claim_value,'claim_unit',f.claim_unit,'claim_period',f.claim_period,
       'event_type',f.event_type,'dimension',f.dimension,'value',f.value,'dim_status',f.dim_status,'attributed_to',f.attributed_to
     ) AS value FROM facts f
-    WHERE f.source_id=$1 AND f.id=ANY($2::integer[]) ORDER BY f.id${lock ? ' FOR UPDATE' : ''}`, [sourceId, ids]);
+    WHERE f.source_id=$1 AND f.id=ANY($2::bigint[]) ORDER BY f.id${lock ? ' FOR UPDATE' : ''}`, [sourceId, ids]);
   return rows.map(row => ({ ...row, id: Number(row.id) }));
 }
 
@@ -776,7 +795,10 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   const p = row.intent;
   const facts = p.facts as FactSnapshot[];
   const pages = p.pages as EvidencePage[];
-  if (sameInstantTies(facts.filter(f => f.value.valid_from != null).map(f => ({ id: f.id, at: Date.parse(String(f.value.valid_from)), metric: (f.value.claim_metric as string | null) ?? null,
+  // GST-4049: an undated fact takes its place at its save time, which never changes; ties are read on the same time.
+  const savedAt = await factSaveTimes(engine, row.source_id, facts.map(f => f.id));
+  const eventAt = (f: FactSnapshot) => (f.value.valid_from != null ? String(f.value.valid_from) : savedAt.get(f.id));
+  if (sameInstantTies(facts.filter(f => eventAt(f) !== undefined).map(f => ({ id: f.id, at: Date.parse(eventAt(f)!), metric: (f.value.claim_metric as string | null) ?? null,
     unit: (f.value.claim_unit as string | null) ?? null, period: (f.value.claim_period as string | null) ?? null }))).length) {
     return { observedRevision: p.expected_revision as string, noop: true, apply: async () => ({ status: 'skipped', reason: 'same_instant_typed_claims', noop: true,
       facts_consolidated: 0, takes_written: 0 }) };
@@ -793,11 +815,17 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
     }, apply: async () => ({ status: 'skipped', reason: 'retired_take', noop: true,
       facts_consolidated: 0, takes_written: 0, take_id: Number(existing.id) }) };
   }
-  // The chain closes each fact at its successor's valid_from. A fenced fact is closed in its fence row, published with the
-  // take on this page, and its row derives from that cell; an unfenced fact has no fence row and is closed in the database.
-  // A fenced fact whose fence is on another page stays open: this publication does not write that file.
-  const chronological = facts.filter(f => f.value.valid_from != null).sort((a, b) => Date.parse(String(a.value.valid_from)) - Date.parse(String(b.value.valid_from)) || a.id - b.id);
-  const closes = consolidationCloses(chronological, f => ({ text: String(f.value.fact), value: f.value.claim_value })).map(({ member, next }) => ({ fact: member, until: String(next.value.valid_from) }));
+  // The chain closes each fact at its successor's effective time, never later than an expiry it already carries (a
+  // `remember --ttl` date is never extended). A fenced fact is closed in its fence row, published with the take on this
+  // page, and its row derives from that cell; an unfenced fact has no fence row and is closed in the database. A fenced
+  // fact whose fence is on another page stays open: this publication does not write that file.
+  const closes = consolidationCloses(facts.filter(f => eventAt(f) !== undefined).sort((a, b) => a.id - b.id), f => ({ text: String(f.value.fact),
+    value: f.value.claim_value, at: Date.parse(eventAt(f)!), dated: f.value.valid_from != null }))
+    .map(({ member, next }) => {
+      const successor = eventAt(next)!;
+      const expiry = member.value.valid_until == null ? null : String(member.value.valid_until);
+      return { fact: member, until: expiry !== null && Date.parse(expiry) <= Date.parse(successor) ? expiry : successor };
+    });
   const fenceCloses = new Map(closes.filter(c => c.fact.value.row_num !== null && c.fact.value.source_markdown_slug === row.slug)
     .map(c => [Number(c.fact.value.row_num), c]));
   const databaseCloses = closes.filter(c => c.fact.value.row_num === null);
@@ -811,7 +839,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
         `Fact ${fact.id} on ${row.slug} in ${row.source_id} does not read back from fence row ${rowNum}, so consolidation request ${row.request_id} could not close it in the page and wrote nothing. The next extract_facts run reconciles the fence, and the next consolidate run re-clusters the current facts.`,
         { fix: receiptFix(row) });
     }
-    const rows = fence.facts.map(f => fenceCloses.has(f.rowNum) ? { ...f, validUntil: formatFenceDate(new Date(fenceCloses.get(f.rowNum)!.until)) } : f);
+    const rows = fence.facts.map(f => fenceCloses.has(f.rowNum) ? { ...f, validUntil: fenceCloseInstant(fenceCloses.get(f.rowNum)!.until) } : f);
     closedRows = rows.filter(f => fenceCloses.has(f.rowNum));
     return replaceOrInsertFactsFence(body, renderFactsTable(rows));
   };
@@ -846,7 +874,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
       const before = await factPreimages(tx, row.source_id, facts.map(f => f.id));
       for (const fact of facts) await tx.consolidateFact(fact.id, take.id);
       for (const { fact, until } of databaseCloses) {
-        await tx.executeRaw('UPDATE facts SET valid_until=$1::timestamptz WHERE source_id=$2 AND id=$3', [until, row.source_id, fact.id]);
+        await tx.executeRaw('UPDATE facts SET valid_until=LEAST(valid_until,$1::timestamptz) WHERE source_id=$2 AND id=$3', [until, row.source_id, fact.id]);
       }
       const derived = extractFactsFromFenceText(closedRows, row.slug, row.source_id);
       for (const [i, cell] of closedRows.entries()) {

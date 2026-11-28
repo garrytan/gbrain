@@ -129,25 +129,28 @@ export const DEFAULT_CLUSTER_THRESHOLD = 0.85;
  * Idempotent: re-running on the same cluster produces the same
  * chronological order and the same valid_until values. No-op if
  * valid_until is already correct.
+ *
+ * GST-4049: a fact with no event date takes its place at its save time but
+ * never ends a dated one (consolidationCloses), and a close never moves an
+ * expiry the fact already carries (`remember --ttl`) later.
  */
+const eventTime = (f: FactRow): Date => f.valid_from ?? f.created_at;
+
 async function writeValidUntilChain(tx: BrainEngine, cluster: FactRow[]): Promise<void> {
-  const chronological = cluster.filter((f): f is FactRow & { valid_from: Date } => f.valid_from !== null).sort((a, b) => {
-    const t = a.valid_from.getTime() - b.valid_from.getTime();
-    if (t !== 0) return t;
-    return a.id - b.id;
-  });
   const values = new Map((await tx.executeRaw<{ id: number; claim_value: number | string | null }>(
     'SELECT id, claim_value FROM facts WHERE id = ANY($1::bigint[])', [cluster.map(f => f.id)])).map(r => [Number(r.id), r.claim_value]));
-  for (const { member: older, next: newer } of consolidationCloses(chronological, f => ({ text: f.fact, value: values.get(f.id) }))) {
+  const members = [...cluster].sort((a, b) => a.id - b.id);
+  for (const { member: older, next: newer } of consolidationCloses(members, f => ({ text: f.fact, value: values.get(f.id),
+    at: eventTime(f).getTime(), dated: f.valid_from !== null }))) {
     await tx.executeRaw(
-      // Only UPDATE when the new value would actually change. Avoids
-      // touching updated_at on no-op rewrites and keeps idempotency
-      // observable in the DB (zero affected rows on stable re-run).
+      // The successor's effective time is read in SQL, so the close keeps its full precision. Only UPDATE when the new
+      // value would actually change: no updated_at churn, and zero affected rows on a stable re-run.
       `UPDATE facts
-         SET valid_until = $1
-       WHERE id = $2
-         AND (valid_until IS DISTINCT FROM $1)`,
-      [newer.valid_from, older.id],
+         SET valid_until = LEAST(valid_until, s.at)
+        FROM (SELECT COALESCE(valid_from, created_at) AS at FROM facts WHERE id = $1) s
+       WHERE facts.id = $2
+         AND facts.valid_until IS DISTINCT FROM LEAST(facts.valid_until, s.at)`,
+      [newer.id, older.id],
     );
   }
 }
@@ -499,8 +502,8 @@ export interface SameInstantCluster {
 const SAME_INSTANT_SAMPLES = 20;
 
 function clusterTie(cluster: FactRow[], claims: Map<number, ClaimShape>): SameInstantTie | undefined {
-  return sameInstantTies(cluster.flatMap(f => f.valid_from ? [{ id: f.id, at: f.valid_from.getTime(), metric: claims.get(f.id)?.metric ?? null,
-    unit: claims.get(f.id)?.unit ?? null, period: claims.get(f.id)?.period ?? null }] : []))[0];
+  return sameInstantTies(cluster.map(f => ({ id: f.id, at: eventTime(f).getTime(), metric: claims.get(f.id)?.metric ?? null,
+    unit: claims.get(f.id)?.unit ?? null, period: claims.get(f.id)?.period ?? null })))[0];
 }
 
 /**
