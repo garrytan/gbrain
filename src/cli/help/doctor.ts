@@ -28,7 +28,7 @@ export const help: CliHelpSpec = {
     { name: '--locks', type: 'boolean', desc: 'List idle-in-transaction backends holding locks (Postgres) and exit.' },
     { name: '--probe', type: 'boolean', desc: 'Also send one tiny paid test request to the configured embedding provider (plain doctor never calls a provider). Non-interactive runs need --yes.', consent: ['paid', 'egress'] },
     { name: '--probe-pglite', type: 'boolean', desc: 'Run the PGLite runtime probe (a 5-20 s cold start) even when the disk diagnosis explains a failed connect.' },
-    { name: '--index-audit', type: 'boolean', desc: 'Report Postgres indexes with zero recorded scans (informational; never drops anything).' },
+    { name: '--index-audit', type: 'boolean', desc: 'Check Postgres for invalid or unready indexes and report healthy indexes with zero recorded scans. Never drops anything.' },
     { name: '--content-audit', type: 'boolean', desc: 'Scan every page in the content-quality check instead of the first 1000.' },
     { name: '--remediation-plan', type: 'boolean', desc: 'Read-only: the job and repair steps that would raise the brain score, each with its exact command.' },
     { name: '--remediate', type: 'boolean', desc: 'Run the remediation job steps (asks before any work; non-interactive runs need --yes).', consent: ['paid'] },

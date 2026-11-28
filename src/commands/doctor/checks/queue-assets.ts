@@ -96,13 +96,8 @@ async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
   const checks: Check[] = [];
 
-  // 12. Index audit (opt-in via --index-audit). v0.13.1 follow-up to #170.
-  // Reports indexes with zero recorded scans on Postgres. Informational only;
-  // we DO NOT auto-drop. On #170's brain, idx_pages_frontmatter and
-  // idx_pages_trgm showed 0 scans — the suggestion there is "consider
-  // investigating on YOUR brain," not "drop these globally." Zero scans on a
-  // fresh install is also normal (nothing has queried yet); the real signal
-  // is zero scans on a long-running active brain.
+  // 12. Index audit (opt-in via --index-audit). Cumulative read counters are
+  // workload evidence. Health comes from the index catalog's validity flags.
   if (args.includes('--index-audit')) {
     progress.heartbeat('index_audit');
     if (engine.kind === 'pglite') {
@@ -113,34 +108,49 @@ async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
       });
     } else {
       try {
-        // #9966: an index backing a PRIMARY KEY or UNIQUE constraint enforces it on every write, which
-        // pg_stat_user_indexes never counts as a scan, so it is not a zero-read candidate. #10413: only one ready for writes
-        // enforces it; a CREATE UNIQUE INDEX CONCURRENTLY that failed before then keeps indisunique, enforces nothing and is listed.
-        const rows = await engine.executeRaw<{ index: string; size: string }>(`
-          SELECT s.schemaname, s.relname AS table, s.indexrelname AS index,
-                 s.idx_scan, pg_size_pretty(pg_relation_size(s.indexrelid)) AS size
-            FROM pg_stat_user_indexes s
-            JOIN pg_index i ON i.indexrelid = s.indexrelid
-           WHERE s.schemaname = 'public'
-             AND s.idx_scan = 0
-             AND NOT ((i.indisprimary OR i.indisunique) AND i.indisready AND i.indislive)
-           ORDER BY pg_relation_size(s.indexrelid) DESC
-           LIMIT 21
+        // #9966: uniqueness enforcement is not counted as a scan. Keep that
+        // exemption on the usage side, so it cannot hide a failed build (#10413).
+        // PostgreSQL marks an index being dropped as no longer live. Partitioned
+        // parent indexes can be invalid but have no per-index statistics row.
+        const rows = await engine.executeRaw<{
+          name: string; size: string | null; unusable: boolean; zero_scan_count: number; unusable_count: number;
+        }>(`
+          WITH candidates AS (
+            SELECT idx.relname AS name, pg_relation_size(i.indexrelid) AS bytes,
+                   NOT (i.indisvalid AND i.indisready) AS unusable
+              FROM pg_catalog.pg_index i
+              JOIN pg_catalog.pg_class idx ON idx.oid = i.indexrelid
+              JOIN pg_catalog.pg_namespace ns ON ns.oid = idx.relnamespace
+              LEFT JOIN pg_catalog.pg_stat_user_indexes s ON s.indexrelid = i.indexrelid
+             WHERE ns.nspname = 'public' AND i.indislive
+               AND (NOT (i.indisvalid AND i.indisready)
+                 OR (s.idx_scan = 0 AND NOT (i.indisprimary OR i.indisunique)))
+          )
+          SELECT name, pg_size_pretty(bytes) AS size, unusable,
+                 (count(*) FILTER (WHERE NOT unusable) OVER ())::int AS zero_scan_count,
+                 (count(*) FILTER (WHERE unusable) OVER ())::int AS unusable_count
+            FROM candidates
+           ORDER BY unusable DESC, bytes DESC NULLS LAST, name
+           LIMIT 20
         `);
-        if (rows.length === 0) {
-          checks.push({ name: 'index_audit', status: 'ok', message: 'All public indexes have recorded scans (indexes backing PRIMARY KEY or UNIQUE constraints are not listed)' });
-        } else {
-          // #7145: 21 rows means more than the 20 listed.
-          const list = rows.slice(0, 20).map(r => `${r.index}(${r.size})`).join(', ');
-          checks.push({
-            name: 'index_audit',
-            status: 'warn',
-            details: { exact: rows.length <= 20 },
-            message: `${rows.length > 20 ? '20+' : rows.length} zero-scan index(es): ${list} (indexes backing PRIMARY KEY or UNIQUE constraints are not listed). ` +
-                     `Consider investigating whether they're used on YOUR workload (fresh brains naturally show zero scans until queries accumulate). ` +
-                     `Do not drop without confirming.`,
-          });
+        const { zero_scan_count = 0, unusable_count = 0 } = rows[0] ?? {};
+        const sample = (unusable: boolean) => {
+          const listed = rows.filter(row => row.unusable === unusable).map(row => row.size ? `${row.name}(${row.size})` : row.name);
+          return listed.length ? ` Sample: ${listed.join(', ')}.` : '';
+        };
+        const messages = [unusable_count > 0
+          ? `${unusable_count} invalid or unready public index(es).${sample(true)} Check for in-progress index builds before repairing.`
+          : 'No invalid or unready public indexes.'];
+        if (zero_scan_count > 0) {
+          messages.push(`${zero_scan_count} healthy zero-scan index(es), workload advisory.${sample(false)} ` +
+                        'Confirm usage on your workload before dropping any index.');
         }
+        checks.push({
+          name: 'index_audit',
+          status: unusable_count > 0 ? 'warn' : 'ok',
+          details: { exact: zero_scan_count + unusable_count === rows.length, zero_scan_count, unusable_count },
+          message: messages.join(' '),
+        });
       } catch (e) { // capability-refusal-ok: an opt-in audit reports any failed read, a refusal included, as a warn naming it
         const msg = e instanceof Error ? e.message : String(e);
         checks.push({ name: 'index_audit', status: 'warn', message: `Index audit failed: ${msg}` });

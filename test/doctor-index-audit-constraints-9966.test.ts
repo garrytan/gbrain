@@ -18,6 +18,8 @@ import { testBackends } from './helpers/test-backends.ts';
 import { encodedPostgres, isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
 const progress = new Proxy({}, { get: () => () => undefined });
+const audit = async (engine: BrainEngine) =>
+  await indexAuditEntry.run({ engine, args: ['--index-audit'], progress } as unknown as DoctorContext) as Check[];
 
 for (const kind of testBackends()) describe(`index_audit and constraint indexes (${kind})`, () => {
   let engine: BrainEngine;
@@ -28,11 +30,9 @@ for (const kind of testBackends()) describe(`index_audit and constraint indexes 
   }, 120_000);
   afterAll(async () => { await close?.(); });
 
-  const audit = async () => await indexAuditEntry.run({ engine, args: ['--index-audit'], progress } as unknown as DoctorContext) as Check[];
-
   test('a primary key and a unique constraint are not listed as zero-scan; a plain unread index is', async () => {
     if (kind === 'pglite') {
-      const [check] = await audit();
+      const [check] = await audit(engine);
       expect(check).toMatchObject({ name: 'index_audit', status: 'ok' });
       return;
     }
@@ -40,19 +40,26 @@ for (const kind of testBackends()) describe(`index_audit and constraint indexes 
     await engine.executeRaw(`INSERT INTO constraint_fixture SELECT n, 'sample-' || n, repeat('n', 40) || n FROM generate_series(1, 32000) AS n`);
     await engine.executeRaw(`CREATE INDEX constraint_fixture_note_idx ON constraint_fixture (note)`);
     await engine.executeRaw(`ANALYZE constraint_fixture`);
-    const [check] = await audit();
+    const [check] = await audit(engine);
     expect(check!.name).toBe('index_audit');
-    expect(check!.status).toBe('warn');
+    expect(check!.status).toBe('ok');
+    expect(check!.details?.zero_scan_count).toBeGreaterThan(0);
+    expect(check!.details?.unusable_count).toBe(0);
     expect(check!.message).toContain('constraint_fixture_note_idx');
     expect(check!.message).not.toContain('constraint_fixture_pkey');
     expect(check!.message).not.toContain('constraint_fixture_label_key');
   }, 60_000);
 
-  // #10413: a CREATE UNIQUE INDEX CONCURRENTLY that failed leaves an invalid index that enforces nothing and still costs
-  // every write; it keeps indisunique, so the #9966 exemption must not hide it. An empty database keeps it in the list.
-  test.skipIf(kind !== 'postgres')('a failed concurrent unique index build is still listed', async () => {
+  // #10413: a failed concurrent unique build keeps indisunique. The usage exemption and
+  // twenty-name display cap must both leave the actual health warning visible.
+  test.skipIf(kind !== 'postgres')('a failed concurrent unique build warns alongside healthy zero-scan indexes', async () => {
     const bare = await encodedPostgres(process.env.DATABASE_URL!, 'UTF8');
     try {
+      await bare.engine.executeRaw(`CREATE TABLE usage_fixture (k integer)`);
+      await bare.engine.executeRaw(`INSERT INTO usage_fixture SELECT n FROM generate_series(1, 2000) AS n`);
+      for (let n = 1; n <= 24; n++) {
+        await bare.engine.executeRaw(`CREATE INDEX usage_fixture_idx_${n} ON usage_fixture (k)`);
+      }
       await bare.engine.executeRaw(`CREATE TABLE dup_fixture (k integer)`);
       await bare.engine.executeRaw(`INSERT INTO dup_fixture VALUES (7), (7)`);
       const failed = await bare.engine.executeRaw(`CREATE UNIQUE INDEX CONCURRENTLY dup_fixture_k_idx ON dup_fixture (k)`).then(() => 'built', (e: { code?: string }) => e.code);
@@ -60,9 +67,43 @@ for (const kind of testBackends()) describe(`index_audit and constraint indexes 
       const [index] = await bare.engine.executeRaw<{ indisunique: boolean; indisvalid: boolean; indisready: boolean }>(
         `SELECT indisunique, indisvalid, indisready FROM pg_index WHERE indexrelid = 'dup_fixture_k_idx'::regclass`);
       expect(index).toEqual({ indisunique: true, indisvalid: false, indisready: false });
-      const [check] = await indexAuditEntry.run({ engine: bare.engine, args: ['--index-audit'], progress } as unknown as DoctorContext) as Check[];
-      expect(check).toMatchObject({ name: 'index_audit', status: 'warn' });
+      const [check] = await audit(bare.engine);
+      expect(check).toMatchObject({
+        name: 'index_audit',
+        status: 'warn',
+        details: { exact: false, zero_scan_count: 24, unusable_count: 1 },
+      });
       expect(check!.message).toContain('dup_fixture_k_idx');
+      expect(check!.message).toContain('usage_fixture_idx_');
+
+      await bare.engine.executeRaw(`DROP INDEX dup_fixture_k_idx`);
+      const [recovered] = await audit(bare.engine);
+      expect(recovered).toMatchObject({
+        name: 'index_audit',
+        status: 'ok',
+        details: { exact: false, zero_scan_count: 24, unusable_count: 0 },
+      });
+      expect(recovered!.message).toContain('usage_fixture_idx_');
+    } finally {
+      await bare.close();
+    }
+  }, 60_000);
+
+  test.skipIf(kind !== 'postgres')('an invalid partitioned parent index warns without a statistics row', async () => {
+    const bare = await encodedPostgres(process.env.DATABASE_URL!, 'UTF8');
+    try {
+      await bare.engine.executeRaw(`CREATE TABLE parent_fixture (k integer) PARTITION BY RANGE (k)`);
+      await bare.engine.executeRaw(`CREATE TABLE child_fixture PARTITION OF parent_fixture FOR VALUES FROM (0) TO (10)`);
+      await bare.engine.executeRaw(`CREATE INDEX parent_fixture_idx ON ONLY parent_fixture (k)`);
+      const [check] = await audit(bare.engine);
+      expect(check).toMatchObject({ status: 'warn', details: { zero_scan_count: 0, unusable_count: 1 } });
+      expect(check!.message).toContain('parent_fixture_idx');
+
+      await bare.engine.executeRaw(`CREATE INDEX child_fixture_idx ON child_fixture (k)`);
+      await bare.engine.executeRaw(`ALTER INDEX parent_fixture_idx ATTACH PARTITION child_fixture_idx`);
+      const [recovered] = await audit(bare.engine);
+      expect(recovered).toMatchObject({ status: 'ok', details: { zero_scan_count: 1, unusable_count: 0 } });
+      expect(recovered!.message).not.toContain('parent_fixture_idx');
     } finally {
       await bare.close();
     }
