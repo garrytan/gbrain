@@ -30,6 +30,9 @@ export async function overlaidSnapshot(brain: StoreBrain, member: string, stored
   const { globalPurgeRows, ...snapshot } = stored;
   const page = toGetPage(snapshot.page);
   const ledger = snapshot.withdrawals ?? [];
+  // A segmented shell's body getters throw (toGetPage); the SQL snapshot overlays no segmented body and resolves `*`
+  // tombstones against the shell's empty stored text, so it carries only the page's own ledger rows.
+  if (isSegmentedPage(page)) return { ...snapshot, page, withdrawals: ledger };
   const tombstones = globalPurgeRows ?? [];
   if ((!ledger.length && !tombstones.length) || (!hasFence(page.compiled_truth) && !hasFence(page.timeline))) {
     return { ...snapshot, page };
@@ -39,9 +42,7 @@ export async function overlaidSnapshot(brain: StoreBrain, member: string, stored
   const body = normalized?.body ?? '', timeline = normalized?.timeline ?? '';
   const hashes = tombstones.length ? new Set(fenceClaimHashes([body, timeline])) : new Set<string>();
   const withdrawals = [...ledger, ...tombstones.filter(row => hashes.has(row.fact_hash))];
-  if (!isSegmentedPage(page)) {
-    page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, body, withdrawals);
-    if (typeof page.timeline === 'string') page.timeline = overlayWithdrawalBody(page.timeline, timeline, withdrawals);
-  }
+  page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, body, withdrawals);
+  if (typeof page.timeline === 'string') page.timeline = overlayWithdrawalBody(page.timeline, timeline, withdrawals);
   return { ...snapshot, page, withdrawals };
 }
