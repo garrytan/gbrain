@@ -4,7 +4,7 @@
  * and reconciler (test/helpers/follow-rig.ts) and the real Rust addon.
  */
 import { describe, expect, spyOn, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -265,6 +265,70 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect(pass.error).toMatch(/stopped/);
         expect(readsAfterStop).toBe(0);
         await expect(base.read(async () => 1)).rejects.toThrow(/closed/);
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
+    test('a process that closes mid-pass records no failed pass and keeps the clean count; the next process finishes the same pass', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      try {
+        const before = status(r).reconcile.consecutive_clean_full_passes;
+        const passes = readPasses(r.dir).length;
+        expect(before).toBeGreaterThanOrEqual(1);
+        let digests = 0;
+        let small: Reconciler;
+        const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+          const out = await r.rpc<T>(method, args);
+          if (method === 'relationDigest' && ++digests === 3) small.stop();
+          return out;
+        };
+        small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: 2 });
+        const stopped = await small.run('full', undefined, { resume: true });
+        // Closing is not a failed pass: nothing is recorded, so the trailing clean passes still count.
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBe(before);
+        expect(readPasses(r.dir)).toHaveLength(passes);
+        expect(stopped.error).toBe('stopped');
+        const progress = JSON.parse(readFileSync(join(r.dir, 'reconcile', 'progress.json'), 'utf8')) as { id: string; done: string[] };
+        expect(progress.id).toBe(stopped.id);
+        let resumedDigests = 0;
+        const counting = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => { if (method === 'relationDigest') resumedDigests++; return r.rpc<T>(method, args); };
+        const resumed = await new Reconciler({ dir: r.dir, reads: base, rpc: counting, follower: r.follower, intervalRows: 2 }).run('full', undefined, { resume: true });
+        expect(resumed.error).toBeUndefined();
+        expect(resumed.id).toBe(stopped.id);
+        expect(resumed.started_at).toBe(stopped.started_at);
+        expect(resumed.repaired_rows).toBe(0);
+        expect(existsSync(join(r.dir, 'reconcile', 'progress.json'))).toBe(false);
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBe(before + 1);
+        // The resumed pass walked only what was left: a fresh pass reads every interval again.
+        let freshDigests = 0;
+        const fresh = await new Reconciler({ dir: r.dir, reads: base, rpc: async <T>(method: string, args?: Record<string, unknown>): Promise<T> => { if (method === 'relationDigest') freshDigests++; return r.rpc<T>(method, args); }, follower: r.follower, intervalRows: 2 }).run('full', undefined, { resume: true });
+        expect(fresh.id).not.toBe(stopped.id);
+        expect(resumedDigests).toBeLessThan(freshDigests);
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
+    test('a half-done pass is not resumed under another continuity, seed or evidence epoch, or without asking', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      try {
+        const file = join(r.dir, 'reconcile', 'progress.json');
+        for (const change of [{ continuity: 'another-session-run' }, { seed_id: 'another-seed' }, { epoch_id: 'another-epoch' }, null]) {
+          let small: Reconciler;
+          let digests = 0;
+          const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+            const out = await r.rpc<T>(method, args);
+            if (method === 'relationDigest' && ++digests === 3) small.stop();
+            return out;
+          };
+          small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: 2 });
+          const stopped = await small.run('full', undefined, { resume: true });
+          expect(stopped.error).toBe('stopped');
+          if (change) writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), ...change }));
+          const next = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: 2 }).run('full', undefined, change ? { resume: true } : {});
+          expect(next.error).toBeUndefined();
+          expect(next.id).not.toBe(stopped.id);
+          expect(existsSync(file)).toBe(false);
+        }
       } finally { await base.close(); await r.close(); }
     }, 90_000);
 

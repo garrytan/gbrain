@@ -259,27 +259,73 @@ describe('follow child', () => {
 });
 
 describe('reconciler schedule', () => {
-  test('a process that stays up checks the watermark a minute after start and runs a full pass only if it is invalid', async () => {
+  // A full pass starts with 'state' again (its barrier) and stops at seedPlan here.
+  async function firstCheck(o: { valid: boolean; lastFullAgoMs?: number; progress?: boolean; ready?: () => Promise<void> }) {
+    const dir = tmp();
+    if (o.lastFullAgoMs !== undefined) {
+      const at = new Date(Date.now() - o.lastFullAgoMs).toISOString();
+      appendPass(dir, { id: 'p', kind: 'full', started_at: at, finished_at: at, repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0 });
+    }
+    if (o.progress) { mkdirSync(join(dir, 'reconcile'), { recursive: true }); writeFileSync(join(dir, 'reconcile', 'progress.json'), JSON.stringify({ version: 1 })); }
+    const calls: string[] = [];
+    const rpc = (async (method: string) => {
+      calls.push(method);
+      if (method === 'state') return { valid: o.valid, through: null, invalidated_reason: null };
+      throw Object.assign(new Error('stop here'), { code: 'stopped' });
+    }) as never;
+    const reconciler = new Reconciler({ dir, rpc, ready: o.ready, reads: { pauseMs: 0, read: async () => { throw new Error('no reads'); }, close: async () => undefined } });
+    reconciler.startNightly();
+    return { calls, reconciler };
+  }
+  const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+
+  test('a process that stays up checks the watermark five seconds after start (a short serve session lasts 10-20 s) and runs a full pass if it is invalid', async () => {
     jest.useFakeTimers();
     try {
       for (const valid of [false, true]) {
-        const calls: string[] = [];
-        const rpc = (async (method: string) => {
-          calls.push(method);
-          if (method === 'state') return { valid, through: null, invalidated_reason: null };
-          throw Object.assign(new Error('stop here'), { code: 'stopped' });
-        }) as never;
-        const reconciler = new Reconciler({ dir: tmp(), rpc, reads: { pauseMs: 0, read: async () => { throw new Error('no reads'); }, close: async () => undefined } });
-        reconciler.startNightly();
-        jest.advanceTimersByTime(59_000);
-        await Promise.resolve();
+        const { calls, reconciler } = await firstCheck({ valid, lastFullAgoMs: 60_000 });
+        jest.advanceTimersByTime(4_000);
+        await flush();
         expect(calls).toEqual([]);
         jest.advanceTimersByTime(2_000);
-        for (let i = 0; i < 20; i++) await Promise.resolve();
-        // 'state' answers the check; a full pass then starts with 'state' again (its barrier) and stops at seedPlan.
+        await flush();
         expect(calls.includes('seedPlan')).toBe(!valid);
         reconciler.stop();
       }
+    } finally { jest.useRealTimers(); }
+  });
+
+  test('a valid watermark still gets a full pass at the first check when none ran, the last is 24 h old, or one was left half done', async () => {
+    jest.useFakeTimers();
+    try {
+      for (const o of [{ valid: true }, { valid: true, lastFullAgoMs: 25 * 3_600_000 }, { valid: true, lastFullAgoMs: 60_000, progress: true }]) {
+        const { calls, reconciler } = await firstCheck(o);
+        jest.advanceTimersByTime(6_000);
+        await flush();
+        expect(calls.includes('seedPlan')).toBe(true);
+        reconciler.stop();
+      }
+    } finally { jest.useRealTimers(); }
+  });
+
+  test('the first check waits for the seal confirmation, and a process stopped before it runs nothing', async () => {
+    jest.useFakeTimers();
+    try {
+      let release!: () => void;
+      const ready = new Promise<void>((resolve) => { release = resolve; });
+      const { calls, reconciler } = await firstCheck({ valid: false, ready: () => ready });
+      jest.advanceTimersByTime(6_000);
+      await flush();
+      expect(calls).toEqual([]);
+      release();
+      await flush();
+      expect(calls.includes('seedPlan')).toBe(true);
+      reconciler.stop();
+      const second = await firstCheck({ valid: false, ready: () => ready });
+      second.reconciler.stop();
+      jest.advanceTimersByTime(6_000);
+      await flush();
+      expect(second.calls).toEqual([]);
     } finally { jest.useRealTimers(); }
   });
 });
