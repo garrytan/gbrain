@@ -166,17 +166,19 @@ describeIf('short MCP serve sessions on Postgres', () => {
   test('a direct SQL write between sessions is not trusted: the next session repairs it and the clean count starts over', async () => {
     if (!snapshot().valid) await serve('settle-2');
     expect(snapshot().valid).toBe(true);
-    // A connection that is not a gbrain process changes a page behind the follower's back, then goes away.
+    // A connection that is not a gbrain process adds a page alias behind the follower's back, then goes away. (Not a
+    // pages row: every pages update queues a projection job, and the serving process's worker then rewrites that page,
+    // so the follower re-reads it on its own. Nothing in gbrain reacts to a new alias row.)
     const direct = postgres(brainUrl, { max: 1, prepare: false });
     try {
-      const [{ n }] = await direct.unsafe(`WITH u AS (UPDATE pages SET title = 'changed behind the follower' WHERE slug = 'sessions/three' RETURNING 1) SELECT count(*)::int AS n FROM u`) as unknown as [{ n: number }];
+      const [{ n }] = await direct.unsafe(`WITH u AS (INSERT INTO page_aliases (source_id, alias_norm, slug, alias_text) VALUES ('default', 'behind the follower', 'sessions/three', 'Behind the follower') RETURNING 1) SELECT count(*)::int AS n FROM u`) as unknown as [{ n: number }];
       expect(n).toBe(1);
     } finally { await direct.end(); }
     const s = await serve('five');
     const after = snapshot();
     const passes = fullPassesIn(after, s.from, s.to);
     expect(passes.length).toBeGreaterThanOrEqual(1);
-    expect(passes[0]!.repaired_rows ?? 0).toBeGreaterThanOrEqual(1);
+    expect((passes[0] as Pass & { repaired_by_relation?: Record<string, number> }).repaired_by_relation?.page_aliases ?? 0).toBeGreaterThanOrEqual(1);
     expect(after.clean).toBe(0);
   }, 60_000);
 });
