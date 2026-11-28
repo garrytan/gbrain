@@ -74,6 +74,18 @@ describe('#10039 unlinked_facts conversation hint', () => {
     expect(verdict.message).not.toContain(`${real} --dry-run`);
     expect(verdict.message).toContain('only the real run moves this warning');
   });
+
+  test('the message says to repeat the real run until a pass reports no pages', () => {
+    const verdict = unlinkedFactsVerdict({
+      sources: 1,
+      window: { active: 60, unlinked: 40, fence_owned: 0, conversation: 40, capped: false },
+      conversation: { source_id: 'default', fix: 'relink', pages: 2, slugs: ['meetings/a-example', 'meetings/b-example'] },
+      new_7d: { facts: 60, unlinked: 40, no_subject: 0, conversation_unresolved: 0 },
+      no_subject: 0, origins: [{ origin: 'conversation', unlinked: 40 }], inferred_7d: { page: 0, mention: 0 }, relinked_7d: {},
+    });
+    expect(verdict.message).toContain('repeat it until a pass reports no pages');
+    expect(verdict.message).toContain('records what it tried even when it links nothing');
+  });
 });
 
 describe('#10351 interrupted PostgreSQL data-file reads', () => {

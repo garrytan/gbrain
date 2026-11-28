@@ -10,7 +10,8 @@
  * canonical brain at ~/git/brain/.
  *
  * Per brain: `gbrain config set search.source_boosts "wiki/:1.3,daily/:1.0"`
- * (`none` drops the defaults). Per process (wins over the brain):
+ * (`none` drops the defaults). Per process (wins over the brain per prefix;
+ * `none` drops the defaults here too):
  * GBRAIN_SOURCE_BOOST="originals/:1.8,openclaw/chat/:0.3"
  * Hard-exclude via env: GBRAIN_SEARCH_EXCLUDE="test/,scratch/"
  */
@@ -109,16 +110,18 @@ export function parseHardExcludesEnv(env: string | undefined): string[] {
 
 /**
  * Resolve the effective boost map: defaults, then the brain's
- * `search.source_boosts` config (same `prefix:factor` format; a bare `none`
- * entry drops the defaults so a brain with a different layout starts from a
- * neutral map), then the GBRAIN_SOURCE_BOOST env override. Shallow merges;
- * later layers win per prefix.
+ * `search.source_boosts` config, then the GBRAIN_SOURCE_BOOST env override
+ * (both in the same `prefix:factor` format). A bare `none` entry in either
+ * one drops the defaults so a brain or process with a different layout starts
+ * from a neutral map (#9876: the env value used to ignore it); `none` in the
+ * env value keeps the brain's own entries. Shallow merges; later layers win
+ * per prefix.
  */
 export function resolveBoostMap(
   envValue: string | undefined = process.env.GBRAIN_SOURCE_BOOST,
   configValue?: string | null,
 ): Record<string, number> {
-  const dropDefaults = (configValue ?? '').split(',').some((entry) => entry.trim() === 'none');
+  const dropDefaults = [configValue, envValue].some(v => (v ?? '').split(',').some(entry => entry.trim() === 'none'));
   return {
     ...(dropDefaults ? {} : DEFAULT_SOURCE_BOOSTS),
     ...parseSourceBoostEnv(configValue ?? undefined),

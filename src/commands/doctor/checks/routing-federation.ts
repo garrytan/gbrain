@@ -36,7 +36,9 @@ export const DCR_PRIVILEGED_SCOPES: ReadonlyArray<string> = Object.freeze(
  *
  * A zero-page source that holds an adopted skill pack (a dedicated skills
  * source has no pages by design) is not warned about: see
- * `adoptedSkillPackSourceIds`.
+ * `adoptedSkillPackSourceIds`. Nor is the conversation archive's target
+ * source or its `<source>-owner` twin (#10151): the archive registers it
+ * before its first archived day.
  *
  * Cost-bounded: total cap of 200 means a 20-source CEO brain pays
  * 20*10 = 200 selects rather than 20*50 = 1000.
@@ -62,7 +64,11 @@ export async function checkSourceRoutingHealth(engine: BrainEngine): Promise<Che
     }
     const packSources = zeroPageSources.length > 0 ? await adoptedSkillPackSourceIds(engine) : new Set<string>();
     const skillPackSources = zeroPageSources.filter((id) => packSources.has(id));
-    const emptySources = zeroPageSources.filter((id) => !packSources.has(id));
+    const { configuredSource, DEFAULT_ARCHIVE_SOURCE } = await import('../../../core/transcripts/archive.ts');
+    let archive = DEFAULT_ARCHIVE_SOURCE;
+    try { archive = await configuredSource(engine); } catch { /* silent-read-ok: an unreadable archive setting exempts only the default archive source name */ }
+    const archiveSources = zeroPageSources.filter((id) => id === archive || id === archive + '-owner');
+    const emptySources = zeroPageSources.filter((id) => !packSources.has(id) && !archiveSources.includes(id));
     if (emptySources.length > 0) {
       return {
         name: 'source_routing_health',
@@ -78,7 +84,8 @@ export async function checkSourceRoutingHealth(engine: BrainEngine): Promise<Che
       name: 'source_routing_health',
       status: 'ok',
       message: `Multi-source brain (${sources.length} non-default source(s)); all populated`
-        + (skillPackSources.length ? ` (skill-pack sources hold no pages by design: ${skillPackSources.join(', ')})` : ''),
+        + (skillPackSources.length ? ` (skill-pack sources hold no pages by design: ${skillPackSources.join(', ')})` : '')
+        + (archiveSources.length ? ` (the conversation archive's source holds no archived day yet: ${archiveSources.join(', ')})` : ''),
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
