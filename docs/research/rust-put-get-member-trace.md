@@ -30,12 +30,15 @@ brain, and what master plus import parts A and B still refuse. It is a measureme
 - `gbrain put` (new page, second page, update with `--expected-revision`) and `gbrain get` (`--json` and raw) exit 0
   on a non-managed Rust brain. `test/rust-cli-put.test.ts` runs the same CLI calls on PGLite, Postgres and Rust and
   compares stdout, the JSON key order and the stored bytes; it fails on the part E base and passes on this branch.
-- All 60 members above are served. 85 more members that the put and get path reaches are served too, with the
+- All 60 members above are served except `listCompactableReceipts` (see the refusal below). 85 more members that the put and get path reaches are served too, with the
   `getChunks`, `readPageSnapshot`/`getPage` and `createVersion` options rust-engine/main added. `readPageTrustRows`
   now carries `precedence` (Rust: `cli_reads/precedence.rs`; no store format change).
 - `hasExtractedEvents` and `pageAwaitsRederive` are served by `put_reads.rs` and answer `false`: master's store has
   no extracted-event or rederive state, so `false` is the true answer there (no store format bump).
 - Refusals that remain on the path, none of which changes the output:
+  - Receipt compaction: `listCompactableReceipts` is not served, because `compactReceipt` runs `SET LOCAL` and raw SQL
+    per receipt. `compactWriteReceiptsDetailed` refuses up front with `engine_capability_missing` (nothing read or
+    written), and `runCompactionPass` records it as `receipt_compaction_unsupported` and carries on.
   - `slug-params.ts` `storedSpellings` runs raw SQL on a `get` miss; the refusal is caught and the miss is reported
     as on the other engines.
   - `MinionQueue.add` with `coalesceOnIdempotencyKey` on a short put; the refusal is caught and no job is queued.
@@ -164,5 +167,7 @@ brain, and what master plus import parts A and B still refuse. It is a measureme
 - `src/core/wanted-links-store.ts`: `wantedReadAt:36 (put)`
 
 ## All 97 members served on the rust-engine/main path
+
+`listCompactableReceipts` is in this list as measured on rust-engine/main; this branch does not serve it (see Result).
 
 `addPageTagsById`, `applyTransactionSettings`, `bumpPageRetrievals`, `claimHousekeepingTurn`, `completeHousekeepingTurn`, `completeWriteRow`, `declarePersistence`, `deleteChunks`, `deleteConsumerRow`, `deleteTakeRows`, `expireMemoryProposals`, `expireStaleWriteClaims`, `findDuplicatePage`, `findTopologyChanges`, `getAllConfig`, `getConfig`, `getConfigValues`, `getSource`, `getWorktreeBinding`, `hasClaimableWrite`, `hasExtractedEvents`, `hasGuestSource`, `hasPersistenceTable`, `hasSegmentStorage`, `hasWithdrawnFenceClaim`, `insertLocalWriterRow`, `insertPublicationEffects`, `insertWriteRequest`, `listActiveAccessMembers`, `listAllSources`, `listAwaitingMemoryProposals`, `listCompactableReceipts`, `listConfigKeys`, `listEffectRecoveries`, `listFenceFactRows`, `listFenceHoldRows`, `listFenceRetireCandidates`, `listGatedMirrorRequests`, `listGuardedTakeRows`, `listGuestSourceIds`, `listLinkEndpointPages`, `listOverdueHeldWrites`, `listOwnerRecoveryHeads`, `listPendingSegmentedProjections`, `listReservationsAfter`, `listResumableRefreshes`, `listRetiredDeactivations`, `listSharedSkillPackRoots`, `listSourceRecords`, `listSourceRoutingRows`, `listTopologyRecoveries`, `lockPageKeys`, `lockPersistenceCounters`, `lockWriteRequest`, `matchTakeRows`, `moveChunkIndexes`, `pageAwaitsRederive`, `publicationJournalStore`, `purgeMemoryProposals`, `putPage`, `readAdmissionSource`, `readCapacityForecastInputs`, `readDatabaseClock`, `readGraduationGateRow`, `readHeldPageRows`, `readJournalLimitRows`, `readLedgerSource`, `readLivePageBody`, `readLocalWriterRow`, `readPageSnapshot`, `readPageTrustRows`, `readPersistenceBrainId`, `readReceiptBudget`, `readSourceMembership`, `readSourceState`, `readTopologyChange`, `readWriteRequest`, `readWriterAdminState`, `removeTimelineRows`, `renewConsumerRow`, `renewWriteClaim`, `replaceDerivedAliases`, `replaceDerivedLinks`, `sealImportedPage`, `selectClaimableEffect`, `selectClaimableWrite`, `selectProjectionWindowJobs`, `setConfig`, `setPageAliases`, `setWriteContext`, `sharedSkillPackTablePresent`, `stampWorktreeHeartbeats`, `stampWriteClaim`, `transaction`, `transactionDirect`, `updateTimelineDetails`, `upsertChunks`

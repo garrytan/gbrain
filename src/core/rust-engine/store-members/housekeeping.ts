@@ -12,7 +12,6 @@ import type { ProjectionScanCursor } from '../../page-state/projection-window.ts
 import type { ProjectionWindowRow } from '../../engine-sql/persistence-housekeeping.ts';
 import type { ReceiptBudget } from '../../engine-sql/persistence-housekeeping.ts';
 import type { SegmentedProjectionFilter } from '../../engine-sql/persistence-housekeeping.ts';
-import { requestRow } from '../store-codec.ts';
 import type { ProjectionJobRef } from '../../engine-sql/persistence-housekeeping.ts';
 import type { TrueUpReservation } from '../../engine-sql/persistence-housekeeping.ts';
 
@@ -29,11 +28,9 @@ export const completeHousekeepingTurn: StoreMember<[turn: { op: string; hostId: 
   await storeCall({ member: 'completeHousekeepingTurn' }, () => brain.completeHousekeepingTurn(turn));
 };
 
-/** No effect is ever unsettled and no managed sync cursor is ever open here, so only the age and refusal tests apply. */
-export const listCompactableReceipts: StoreMember<[retentionDays: number], Record<string, unknown>[]> = async (brain, retentionDays) => {
-  const rows = await storeCall({ member: 'listCompactableReceipts' }, () => brain.listCompactableReceipts(retentionDays)) as unknown[];
-  return rows.map(row => requestRow<Record<string, unknown>>(row)!);
-};
+// `listCompactableReceipts` is not served: compacting a receipt (journal.ts compactReceipt) runs `SET LOCAL` and raw SQL
+// per receipt, which this engine refuses, so serving the listing alone made a pass fail halfway. It refuses up front
+// (`engine_capability_missing`, nothing read or written) until the typed compaction member lands.
 
 /**
  * The jobs of live segmented pages of active sources, oldest first. A job's reason is `canonical_change`, a projector's

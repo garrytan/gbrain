@@ -13,6 +13,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { compactReceipt, compactWriteReceiptsDetailed, NEWEST_SYNC_RECEIPT_EXCLUSION, OPEN_SYNC_CURSOR_EXCLUSION, yieldToEventLoop, type ReceiptCompactionResult } from './journal.ts';
 import { getCode } from '../retry-matcher.ts';
+import { isCapabilityMissing } from '../rust-engine/errors.ts';
 import type { WriteRequest } from './model.ts';
 import { HOUSEKEEPING_FLOOR_DAYS, readCompactableReceiptBytes, readReceiptTargetBytes, RECEIPT_RETENTION_KEY } from './limits.ts';
 import { sweepCompactedReservations } from './receipt-true-up.ts';
@@ -27,7 +28,12 @@ export interface CompactionRecord extends ReceiptCompactionResult { at: string; 
 const recordedAt = new WeakMap<object, number>();
 
 export async function runCompactionPass(engine: BrainEngine, opts: { hostId: string; notice?: boolean; now?: number }): Promise<CompactionRecord> {
-  const result = await compactWriteReceiptsDetailed(engine);
+  // An engine that cannot compact receipts (a Rust brain) refuses before reading or writing anything; the pass records
+  // that and carries on, so the one-shot consumer's queue upkeep after it still runs.
+  const result = await compactWriteReceiptsDetailed(engine).catch((error: unknown): ReceiptCompactionResult => {
+    if (!isCapabilityMissing(error)) throw error;
+    return { compacted: 0, freed_bytes: 0, skipped_by_reason: { receipt_compaction_unsupported: 1 } };
+  });
   await yieldToEventLoop();
   // A housekeeping error never skips the reservation sweep or the pass record: it is counted and the pass carries on.
   const early = await housekeepReceipts(engine).catch((error: unknown): ReceiptCompactionResult => {
