@@ -485,13 +485,17 @@ function readLost(dir: string, epoch: string, applied: Record<string, number> = 
 function firstCopies(lines: LostLine[], seen: Record<string, number>): LostLine[] {
   return lines.filter((x) => { if (x.w === null || x.n === null) return true; if (x.n <= (seen[x.w] ?? 0)) return false; seen[x.w] = x.n; return true; });
 }
-/** Lost samples that no tally has taken yet: `outcomes` of `epoch` (status reads any as no evidence, like a standing in-flight mark) and, per session, the samples every epoch's lines would settle. */
-export function unfoldedLines(dir: string, epoch: string | null, taken?: Record<string, number>, lineSeq?: Record<string, number>): { outcomes: number; bySession: Record<string, number>; qualifyingBySession: Record<string, number> } {
-  const out = { outcomes: 0, bySession: {} as Record<string, number>, qualifyingBySession: {} as Record<string, number> };
+/**
+ * Lost samples that no tally has taken yet: `outcomes` of `epoch` (status reads any as no evidence, like a standing in-flight mark) and, per session, the samples every epoch's lines would settle.
+ * `unreadable` is true when a journal could not be read: `bySession` then lacks that journal's lines, so a pass that books from it would book samples a later fold counts again.
+ */
+export function unfoldedLines(dir: string, epoch: string | null, taken?: Record<string, number>, lineSeq?: Record<string, number>): { outcomes: number; bySession: Record<string, number>; qualifyingBySession: Record<string, number>; unreadable: boolean } {
+  const out = { outcomes: 0, bySession: {} as Record<string, number>, qualifyingBySession: {} as Record<string, number>, unreadable: false };
   if (epoch === null) return out;
   const seen = { ...lineSeq };
   for (const l of readLost(dir, epoch, taken)) {
     const lines = firstCopies(l.lines, seen);
+    if (l.unreadable) out.unreadable = true;
     out.outcomes += lines.filter((x) => x.thisEpoch).length + (l.unreadable ? 1 : 0);
     for (const x of lines) {
       if (!x.session) continue;
@@ -749,6 +753,7 @@ export class WriteTally {
       let booked = false; const removable: string[] = []; const stale: string[] = [];
       let tally: WriteTallyFile | null = null; try { tally = loadTally(this.dir); } catch { return; } // silent-read-ok: a tally that cannot be read settles nothing now
       const lines = unfoldedLines(this.dir, epoch, tally?.lost_applied, tally?.line_seq);
+      if (lines.unreadable) return; // a journal that cannot be read settles nothing now (booking from the rest would count its samples twice); the pass is retried
       for (const name of names) {
         const key = OWED_NAME.exec(name)?.[1];
         if (key === undefined || key === this.key || pending.keys.includes(key)) continue; // this child's own session is settled at the end of its input; a marked session is the serving process's to publish and clear

@@ -1294,3 +1294,35 @@ describe('An unreadable session record during the client-journal fold does not p
     } finally { serving.kill(); await gone(serving.pid!); }
   });
 });
+
+describe('An unreadable client journal during the orphan pass does not make the pass book the same samples a second time', () => {
+  // Protects: the swap write check's counts. A client journal that cannot be read holds lines for the session the pass is settling; booking the whole owed count from the marker while those lines are missing makes the
+  // later fold credit the same samples again (6 counted for 3 owed). Fails if `obligations()` goes on to book from a listing that lacks an unreadable journal. No other test reads the journal during the pass. No production seam: `readFileSync` is observed through a spy.
+  const SES = 'p2s';
+  const crashed = (): { dir: string; epoch: string } => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    writeOwed(dir, { v: 2, session: SES, serving_pid: deadPid(), child_pid: deadPid(), owed: 3, closed: false, child_exited: false, open_until: 1 } as OwedRecord);
+    const client = new WriteTally(dir, () => null, () => true, process.pid, SES); client.missing(3, 0, 1); expect(client.flush()).toBe(true); // the crashed session's client journalled all three samples, the window last
+    return { dir, epoch };
+  };
+  test('a journal that cannot be read during the pass: nothing is booked from the marker (no receipt_orphaned, one window), and the count is 3 for 3 owed, before and after the read recovers', () => {
+    const { dir, epoch } = crashed();
+    const realRead = fsm.readFileSync; let eio = true;
+    const spy = spyOn(fsm, 'readFileSync').mockImplementation(((path: unknown, ...rest: unknown[]) => { if (eio && /write-lost\.\d+\.jsonl$/.test(String(path)) && (new Error().stack ?? '').includes('obligations')) throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }); return (realRead as (...a: unknown[]) => unknown)(path, ...rest); }) as never);
+    try {
+      const owner = new WriteTally(dir, () => epoch, () => true, process.pid);
+      owner.save(); // the pass's own read of the journal fails; the fold's read does not
+      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 }); // was {pipe_unflushed 2, write_window_lost 2, receipt_orphaned 2}: the marker was booked in full as well
+      eio = false; owner.save(); owner.save();
+      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
+      expect(readOwed(dir, SES)).toBeNull(); expect(stat(dir)).toMatchObject({ state: 'capability_missing', write_windows_lost: 1 });
+    } finally { eio = false; spy.mockRestore(); }
+  });
+  test('control: with no read error the same crash is counted 3 for 3 owed, the window once', () => {
+    const { dir, epoch } = crashed();
+    ownerPass(dir, epoch); ownerPass(dir, epoch);
+    expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
+    expect(readOwed(dir, SES)).toBeNull();
+  });
+});
+
