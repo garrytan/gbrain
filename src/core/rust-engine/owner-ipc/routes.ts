@@ -199,6 +199,7 @@ export const OWNER_IPC_REMOTE_DENY: Readonly<Record<string, string>> = {
   ...Object.fromEntries(['readAccessReadLog', 'listAccessReadPageRefs', 'readAccessReadsOfPages', 'tallyAccessReadsOfPages'].map(m => [m, READ_LOG])),
   ...Object.fromEntries(['readDecideState', 'dailyDecideSpend', 'listDecideSpendBySlot', 'listDecideReceiptStats', 'getDecideProposal',
     'listDecideProposals', 'getDecideReviewProposal', 'listDecideCalibrations', 'getDecideCalibration'].map(m => [m, DECIDE])),
+  listSourceRecords: 'every source\'s local_path and config across all callers, with no caller filter; sources_list filters its listing in the client after the whole registry crossed, and the remote rank_entities coverage read takes every source id; a caller-scoped listing must exist before this is served',
 };
 
 /**

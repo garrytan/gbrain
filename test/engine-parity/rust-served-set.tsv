@@ -190,6 +190,14 @@ test/engine-parity/segmented-mirror-effects.test.ts	served
 test/engine-parity/segmented-purge-writes.test.ts	served	
 test/engine-parity/segmented-rewrite.test.ts	served	
 test/engine-parity/served-remote-doctor.test.ts	served	
+test/engine-parity/served-remote-g1-belief-links.test.ts	served	
+test/engine-parity/served-remote-g1-body.test.ts	served	
+test/engine-parity/served-remote-g1-brief.test.ts	served	
+test/engine-parity/served-remote-g1-exact-scan.test.ts	served	
+test/engine-parity/served-remote-g1-facts-recall.test.ts	served	
+test/engine-parity/served-remote-g1-household-members.test.ts	served	
+test/engine-parity/served-remote-g1-link-notes.test.ts	served	
+test/engine-parity/served-remote-g1-search-probes.test.ts	served	
 test/engine-parity/served-remote-think.test.ts	served	
 test/engine-parity/served-remote-writes.test.ts	served	
 test/engine-parity/session-state-cap.test.ts	served	

@@ -43,6 +43,7 @@ import { OWNER_RUN_OPERATION } from '../src/core/rust-engine/owner-ipc/forwarded
 import { REMOTE_CONTEXT_KEYS, remoteOperationContext } from '../src/core/rust-engine/served/remote-whole-ops.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { withRemoteCaller } from '../src/core/remote-caller.ts';
+import { SCAN_STEP_LIMIT } from '../src/core/rust-engine/served/remote-scan-guard.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { loadRustArmAddon, rustArmAddonPath } from './engine-parity/rust-arm.ts';
@@ -262,5 +263,77 @@ describeAddon('remote writes over the served wire', () => {
       readOnly: await send({}, {}, { clientId: 'c', scopes: ['read'] }),
     }).toEqual({ purge: 'permission_denied', retention: 'invalid_params', readOnly: 'permission_denied' });
     expect((await owner.getPage('notes/stays'))?.compiled_truth).toBe('Not purged.');
+  });
+
+  /** The member sent as a remote caller on an ordinary frame and inside a transaction the caller holds. */
+  const sendMember = async (member: string, args: unknown[]) => {
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const plain = await withRemoteCaller(true, () => conn.request('call', member, args)).then(v => ({ code: 'ok', value: v }), (e: { code?: string; message?: string; reason?: string; detail?: string }) => ({ code: e.code ?? String(e.message), value: `${e.reason ?? ''} ${e.detail ?? ''}` }));
+    const ref = await withRemoteCaller(true, () => conn.txn('begin', {})) as string;
+    try {
+      const held = await withRemoteCaller(true, () => conn.request('call', member, args, { txn: ref })).then(v => ({ code: 'ok', value: v }), (e: { code?: string; message?: string; reason?: string; detail?: string }) => ({ code: e.code ?? String(e.message), value: `${e.reason ?? ''} ${e.detail ?? ''}` }));
+      return { plain, held };
+    } finally { await withRemoteCaller(true, () => conn.txn('rollback', { txn: ref })).catch(() => undefined); }
+  };
+  const codes = (r: { plain: { code: string }; held: { code: string } }) => [r.plain.code, r.held.code];
+
+  test('a page-id member answers for a page the caller may read and refuses one it may not, on an ordinary frame and in a held transaction', async () => {
+    const open = (await owner.getPage('notes/open'))!.id;
+    const secret = (await owner.getPage('notes/secret'))!.id;
+    const forms: Array<[string, (id: number) => unknown[]]> = [
+      ['readBriefPageVersions', id => [id, '1970-01-01T00:00:00.000Z', 4096, 5]],
+      ['readBodyManifestMeta', id => [id, [], 1]],
+      ['readBodyManifestRows', id => [id, null]],
+    ];
+    for (const [member, args] of forms) {
+      expect({ member, open: codes(await sendMember(member, args(open))) }).toEqual({ member, open: ['ok', 'ok'] });
+      const refused = await sendMember(member, args(secret));
+      expect({ member, secret: codes(refused) }).toEqual({ member, secret: ['permission_denied', 'permission_denied'] });
+      expect(refused.plain.value).toContain('read_out_of_scope');
+      expect(refused.held.value).toContain('read_out_of_scope');
+    }
+  });
+
+  test('nextLivePageAfter answers only a page the caller may read: a hidden page is stepped past, a cursor of 0 or one that names no page is valid', async () => {
+    await owner.putPage('notes/scan-a-open', NOTE('Scan A', 'Visible scan page.'));
+    await owner.putPage('notes/scan-b-hidden', NOTE('Scan B', 'Hidden scan page.', { visibility: 'private' }));
+    await owner.putPage('notes/scan-c-open', NOTE('Scan C', 'Visible scan page after a hidden one.'));
+    const idOf = async (slug: string) => (await owner.getPage(slug))!.id;
+    const [a, b, c] = [await idOf('notes/scan-a-open'), await idOf('notes/scan-b-hidden'), await idOf('notes/scan-c-open')];
+    const slugAfter = async (cursor: number) => {
+      const r = await sendMember('nextLivePageAfter', [cursor]);
+      return [r.plain, r.held].map(x => (x.code === 'ok' ? ((x.value as { slug: string } | null)?.slug ?? null) : x.code));
+    };
+    expect(await slugAfter(a)).toEqual(['notes/scan-c-open', 'notes/scan-c-open']);
+    expect(await slugAfter(b)).toEqual(['notes/scan-c-open', 'notes/scan-c-open']);
+    expect(await slugAfter(c)).toEqual([null, null]);
+    expect((await slugAfter(0))[0]).not.toBe('notes/secret');
+    expect(await slugAfter(2_000_000)).toEqual([null, null]);
+  });
+
+  test('nextLivePageAfter refuses a walk past 1000 hidden pages in a held transaction (no read deadline there), naming none of them', async () => {
+    await owner.putPage('notes/walk-0000-open', NOTE('Walk start', 'Visible start of the walk.'));
+    const start = (await owner.getPage('notes/walk-0000-open'))!.id;
+    for (let i = 1; i <= SCAN_STEP_LIMIT + 1; i++) await owner.putPage(`notes/walk-hidden-${String(i).padStart(4, '0')}`, NOTE(`Hidden ${i}`, 'Hidden walk page.', { visibility: 'private' }));
+    const refused = await sendMember('nextLivePageAfter', [start]);
+    expect(codes(refused)).toEqual(['permission_denied', 'permission_denied']);
+    for (const r of [refused.plain, refused.held]) {
+      expect(String(r.value)).toContain('scan_gap_hidden');
+      expect(String(r.value)).not.toContain('walk-hidden');
+    }
+  }, 120_000);
+
+  test('readAccessMembers answers a lookup by id and refuses the member directory forms (list, email, removed members)', async () => {
+    const byId = await sendMember('readAccessMembers', [{ id: 'no-such-member' }]);
+    expect({ plain: byId.plain, held: byId.held }).toEqual({ plain: { code: 'ok', value: [] }, held: { code: 'ok', value: [] } });
+    for (const form of [{}, { includeRemoved: false }, { includeRemoved: true }, { email: 'someone@example.test' }, { id: 'x', includeRemoved: true }, { id: 'x', email: 'someone@example.test' }]) {
+      const refused = await sendMember('readAccessMembers', [form]);
+      expect({ form, codes: codes(refused) }).toEqual({ form, codes: ['permission_denied', 'permission_denied'] });
+      expect(refused.plain.value).toContain('member_directory_out_of_scope');
+    }
+  });
+
+  test('listSourceRecords stays denied for a remote caller: refused on an ordinary frame and in a held transaction', async () => {
+    expect(codes(await sendMember('listSourceRecords', []))).toEqual(['engine_capability_missing', 'engine_capability_missing']);
   });
 });

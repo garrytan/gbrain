@@ -29,7 +29,8 @@ export function nextReadablePage(engine: object, plain: Member): Member {
       const { readable } = await remotePageAccess(engine as BrainEngine, [{ source_id: row.source_id, slug: row.slug }]);
       if (readable.has(`${row.source_id}\u0000${row.slug}`)) return row;
       const deadline = readDeadline();
-      if (hidden >= SCAN_STEP_LIMIT || (deadline !== undefined && Date.now() >= deadline)) throw scanGapHidden(hidden + 1, deadline !== undefined && Date.now() >= deadline);
+      const late = deadline !== undefined && Date.now() >= deadline;
+      if (hidden >= SCAN_STEP_LIMIT || late) throw scanGapHidden(hidden + 1, late);
       row = await plain(Number(row.id)) as PageRow | null;
     }
     return null;
