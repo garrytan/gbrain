@@ -327,6 +327,45 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       }, 120_000);
     }
 
+    // Two sources that hold the same slugs: each batch write is keyed on (source_id, slug), so the copy and the read-back must name the right page in each source.
+    const TEAM = 'team-b-example';
+    const ALICE_B = { slug: ALICE.slug, source_id: TEAM };
+    const twoSources = async (): Promise<void> => {
+      await primary().executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [TEAM]);
+      await primary().putPage(ALICE.slug, page('Alice Example (team b)'), { sourceId: TEAM });
+      await primary().putPage(ACME.slug, page('Acme Example (team b)'), { sourceId: TEAM });
+    };
+    const TWO_SOURCE: Array<{ op: string; act: (e: BrainEngine) => Promise<unknown>; changed: (p: BrainEngine) => Promise<boolean> }> = [
+      { op: 'softDeletePages', act: (e) => e.softDeletePages([ALICE.slug, ACME.slug], { sourceId: TEAM }),
+        changed: async (p) => (await p.getPage(ALICE.slug, { sourceId: TEAM, includeDeleted: true }))?.deleted_at != null && (await p.getPage(ALICE.slug, { sourceId: 'default' }))?.deleted_at == null },
+      { op: 'setEmotionalWeightBatch', act: (e) => e.setEmotionalWeightBatch([{ ...ALICE, weight: 0.75 }, { ...ALICE_B, weight: 0.25 }]),
+        changed: async (p) => Math.abs(Number((await p.getPage(ALICE.slug, { sourceId: TEAM }))?.emotional_weight) - 0.25) < 1e-6 && Math.abs(Number((await p.getPage(ALICE.slug, { sourceId: 'default' }))?.emotional_weight) - 0.75) < 1e-6 },
+      { op: 'markPagesExtractedBatch', act: (e) => e.markPagesExtractedBatch([{ ...ALICE, extractedAt: '2026-11-01T00:00:00.000Z' }, ALICE_B], '2026-11-02T00:00:00.000Z'),
+        changed: async (p) => (await p.executeRaw<{ n: string }>(`SELECT count(DISTINCT links_extracted_at)::text AS n FROM pages WHERE slug = $1 AND links_extracted_at IS NOT NULL`, [ALICE.slug]))[0]!.n === '2' },
+      { op: 'markPagesAttendanceBlocked',
+        act: async (e) => e.markPagesAttendanceBlocked([{ ...ALICE_B, revision: (await primary().getPage(ALICE.slug, { sourceId: TEAM }))!.knowledge_revision! }]),
+        changed: async (p) => (await p.executeRaw<{ s: string }>(`SELECT string_agg(source_id, ',') AS s FROM pages WHERE links_attendance_blocked_revision IS NOT NULL`))[0]!.s === TEAM },
+      { op: 'removeLinksByPagesAndSource',
+        act: async (e) => { const [link] = await primary().getLinks(ALICE.slug); return e.removeLinksByPagesAndSource([ALICE, ALICE_B], { linkSource: link!.link_source! }); },
+        changed: async (p) => (await p.getLinks(ALICE.slug)).length === 0 },
+    ];
+    for (const m of TWO_SOURCE) {
+      test(`${m.op}: a batch over two sources that hold the same slug is compared on (source_id, slug), and only the named page changes`, async () => {
+        const out = await replay(async (e) => { await twoSources(); await m.act(e); }, 1);
+        expect(await m.changed(primary())).toBe(true);
+        expect(out.inbox[0]!.op).toBe(m.op);
+        expect(out.tally).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
+      }, 120_000);
+    }
+
+    test('a difference on the second source\'s page of a two-source batch is counted unexplained_difference, never comparable', async () => {
+      const team = (ev: WriteEvent): Record<string, unknown> => (ev.post as { pages: Array<Record<string, unknown>> }).pages.find((p) => p?.source_id === TEAM)!;
+      const out = await replay(async (e) => { await twoSources(); await e.setEmotionalWeightBatch([{ ...ALICE, weight: 0.75 }, { ...ALICE_B, weight: 0.25 }]); }, 1, (ev) => { team(ev).emotional_weight = 0.75; });
+      expect(out.tally).toMatchObject({ comparable: 0, unexplained_difference: 1, uncomparable: 0 });
+      const deleted = await replay(async (e) => { await twoSources(); await e.softDeletePages([ALICE.slug], { sourceId: TEAM }); }, 1, (ev) => { team(ev).deleted_at = null; });
+      expect(deleted.tally).toMatchObject({ comparable: 0, unexplained_difference: 1, uncomparable: 0 });
+    }, 120_000);
+
     test('a write whose pages are not in the copy is uncomparable (target_absent), and a batch with one page that is there is compared', async () => {
       const out = await replay(async (e, sampled) => {
         await e.softDeletePage('people/never-example', { sourceId: 'default' }); await sampled(1);
@@ -518,13 +557,23 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(inbox.map((e) => [e.op, e.outcome, e.reason, e.pre])).toEqual([['addLinksBatch', 'uncomparable', 'target_unresolved', undefined]]);
     }, 60_000);
 
-    test('a compared member called inside a transaction is uncomparable (in_transaction), not compared: only a putPage is, and only in the outermost transaction', async () => {
+    test('a B1 member in the outermost transaction is compared after the commit; in a nested transaction it is uncomparable (in_transaction); an id-named one is uncomparable (target_unresolved)', async () => {
       await ctx.reset();
       await fillSeedFixture(primary());
       const { inbox, wrapped } = rig();
       await wrapped.transaction(async (tx) => { await tx.softDeletePage('people/alice-example', { sourceId: 'default' }); });
       await until(() => inbox.length >= 1);
-      expect(inbox.map((e) => [e.op, e.outcome, e.reason, e.pre])).toEqual([['softDeletePage', 'uncomparable', 'in_transaction', undefined]]);
+      await wrapped.transaction(async (tx) => tx.transaction(async (nested) => { await nested.setPageEmbeddingSignature('companies/acme-example', { sourceId: 'default', signature: 'm:1' }); }));
+      await until(() => inbox.length >= 2);
+      const [row] = await primary().executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1', ['companies/acme-example']);
+      await wrapped.transaction(async (tx) => { await tx.stripStaleFrontmatterKeys({ sourceId: 'default', ids: [Number(row!.id)] }); }); // its pages are looked up by id outside a transaction only
+      await until(() => inbox.length >= 3);
+      expect(inbox[0]).toMatchObject({ op: 'softDeletePage', moved: false });
+      expect(inbox[0]!.pre).toBeDefined();
+      expect(inbox.slice(1).map((e) => [e.op, e.outcome, e.reason, e.pre])).toEqual([['setPageEmbeddingSignature', 'uncomparable', 'in_transaction', undefined], ['stripStaleFrontmatterKeys', 'uncomparable', 'target_unresolved', undefined]]);
+      const dir = ctx.tempDir(); const on = tallyOn(dir);
+      await settle(createWriteComparer({ dir, tally: on.tally, alive: () => true, load: { ok: true, addon: addonOf() } as never, scratchRoot: ctx.tempDir() }), inbox);
+      expect(on.counts()).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 2 });
     }, 60_000);
 
     test('only a comparable verdict counts toward criterion 5: every other outcome adds nothing to comparable, and the row stays closed', async () => {
