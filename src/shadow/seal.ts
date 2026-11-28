@@ -33,8 +33,8 @@
  *    only at close), not the counters: what it commits is published to the follower, and a write published after the
  *    follower closed is recorded as lost (follower.ts `close`), which voids the seal; its own writes after the token
  *    move the counters and refuse the seal. A connection is left out only when proven ours: its backend pid is one the
- *    server sent a live connection of the primary's pool over that connection's own socket (the vendored driver's
- *    `backend_pids`), read before and after the activity read (`ownBackends`), so a pool connection held reserved or
+ *    server sent a live connection of the primary's pool, or of its direct pool when that one is already open, over
+ *    that connection's own socket (the vendored driver's `backend_pids`), read before and after the activity read (`ownBackends`), so a pool connection held reserved or
  *    busy elsewhere in the process is proven too; a connection name proves nothing, since any client can set it, and a
  *    proof that cannot be made refuses (`own_backends_unproven`);
  *  - a login role that can write a brain table with no complete way to record evidence (`uncovered_roles` of
@@ -228,21 +228,30 @@ type Observed = Omit<Mark, 'v'>;
 interface PidPool { backend_pids?: unknown }
 
 /**
- * The backend pids of the primary pool's live connections, whatever they are doing (idle, running a statement, or held
- * reserved by another part of the process, such as the persistence consumer's idle lane). Each is the pid the server
+ * The backend pids of the primary's live connections, whatever they are doing (idle, running a statement, or held
+ * reserved by another part of the process, such as the persistence consumer's idle lane): its ordinary pool, plus its
+ * direct pool on a dual-pool brain (Supabase, or an explicit direct URL) when that pool is already open, where the
+ * persistence heartbeat renews every 10 s. The direct pool is never opened here. Each pid is the one the server
  * sent that connection over its own socket at startup (BackendKeyData), so another client cannot claim it by copying
- * this process's connection name. Null when the pool reports none (a driver without the accessor): refused as
+ * this process's connection name. Null when a pool reports none (a driver without the accessor): refused as
  * `own_backends_unproven` when a connection carries this process's name. No primary, or one without a pool (PGLite):
  * nothing proven, nothing left out.
  */
 function poolPids(primary: BrainEngine | undefined): number[] | null {
   if (!primary) return [];
-  let pool: PidPool | undefined;
-  try { pool = (primary as unknown as { sql?: PidPool }).sql; } catch { return null; } // silent-read-ok: a torn-down pool proves nothing, refused as own_backends_unproven
-  if (!pool) return [];
-  const pids = pool.backend_pids;
-  if (!Array.isArray(pids)) return null;
-  return pids.filter((pid): pid is number => Number.isInteger(pid));
+  const pools: Array<PidPool | null | undefined> = [];
+  try {
+    const p = primary as unknown as { sql?: PidPool; connectionManager?: { peekDirectPool?: () => PidPool | null } | null };
+    pools.push(p.sql, p.connectionManager?.peekDirectPool?.());
+  } catch { return null; } // silent-read-ok: a torn-down pool proves nothing, refused as own_backends_unproven
+  const out: number[] = [];
+  for (const pool of pools) {
+    if (!pool) continue;
+    const pids = pool.backend_pids;
+    if (!Array.isArray(pids)) return null;
+    out.push(...pids.filter((pid): pid is number => Number.isInteger(pid)));
+  }
+  return out;
 }
 
 /**

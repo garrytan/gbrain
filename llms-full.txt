@@ -6296,8 +6296,9 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   under a minute ago, or cannot be seen by the reading role (without superuser or `pg_read_all_stats` another role's
   `pg_stat_activity` row has NULL state, transaction id and backend type), because counters show only what the server
   has flushed. A connection of a read-only role, such as a monitoring agent, is never waited on. The sealing process's
-  own connections are left out only when proven its own: the backend pid of a connection its database driver holds,
-  read before and after the check (the vendored driver's read-only `backend_pids`); its application name alone
+  own connections are left out only when proven its own: the backend pid of a connection its database driver holds
+  (in its ordinary pool, and in its direct pool on a dual-pool brain when that pool is already open, where the
+  persistence heartbeat renews every 10 s), read before and after the check (the vendored driver's read-only `backend_pids`); its application name alone
   exempts nothing, and a pool that cannot be proven refuses (`own_backends_unproven`). No seal is written under the same conditions, and not while a
   connection the writer hooks recorded is still connected, whatever the age of its row: a writer still connected during
   the seal check is refused until it commits or disconnects. After the child took a confirmation the check reads once
