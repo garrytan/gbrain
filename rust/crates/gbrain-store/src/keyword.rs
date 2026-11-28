@@ -63,6 +63,7 @@ pub(crate) mod parser;
 mod rank;
 mod stem;
 pub(crate) mod stem_german;
+mod term_health;
 mod title_fuzzy;
 mod titles;
 mod trgm;
@@ -84,6 +85,7 @@ pub use index_build::{KeywordIndexReport, KeywordIndexState};
 pub use index_health::{KeywordIndexHealth, KeywordIndexRebuild};
 pub(crate) use index_health::{check as check_index_health, rebuild as rebuild_index};
 pub(crate) use index_writer::IndexingWriter;
+pub use term_health::TermPostingsReport;
 pub use titles::{TitleAttempt, TitleAttemptKind};
 pub(crate) use titles::{check_page_vector, check_sealed_page_vector};
 

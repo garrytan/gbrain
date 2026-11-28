@@ -231,7 +231,7 @@ pub fn tokenize(text: &str) -> Vec<String> {
     out
 }
 
-fn term_frequencies(text: &str) -> (BTreeMap<String, u32>, u32) {
+pub(crate) fn term_frequencies(text: &str) -> (BTreeMap<String, u32>, u32) {
     let mut tf = BTreeMap::new();
     let mut total = 0u32;
     for term in tokenize(text) {

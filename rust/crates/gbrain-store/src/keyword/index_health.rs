@@ -11,11 +11,14 @@
 //! `max_pages` pages compared with the postings rebuilt from their records (`index_build.rs`
 //! `verify`).
 //!
-//! [`rebuild`] resets the index and runs build batches until the state is complete, each in its
-//! own write transaction, through a handle ([`IndexOnly`]) that refuses any write outside the `R`
+//! [`rebuild`] resets the index and runs build batches until the state is complete (unless the
+//! state is complete and every posting matches the records already), each in its own write
+//! transaction, through a handle ([`IndexOnly`]) that refuses any write outside the `R`
 //! tag, so a rebuild changes no record but the index's own; the receipt counts its writes.
 //!
-//! The core term postings (`keys::POSTING`, `T`) are not checked or rebuilt here.
+//! The same check and rebuild cover the core term postings (`keys::POSTING`, `T`) in
+//! `term_health.rs`: [`check`] compares them over the same pages, and [`rebuild`] repairs them in
+//! place first, through a handle that refuses any write outside the `T` tag.
 
 use serde::Serialize;
 
@@ -23,6 +26,7 @@ use super::index::{INDEX_VERSION, StateRecord, read_state_record, serves};
 use super::index_build::{
     BATCH_PAGES, KeywordIndexReport, KeywordIndexState, build_batch, reset, verify,
 };
+use super::term_health::{self, TermPostingsReport};
 use crate::Store;
 use crate::error::{INVALID_STATE, Result, StoreError};
 use crate::keys;
@@ -52,6 +56,9 @@ pub struct KeywordIndexHealth {
     pub builder_error: Option<String>,
     /// The posting comparison, for a complete state.
     pub verify: Option<KeywordIndexReport>,
+    /// The core term postings (`T`) compared with the chunks of the same pages, whatever the
+    /// keyword index state.
+    pub terms: TermPostingsReport,
 }
 
 /// Reads the keyword index's health from one snapshot (see the module docs). `builder` is this
@@ -82,6 +89,7 @@ pub(crate) fn check(
             (status, Some(s), None, Some(report))
         }
     };
+    let terms = term_health::verify(read, max_pages)?;
     Ok(KeywordIndexHealth {
         index: "keyword",
         status,
@@ -91,6 +99,7 @@ pub(crate) fn check(
         builder: builder.0,
         builder_error: builder.1,
         verify: report,
+        terms,
     })
 }
 
@@ -99,26 +108,44 @@ pub(crate) fn check(
 pub struct KeywordIndexRebuild {
     /// `"keyword"`.
     pub index: &'static str,
-    /// Write transactions the rebuild committed: the reset and each build batch.
+    /// Write transactions the rebuild committed: each term posting batch, then the reset and each
+    /// build batch (none when the keyword index already matched its records).
     pub transactions: u64,
     /// Index records the rebuild put and deleted (the state record included).
     pub index_puts: u64,
     pub index_deletes: u64,
-    /// Records outside the index the rebuild wrote: always 0, as its handle refuses them.
+    /// Core term postings (`T`) the repair put and deleted.
+    pub term_puts: u64,
+    pub term_deletes: u64,
+    /// Records outside the two indexes the rebuild wrote: always 0, as its handles refuse them.
     pub record_writes: u64,
     /// The state the rebuild left: complete.
     pub state: KeywordIndexState,
 }
 
-/// Resets the keyword index and builds it again from the records, batch by batch, until the
-/// state is complete (see the module docs). A running background build may run batches at the
-/// same time; both rebuild the same postings from the same records.
+/// Repairs the core term postings in place, then resets the keyword index and builds it again from
+/// the records, batch by batch, until the state is complete (see the module docs). A keyword index
+/// that is complete and matches every record is left as it is, so repairing only the term
+/// postings never sends keyword search to the scan. A running background build may run batches at
+/// the same time; both rebuild the same postings from the same records.
 pub(crate) fn rebuild(store: &Store) -> Result<KeywordIndexRebuild> {
+    let terms = term_health::repair(store)?;
+    let sound = {
+        let read = store.read()?;
+        match read_state_record(&*read)? {
+            StateRecord::Present(s) if s.version == INDEX_VERSION && s.complete => {
+                verify(&*read, None)?.ok.then_some(s)
+            }
+            _ => None,
+        }
+    };
     let mut receipt = KeywordIndexRebuild {
         index: "keyword",
-        transactions: 0,
+        transactions: terms.transactions,
         index_puts: 0,
         index_deletes: 0,
+        term_puts: terms.puts,
+        term_deletes: terms.deletes,
         record_writes: 0,
         state: KeywordIndexState {
             version: INDEX_VERSION,
@@ -126,8 +153,12 @@ pub(crate) fn rebuild(store: &Store) -> Result<KeywordIndexRebuild> {
             cursor: Some(0),
         },
     };
+    if let Some(state) = sound {
+        receipt.state = state.into();
+        return Ok(receipt);
+    }
     let (puts, deletes) = store.write(|w| {
-        let mut only = IndexOnly::new(w);
+        let mut only = IndexOnly::new(w, keys::TRIGRAM);
         reset(&mut only)?;
         Ok((only.puts, only.deletes))
     })?;
@@ -136,7 +167,7 @@ pub(crate) fn rebuild(store: &Store) -> Result<KeywordIndexRebuild> {
     receipt.index_deletes += deletes;
     loop {
         let (state, puts, deletes) = store.write(|w| {
-            let mut only = IndexOnly::new(w);
+            let mut only = IndexOnly::new(w, keys::TRIGRAM);
             let state = build_batch(&mut only, BATCH_PAGES)?;
             Ok((state, only.puts, only.deletes))
         })?;
@@ -159,24 +190,27 @@ pub(crate) fn rebuild(store: &Store) -> Result<KeywordIndexRebuild> {
     }
 }
 
-/// A write handle that passes only `R` (keyword index) writes and counts them.
-struct IndexOnly<'a> {
+/// A write handle that passes only the writes of one index tag (`R`, the keyword index, or `T`,
+/// the core term postings) and counts them.
+pub(super) struct IndexOnly<'a> {
     inner: &'a mut dyn KvWrite,
-    puts: u64,
-    deletes: u64,
+    tag: u8,
+    pub(super) puts: u64,
+    pub(super) deletes: u64,
 }
 
 impl<'a> IndexOnly<'a> {
-    fn new(inner: &'a mut dyn KvWrite) -> Self {
+    pub(super) fn new(inner: &'a mut dyn KvWrite, tag: u8) -> Self {
         Self {
             inner,
+            tag,
             puts: 0,
             deletes: 0,
         }
     }
 
-    fn guard(key: &[u8]) -> Result<()> {
-        if key.first() == Some(&keys::TRIGRAM) {
+    fn guard(&self, key: &[u8]) -> Result<()> {
+        if key.first() == Some(&self.tag) {
             return Ok(());
         }
         Err(StoreError::new(
@@ -206,13 +240,13 @@ impl KvRead for IndexOnly<'_> {
 // the same guard.
 impl KvWrite for IndexOnly<'_> {
     fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
-        Self::guard(key)?;
+        self.guard(key)?;
         self.puts += 1;
         self.inner.put(key, value)
     }
 
     fn delete(&mut self, key: &[u8]) -> Result<()> {
-        Self::guard(key)?;
+        self.guard(key)?;
         self.deletes += 1;
         self.inner.delete(key)
     }

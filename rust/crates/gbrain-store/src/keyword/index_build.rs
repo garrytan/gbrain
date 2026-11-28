@@ -128,7 +128,7 @@ pub(crate) fn check_state(read: &dyn KvRead) -> Result<StateRecord> {
 }
 
 /// The page ids from `start` on, ascending, at most `limit`.
-fn page_ids_from(read: &dyn KvRead, start: u64, limit: usize) -> Result<Vec<u64>> {
+pub(super) fn page_ids_from(read: &dyn KvRead, start: u64, limit: usize) -> Result<Vec<u64>> {
     let mut ids = Vec::new();
     if limit == 0 {
         return Ok(ids);
@@ -203,17 +203,12 @@ impl From<IndexState> for KeywordIndexState {
     }
 }
 
-/// Compares the stored `R` records with the records rebuilt from the first `max_pages` pages (all
-/// of them when `None`) and their chunks. A record is missing when the store lacks it, changed
-/// when its value differs, and orphan when no page's rebuild has it (counted only when the walk
-/// covered every page: stored records minus the expected ones found).
-pub(crate) fn verify(read: &dyn KvRead, max_pages: Option<u64>) -> Result<KeywordIndexReport> {
-    // An unreadable state reports as none; the postings are compared all the same.
-    let state = match read_state_record(read)? {
-        StateRecord::Present(s) => Some(s),
-        StateRecord::Absent | StateRecord::Unreadable(_) => None,
-    };
-    let (mut pages, mut expected, mut missing, mut changed) = (0u64, 0u64, 0u64, 0u64);
+/// The first `max_pages` page ids (all of them when `None`), ascending, and whether that is every
+/// page (the walk reached the last one).
+pub(super) fn checked_page_ids(
+    read: &dyn KvRead,
+    max_pages: Option<u64>,
+) -> Result<(Vec<u64>, bool)> {
     let mut complete_walk = true;
     let mut ids = Vec::new();
     scan_prefix(read, &[keys::PAGE_ID], false, &mut |k, _| {
@@ -226,6 +221,21 @@ pub(crate) fn verify(read: &dyn KvRead, max_pages: Option<u64>) -> Result<Keywor
         }
         true
     })?;
+    Ok((ids, complete_walk))
+}
+
+/// Compares the stored `R` records with the records rebuilt from the first `max_pages` pages (all
+/// of them when `None`) and their chunks. A record is missing when the store lacks it, changed
+/// when its value differs, and orphan when no page's rebuild has it (counted only when the walk
+/// covered every page: stored records minus the expected ones found).
+pub(crate) fn verify(read: &dyn KvRead, max_pages: Option<u64>) -> Result<KeywordIndexReport> {
+    // An unreadable state reports as none; the postings are compared all the same.
+    let state = match read_state_record(read)? {
+        StateRecord::Present(s) => Some(s),
+        StateRecord::Absent | StateRecord::Unreadable(_) => None,
+    };
+    let (mut pages, mut expected, mut missing, mut changed) = (0u64, 0u64, 0u64, 0u64);
+    let (ids, complete_walk) = checked_page_ids(read, max_pages)?;
     for id in ids {
         pages += 1;
         for (key, value) in expected_records(read, id)? {

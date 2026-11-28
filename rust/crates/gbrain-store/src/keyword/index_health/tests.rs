@@ -172,7 +172,7 @@ fn an_absent_state_is_reported() {
 fn the_rebuild_handle_refuses_a_write_outside_the_index() {
     let kv = mem_kv();
     let mut tx = kv.begin_write().unwrap();
-    let mut only = IndexOnly::new(&mut *tx);
+    let mut only = IndexOnly::new(&mut *tx, keys::TRIGRAM);
     let refused = only.put(&keys::meta("format"), b"{}").unwrap_err();
     assert_eq!(refused.code, INVALID_STATE);
     let refused = only.delete(&keys::page_id(1)).unwrap_err();

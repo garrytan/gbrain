@@ -1,17 +1,23 @@
 /**
- * `gbrain doctor` checks the Rust store's keyword index and `gbrain doctor --fix` rebuilds it (doctor check
- * `rust_derived_indexes`; rust/docs/store/keyword.md, "Doctor"), on a real Rust brain, with and without a running owner.
+ * `gbrain doctor` checks the Rust store's keyword index and its core term postings, and `gbrain doctor --fix` repairs
+ * them (doctor check `rust_derived_indexes`; rust/docs/store/keyword.md, "Doctor"), on a real Rust brain, with and
+ * without a running owner.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  * 1. Protects: a keyword index whose chunk postings are gone is a doctor `fail` that `--fix` repairs, after which
  *    `gbrain search` finds what the records hold; a keyword index state that does not parse opens (search scans), is a
- *    doctor `warn`, and `--fix` repairs it. The rebuild writes no record outside the index, and doctor reports the
- *    same checks with the same statuses whether the CLI opens the brain itself or reaches it through `gbrain serve`.
+ *    doctor `warn`, and `--fix` repairs it; missing, changed and orphan core term postings (`T`) are a doctor `fail`
+ *    that `--fix` repairs in place, writing only `T` and leaving `gbrain search` right throughout; a background build
+ *    that failed is a `warn` that names its error, `--fix` reports the same error, and once the bad record is gone
+ *    `--fix` completes the index. The repair writes no record outside the indexes, and doctor reports the same checks
+ *    with the same statuses whether the CLI opens the brain itself or reaches it through `gbrain serve`.
  * 2. Fails when: doctor has no row for the index (the base before this check), the open refuses an unparseable
- *    state (`rust_store_unreadable`), the rebuild leaves postings missing or writes records, or the owner path
- *    answers differently.
- * 3. Existing coverage: the store's unit tests (keyword/index_health/tests.rs) drive the check and the rebuild on an
- *    in-memory store; no test runs the CLI's doctor on a damaged Rust brain, or through an owner.
+ *    state (`rust_store_unreadable`), doctor reports damaged term postings ok or `--fix` leaves them (the base before
+ *    the term check), a failed build hides its error, the repair writes records, or the owner path answers
+ *    differently.
+ * 3. Existing coverage: the store's unit tests (keyword/index_health/tests.rs, keyword/term_health/tests.rs) drive
+ *    the check and the repair on an in-memory store; no other test runs the CLI's doctor on a damaged Rust brain, or
+ *    through an owner.
  * 4. Seams: the damage comes from the development-only cargo example `derived_fault` (rust/crates/gbrain-store/
  *    examples/derived_fault.rs), which opens records.redb directly while no owner runs; nothing in the addon can
  *    reach it. The test builds it with cargo (GBRAIN_TEST_DERIVED_FAULT names a built one) and skips without cargo or
@@ -36,9 +42,13 @@ if (REQUIRED && !HAVE_CARGO) throw new Error('GBRAIN_TEST_RUST_ADDON_REQUIRED=1 
 
 const CHECK = 'rust_derived_indexes';
 const INDEX_TAG = 'R'.charCodeAt(0).toString(16); // keys::TRIGRAM, the keyword index's records
+const TERM_TAG = 'T'.charCodeAt(0).toString(16); // keys::POSTING, the core term postings
 
 interface Run { exitCode: number; stdout: string; stderr: string }
-interface Row { name: string; status: string; message: string; details?: { keyword?: { status: string }; rebuild?: { record_writes: number; index_puts: number } } }
+interface Terms { missing: number; changed: number; orphan: number | null; ok: boolean }
+interface Keyword { status: string; builder: string; builder_error: string | null; terms?: Terms }
+interface Rebuild { record_writes: number; index_puts: number; index_deletes: number; term_puts?: number; term_deletes?: number }
+interface Row { name: string; status: string; message: string; details?: { keyword?: Keyword; rebuild?: Rebuild } }
 type Digest = Record<string, { records: number; sha256: string }>;
 
 let home = '';
@@ -64,7 +74,9 @@ async function cli(args: string[]): Promise<Run> {
   return { stdout, stderr, exitCode };
 }
 
-function damage(mode: 'drop-chunk-postings' | 'garbage-state' | 'digest'): string {
+type Mode = 'drop-chunk-postings' | 'garbage-state' | 'damage-term-postings' | 'builder-fail' | 'heal-page-id' | 'digest';
+
+function damage(mode: Mode): string {
   const run = Bun.spawnSync([fault, db, mode], { stdout: 'pipe', stderr: 'pipe' });
   if (run.exitCode !== 0) throw new Error(`derived_fault ${mode}: ${run.stderr.toString()}`);
   return run.stdout.toString();
@@ -155,26 +167,34 @@ describe.skipIf(!HAVE_ADDON || !HAVE_CARGO)('gbrain doctor on a damaged Rust key
     if (home) rmSync(home, { recursive: true, force: true });
   });
 
+  // `terms` is the term postings verdict before --fix; `tags` the record tags --fix changes; `writes` its index counts.
   const DRILLS = [
-    { mode: 'drop-chunk-postings', status: 'fail', keyword: 'mismatch', searchBefore: { exitCode: 0, keywordZero: true } },
-    { mode: 'garbage-state', status: 'warn', keyword: 'unreadable', searchBefore: { exitCode: 0, keywordZero: false } },
+    { mode: 'drop-chunk-postings', status: 'fail', keyword: 'mismatch', terms: true, searchBefore: { exitCode: 0, keywordZero: true },
+      tags: [INDEX_TAG], writes: null },
+    { mode: 'garbage-state', status: 'warn', keyword: 'unreadable', terms: true, searchBefore: { exitCode: 0, keywordZero: false },
+      tags: [INDEX_TAG], writes: null },
+    // Two postings deleted, one changed, one orphan added: --fix puts 3 and deletes 1, and leaves the sound keyword index alone.
+    { mode: 'damage-term-postings', status: 'fail', keyword: 'ok', terms: false, searchBefore: { exitCode: 0, keywordZero: false },
+      tags: [TERM_TAG], writes: { index_puts: 0, index_deletes: 0, term_puts: 3, term_deletes: 1 } },
   ] as const;
 
-  // Value: protects=doctor on a sound Rust brain reports its keyword index ok; fails_when=the row is missing or the check misreads a complete index; why_new=no doctor check reads the Rust keyword index; seam=none; no_claim=the core term postings (T)
-  test('a sound brain: doctor reports the keyword index ok', async () => {
+  // Value: protects=doctor on a sound Rust brain reports its keyword index and term postings ok; fails_when=the row is missing or the check misreads a complete index or sound postings; why_new=no doctor check reads the Rust keyword index; seam=none; no_claim=a brain over the standard tier's page bound
+  test('a sound brain: doctor reports the keyword index and the term postings ok', async () => {
     const row = (await doctor(['--only', CHECK])).row;
-    expect({ status: row?.status, keyword: row?.details?.keyword?.status }).toEqual({ status: 'ok', keyword: 'ok' });
+    expect({ status: row?.status, keyword: row?.details?.keyword?.status, terms: row?.details?.keyword?.terms?.ok })
+      .toEqual({ status: 'ok', keyword: 'ok', terms: true });
   }, 600_000);
 
   for (const drill of DRILLS) {
-    // Value: protects=a damaged keyword index is a named doctor finding the CLI and the owner report alike, and --fix repairs it writing only index records; fails_when=doctor has no row or ok, the open refuses, the two paths differ, or the rebuild writes a record; why_new=no CLI doctor test damages a Rust store; seam=the dev-only derived_fault example; no_claim=the core term postings (T), never checked
+    // Value: protects=a damaged keyword index or damaged term postings are a named doctor finding the CLI and the owner report alike, and --fix repairs them writing only index records; fails_when=doctor has no row or ok, the open refuses, the two paths differ, or the repair writes a record or touches the other index; why_new=no CLI doctor test damages a Rust store; seam=the dev-only derived_fault example; no_claim=search through the term postings, which no CLI command reads
     test(`${drill.mode}: doctor reports ${drill.keyword} the same with and without an owner, and --fix repairs it with no record write`, async () => {
       damage(drill.mode);
       const before = await searchBeta();
       expect({ exitCode: before.exitCode, keywordZero: before.keywordZero }).toEqual(drill.searchBefore);
 
       const solo = await doctor([]);
-      expect({ status: solo.row?.status, keyword: solo.row?.details?.keyword?.status }).toEqual({ status: drill.status, keyword: drill.keyword });
+      expect({ status: solo.row?.status, keyword: solo.row?.details?.keyword?.status, terms: solo.row?.details?.keyword?.terms?.ok })
+        .toEqual({ status: drill.status, keyword: drill.keyword, terms: drill.terms });
       await startOwner();
       let owned: Awaited<ReturnType<typeof doctor>>;
       try { owned = await doctor([]); } finally { await stopOwner(); }
@@ -188,9 +208,12 @@ describe.skipIf(!HAVE_ADDON || !HAVE_CARGO)('gbrain doctor on a damaged Rust key
       const fixed = await doctor(['--fix', '--only', CHECK]);
       const d2 = digest();
       expect(changedTags(d0, d1)).toEqual([]);
-      expect(changedTags(d1, d2)).toEqual([INDEX_TAG]);
-      expect({ status: fixed.row?.status, keyword: fixed.row?.details?.keyword?.status, record_writes: fixed.row?.details?.rebuild?.record_writes })
-        .toEqual({ status: 'ok', keyword: 'ok', record_writes: 0 });
+      expect(changedTags(d1, d2)).toEqual([...drill.tags]);
+      const r = fixed.row?.details?.rebuild;
+      expect({ status: fixed.row?.status, keyword: fixed.row?.details?.keyword?.status, terms: fixed.row?.details?.keyword?.terms?.ok, record_writes: r?.record_writes })
+        .toEqual({ status: 'ok', keyword: 'ok', terms: true, record_writes: 0 });
+      if (drill.writes) expect({ index_puts: r?.index_puts, index_deletes: r?.index_deletes, term_puts: r?.term_puts, term_deletes: r?.term_deletes }).toEqual(drill.writes);
+      else expect({ term_puts: r?.term_puts, term_deletes: r?.term_deletes }).toEqual({ term_puts: 0, term_deletes: 0 });
       expect(await searchBeta()).toEqual(OK_SEARCH);
     }, 600_000);
 
@@ -209,4 +232,45 @@ describe.skipIf(!HAVE_ADDON || !HAVE_CARGO)('gbrain doctor on a damaged Rust key
       expect((await doctor(['--only', CHECK])).row?.status).toBe('ok');
     }, 600_000);
   }
+
+  /** The row once this process's background build has stopped (each CLI process opens the brain and starts one). */
+  async function settled(): Promise<Awaited<ReturnType<typeof doctor>>> {
+    let run = await doctor([]);
+    for (let i = 0; i < 5 && run.row?.details?.keyword?.status === 'building'; i++) run = await doctor([]);
+    return run;
+  }
+
+  // Value: protects=a background build that failed is a doctor warn naming its error on both paths, --fix reports that error and writes no record, and once the bad record is gone --fix completes the index; fails_when=the row hides the error, --fix claims success, the two paths differ, or a record is written; why_new=no test drives a failed build through the CLI; seam=the dev-only derived_fault example (a page id key whose page record does not parse); no_claim=how a real brain gets such a record
+  test('builder-fail: doctor names the failed build the same with and without an owner, and --fix completes the index once the bad record is gone', async () => {
+    damage('builder-fail');
+    expect(await searchBeta()).toEqual(OK_SEARCH); // an incomplete index: search scans the records
+
+    const solo = await settled();
+    const k = solo.row?.details?.keyword;
+    expect({ status: solo.row?.status, keyword: k?.status, builder: k?.builder, terms: k?.terms?.ok })
+      .toEqual({ status: 'warn', keyword: 'stalled', builder: 'failed', terms: true });
+    expect(k?.builder_error).toContain('not valid JSON');
+    expect(solo.row?.message).toContain(k!.builder_error!);
+    await startOwner();
+    let owned: Awaited<ReturnType<typeof doctor>>;
+    try { owned = await settled(); } finally { await stopOwner(); }
+    expect({ status: owned.row?.status, keyword: owned.row?.details?.keyword?.status, builder_error: owned.row?.details?.keyword?.builder_error })
+      .toEqual({ status: 'warn', keyword: 'stalled', builder_error: k!.builder_error });
+
+    // --fix meets the same record: the row fails with the build's error and no record outside the index changes.
+    const d0 = digest();
+    const failed = (await doctor(['--fix', '--only', CHECK])).row;
+    const d1 = digest();
+    expect(failed?.status).toBe('fail');
+    expect(failed?.message).toContain(k!.builder_error!.replace(/^[a-z_]+: /, '')); // the row has the message, not the code
+    expect(changedTags(d0, d1).filter(t => t !== INDEX_TAG)).toEqual([]);
+    expect(await searchBeta()).toEqual(OK_SEARCH);
+
+    // The open's own background build may complete the index before the check reads it; then --fix has nothing to do.
+    damage('heal-page-id');
+    const fixed = (await doctor(['--fix', '--only', CHECK])).row;
+    expect({ status: fixed?.status, keyword: fixed?.details?.keyword?.status, record_writes: fixed?.details?.rebuild?.record_writes ?? 0 })
+      .toEqual({ status: 'ok', keyword: 'ok', record_writes: 0 });
+    expect(await searchBeta()).toEqual(OK_SEARCH);
+  }, 600_000);
 });

@@ -213,20 +213,30 @@ While members scan, keyword search gives the same results more slowly: about 7-8
 chunks. The comparison (`verify`) reads the first 2,000 pages under the standard tier and every page under
 `--tier deep` (about 21 s and 1.0 GiB RSS at 50k pages); `orphan` is counted only after a walk of every page.
 
-`gbrain doctor --fix` (fix argv `gbrain doctor --fix --only rust_derived_indexes --json`) calls
-`rebuildDerivedIndexes` (`Store::derived_index_rebuild`, `index_health.rs` `rebuild`) for every status but `ok` and
-`building`, then checks again. The rebuild resets the index and runs build batches of 256 pages until the state is
-complete, each in its own write transaction, through a handle (`IndexOnly`) that refuses any write outside the `R`
-tag. Its receipt (`details.rebuild`) counts the transactions and the index puts and deletes; `record_writes` is
-always 0. A background build may run batches at the same time; both write the same postings from the same records.
+The same check compares the core term postings (`keys::POSTING`, the `T` records; `keyword/term_health.rs` `verify`)
+of the same pages with the postings their visible chunks give, whatever the index status, and reports them as
+`terms` (`missing`, `changed`, `orphan`, `ok`). Wrong term postings make the row `fail`. Only `Store::search_keyword`
+(the BM25 member) reads them; the CLI's keyword search reads the `R` index or scans.
 
-Not checked or rebuilt: the core term postings (`keys::POSTING`, the `T` records).
+`gbrain doctor --fix` (fix argv `gbrain doctor --fix --only rust_derived_indexes --json`) calls
+`rebuildDerivedIndexes` (`Store::derived_index_rebuild`, `index_health.rs` `rebuild`) for every index status but `ok`
+and `building`, and for an `ok` index whose term postings are wrong, then checks again. The rebuild first repairs the
+term postings in place (`term_health.rs` `repair`): batches of 256 pages put the missing and changed postings, then
+batches of 4,096 keys delete the orphans, each in its own write transaction, so after every batch each right posting
+is still there and no wrong one was added. Then, unless the index is complete and matches its records (it is left as
+it was, so a term repair never sends keyword search to the scan), it resets the index and runs build batches of 256
+pages until the state is complete, each in its own write transaction. Both run through a handle (`IndexOnly`) that
+refuses any write outside its tag (`T`, then `R`). The receipt (`details.rebuild`) counts the transactions, the index
+puts and deletes and the term puts and deletes (`term_puts`, `term_deletes`); `record_writes` is always 0. A
+background build may run batches at the same time; both write the same postings from the same records. A build that
+meets a record it cannot read stops; `--fix` then fails with the same error the row shows as `builder_error`.
 
 The development-only cargo example `examples/derived_fault.rs` damages an index for drills and tests
-(`drop-chunk-postings`, `garbage-state`; `show` and `digest` print the records per tag). It opens `records.redb`
-directly and must run while no process holds the brain; nothing in the addon reaches it. Pinned by
-`keyword/index_health/tests.rs` and `test/rust-doctor-derived-index.serial.test.ts` (both damages, with and without
-a running owner, and a digest that shows `--fix` changes only `R` records).
+(`drop-chunk-postings`, `garbage-state`, `damage-term-postings`, `builder-fail` and its undo `heal-page-id`; `show`
+and `digest` print the records per tag). It opens `records.redb` directly and must run while no process holds the
+brain; nothing in the addon reaches it. Pinned by `keyword/index_health/tests.rs`, `keyword/term_health/tests.rs` and
+`test/rust-doctor-derived-index.serial.test.ts` (each damage, with and without a running owner, and a digest that
+shows `--fix` changes only the damaged index's records).
 
 ### Scale
 

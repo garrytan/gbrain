@@ -33,7 +33,14 @@ export interface DerivedIndexVerify {
   orphan: number | null; ok: boolean;
 }
 
-/** What `checkDerivedIndexes` found about the Rust store's keyword index (the `R` records); the core term postings are not checked. */
+/** The core term postings (the `T` records) compared with the chunks of the checked pages. */
+export interface DerivedTermPostings {
+  pages: number; chunks: number; expected: number; missing: number; changed: number;
+  /** Postings no chunk should hold; null when the comparison stopped at its page bound. */
+  orphan: number | null; ok: boolean;
+}
+
+/** What `checkDerivedIndexes` found about the Rust store's keyword index (the `R` records) and its core term postings (`T`). */
 export interface DerivedIndexHealth {
   index: 'keyword';
   status: 'ok' | 'mismatch' | 'building' | 'stalled' | 'unreadable' | 'absent' | 'other_layout';
@@ -46,11 +53,17 @@ export interface DerivedIndexHealth {
   builder: 'none' | 'running' | 'finished' | 'failed';
   builder_error: string | null;
   verify: DerivedIndexVerify | null;
+  /** The core term postings over the same pages, whatever the keyword index state. */
+  terms: DerivedTermPostings;
 }
 
-/** The receipt of `rebuildDerivedIndexes`: the keyword index rebuilt from the records; `record_writes` is always 0. */
+/**
+ * The receipt of `rebuildDerivedIndexes`: the core term postings repaired in place, then the keyword index rebuilt from
+ * the records (left as it was when it already matched them); `record_writes` is always 0.
+ */
 export interface DerivedIndexRebuild {
-  index: 'keyword'; transactions: number; index_puts: number; index_deletes: number; record_writes: number;
+  index: 'keyword'; transactions: number; index_puts: number; index_deletes: number;
+  term_puts: number; term_deletes: number; record_writes: number;
   state: DerivedIndexState | null;
 }
 

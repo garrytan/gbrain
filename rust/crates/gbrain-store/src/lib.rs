@@ -585,9 +585,10 @@ impl Store {
     }
 
     /// The keyword index's health for `gbrain doctor` (`keyword/index_health.rs`): its state, how
-    /// this handle's background build ended, and for a complete index the postings of the first
-    /// `max_pages` pages (every page when `None`) compared with their records. Reads one
-    /// snapshot; writes nothing.
+    /// this handle's background build ended, for a complete index the postings of the first
+    /// `max_pages` pages (every page when `None`) compared with their records, and the core term
+    /// postings of the same pages compared with their chunks (`keyword/term_health.rs`). Reads
+    /// one snapshot; writes nothing.
     pub fn derived_index_check(
         &self,
         max_pages: Option<u64>,
@@ -606,9 +607,9 @@ impl Store {
         keyword::check_index_health(&*self.read()?, builder, max_pages)
     }
 
-    /// Rebuilds the keyword index from the records to a complete state before it returns, for
-    /// `gbrain doctor --fix` (`keyword/index_health.rs`). Writes only `R` records; the receipt
-    /// counts them.
+    /// Repairs the core term postings in place and rebuilds the keyword index from the records to
+    /// a complete state before it returns, for `gbrain doctor --fix` (`keyword/index_health.rs`).
+    /// Writes only `T` and `R` records; the receipt counts them.
     pub fn derived_index_rebuild(&self) -> Result<keyword::KeywordIndexRebuild> {
         keyword::rebuild_index(self)
     }
