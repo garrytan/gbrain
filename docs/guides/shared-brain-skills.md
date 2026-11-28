@@ -609,7 +609,7 @@ rather than assuming it shares a `connect` installation's receipt path.
 | `writer_not_quiesced` | Stop and exclude old filesystem writers and direct-file skill servers; claim exact roots and activate the shared writer protocol on the host. A confirmation flag cannot stop those processes for you. |
 | `catalog_unavailable` / `stale_unavailable` | Keep installed files and cursor state; retry the current authorized view. Do not treat failure as an empty catalog or activate a stale cached skill. |
 | `full_resync_required` | Discard the pagination cursor and enumerate again under current authority. |
-| `requirements_changed` / `approval_required` | Have the owner review the changed disclosure, tools, source, or follow policy. Do not self-grant permissions. |
+| `requirements_changed` / `approval_required` | When the source's policy only moved its epoch and asks for no new tool, file class or audience, run `gbrain bootstrap harness --refresh-skills` (an approved `join_brain` on an active enrollment renews it). For a new tool, a new source or a recreated source, have the owner review the changed disclosure, tools, source, or follow policy. Do not self-grant permissions. |
 | `revision_conflict` / `local_conflict` | Preserve both edits and inspect current revisions/ownership receipts before retrying. |
 | `restart_required` | Restart the harness and record actual new-conversation evidence. Files alone do not clear this check. |
 | `left_with_retained_files` | Preserve the reported edits, disable native cached instructions through the harness controls, and restart. |
@@ -638,7 +638,12 @@ token is minted or revoked. `--status` prints each entry's receipt epoch, and
 `shared_skills_epoch_superseded`) when the receipt epoch differs from the
 brain's membership row. A refresh whose recorded policy is wider than the
 active membership answers `follow_approval_required`: leave and re-run
-`gbrain bootstrap harness` after owner approval. A rotation leave whose own
+`gbrain bootstrap harness` after owner approval. A refresh after a source's
+skill policy moved its epoch renews the enrollment's pin and moves the
+enrollment epoch on, so its skills deliver again; a policy that now asks for
+a tool, file class or audience the enrollment never approved, a recreated
+source, or an enrollment made before this release (its pin records no classes
+or audiences) stays `requirements_changed` until the owner approves a new enrollment. A rotation leave whose own
 epoch was superseded completes locally (`remote_membership_reason:
 superseded`) so the previous token can be revoked.
 

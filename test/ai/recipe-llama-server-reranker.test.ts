@@ -79,4 +79,10 @@ describe('recipe: llama-server-reranker', () => {
     expect(r.setup_hint).toMatch(/--alias/);
     expect(r.setup_hint).toMatch(/--reranking/);
   });
+
+  // #10614: a server launched without -b/-ub can default its physical batch to 512 and refuse every real document.
+  test('setup_hint launches with explicit logical and physical batch sizes', () => {
+    const r = getRecipe('llama-server-reranker')!;
+    expect(r.setup_hint).toMatch(/--reranking -b 2048 -ub 2048 /);
+  });
 });

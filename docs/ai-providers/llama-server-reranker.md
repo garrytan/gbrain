@@ -75,6 +75,7 @@ usual CPU choice).
   --model ./models/qwen3-reranker-0.6b-q8_0.gguf \
   --alias qwen3-reranker-0.6b \
   --reranking --pooling rank \
+  -b 2048 -ub 2048 \
   --port 8081
 ```
 
@@ -83,6 +84,17 @@ The `--alias` matters: without it, llama-server's `/v1/models` (and the
 path, which makes the gbrain config string ugly and brittle. With
 `--alias qwen3-reranker-0.6b`, your config string is short and stable.
 `--pooling rank` selects the reranking head explicitly.
+
+Set the batch sizes explicitly with `-b 2048 -ub 2048` (logical and physical).
+A reranker scores each query and document pair in one physical batch, and
+some llama-server builds default the physical batch (`-ub`) to 512 tokens.
+Such a server answers any longer pair with HTTP 500 (`input (518 tokens) is
+too large to process. increase the physical batch size`). gbrain sends
+documents of up to about 1,400 tokens (see [Document size](#document-size)),
+so most real searches fail, and search keeps working on the un-reranked order
+(see [Fail-open contract preserved](#fail-open-contract-preserved)). A server
+you already run without these flags keeps working for short documents. Add
+the flags and restart only the reranker process.
 
 `--reranking` and `--embeddings` are mutually exclusive at server
 launch. If you also run a local embedder via the
@@ -124,6 +136,19 @@ gbrain search "some query" --json | jq '.[].rerank_score'
 # Expect: rerank_score on every row
 ```
 
+The doctor probe sends short passages, so it passes on a server whose
+physical batch is too small for real documents. Send one long document
+(over 1,000 tokens) straight to the server as well:
+
+```bash
+LONG=$(printf 'The quick brown fox jumps over the lazy dog. %.0s' $(seq 1 120))
+curl -s http://localhost:8081/v1/rerank -H 'Content-Type: application/json' \
+  -d "{\"model\": \"qwen3-reranker-0.6b\", \"query\": \"fox\", \"documents\": [\"$LONG\"]}" \
+  | jq '.results[0].relevance_score // .error'
+# Expect: a number. An error that says "increase the physical batch size"
+# means the server needs -b 2048 -ub 2048 (step 3).
+```
+
 The reachability probe sends one question with a relevant and an
 unrelated passage. If it reports `config` ("scores an unrelated passage as
 high as a relevant one"), the server answers but the model can't rank:
@@ -163,7 +188,7 @@ a 500 into a 400. Prose chunks (~300 words) pass through untouched; code or
 CJK chunks at the chunker ceiling lose part of their tail before scoring, the
 same trade the embed side already makes. The cap exists because a
 chunker-ceiling chunk plus the query plus the server-side reranker template
-does not fit llama-server's default 2048 ubatch, and a pooled self-hosted
+does not fit the 2048-token physical batch step 3 sets (`-ub 2048`), and a pooled self-hosted
 reranker answered that overflow with a 500 that `applyReranker` fails open
 on, silently serving raw RRF order. It applies to every provider, hosted
 included, and has no config knob.

@@ -9,7 +9,9 @@
  *   (`ambiguous`, `unverified_match`: the user has to act) stay tried for
  *   good. Any other miss (`no_page`, `no_mention`, `withdrawn`) is re-armed
  *   by a page created in the source after the attempt, since a new entity page
- *   can resolve it for free; until then the paid fallback is next.
+ *   can resolve it for free; until then the paid fallback is next. Any miss,
+ *   memoized or not, is re-armed when the row's page gains an authored link
+ *   after the attempt (#10588), since its new hints can resolve it for free.
  * - Paid attempt, per page and content (`tier = paid_reextract`, `target_slug`
  *   the page, `reason` its `content_hash`, `fact_id` the page's completion
  *   outcome row): written whenever an extraction of the page completes,
@@ -21,15 +23,25 @@
 import type { BrainEngine } from '../engine.ts';
 import { TERMINAL_AUDIT_SOURCE } from './audit-sources.ts';
 import { CONVERSATION_UNRESOLVED, RELINK_REASONS } from './relink-reasons.ts';
+import { AUTHORED_LINK_SOURCES } from './conversation-entity-hints.ts';
 
 export const PAID_REEXTRACT = 'paid_reextract';
 
 const REARMED = Object.entries(RELINK_REASONS).filter(([, r]) => !r.memoized).map(([code]) => `'${code}'`).join(', ');
 
-/** SQL (fact alias `f`): the free relink already tried this row, and no page created since has re-armed an unmemoized miss. */
+const AUTHORED = [...AUTHORED_LINK_SOURCES].map(source => `'${source}'`).join(', ');
+
+/**
+ * SQL (fact alias `f`): the free relink already tried this row, no page created since has re-armed an unmemoized miss,
+ * and (#10588) the row's page gained no authored link since, which hands the relink new hints for any miss.
+ */
 export const conversationTriedSql = `EXISTS (SELECT 1 FROM fact_relink_attempts a WHERE a.source_id = f.source_id AND a.fact_id = f.id
   AND a.outcome = '${CONVERSATION_UNRESOLVED}'
-  AND NOT (a.reason IN (${REARMED}) AND EXISTS (SELECT 1 FROM pages np WHERE np.source_id = f.source_id AND np.deleted_at IS NULL AND np.created_at > a.attempted_at)))`;
+  AND NOT (a.reason IN (${REARMED}) AND EXISTS (SELECT 1 FROM pages np WHERE np.source_id = f.source_id AND np.deleted_at IS NULL AND np.created_at > a.attempted_at))
+  AND NOT EXISTS (SELECT 1 FROM pages cp JOIN links l ON l.from_page_id = cp.id
+    WHERE cp.source_id = f.source_id AND cp.slug = f.source_markdown_slug AND l.link_source IN (${AUTHORED}) AND l.created_at > a.attempted_at)
+  AND NOT EXISTS (SELECT 1 FROM pages cp JOIN links l ON l.origin_page_id = cp.id
+    WHERE cp.source_id = f.source_id AND cp.slug = f.source_markdown_slug AND l.link_source = 'frontmatter' AND l.created_at > a.attempted_at))`;
 
 /** SQL (fact alias `f`): an extraction of this row's page completed on the page's current content. */
 export const conversationPaidSql = `EXISTS (SELECT 1 FROM fact_relink_attempts pa JOIN pages pp ON pp.source_id = pa.source_id AND pp.slug = pa.target_slug AND pp.deleted_at IS NULL

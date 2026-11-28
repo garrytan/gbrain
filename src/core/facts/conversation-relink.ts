@@ -50,7 +50,8 @@ import { CONVERSATION_UNRESOLVED } from './relink-reasons.ts';
 import { conversationTriedSql } from './conversation-memo.ts';
 import { appendContextNote } from './subject-infer.ts';
 import { ENTITY_LINKABLE_SQL, entityLinkable } from './attribution.ts';
-import { inferConversationSubject } from './conversation-subject-infer.ts';
+import { inferConversationSubject, inferSubjectFromHints } from './conversation-subject-infer.ts';
+import { conversationEntityHints } from './conversation-entity-hints.ts';
 import { unbackedEntitySql } from './withdrawal-schema.ts';
 import { resolveStrictEntityReference } from '../entities/resolve.ts';
 import { dropRekeyDuplicates } from './ontology-rekey.ts';
@@ -130,11 +131,25 @@ async function planPages(engine: BrainEngine, sourceId: string, slugs: string[])
       WHERE f.source_id = $1 AND f.source_markdown_slug = ANY($2::text[]) AND ${ACTIVE} AND ${derivedConversationRow('$3')}
       ORDER BY f.source_markdown_slug, f.id`, [sourceId, slugs, [...AUDIT_ROW_SOURCES]]);
   const pages = new Map<string, PagePlan>();
+  const hints = new Map<string, Array<{ slug: string; title: string; type: string | null }>>();
   for (const row of rows) {
     const page = pages.get(row.slug) ?? { slug: row.slug, link: [], misses: [], notUserAttributed: 0 };
     pages.set(row.slug, page);
     if (!entityLinkable(row.attributed_to)) { page.notUserAttributed++; continue; }
     const inferred = await inferConversationSubject(engine, sourceId, row.visibility, row.fact);
+    if (inferred.slug === null && inferred.reason !== 'withdrawn' && inferred.resolved.length === 0) {
+      const key = `${row.slug}\u0000${row.visibility}`;
+      if (!hints.has(key)) {
+        const pages = [];
+        for (const slug of await conversationEntityHints(engine, sourceId, row.slug, row.visibility)) {
+          const hinted = await engine.getPage(slug, { sourceId });
+          if (hinted) pages.push({ slug, title: hinted.title, type: hinted.type });
+        }
+        hints.set(key, pages);
+      }
+      const hinted = await inferSubjectFromHints(engine, sourceId, row.visibility, row.fact, hints.get(key)!);
+      if (hinted) { page.link.push({ id: Number(row.id), fact: row.fact, entity_slug: hinted, context: appendContextNote(row.context, 'entity relinked from page links') }); continue; }
+    }
     if (inferred.slug === null) page.misses.push({ id: Number(row.id), reason: inferred.reason });
     else page.link.push({ id: Number(row.id), fact: row.fact, entity_slug: inferred.slug, context: appendContextNote(row.context, `entity relinked from ${inferred.via}`) });
   }

@@ -265,6 +265,7 @@ test/function-search-path-upgrade-parity.test.ts
 test/g4-forget-fence-edit.test.ts
 test/gated-hold-strict-page-gst2535.test.ts
 test/get-chunks-paging.test.ts
+test/get-versions-alias-10586.test.ts
 test/ghost-pages-git-canonical-7967.test.ts
 test/ghost-pages-move-evidence.test.ts
 test/ghost-pages-only-copy-gst3637.test.ts
