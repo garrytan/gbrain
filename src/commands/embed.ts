@@ -1094,7 +1094,7 @@ async function embedSegmented(engine: BrainEngine, page: SegmentedEmbedPage, res
     if (stamp) await stampIfPageProvenanceComplete(engine, page.slug, page.source_id, stamp);
     if (done.stopped === 'page_moved') recordFailure(result, 1, page.slug, EMBED_UNAVAILABLE_MESSAGE);
   } catch (e: unknown) {
-    if (isAborted(opts.signal)) throw e;
+    if (isAborted(opts.signal) || isAIInvocationPolicyError(e)) throw e;
     recordFailure(result, 1, page.slug, e);
   }
   result.pages_processed++;

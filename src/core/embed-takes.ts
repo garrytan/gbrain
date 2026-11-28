@@ -13,6 +13,7 @@ import type { BrainEngine, StaleTakeRow, TakeEmbeddingInput } from './engine.ts'
 import { embedBatchWithBackoff } from '../commands/embed.ts';
 import { getEmbeddingDimensions, getEmbeddingModel } from './ai/gateway.ts';
 import { slog } from './console-prefix.ts';
+import { isAIInvocationPolicyError } from './ai/invocation-guard.ts';
 import { currentEmbeddingSignature } from './embedding.ts';
 
 const DEFAULT_BATCH_SIZE = 100;
@@ -116,6 +117,7 @@ export async function embedStaleTakes(
       result.embedded += written;
       result.discarded += batch.length - written;
     } catch (error: unknown) {
+      if (isAIInvocationPolicyError(error)) throw error;
       result.failures += batch.length;
       if (result.failure_samples.length < 10) {
         result.failure_samples.push(error instanceof Error ? error.message : String(error));
@@ -144,6 +146,7 @@ export async function embedTakesForStaleDrain(
   try {
     takes = await embedStaleTakes(engine, opts);
   } catch (error: unknown) {
+    if (isAIInvocationPolicyError(error)) throw error;
     takes = { total_stale: 0, embedded: 0, would_embed: 0, discarded: 0, failures: 1, dryRun: !!opts.dryRun,
       failure_samples: [error instanceof Error ? error.message : String(error)] };
   }

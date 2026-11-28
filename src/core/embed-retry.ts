@@ -16,6 +16,7 @@ import { embedBatch } from './embedding.ts';
 import { isSingleInputOverLengthError } from './embed-overlength-classify.ts';
 import { isEmbeddingZeroNormError, type EmbeddingZeroNormError } from './ai/embedding-guard.ts';
 import { serr } from './console-prefix.ts';
+import { isAIInvocationPolicyError } from './ai/invocation-guard.ts';
 import { noteEmbedApiResponse } from './embed-stall.ts';
 import { titleTierCorpusGeneration } from './contextual-retrieval-service.ts';
 import type { BrainEngine } from './engine.ts';
@@ -230,6 +231,8 @@ export async function embedBatchWithBackoff(
       return out;
     } catch (e: unknown) {
       noteEmbedApiResponse();
+      // A spend refusal is final: its id may carry 429 or 5xx digits, but it must never wait out the retry ladder.
+      if (isAIInvocationPolicyError(e)) throw e;
       // If the budget fired we may have been aborted mid-fetch; bubble out.
       // This check is what keeps caller-initiated aborts out of BOTH retry
       // branches below (#3374) — an abort is never reclassified as transient.

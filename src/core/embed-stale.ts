@@ -280,11 +280,11 @@ export async function probeEmbedder(
  * page's provenance when it is complete, and return true; false for an inline page.
  */
 async function embedSegmentedStaleRows(engine: BrainEngine, stale: readonly StaleChunkRow[], result: { embedded: number; pagesProcessed: number },
-  opts: Omit<SegmentedEmbedOpts, 'beforeInstall'> & { stamp?: ProvenanceStamp; pacer: DbPacer; assertOwned?: (tx?: BrainEngine) => Promise<void>; stopped: () => boolean }): Promise<boolean> {
+  opts: Omit<SegmentedEmbedOpts, 'beforeInstall'> & { stamp?: ProvenanceStamp; pacer: DbPacer; assertOwned?: (tx?: BrainEngine) => Promise<void>; cancelled: () => boolean }): Promise<boolean> {
   const page = await observed(opts.pacer, () => readSegmentedEmbedPage(engine, { id: stale[0]!.page_id }));
   if (!page) return false;
   const installed = (await embedSegmentedRows(engine, page, stale, { ...opts,
-    beforeInstall: async tx => { await opts.assertOwned?.(tx); if (opts.stopped()) throw new AbortError(); } }))?.installed;
+    beforeInstall: async tx => { await opts.assertOwned?.(tx); if (opts.cancelled()) throw new AbortError(); } }))?.installed;
   if (opts.stamp && installed) await stampIfPageProvenanceComplete(engine, page.slug, page.source_id, opts.stamp);
   result.embedded += installed ?? 0;
   if (installed) result.pagesProcessed += 1;
@@ -418,7 +418,10 @@ export async function embedStaleForSource(
   if (await embeddingSendBlocked(engine)) return await embeddingsDisabled(engine) ? { ...result, done: true } : { ...result, done: true, complete: false };
   const signature = opts.embeddingSignature;
   let refused: unknown;
-  const stopped = () => refused !== undefined || !!signal?.aborted || Date.now() >= (opts.deadline ?? Infinity);
+  // A spend refusal only stops claiming new keys; a sibling's request already sent was paid for, so its install
+  // checks key on abort and deadline alone.
+  const cancelled = () => !!signal?.aborted || Date.now() >= (opts.deadline ?? Infinity);
+  const stopped = () => refused !== undefined || cancelled();
   if (stopped()) return { ...result, aborted: true };
   await opts.assertOwned?.();
   if (stopped()) return { ...result, aborted: true };
@@ -567,7 +570,7 @@ export async function embedStaleForSource(
       const slug = stale[0].slug;
       try {
         await opts.assertOwned?.();
-        if (stopped() || await embedSegmentedStaleRows(engine, stale, result, { embedFn, signal, signature, stamp, pacer, assertOwned: opts.assertOwned, stopped })) return;
+        if (stopped() || await embedSegmentedStaleRows(engine, stale, result, { embedFn, signal, signature, stamp, pacer, assertOwned: opts.assertOwned, cancelled })) return;
         await using lease = await acquirePageEmbeddingLease(engine, stale[0].page_id, { signal, deadline: opts.deadline });
         if (lease.busy) return;
         // SUP-3874: split legacy oversized chunk_text before embedding.
@@ -604,7 +607,7 @@ export async function embedStaleForSource(
         await opts.assertOwned?.();
         if (stopped()) return;
         const embeddings = await spendGrant(metered.grant, () => embedFn(wrapChunkTextsForStoredMode(pageRow, stale), { abortSignal: signal }));
-        if (stopped()) return;
+        if (cancelled()) return;
         const dimensions = signature ? splitEmbeddingSignature(signature).dims
           : prepared.embeddingColumn.name === 'embedding' ? (await readContentChunksEmbeddingDim(engine)).dims : prepared.embeddingColumn.dimensions;
         if (embeddings.length !== stale.length || embeddings.some(v => !v || v.length !== dimensions || !v.every(Number.isFinite))) {
@@ -626,13 +629,13 @@ export async function embedStaleForSource(
         // with context demotion in the same transaction as its vector writes.
         const install = await observed(pacer, () => engine.transaction(async tx => {
           await opts.assertOwned?.(tx);
-          if (stopped()) throw new AbortError();
+          if (cancelled()) throw new AbortError();
           await lease.assertHeld(tx);
           const installed = await installPageEmbeddings(tx, prepared, merged);
           if (stamp) await stampIfPageProvenanceComplete(tx, slug, keySourceId, stamp);
           if (stale.length === existing.length && installed.complete) await restampIfDemotedToTitleTier(tx, prepared.snapshot.page, slug, keySourceId);
           await opts.assertOwned?.(tx);
-          if (stopped()) throw new AbortError();
+          if (cancelled()) throw new AbortError();
           return installed;
         }));
         result.embedded += install.installed;
