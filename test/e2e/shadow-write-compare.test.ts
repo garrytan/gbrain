@@ -73,6 +73,8 @@ const dirs: string[] = [];
 const ROOT = join(import.meta.dir, '..', '..');
 const CLI = join(ROOT, 'src', 'cli.ts');
 const PAGES = 60;
+const BURST_PAGES = 250;
+const BURST_IN_FLIGHT = 4;
 
 (hasDatabase() && HAVE_ADDON ? describe : describe.skip)('write samples across an MCP stdio serve exit on Postgres', () => {
   let home = '';
@@ -140,5 +142,43 @@ const PAGES = 60;
     expect(lost).toEqual({ pipe_unflushed: 0, pipe_unflushed_nonqualifying: 0, line_unreadable: 0, child_exit_deadline: 0 });
     expect(owedLeft()).toEqual([]);
     expect(w.comparable).toBeGreaterThan(0);
+  }, 300_000);
+
+  // A longer burst with several page writes in flight at once: about 40 write samples per put_page, so some 10,000 samples reach the child
+  // (a 1,000-page run of the same burst took about a minute on 8 cores and lost none; that run is too slow for this file's E2E time cap).
+  test('a longer burst of concurrent page writes then a client close loses no owed write sample', async () => {
+    const dir = String(status().directory);
+    const before = status().write_comparisons as Record<string, any>;
+    const log = openSync(join(home, 'serve-burst.log'), 'a');
+    const transport = new StdioClientTransport({ command: 'bun', args: ['--no-env-file', CLI, 'serve'], cwd: ROOT, env, stderr: log });
+    const client = new Client({ name: 'gbrain-serve-burst-test', version: '1.0.0' }, { capabilities: {} });
+    let next = 0;
+    const writer = async () => {
+      for (let i = next++; i < BURST_PAGES; i = next++) {
+        const content = `---\ntitle: Burst ${i}\ntype: concept\ntags: [burst]\n---\n\n# Burst ${i}\n\nA placeholder page. See [[burst/page-${(i + 1) % BURST_PAGES}]].\n\n## Timeline\n\n- **2026-03-02** | placeholder event ${i}\n`;
+        const r = await client.callTool({ name: 'put_page', arguments: { slug: `burst/page-${i}`, content } }) as { isError?: boolean };
+        expect(r.isError ?? false).toBe(false);
+      }
+    };
+    try {
+      await client.connect(transport);
+      await Promise.all(Array.from({ length: BURST_IN_FLIGHT }, writer));
+    } finally {
+      await client.close().catch(() => {}); // ends stdin, then SIGTERM after 2 s and SIGKILL after 2 s more: what an MCP client does
+      closeSync(log);
+    }
+    const owedLeft = () => readdirSync(dir).filter((f) => f.startsWith('write-owed.') || f.startsWith('write-pending.'));
+    const until = Date.now() + 120_000;
+    while (owedLeft().length && Date.now() < until) await Bun.sleep(500);
+    const w = status().write_comparisons as Record<string, any>;
+    const lost = {
+      pipe_unflushed: w.uncomparable_by_reason?.pipe_unflushed ?? 0,
+      pipe_unflushed_nonqualifying: w.capability_missing_by_family?.pipe_unflushed_nonqualifying ?? 0,
+      line_unreadable: w.uncomparable_by_reason?.line_unreadable ?? 0,
+      child_exit_deadline: w.uncomparable_by_reason?.child_exit_deadline ?? 0,
+    };
+    expect(lost).toEqual({ pipe_unflushed: 0, pipe_unflushed_nonqualifying: 0, line_unreadable: 0, child_exit_deadline: 0 });
+    expect(owedLeft()).toEqual([]);
+    expect(w.comparable).toBeGreaterThan(before.comparable);
   }, 300_000);
 });
