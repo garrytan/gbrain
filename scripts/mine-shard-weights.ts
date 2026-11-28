@@ -377,7 +377,7 @@ async function main(): Promise<void> {
   const batch = { addedFiles: added.length, run: run ?? null, commit, ...several };
   const prior = coverageOnly && existsSync(metadataPath) ? JSON.parse(readFileSync(metadataPath, "utf8")) : undefined;
   const baseline = prior ? Object.fromEntries(FULL_PROVENANCE.filter(key => key in prior).map(key => [key, prior[key]])) : {};
-  const metadata = prior
+  const metadata: Record<string, any> = prior
     ? { ...Object.fromEntries(Object.entries(prior).filter(([key]) => !FULL_PROVENANCE.includes(key))), ...(Object.keys(baseline).length ? { baseline } : {}),
       mergeExisting: true, totalFiles: weights.size, coverageOnly: [...[prior.coverageOnly ?? []].flat(), ...(added.length ? [batch] : [])] }
     : { lane, unit: lane === "serial" ? "seconds" : "milliseconds", run: run ?? null, commit, source: run ? "github" : input ? "file" : "stdin",
