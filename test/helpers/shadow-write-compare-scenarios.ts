@@ -1647,6 +1647,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       sampler.scope = (e, o) => { const sc = realScope(e, o); const push = sc.waiters.push.bind(sc.waiters); sc.waiters.push = (...w: Array<() => void>) => { queued += w.length; return push(...w); }; return sc; };
       const N = 40;
       await wrapped.transaction(async (tx) => { await Promise.all(Array.from({ length: N }, (_, i) => tx.putPage(`people/q${i}-example`, page(`Q${i} Example`), { sourceId: 'default', inline: true }))); });
+      // pregate-literal: SHADOW_ADAPTER_VERSION=13 the number 13 on the next line is test data (a loop step), not the adapter version
       for (let i = 0; i < N; i += 13) expect(await primary().getPage(`people/q${i}-example`)).not.toBeNull();
       await sampleOf(inbox, 'putPage', N);
       expect(queued).toBeLessThanOrEqual(N); // master: every release woke every waiter again (quadratic)
