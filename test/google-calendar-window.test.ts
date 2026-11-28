@@ -69,10 +69,10 @@ describe('planCalendarPage', () => {
     expect(planCalendarPage('after', 'calendar/new.md', null, 'x')).toEqual({ kind: 'ignore' });
   });
 
-  test('inside the window: write, removing a copy at another path first', () => {
-    expect(planCalendarPage('inside', 'calendar/new.md', 'calendar/old.md', 'x')).toEqual({ kind: 'write', removeFirst: 'calendar/old.md' });
-    expect(planCalendarPage('inside', 'calendar/new.md', 'calendar/new.md', 'x')).toEqual({ kind: 'write', removeFirst: null });
-    expect(planCalendarPage('inside', 'calendar/new.md', null, 'x')).toEqual({ kind: 'write', removeFirst: null });
+  test('inside the window: write, then retire a copy at another path', () => {
+    expect(planCalendarPage('inside', 'calendar/new.md', 'calendar/old.md', 'x')).toEqual({ kind: 'write', removeAfter: 'calendar/old.md' });
+    expect(planCalendarPage('inside', 'calendar/new.md', 'calendar/new.md', 'x')).toEqual({ kind: 'write', removeAfter: null });
+    expect(planCalendarPage('inside', 'calendar/new.md', null, 'x')).toEqual({ kind: 'write', removeAfter: null });
   });
 });
 

@@ -92,7 +92,7 @@ export class CalendarSyncWindow {
 
 /** The page change one listed event calls for. */
 export type CalendarPageChange =
-  | { kind: 'write'; removeFirst: string | null }
+  | { kind: 'write'; removeAfter: string | null }
   | { kind: 'remove'; relPath: string }
   | { kind: 'ignore' };
 
@@ -106,14 +106,14 @@ export type CalendarPageChange =
  * before the floor is ignored, so history imported while it was in range is
  * kept as it is. One that now starts past the ceiling loses its page; the
  * catch-up list brings it back once it is in range. Anything else is
- * written, after removing a copy at an older path.
+ * written before retiring a copy at an older path.
  */
 export function planCalendarPage(side: CalendarWindowSide, targetPath: string | null, currentPath: string | null,
   fallbackPath: string): CalendarPageChange {
   if (targetPath === null) return { kind: 'remove', relPath: currentPath ?? fallbackPath };
   if (side === 'before') return { kind: 'ignore' };
   if (side === 'after') return currentPath ? { kind: 'remove', relPath: currentPath } : { kind: 'ignore' };
-  return { kind: 'write', removeFirst: currentPath !== null && currentPath !== targetPath ? currentPath : null };
+  return { kind: 'write', removeAfter: currentPath !== null && currentPath !== targetPath ? currentPath : null };
 }
 
 /**

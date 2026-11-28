@@ -463,8 +463,12 @@ async function applyEvent(deps: GoogleSyncDeps, ev: CalendarEventData, range: Ca
   const change = planCalendarPage(side, page?.relPath ?? null, await calendarPageRelPathByEventId(deps, ev.id), calendarRelPath(ev));
   if (change.kind === 'remove') await deletePageByRelPath(deps, change.relPath, ctx.summary);
   if (change.kind !== 'write' || !page) return;
-  if (change.removeFirst) await deletePageByRelPath(deps, change.removeFirst, ctx.summary);
-  await importRendered(deps, page.relPath, page.markdown, ctx.activePack, ctx.summary, ctx.countedSlugs);
+  const imported = await importRendered(deps, page.relPath, page.markdown, ctx.activePack, ctx.summary, ctx.countedSlugs);
+  // A skipped or failed replacement cannot retire the only existing page. The
+  // importer may also preserve its original slug, in which case it is already current.
+  if (imported !== null && change.removeAfter && imported !== slugifyPath(change.removeAfter)) {
+    await deletePageByRelPath(deps, change.removeAfter, ctx.summary);
+  }
   deps.tick(`event ${ev.id}`);
 }
 
