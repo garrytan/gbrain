@@ -242,15 +242,30 @@ jobs:
           key: ${{ steps.cachename.outputs.value }}
           restore-keys: |
             rust-checks-${{ runner.os }}-${{ runner.arch }}-
+      # A pull request into rust-engine/main has its own Cargo.lock, so its cache key misses and the 8.5 GB master cache is
+      # restored under it. The df lines here and after the unit tests record the free bytes around the build.
+      - name: Disk before the build
+        run: df -B1 /
       - name: Format
         working-directory: rust
         run: cargo fmt --check
       - name: Clippy
         working-directory: rust
         run: cargo clippy --all-targets --locked -- -D warnings
+      # No debug info in the test binaries. With it, the trunk's 235 integration test binaries took about 59 GB and filled
+      # the disk even with 26 GB of SDKs removed (run 46167447668: 59 GB free before clippy, 250 MB left after; rust/target 114 GB).
+      # Without it the whole test build is about 5 GB. A failing test still prints its panic message and file:line.
       - name: Unit tests
         working-directory: rust
+        env:
+          CARGO_PROFILE_TEST_DEBUG: '0'
         run: cargo test --locked
+      - name: Disk after the unit tests
+        if: always()
+        shell: bash
+        run: |
+          df -B1 /
+          du -sb rust/target 2>/dev/null || true
       # A pinned prebuilt binary, checked against its SHA-256, so CI does not compile cargo-deny
       # and does not depend on a third-party action.
       - name: Install cargo-deny 0.21.0
