@@ -1172,6 +1172,7 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
       const item = { ...opts.githubItem, repo: opts.githubItem.repo.toLowerCase() };
       // A webhook can change or delete a page while a sweep is suspended.
       // Recheck that sweep rather than skip an item whose bytes changed.
+      const interruptedSweep = !!state.sweep_progress;
       delete state.sweep_progress;
       if (!repos.includes(item.repo)) {
         return syncResult({ ...summary, status: 'up_to_date' }, opts);
@@ -1183,7 +1184,10 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
         stopItemHb();
       }
       if (managed) await managed.saveState(state);
-      else { writeState(cfg.dir, state); await touchSourceRow(deps, new Date().toISOString()); }
+      else {
+        if (interruptedSweep) writeState(cfg.dir, state);
+        await touchSourceRow(deps, new Date().toISOString());
+      }
       return syncResult(summary, opts);
     }
     if (managed) managed.incompleteSweep = true;
