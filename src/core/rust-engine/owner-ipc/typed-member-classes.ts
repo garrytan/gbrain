@@ -961,8 +961,8 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   persistOauthClientGrant: 'readOAuthClientWriteGrant for that client',
   publicationJournalStore: 'a SELECT of the rows the call writes',
   runSyncStatement: 'a SELECT of the rows the call writes',
-  gitDurabilityStore: 'a SELECT of the rows the call writes', gitEffectStore: 'a SELECT of the rows the call writes',
-  topologyStore: 'a SELECT of the rows the call writes', manualLinkStore: 'a SELECT of the rows the call writes',
+  // gitDurabilityStore, gitEffectStore, topologyStore and manualLinkStore have no entry: a client refuses them by name
+  // (owner-ipc/routes.ts REFUSE), since the object of functions they answer does not cross the socket.
   persistenceUpkeepStore: 'a SELECT of the rows the call writes',
   queuePageProjectionJob: 'projectionRebuildProgress',
   rebindSharedSkillMember: 'readSharedSkillMember for that member',

@@ -1793,9 +1793,7 @@ fn derive_fact(
         } else {
             caller_reference(cur2, s)
         };
-        let Some(grants) = reference_grants else {
-            return None;
-        };
+        let grants = reference_grants?;
         let mut records: Vec<(Patch, FactRecord)> = Vec::new();
         let mut reader = readers_patch(readers);
         reader.hide_private = Some(true);
@@ -2463,7 +2461,11 @@ fn derive_writer_policy(cur: &Cur, s: &AccessSettings, w: &WriterReadPolicyIn) -
 }
 
 /// `unlabelledWriterPolicyRendered`: the member-access and privacy parts of the writer's read policy.
-fn derive_unlabelled_writer_policy(cur: &Cur, s: &AccessSettings, w: &WriterReadPolicyIn) -> Derived {
+fn derive_unlabelled_writer_policy(
+    cur: &Cur,
+    s: &AccessSettings,
+    w: &WriterReadPolicyIn,
+) -> Derived {
     let wcur = with(
         cur,
         &Patch {
@@ -2518,11 +2520,16 @@ fn derive_unlabelled_writer_policy(cur: &Cur, s: &AccessSettings, w: &WriterRead
         identity.map_or(&[], |i| i.as_slice()),
         &w.satisfied_rule_ids,
     );
-    if w.identities.len() == 1 && identity.is_some_and(|i| !i.is_empty()) && applied_identity.is_empty() {
+    if w.identities.len() == 1
+        && identity.is_some_and(|i| !i.is_empty())
+        && applied_identity.is_empty()
+    {
         // One identity holding an invalid entry reads as a writer with no identity. Beside rules the SQL still applies it is a
         // policy the store cannot hold, and an owner record is not modelled for it.
         if !applied_rules.is_empty() {
-            return Derived::Refuse("a writer whose identity holds an invalid entry beside satisfied folder rules");
+            return Derived::Refuse(
+                "a writer whose identity holds an invalid entry beside satisfied folder rules",
+            );
         }
         if text == no_identity_record() {
             return no_identity(off);
@@ -2680,7 +2687,9 @@ fn derive_enforced_member_policy(
     let access = eff(cur, s);
     let (applied_identity, applied_rules) = sql_applied_sets(identity, satisfied);
     if applied_identity.is_empty() && !applied_rules.is_empty() {
-        return Derived::Refuse("a member whose identity holds an invalid entry beside satisfied folder rules");
+        return Derived::Refuse(
+            "a member whose identity holds an invalid entry beside satisfied folder rules",
+        );
     }
     let render = |at: &Cur| -> PageKey {
         match view {

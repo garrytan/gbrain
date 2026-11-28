@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { accessDeriveContext, firstDifference, withAccessStore, type AccessDeriveRequest } from '../src/core/rust-engine/access-self-check.ts';
-import { enforcedMemberPolicy } from '../src/core/rust-engine/store-members/page-mutation-reads.ts';
+import { enforcedMemberPolicy } from '../src/core/rust-engine/store-members/enforced-member-policy.ts';
 import { hiddenSlugsPolicySql, memberViewPolicySql } from '../src/core/engine-sql/page-mutation-reads.ts';
 import {
   storeFloorPolicy, storeMemberReadPolicy, storePageTextPolicy, storePrivacyPolicy,
@@ -226,7 +226,7 @@ function cases(): Case[] {
 }
 
 /**
- * The enforced member CLI's reads around a write (`enforcedMemberPolicy`, store-members/page-mutation-reads.ts): the member
+ * The enforced member CLI's reads around a write (`enforcedMemberPolicy`, store-members/enforced-member-policy.ts): the member
  * view of a page for a member's identity and rules, and the output guard's text for the caller's own. Kept apart from
  * `cases()` so the main corpus keeps its size.
  */
