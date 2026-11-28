@@ -4,6 +4,7 @@ import { isValidRepoName } from './github-source-config.ts';
 import { connectorRender } from './connectors/connector-text.ts';
 import { ConnectorHoldSession, connectorHoldsResult } from './connectors/connector-hold-session.ts';
 import { connectorDryRunResult } from './connectors/api-source.ts';
+import { gitHubStateFile, parseGitHubState, SweepLedger, type GitHubState } from './github-sweep-state.ts';
 export { isValidRepoName, parseGitHubSourceConfig } from './github-source-config.ts';
 export { AppTokenProvider, mintAppInstallationToken } from './github-app-token.ts';
 import { AppTokenProvider } from './github-app-token.ts';
@@ -108,39 +109,18 @@ export function isGitHubSourceConfig(config: Record<string, unknown>): boolean {
   return config.kind === GH_KIND;
 }
 
-export function gitHubStateFile(dir: string): string {
-  return join(dir, '.github-source.json');
+export { gitHubStateFile } from './github-sweep-state.ts';
+
+function readGitHubState(dir: string): GitHubState {
+  return parseGitHubState(existsSync(gitHubStateFile(dir)) ? readFileSync(gitHubStateFile(dir), 'utf-8') : '');
 }
 
-interface GitHubState {
-  last_sweep_at: string | null;
-  /** owner/name -> default branch (for check fetches we only need head sha, so this stays small). */
-  repos: string[];
-  /** Fix wave 4: connector item holds (src/core/connectors/item-holds.ts). */
-  item_holds?: unknown;
-}
-
-function readState(dir: string): GitHubState {
-  try {
-    const raw = readFileSync(gitHubStateFile(dir), 'utf-8');
-    const parsed = JSON.parse(raw) as Partial<GitHubState>;
-    return {
-      last_sweep_at: typeof parsed.last_sweep_at === 'string' ? parsed.last_sweep_at : null,
-      // Legacy state files may carry canonical-case names; the module keys
-      // on lowercase everywhere.
-      repos: Array.isArray(parsed.repos)
-        ? parsed.repos.filter((r): r is string => typeof r === 'string').map((r) => r.toLowerCase())
-        : [],
-      ...(parsed.item_holds ? { item_holds: parsed.item_holds } : {}),
-    };
-  } catch {
-    return { last_sweep_at: null, repos: [] };
-  }
-}
-
-function writeState(dir: string, state: GitHubState): void {
+/** Written beside itself and renamed into place, so a crash mid-write never leaves a torn state file (which reads as no state). */
+function writeGitHubState(dir: string, state: GitHubState): void {
+  const file = gitHubStateFile(dir), tmp = `${file}.${process.pid}.tmp`;
   mkdirSync(dir, { recursive: true });
-  writeFileSync(gitHubStateFile(dir), JSON.stringify(state, null, 2), 'utf-8');
+  writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf-8');
+  renameSync(tmp, file);
 }
 
 // ── HTTP client (rate-limit aware, injectable for tests) ─────────────────────
@@ -1138,7 +1118,7 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
   // Keep previous scope before this run resolves its refreshed repo list.
   // A repo added to an existing source needs a history bootstrap even when
   // the source-wide cursor is already ahead of its old items.
-  const state: GitHubState = managed ? managed.state({ last_sweep_at: null, repos: [] }) : readState(cfg.dir);
+  const state: GitHubState = managed ? managed.state({ last_sweep_at: null, repos: [] }) : readGitHubState(cfg.dir);
   const previousRepos = new Set(state.repos);
 
   // Shared bulk-progress reporter (docs/progress-events.md, phase
@@ -1184,13 +1164,15 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
     // them in the same run (added/modified describe distinct page outcomes).
     const countedSlugs = new Set<string>();
     let maxUpdatedAt = state.last_sweep_at ?? '';
-    const repoMeta = new Map<string, RawRepo>();
     // Fix wave 4 (#5740): an item failing 3 consecutive runs is held, so one
     // permanently failing item no longer pins the watermark; held items stay
     // visible (sources status, doctor, sync summary) until retried.
     const holds = await ConnectorHoldSession.open(engine, sourceId, managed, { last_sweep_at: null, repos: [] }, state.item_holds, { full: opts.full });
+    // #10578: the cursor stays put until a sweep finishes, so a run stopped short resumes from what the last one finished.
+    const ledger = SweepLedger.resume(state.sweep_progress, state.last_sweep_at ?? null, opts.full === true);
     const itemFailed = async (repo: string, item: { number: number; kind: 'issue' | 'pr'; updated_at: string; list?: { title?: string } }, err: unknown, what = '') => {
       const key = `${repo}#${item.number}`;
+      ledger.drop(key);
       const blocking = !holds.isHeld(key);
       await holds.fail(key, err, { version: item.updated_at || null, ref: item.kind, slug: slugifyPath(`gh/${repo}/${item.number}`),
         meta: { title: item.list?.title ?? null, upstream_at: item.updated_at || null } });
@@ -1236,6 +1218,14 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
             progress.tick(1, `${repo}#${item.number} held`);
             continue;
           }
+          const key = `${repo}#${item.number}`;
+          const resumed = holds.holds.record(key) ? null : ledger.resumed(key, item);
+          if (resumed === 'listed') { pendingDetail.push(item); continue; }
+          if (resumed === 'done') {
+            if (item.updated_at > maxUpdatedAt) maxUpdatedAt = item.updated_at;
+            holds.succeed(key); progress.tick(1, `${key} already checked`);
+            continue;
+          }
           // Open PRs are never fresh: their check state can change without
           // touching the PR's updated_at (a new check run does not bump it),
           // so they are re-fetched every sweep. Cost is bounded by the number
@@ -1246,6 +1236,8 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
           try {
             stored = await storedPage(deps, filePath, item.updated_at);
           } catch (err) {
+            // A stop (deadline or cancel) is not a failure of the item: it must not count toward a hold.
+            if (opts.signal?.aborted) { summary.status = 'partial'; continue; }
             await itemFailed(repo, item, err, ' stored page read');
             continue;
           }
@@ -1255,7 +1247,8 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
             // a repo whose newest item is always fresh stays re-listed on
             // every sweep (the since filter never passes it).
             if (item.updated_at > maxUpdatedAt) maxUpdatedAt = item.updated_at;
-            holds.succeed(`${repo}#${item.number}`);
+            holds.succeed(key);
+            ledger.record('done', key, item);
             progress.tick(1, `${repo}#${item.number} fresh`);
             continue;
           }
@@ -1275,10 +1268,12 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
                 }
               }
             } catch (err) {
+              if (opts.signal?.aborted) { summary.status = 'partial'; continue; }
               await itemFailed(repo, item, err, ' list render');
               continue;
             }
           }
+          ledger.record('listed', key, item);
           pendingDetail.push(item);
         }
         // Held items the listing no longer returns are re-attempted when
@@ -1315,10 +1310,12 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
                 }
               }
             } catch (err) {
+              if (opts.signal?.aborted) { summary.status = 'partial'; break; }
               await itemFailed(repo, item, err);
               continue;
             }
             holds.succeed(`${repo}#${item.number}`);
+            ledger.record('done', `${repo}#${item.number}`, item);
             progress.tick(1, `${repo}#${item.number}`);
             // Cursor advances only for items that fully succeeded.
             if (item.updated_at > maxUpdatedAt) maxUpdatedAt = item.updated_at;
@@ -1326,27 +1323,12 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
         } finally {
           stopDetailHb();
         }
-        // Repo card, refreshed once per repo.
-        const cardPath = repoCardPath(cfg.dir, repo);
-        keepPaths.add(relative(cfg.dir, cardPath).replace(/\\/g, '/'));
-        if (!opts.signal?.aborted && (opts.full || !(await storedPage(deps, cardPath, '')).exists)) {
-          try {
-            const meta = await client.fetchJSON<RawRepo>(`/repos/${repo}`, { signal: opts.signal });
-            repoMeta.set(repo, meta);
-            const imported = await materializePage(deps, cardPath, renderRepoCard(repo, meta, managed ? null : undefined), activePack);
-            if (!summary.pagesAffected.includes(imported.slug)) summary.pagesAffected.push(imported.slug);
-            if (imported.status === 'imported') {
-              if (imported.created) summary.added++; else summary.modified++;
-            }
-          } catch (error) {
-            if (managed) { rethrowConnectorWriteError(error); summary.failedFiles++; summary.status = 'partial'; }
-          }
-        } else {
-          keepPaths.add(relative(cfg.dir, cardPath).replace(/\\/g, '/'));
-        }
+        keepPaths.add(relative(cfg.dir, repoCardPath(cfg.dir, repo)).replace(/\\/g, '/'));
+        await refreshRepoCard(deps, repo, summary, activePack);
         if (!opts.signal?.aborted) succeededRepos.add(`gh/${repo}`);
       } catch (err) {
         if (managed) rethrowConnectorWriteError(err);
+        if (opts.signal?.aborted) { summary.status = 'partial'; break; }
         deps.client.log?.(`[github] repo ${repo} failed: ${err instanceof Error ? err.message : String(err)}`);
         summary.failedFiles++;
         summary.status = 'partial';
@@ -1376,22 +1358,48 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
     state.repos = repos.filter((r) => succeededRepos.has(`gh/${r}`) || previousRepos.has(r));
     // Throws connector_holds_exhausted before any save, so the cursor stays.
     state.item_holds = holds.finish();
-    if (summary.status === 'synced') {
-      state.last_sweep_at = maxUpdatedAt || (managed ? null : new Date().toISOString());
-      if (managed) await managed.saveState(state, true, state.last_sweep_at ?? undefined);
-      else { writeState(cfg.dir, state); await touchSourceRow(deps, state.last_sweep_at!); }
-    } else if (managed) {
-      // A partial run leaves the cursor at its last committed position and publishes only changed holds.
-      if (!opts.signal?.aborted) await managed.publishHolds({ last_sweep_at: null, repos: [] }, state.item_holds);
-    } else {
-      // #5740 (#5741): a partial sweep persists its state but never stamps last_sync_at.
-      writeState(cfg.dir, state);
-    }
+    await saveSweepState(deps, state, summary, maxUpdatedAt, ledger);
     await holds.complete();
 
     return { ...syncResult(summary, opts), ...connectorHoldsResult(sourceId, holds.summary()) };
   } finally {
     progress.finish();
+  }
+}
+
+/** The repo card, refreshed once per repo: on a full sweep, or when the card page is missing. */
+async function refreshRepoCard(deps: GitHubSyncDeps, repo: string, summary: GitHubSyncSummary, activePack: Parameters<typeof importPage>[2]): Promise<void> {
+  const { opts, client, managed } = deps, cardPath = repoCardPath(deps.cfg.dir, repo);
+  if (opts.signal?.aborted || !opts.full && (await storedPage(deps, cardPath, '')).exists) return;
+  try {
+    const meta = await client.fetchJSON<RawRepo>(`/repos/${repo}`, { signal: opts.signal });
+    const imported = await materializePage(deps, cardPath, renderRepoCard(repo, meta, managed ? null : undefined), activePack);
+    if (!summary.pagesAffected.includes(imported.slug)) summary.pagesAffected.push(imported.slug);
+    if (imported.status === 'imported') { if (imported.created) summary.added++; else summary.modified++; }
+  } catch (error) {
+    if (managed) { rethrowConnectorWriteError(error); summary.failedFiles++; summary.status = 'partial'; }
+  }
+}
+
+/** The end of a sweep: a complete one advances the cursor and stamps freshness; a partial one keeps the cursor where it was. */
+async function saveSweepState(deps: GitHubSyncDeps, state: GitHubState, summary: GitHubSyncSummary, maxUpdatedAt: string, ledger: SweepLedger): Promise<void> {
+  const { managed, cfg, opts } = deps;
+  if (summary.status === 'synced') {
+    delete state.sweep_progress;
+    state.last_sweep_at = maxUpdatedAt || (managed ? null : new Date().toISOString());
+    if (managed) await managed.saveState(state, true, state.last_sweep_at ?? undefined);
+    else { writeGitHubState(cfg.dir, state); await touchSourceRow(deps, state.last_sweep_at!); }
+  } else if (!managed) {
+    // #5740 (#5741): a partial sweep persists its state but never stamps last_sync_at.
+    writeGitHubState(cfg.dir, { ...state, sweep_progress: ledger.toJSON() });
+  } else if (opts.signal?.aborted && opts.deadlineAtMs !== undefined && (opts.signal.reason as { name?: unknown } | undefined)?.name === 'TimeoutError') {
+    // #10578: a deadline stop still holds its lease, so it saves the unchanged cursor with what it finished (published only once
+    // every page write committed, never stamping freshness; stoppedAtDeadline keeps it from reading as a complete sweep).
+    managed.stoppedAtDeadline = true;
+    await managed.saveState({ ...state, sweep_progress: ledger.toJSON() });
+  } else if (!opts.signal?.aborted) {
+    // A partial run publishes only changed holds; a cancel or a lost lease saves nothing.
+    await managed.publishHolds({ last_sweep_at: null, repos: [] }, state.item_holds);
   }
 }
 

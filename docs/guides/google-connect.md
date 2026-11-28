@@ -666,7 +666,17 @@ again. The first sync fills `--history-days`, newest mail first, and
 resumes where it stopped if it runs out of time. `--gbrainio-command` sets a
 full path when `gbrainio` is not on `PATH`.
 
-Threads are sorted into tiers before anything is written:
+Ingest tiers are on by default only for a gbrain.io source. Any Gmail source
+can choose when it is added: `--ingest-tiers` turns them on (for example on a
+source that reads through your own Google connection) and `--no-ingest-tiers`
+turns them off. With neither flag the default above applies. Pick at add time,
+because turning tiers on is part of the source's identity.
+
+```bash
+gbrain sources add mail --kind google --account you@example.com --ingest-tiers
+```
+
+With tiers on, threads are sorted before anything is written:
 
 | Tier | Which threads | What gbrain does |
 |---|---|---|

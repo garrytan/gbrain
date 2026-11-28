@@ -82,10 +82,11 @@ export function parseContactsDir(raw: unknown): string | null {
  * existing source's config keeps its exact shape (`DEFAULT_CALENDAR_ID` and
  * `CALENDAR_HORIZON_DAYS` stay parse-time fallbacks): `g_calendar_id`
  * (#5296), `g_contacts_dir` (#4845), `g_future_days` (#5442), `g_loops_exclude_labels` (#5445),
- * `g_gbrainio_command` and `g_private_senders_file`.
+ * `g_gbrainio_command`, `g_private_senders_file`, and `g_ingest_tiers` (#10571), written only for an explicit
+ * `--ingest-tiers` or `--no-ingest-tiers` so the access mode's default (on for gbrainio, off otherwise) still applies.
  */
 export function googleTuningConfig(google: { calendarId?: string; contactsDir?: string; futureDays?: number; loopsExcludeLabels?: string[];
-  gbrainioCommand?: string; privateSendersFile?: string }): Record<string, unknown> {
+  gbrainioCommand?: string; privateSendersFile?: string; ingestTiers?: boolean }): Record<string, unknown> {
   return {
     ...(google.calendarId && google.calendarId !== DEFAULT_CALENDAR_ID ? { g_calendar_id: google.calendarId } : {}),
     ...(google.contactsDir && google.contactsDir !== DEFAULT_CONTACTS_DIR ? { g_contacts_dir: google.contactsDir } : {}),
@@ -93,5 +94,6 @@ export function googleTuningConfig(google: { calendarId?: string; contactsDir?: 
     ...(google.loopsExcludeLabels && google.loopsExcludeLabels.length > 0 ? { g_loops_exclude_labels: google.loopsExcludeLabels.join(',') } : {}),
     ...(google.gbrainioCommand ? { g_gbrainio_command: google.gbrainioCommand } : {}),
     ...(google.privateSendersFile ? { g_private_senders_file: google.privateSendersFile } : {}),
+    ...(typeof google.ingestTiers === 'boolean' ? { g_ingest_tiers: google.ingestTiers } : {}),
   };
 }
