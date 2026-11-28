@@ -2,6 +2,8 @@ import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import { assertPageRevision, PageRevisionConflictError, RevisionBackfillPendingError, type PageSnapshot } from './page-state/types.ts';
 import { pipelined } from './page-state/transactions.ts';
 import { PageSourceMissingError } from './page-state/guards.ts';
+import { abortableSleep, computeNextDelay, resolveBulkRetryOpts } from './retry.ts';
+import { getCode, isRetryableConnError } from './retry-matcher.ts';
 import { beliefCoveredSources, unmanagedBeliefPoint } from './belief/projection-point.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { pageSnapshotKey } from './page-snapshot-batch.ts';
@@ -230,6 +232,26 @@ export async function replaceDerivedLinksBatch(
   return results;
 }
 
+const LOST_LOOKUP_CODES: ReadonlySet<string> = new Set(['ENOTFOUND', 'EAI_AGAIN']);
+
+/**
+ * A brief connection loss (a dropped pooler socket, a resolver outage) during the one-by-one replay must not end a long
+ * walk whose earlier batches already committed: retry it with the shared bulk backoff. Conflicts and every other error
+ * keep their outcome; only a still-failing connection error escapes, after the bounded attempts.
+ */
+async function replayWithConnectionRetry<T>(run: () => Promise<T>): Promise<T> {
+  const { maxRetries, delayMs, delayMaxMs } = resolveBulkRetryOpts();
+  let prev = 0;
+  for (let attempt = 0; ; attempt++) {
+    try { return await run(); }
+    catch (error) {
+      if (attempt >= maxRetries || !(isRetryableConnError(error) || LOST_LOOKUP_CODES.has(getCode(error) ?? ''))) throw error;
+      prev = computeNextDelay(attempt, prev, delayMs, delayMaxMs, 'decorrelated');
+      await abortableSleep(prev);
+    }
+  }
+}
+
 /**
  * Publish through replaceDerivedLinksBatch; when that transaction fails,
  * replay the origins one by one so every outcome is the unbatched one:
@@ -244,7 +266,7 @@ export async function replaceDerivedLinksBatchOrReplay(engine: Pick<BrainEngine,
   catch {
     const results: DeferredDerivedLinkOutcome[] = [];
     for (const item of items) {
-      try { results.push(await replaceDerivedLinksDeferringConflicts(engine, item.origin, item.links, item.opts)); }
+      try { results.push(await replayWithConnectionRetry(() => replaceDerivedLinksDeferringConflicts(engine, item.origin, item.links, item.opts))); }
       catch (error) { onError?.(item); throw error; }
     }
     return results;
