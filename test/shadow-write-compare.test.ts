@@ -1223,6 +1223,34 @@ describe('S2c: a durable per-session obligation for write samples', () => {
     expect(existsSync(owedPath(dir, 'sg'))).toBe(false);
   });
 
+  test('a child killed (SIGKILL) between note() and its deferred save loses only that turn: the next owner books it receipt_orphaned once, and none of it counts as a pass', async () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch, { comparable: 0 });
+    const ready = join(tmp(), 'noted');
+    // test/helpers/deferred-tally-child.ts: turn 1 notes a pass and a tags write and saves them; turn 2 marks a replay, notes its pass and two more outcomes, and blocks before its save.
+    const child = Bun.spawn(['bun', join(import.meta.dir, 'helpers', 'deferred-tally-child.ts'), dir, epoch, 'sk', ready], { stdout: 'ignore', stderr: 'pipe' });
+    owe(dir, 'sk', 5, { child_pid: child.pid, owed_qualifying: 3 } as never); // 5 samples owed, 3 of them page and link writes
+    const reach = async (file: string): Promise<void> => { for (let i = 0; i < 400 && !existsSync(file); i++) await Bun.sleep(25); expect(existsSync(file)).toBe(true); };
+    await reach(`${ready}.1`);
+    expect(readWriteTally(dir, epoch)).toMatchObject({ comparable: 1, capability_missing: 1, in_flight: [], settled: { sk: 2 } }); // turn 1 was saved once that turn ended, by the save it asked for
+    writeFileSync(`${ready}.go`, '1');
+    await reach(`${ready}.2`);
+    expect(readWriteTally(dir, epoch)).toMatchObject({ comparable: 1, capability_missing: 1, in_flight: [child.pid], settled: { sk: 2 } }); // turn 2's mark is on disk; its outcomes are only in the child's memory
+    child.kill('SIGKILL');
+    await child.exited;
+    expect(child.signalCode).toBe('SIGKILL');
+    const owner = worker(dir, epoch, 'owner-session'); owner.recover(); // its child is not running: orphaned
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.comparable).toBe(1); // the two passes of turn 2 were never saved: neither counts
+    expect(t.unexplained_difference).toBe(1); // the replay whose verdict died with the child stays unexplained, never a pass
+    expect(t.uncomparable_by_reason).toEqual({ receipt_orphaned: 2 }); // owed 5 less settled 2 = 3: the 2 page and link writes of turn 2
+    expect(t.capability_missing_by_family).toEqual({ tags: 1, receipt_orphaned_nonqualifying: 1 }); // and its tags write
+    expect(t.in_flight).toEqual([]);
+    expect(existsSync(owedPath(dir, 'sk'))).toBe(false);
+    expect(stat(dir)).toMatchObject({ state: 'measured', comparable: 1, unexplained_difference: 1 }); // settled evidence that holds an unexplained difference: the write bar fails, it never passes
+    owner.save(); worker(dir, epoch, 'another-owner').recover(); // booked once, however many owners look
+    expect(readWriteTally(dir, epoch)).toMatchObject({ comparable: 1, unexplained_difference: 1, uncomparable_by_reason: { receipt_orphaned: 2 }, capability_missing_by_family: { tags: 1, receipt_orphaned_nonqualifying: 1 } });
+  });
+
   // The hard limit and the per-session rule.
   test('a long-running session with nothing unsettled reads measured, however many samples it has owed', () => {
     const dir = tmp(); const epoch = epochOf(dir); owe(dir, 'long', 1_000_000, { child_pid: process.pid });
