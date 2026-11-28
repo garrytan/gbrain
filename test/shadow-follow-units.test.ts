@@ -260,10 +260,10 @@ describe('follow child', () => {
 
 describe('reconciler schedule', () => {
   // A full pass starts with 'state' again (its barrier) and stops at seedPlan here.
-  async function firstCheck(o: { valid: boolean; lastFullAgoMs?: number; progress?: boolean; ready?: () => Promise<void> }) {
+  async function firstCheck(o: { valid: boolean; lastFullAgoMs?: number; lastFullAt?: string; progress?: boolean; ready?: () => Promise<void> }) {
     const dir = tmp();
-    if (o.lastFullAgoMs !== undefined) {
-      const at = new Date(Date.now() - o.lastFullAgoMs).toISOString();
+    if (o.lastFullAgoMs !== undefined || o.lastFullAt !== undefined) {
+      const at = o.lastFullAt ?? new Date(Date.now() - o.lastFullAgoMs!).toISOString();
       appendPass(dir, { id: 'p', kind: 'full', started_at: at, finished_at: at, repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0 });
     }
     if (o.progress) { mkdirSync(join(dir, 'reconcile'), { recursive: true }); writeFileSync(join(dir, 'reconcile', 'progress.json'), JSON.stringify({ version: 1 })); }
@@ -304,6 +304,26 @@ describe('reconciler schedule', () => {
         await flush();
         expect(calls.includes('seedPlan')).toBe(true);
         reconciler.stop();
+      }
+    } finally { jest.useRealTimers(); }
+  });
+
+  test('a last full pass that finished in the future (a clock set back) or at an unreadable time makes a full pass due, at the first check and at the 15-minute tick', async () => {
+    jest.useFakeTimers();
+    try {
+      const times = [new Date(Date.now() + 3_600_000).toISOString(), new Date(Date.now() + 30 * 86_400_000).toISOString(), 'not-a-time'];
+      for (const lastFullAt of times) {
+        const first = await firstCheck({ valid: true, lastFullAt });
+        jest.advanceTimersByTime(6_000);
+        await flush();
+        expect({ lastFullAt, at: 'first check', ran: first.calls.includes('seedPlan') }).toEqual({ lastFullAt, at: 'first check', ran: true });
+        first.reconciler.stop();
+        // The tick on its own: the first check never gets past its wait.
+        const tick = await firstCheck({ valid: true, lastFullAt, ready: () => new Promise<void>(() => undefined) });
+        jest.advanceTimersByTime(15 * 60_000 + 1_000);
+        await flush();
+        expect({ lastFullAt, at: 'tick', ran: tick.calls.includes('seedPlan') }).toEqual({ lastFullAt, at: 'tick', ran: true });
+        tick.reconciler.stop();
       }
     } finally { jest.useRealTimers(); }
   });
