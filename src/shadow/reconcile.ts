@@ -19,7 +19,10 @@
  * A full pass saves its progress (`reconcile/progress.json`) after every interval. A process that closes in the middle
  * of one records no pass (closing is not a failed pass) and leaves the progress; the next process's first check resumes
  * it only under the same follower continuity (follow-child.ts: an unbroken run of owner sessions, each confirmed to
- * continue the one before it), so a brain served only in short sessions still completes full passes.
+ * continue the one before it), so a brain served only in short sessions still completes full passes. A stopped pass
+ * that repaired rows or found misses goes on record at once; if that record cannot be appended, its resume point holds
+ * it, status and writer coverage count it (follow-status.ts `unrecordedStoppedPass`), and the next full pass that does
+ * not continue it puts it on record before removing it.
  */
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -27,7 +30,7 @@ import { join } from 'node:path';
 import { quoteIdent, readKeysetRows, type DigestPlan, type KeysetRow } from '../core/persistence/graduation-digest.ts';
 import type { SeedEntry, SeedFollowResult, SeedIntervalDigest, SeedPlan, SeedRelationPlan } from '../core/rust-engine/store.ts';
 import { hasFingerprintFunctions, probeOnPrimary } from './fingerprints.ts';
-import { appendPass, NIGHTLY_MS, readPasses, type PassRecord, type Watermark } from './follow-status.ts';
+import { appendPass, NIGHTLY_MS, progressPath, readPasses, unrecordedStoppedPass, type PassRecord, type Watermark } from './follow-status.ts';
 import { intervalDigest, rowDigest, sortKey, sortKeyUnsupported } from './follow-digest.ts';
 import { nextGeneration, type ShadowFollower } from './follower.ts';
 import { primaryTables } from './seed-gaps.ts';
@@ -104,7 +107,6 @@ interface PassProgress {
   cursor: { relation: string; lo: string; after: string[]; displaced: number } | null;
 }
 
-const progressPath = (dir: string): string => join(dir, 'reconcile', 'progress.json');
 
 function readProgress(dir: string): PassProgress | null {
   // silent-read-ok: a missing or torn progress file only means the next full pass starts from the beginning.
@@ -248,6 +250,7 @@ export class Reconciler {
     let lastCursor: PassProgress['cursor'] = null;
     let countsSaved = true;
     let saveCounts: () => boolean = () => false;
+    let keepProgress = false;
     try {
       await this.o.follower?.settle();
       const barrier = await this.o.rpc<StateReply>('state', {}, 30_000);
@@ -275,7 +278,20 @@ export class Reconciler {
           for (const relation of prior.done) done.add(relation);
           cursor = prior.cursor;
           lastCursor = prior.cursor;
-        } else clearProgress(this.o.dir);
+        } else {
+          // A resume point that is not continued but holds a repair or miss no record carries (its stopped record could
+          // not be appended) is that pass's only evidence: it goes on record first, stamped now. A pass that cannot put
+          // it there keeps the resume point and fails, named; nothing is dropped.
+          let owed: PassRecord | null = null;
+          try {
+            owed = unrecordedStoppedPass(this.o.dir);
+            if (owed) appendPass(this.o.dir, { ...owed, finished_at: new Date().toISOString() });
+          } catch (error) {
+            keepProgress = true;
+            throw Object.assign(new Error(`a stopped pass's repair could not be put on record: ${error instanceof Error ? error.message.slice(0, 120) : 'failed'}`), { code: 'pending_repair_unrecorded' });
+          }
+          clearProgress(this.o.dir);
+        }
         if (continuity) {
           progress = {
             version: 1, id: rec.id, started_at: rec.started_at, pass_start: passStart, valid_at_start: validAtStart, continuity, seed_id: seedId, epoch_id: epochId,
@@ -338,7 +354,8 @@ export class Reconciler {
         // Rows this pass repaired are evidence the store had drifted, and the store now holds the repair: a pass that
         // reads them again finds nothing. So a stopped pass that saw any repair or miss goes on record at once, as a
         // stopped pass (not clean, so the clean streak ends, and counted by writer coverage), and its resume point is
-        // removed only after that record landed: a resume point alone is dropped by any fresh pass or new continuity.
+        // removed only after that record landed. If the append fails, the resume point keeps the counts, which are
+        // counted from there until a later pass puts them on record (`unrecordedStoppedPass`).
         // A stopped pass that saw nothing keeps only its resume point, and the next process finishes it.
         if (rec.repaired_rows > 0 || rec.follower_misses > 0) {
           let recorded = false;
@@ -361,7 +378,7 @@ export class Reconciler {
     }
     // Allocator and full-pass probe failures are reported but do not decide whether the rows are covered; a failed probe of a dirty
     // pass for facts or purge tombstones does, because those rows are what it checks.
-    if (resumable) clearProgress(this.o.dir);
+    if (resumable && !keepProgress) clearProgress(this.o.dir);
     if (!repairFailed && !probeFailed) await this.restore(kind, passStart, verified, settled);
     rec.finished_at = new Date().toISOString();
     try { appendPass(this.o.dir, rec); } catch { /* a full disk loses the record, never the pass */ }

@@ -164,6 +164,30 @@ export function readPasses(dir: string): PassRecord[] {
   return readFileSync(passesPath(dir), 'utf8').split('\n').flatMap((line) => { try { return line ? [JSON.parse(line) as PassRecord] : []; } catch { return []; } });
 }
 
+/** A full pass's resume point (reconcile.ts `PassProgress`), written by rename after each interval. */
+export const progressPath = (dir: string): string => join(dir, 'reconcile', 'progress.json');
+
+/**
+ * The record a full pass still owes the pass log: its resume point holds repairs or follower misses, and no record with
+ * its id is in `logged` (its stopped record could not be appended). Those repairs are evidence the store drifted, and
+ * the store now holds them, so no later scan finds them again: until a pass puts the record on the log
+ * (reconcile.ts), the status and writer coverage count it as a stopped full pass. A missing or torn resume point owes
+ * nothing. The pass log is read only when the resume point holds a repair or miss.
+ */
+export function unrecordedStoppedPass(dir: string, logged?: PassRecord[]): PassRecord | null {
+  let p: Record<string, unknown> | null;
+  try { p = JSON.parse(readFileSync(progressPath(dir), 'utf8')) as Record<string, unknown> | null; } catch { return null; } // silent-read-ok: no resume point (missing, or torn though it is only written by rename) holds no counts to owe
+  if (!p || typeof p !== 'object' || p.version !== 1 || typeof p.id !== 'string' || typeof p.started_at !== 'string') return null;
+  const repaired = typeof p.repaired_rows === 'number' ? p.repaired_rows : 0;
+  const misses = typeof p.follower_misses === 'number' ? p.follower_misses : 0;
+  if (repaired <= 0 && misses <= 0) return null;
+  const id = p.id;
+  if ((logged ?? readPasses(dir)).some((r) => r.id === id)) return null;
+  const byRelation = p.repaired_by_relation && typeof p.repaired_by_relation === 'object' ? p.repaired_by_relation as Record<string, number> : {};
+  const epoch_id = typeof p.epoch_id === 'string' ? p.epoch_id : readEpoch(dir)?.epoch_id;
+  return { id, kind: 'full', started_at: p.started_at, finished_at: p.started_at, repaired_rows: repaired, repaired_by_relation: { ...byRelation }, follower_misses: misses, error: 'stopped', ...(epoch_id ? { epoch_id } : {}) };
+}
+
 export interface FollowStatus {
   epoch_id: string | null;
   epoch_started_at: string | null;
@@ -228,7 +252,9 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
   const windowsLost = Math.max(writes?.uncomparable_by_reason?.write_window_lost ?? 0, snapshot.windowFiles); // windows a crash lost, of unknown size: no evidence for the rest of this epoch (not in `unresolved`: nothing will ever settle them, so the swap's wait must not wait for them)
   const pendingMarkers = snapshot.outstanding.filter((n) => /^write-pending\.[A-Za-z0-9_-]+\.json$/.test(n)).map((n) => join(dir, n)); // by path: the operator step names the file
   const unresolved = (writes?.in_flight.length ?? 0) + snapshot.unfolded + receipts.length + unrecorded + snapshot.outstanding.length + (snapshot.unstable ? 1 : 0) + legacy; // a lost sample no tally has taken yet reads as no evidence, like a replay with no verdict
-  const everyPass = readPasses(dir);
+  const logged = readPasses(dir);
+  const owed = unrecordedStoppedPass(dir, logged); // a stopped repair only the resume point holds counts as the stopped pass it was
+  const everyPass = owed ? [...logged, owed] : logged;
   const passes = epoch ? everyPass.filter((p) => p.epoch_id === epoch.epoch_id && Date.parse(p.started_at) >= Date.parse(epoch.started_at)) : everyPass;
   const last = passes.at(-1) ?? null;
   const fulls = passes.filter((p) => p.kind === 'full');
