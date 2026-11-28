@@ -36,7 +36,13 @@ const ENGINE_SOURCE = readFileSync(join(import.meta.dir, '..', 'src', 'core', 'p
 const NOT_ON_OWNER_SOCKET: readonly string[] = ['onCheckout', 'getPoolDiagnostics', 'explainVectorSearch'];
 
 const forwarded = Object.entries(OWNER_IPC_ROUTES).filter(([, route]) => route === 'forward').map(([member]) => member);
-const WRITES = forwarded.filter(member => !ownerMemberOnlyReads(member));
+/**
+ * Forwarded writes only the Rust store has: `rebuildDerivedIndexes` rebuilds its keyword index (doctor
+ * `rust_derived_indexes`). The member is optional on BrainEngine and PostgresEngine has none, so there is no
+ * executor to audit; the first test below holds it absent from the Postgres engine.
+ */
+const RUST_STORE_ONLY_WRITES: readonly string[] = ['rebuildDerivedIndexes'];
+const WRITES = forwarded.filter(member => !ownerMemberOnlyReads(member) && !RUST_STORE_ONLY_WRITES.includes(member));
 
 /**
  * Writes that run on `engineSql` (or `this.sql`) in master 275870ad21 as well. Not a regression of the trunk; the retry is
@@ -63,6 +69,7 @@ describe('the typed writes the audit covers', () => {
   // list from the table; seam=none; no_claim=the table's read list is right (test/rust-owner-ipc-read-classes.test.ts scans it)
   test('every public engine member is in the owner route table or listed as outside it', () => {
     const declared = declaredMembers(ENGINE_SOURCE);
+    expect(RUST_STORE_ONLY_WRITES.filter(name => declared.has(name))).toEqual([]);
     const methods = [...declared.entries()].filter(([name, d]) => d.kind !== 'getter' && !/^\s*(private|protected)\b/.test(d.text) && !name.startsWith('_') && name !== 'constructor');
     const unrouted = methods.map(([name]) => name).filter(name => !(name in OWNER_IPC_ROUTES) && !NOT_ON_OWNER_SOCKET.includes(name)
       && typeof (PostgresEngine.prototype as unknown as Record<string, unknown>)[name] === 'function');

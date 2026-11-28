@@ -515,7 +515,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // source root, so those checks emit nothing, as on PGLite.
       // sync_failures is gone from this list: its reads are typed members Rust serves, so on this brain it emits nothing,
       // as on PGLite.
-      onlyRust: [],
+      // rust_derived_indexes is the Rust store's keyword index check (doctor/checks/rust-derived-indexes.ts); the SQL
+      // engines keep no such index, so their doctor output has no row for it.
+      onlyRust: ['rust_derived_indexes'],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
       // child_table_orphans is gone from this list: countPageChildOrphans counts the orphan rows in the store.

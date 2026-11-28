@@ -396,8 +396,9 @@ mod tests {
         // - this module's open-time scan, the keyword index
         //   repair (`keyword/index_build.rs`, postings only) and the open-time repair of the
         //   derivation sweep records' source index (`page_body/purge_record.rs`, index keys only);
-        // - the keyword test modules (`index_build/tests.rs`, `index_writer/tests.rs`), which are
-        //   whole files under `#[cfg(test)]`;
+        // - the keyword test modules (`index_build/tests.rs`, `index_health/tests.rs`,
+        //   `index_writer/tests.rs`), which are whole files under `#[cfg(test)]` (`index_health`'s
+        //   damage the index of an in-memory store under no `Store`);
         // - `seed/v0_60_766_tests.rs`, a whole file under `#[cfg(test)]` that writes an older
         //   addon's records into an empty record file before any store opens it;
         // - `test_support.rs`'s `FaultyKv`, which wraps a record store in tests to make a write
@@ -407,6 +408,7 @@ mod tests {
             ("fjall_kv.rs", 1),
             ("keyword/index_build.rs", 1),
             ("keyword/index_build/tests.rs", 1),
+            ("keyword/index_health/tests.rs", 3),
             ("keyword/index_writer/tests.rs", 2),
             ("kv.rs", 5),
             ("lib.rs", 4),
