@@ -14,10 +14,12 @@ import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FollowChild, lostWriteRecorder, noteLostWrite, type FollowStore } from '../src/shadow/follow-child.ts';
+import * as followChild from '../src/shadow/follow-child.ts';
 import * as followStatus from '../src/shadow/follow-status.ts';
 import { appendPass, buildFollowStatus, readFollowerFile, readPasses } from '../src/shadow/follow-status.ts';
 import type { ReadSource } from '../src/shadow/read-pool.ts';
 import { ShadowFollower } from '../src/shadow/follower.ts';
+import { Reconciler } from '../src/shadow/reconcile.ts';
 import { confirmSeal, quietSince, sealMark } from '../src/shadow/seal.ts';
 import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
 import { SHADOW_STATE_VERSION, writeShadowState, type ShadowState } from '../src/shadow/state.ts';
@@ -594,6 +596,94 @@ describe('revokeSeal: the serving process saw a writer after it confirmed the se
     await s.ask('confirmSeal', { db_at: 'mark-1', ok: true });
     await s.ask('revokeSeal', { reason: 'not a code!' });
     expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'refused' });
+  });
+});
+
+/**
+ * confirmSeal against the real child. A failed RPC does not prove the child did not apply it (a timeout is not a
+ * cancellation, an acknowledgement can be lost), and a refused revoke send must not drop the revocation.
+ */
+describe('confirmSeal over the real child: an unacknowledged confirmation or revoke never leaves coverage valid', () => {
+  type Rpc = (method: string, args?: Record<string, unknown>) => Promise<unknown>;
+  async function takenOver(): Promise<{ dir: string; s: Session }> {
+    const { dir } = await sealed({ dbAt: mark });
+    writeFileSync(writerHooksManifestPath(dir), JSON.stringify({ version: 1, state: 'installed', at: 'x', tables: ['pages', 'tags'] }));
+    return { dir, s: next(dir) };
+  }
+  /** Reads that show the mark until `move()`, then a write to pages (a writer that committed in the meantime). */
+  const switchable = (): { move: () => void; reads: ReadSource } => {
+    let moved = false;
+    const quiet = fakeReads();
+    const after = fakeReads({ rels: [rel('pages', { ins: '6' }), RELS[1]!] });
+    return { move: () => { moved = true; }, reads: { pauseMs: 0, read: ((fn: never) => (moved ? after : quiet).read(fn)) as ReadSource['read'], close: async () => {} } };
+  };
+
+  test('the child applied ok:true but its acknowledgement was lost while a writer committed: the child does not stay valid, and status names why', async () => {
+    const { dir, s } = await takenOver();
+    const db = switchable();
+    const calls: string[] = [];
+    const rpc: Rpc = async (method, args) => {
+      calls.push(method);
+      const value = await s.ask(method, args ?? {});
+      if (method === 'confirmSeal') { db.move(); throw new Error('timeout'); } // applied in the child; the answer never came back
+      return value;
+    };
+    const result = await confirmSeal({ dir, reads: db.reads, postgres: true, rpc: rpc as never, revokeRetryMs: [0] } as never);
+    expect((await s.ask<State>('state')).valid).toBe(false);
+    expect(calls).toEqual(['state', 'confirmSeal', 'revokeSeal']);
+    expect(result).toEqual({ doubt: null }); // the revoke was acknowledged: nothing left in doubt
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'seal_confirm_unacknowledged' });
+    // Only a full pass that starts after the veto settles it.
+    expect(await s.ask('watermark', { valid: true, since: 6_000, relations: ['pages'] })).toMatchObject({ valid: false });
+    expect(await s.ask('watermark', { valid: true, since: Date.now() + 5_000 })).toMatchObject({ valid: true });
+  });
+
+  test('the second read fails and the first revoke send is refused: the revoke is retried once the transport is back, and validity stays blocked in between', async () => {
+    const { dir, s } = await takenOver();
+    const calls: string[] = [];
+    let refuse = 1;
+    let between: State | null = null;
+    const rpc: Rpc = async (method, args) => {
+      calls.push(method);
+      if (method === 'revokeSeal' && refuse-- > 0) throw new Error('child_unavailable'); // the send was refused: it never reached the child
+      if (method === 'revokeSeal') between = await s.ask<State>('state'); // what the child shows before the retry reaches it
+      return s.ask(method, args ?? {});
+    };
+    const result = await confirmSeal({ dir, reads: fakeReads({ failFrom: 1 }), postgres: true, rpc: rpc as never, revokeRetryMs: [0] } as never);
+    expect(calls).toEqual(['state', 'confirmSeal', 'revokeSeal', 'revokeSeal']);
+    expect(between).toMatchObject({ valid: false });
+    expect(result).toEqual({ doubt: null });
+    expect((await s.ask<State>('state')).valid).toBe(false);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'read_failed' });
+  });
+
+  test('when neither the veto line nor any revoke gets through, confirmSeal returns the doubt instead of resolving as settled', async () => {
+    const { dir, s } = await takenOver();
+    const spy = spyOn(followChild, 'noteLostWrite').mockImplementation(() => false);
+    const calls: string[] = [];
+    const rpc: Rpc = async (method, args) => {
+      calls.push(method);
+      if (method === 'revokeSeal') throw new Error('child_unavailable');
+      const value = await s.ask(method, args ?? {});
+      if (method === 'confirmSeal') throw new Error('timeout');
+      return value;
+    };
+    let result: unknown;
+    try { result = await confirmSeal({ dir, reads: fakeReads(), postgres: true, rpc: rpc as never, revokeRetryMs: [0, 0] } as never); } finally { spy.mockRestore(); }
+    expect(calls).toEqual(['state', 'confirmSeal', 'revokeSeal', 'revokeSeal', 'revokeSeal']);
+    expect(result).toEqual({ doubt: 'seal_confirm_unacknowledged' });
+  });
+
+  test('the first check runs a full pass when the confirmation is left in doubt, though the child says valid and the last full pass is recent', async () => {
+    for (const doubt of [null, 'seal_confirm_unacknowledged']) {
+      const dir = tmp();
+      const now = new Date().toISOString();
+      appendPass(dir, { id: 'p-recent', kind: 'full', started_at: now, finished_at: now, repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0 });
+      const r = new Reconciler({ dir, reads: fakeReads(), rpc: (async (m: string) => (m === 'state' ? { valid: true, through: now, invalidated_reason: null, continuity: 'c' } : {})) as never, ready: (async () => ({ doubt })) as never });
+      const run = spyOn(r, 'run').mockImplementation(async () => ({}) as never);
+      await (r as unknown as { firstRun: () => Promise<void> }).firstRun();
+      expect(run.mock.calls.length).toBe(doubt ? 1 : 0);
+    }
   });
 });
 
