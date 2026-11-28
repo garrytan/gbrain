@@ -233,8 +233,8 @@ impl Store {
         Ok(Some(json!({
             "row_num": n.row_num,
             "same_page": n.source_markdown_slug == o.source_markdown_slug,
-            "valid_from": iso(n.valid_from_us),
-            "old_from": iso(o.valid_from_us),
+            "valid_from": n.valid_from().map(iso),
+            "old_from": o.valid_from().map(iso),
             "old_until": o.valid_until_us.map(iso),
         })))
     }
@@ -364,7 +364,7 @@ impl Store {
                 "visibility": f.visibility,
                 "fact": f.fact,
                 "expired_at": f.expired_at_us.map(iso),
-                "valid_from": iso(f.valid_from_us),
+                "valid_from": f.valid_from().map(iso),
                 "valid_until": f.valid_until_us.map(iso),
                 "superseded_by": f.superseded_by,
                 "row_num": f.row_num,

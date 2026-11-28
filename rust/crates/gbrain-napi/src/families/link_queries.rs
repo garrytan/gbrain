@@ -358,16 +358,18 @@ impl Brain {
         })
     }
 
-    /// `wordLexemes(words)`: `[{ w, lexemes }]`.
+    /// `wordLexemes(words, config?)`: `[{ w, lexemes }]`; `config` is the text search
+    /// configuration (absent: `english`).
     #[napi]
     pub fn word_lexemes<'env>(
         &self,
         env: &'env Env,
         words: Option<Value>,
+        config: Option<String>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             let words: Vec<String> = arg(words, "wordLexemes words")?;
-            s.word_lexemes(&words)
+            s.word_lexemes(&words, config.as_deref())
         })
     }
 

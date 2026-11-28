@@ -30,6 +30,12 @@ export const DEFAULT_SHADOW_SAMPLE_RATE = 0.1;
 export const DEFAULT_SHADOW_WRITE_SAMPLE_RATE = 0.05;
 /** Default bound on queued mirror events in the serving process. */
 export const DEFAULT_SHADOW_QUEUE_BOUND = 256;
+/**
+ * The write sample rate of an opt-in shadow: a brain that can opt in to the swap (one without managed storage, D25)
+ * compares every write (D26, ask D), so criterion 5's bar is reachable inside the 5-day shadow. Each save is about 2x
+ * slower while it runs. Recorded in the state as `write_sample_rate`; the write comparison reads it.
+ */
+export const OPT_IN_WRITE_SAMPLE_RATE = 1;
 
 export interface ShadowState {
   version: number;
@@ -39,7 +45,8 @@ export interface ShadowState {
   /** ISO time `stop` ran, when it has. */
   stopped_at?: string;
   sample_rate: number;
-  /** Share of writes compared (`shadow.write_sample`). Absent in a state written before it existed: the default applies. */
+  /** Share of writes compared (`shadow.write_sample`). `start` sets OPT_IN_WRITE_SAMPLE_RATE on a brain that can opt in to
+   * the swap (no managed storage). Absent in a state written before it existed, or for any other brain: the default applies. */
   write_sample_rate?: number;
   queue_bound: number;
   /** The plan hash `start --yes --expect` confirmed. */
@@ -92,7 +99,9 @@ export function brainIdentity(config: Pick<EngineConfig, 'engine' | 'database_pa
       if (!config.database_path) return null;
       return { engine, identity: `pglite:${resolve(config.database_path)}` };
     case 'rust':
-      return null; // shadow mode follows a PGLite or Postgres brain; a Rust brain has no primary to mirror
+      // A Rust brain is its store directory, as a PGLite brain is its data directory.
+      if (!config.database_path) return null;
+      return { engine, identity: `rust:${resolve(config.database_path)}` };
     default: {
       const unreachable: never = engine;
       return unreachable;
@@ -162,3 +171,17 @@ export function shadowStateFor(config: EngineConfig): { dir: string; state: Shad
   const state = readShadowState(dir);
   return state?.enabled ? { dir, state } : null;
 }
+
+/** Wraps a worker engine of the same brain as a shadowed primary is wrapped (wrapper.ts `wrapShadowEngine` registers one per primary). */
+export type ShadowSiblingWrap = <E extends object>(worker: E) => E;
+const siblings = new WeakMap<object, ShadowSiblingWrap>();
+/** Records how to shadow a worker engine opened beside `primary` (a shadowed engine, or a view the engine factory puts over one). */
+export function registerShadowSibling(primary: object, wrap: ShadowSiblingWrap): void { siblings.set(primary, wrap); }
+/** How `primary`'s workers are shadowed; undefined when `primary` is not a shadowed engine. */
+export function shadowSiblingOf(primary: object): ShadowSiblingWrap | undefined { return siblings.get(primary); }
+/**
+ * A worker engine a bulk import opens beside its primary (sync/imports.ts, commands/import.ts), shadowed as the primary is: the same mirror,
+ * follower and writer observer, and a write sampler of its own that settles before the worker disconnects. `worker` itself when `primary` is
+ * not shadowed. Kept here because this is the one shadow module a process without shadow mode loads.
+ */
+export function wrapShadowSibling<E extends object>(primary: object, worker: E): E { return siblings.get(primary)?.(worker) ?? worker; }

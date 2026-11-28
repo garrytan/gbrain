@@ -38,9 +38,32 @@ import { compileRowNormalizer } from './normalize.ts';
 import { liveTilingSql, stagingNeedsTextSql, untiledSql } from '../page-body/schema.ts';
 import { DerivationWriteRefused, type SegmentDerivationInput, type SegmentDerivationKind, type SegmentDerivationRow, type SegmentDerivationState } from '../page-body/derivations.ts';
 import { RELEASE_STAGED_CTE } from '../persistence/limits.ts';
+import { NON_TEXT_FRONTMATTER_KEYS_SQL, textFrontmatterSql } from '../persistence/content-author-schema.ts';
 import { pageSearchVectorSql } from '../fts-language.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { overlayCanonicalBodies, readPageSnapshot } from '../page-state/snapshot.ts';
+/**
+ * Segmented page storage (Wave B): one SQL implementation for both engines.
+ * Segment texts, the generation-ranged body manifest, staged chunk rows, the
+ * generation flip and garbage collection (docs: wave-b spec 1.2, 3.3-3.5, 4.2).
+ *
+ * Contracts the callers keep:
+ * - Every staged manifest row's `staging_id` names a row `openBodyStaging`
+ *   recorded; a staging is a GC root while it is open, sealed or prepared, or
+ *   while a non-terminal persistence request's `intent.body_ref` names it.
+ * - Manifest rows are staged before the chunk rows of their occurrences: a
+ *   staged chunk row no live staging's manifest row owns is garbage.
+ * - Insert-reference-before-GC: staging a text that already exists refreshes
+ *   its `created_at` under the row lock (a concurrent sweep skips the locked
+ *   row, then sees it inside the grace window), and the text sweep keeps every
+ *   text touched since the oldest live staging of its source opened, so a
+ *   text a preparation staged or deduped onto stays until its manifest row
+ *   references it, however long publication waits.
+ *
+ * Statement sizes stay bounded whatever the page size: texts by
+ * STAGE_BATCH_BYTES per engine, manifest and chunk rows by `jsonRowBatches`
+ * under the same byte bound; the flip touches O(changed rows).
+ */
 
 export const LIVE_STAGING_STATES = ['open', 'sealed', 'prepared'];
 const TERMINAL_STAGING_STATES = ['committed', 'aborted', 'expired'];
@@ -279,7 +302,7 @@ function metaParams(meta: SegmentedPageMeta) {
     effectiveDate: meta.effective_date ?? null, effectiveDateSource: meta.effective_date_source ?? null, importFilename: meta.import_filename ?? null,
     chunkerVersion: meta.chunker_version === undefined || meta.chunker_version === null ? null : Math.min(meta.chunker_version, SAFE_FENCE_CHUNKER_VERSION - 1),
     sourcePath: meta.source_path ?? null, sourceKind: meta.source_kind ?? null, sourceUri: meta.source_uri ?? null, ingestedVia: meta.ingested_via ?? null,
-    ingestedAt: ingested ? new Date() : null,
+    ingestedAt: ingested ? sqlFragment`now()` : null, contentAuthor: meta.content_author ?? null,
   };
 }
 
@@ -360,7 +383,12 @@ export async function flipBodyGeneration(exec: SqlExecutor, input: BodyFlipInput
         chunker_version = COALESCE(${m.chunkerVersion}::smallint, chunker_version),
         source_path = COALESCE(${m.sourcePath}::text, source_path), source_kind = COALESCE(${m.sourceKind}::text, source_kind),
         source_uri = COALESCE(${m.sourceUri}::text, source_uri), ingested_via = COALESCE(${m.ingestedVia}::text, ingested_via),
-        ingested_at = COALESCE(${m.ingestedAt}::timestamptz, ingested_at)
+        ingested_at = COALESCE(${m.ingestedAt}::timestamptz, ingested_at),
+        content_author = CASE WHEN ${input.textUnchanged === true}::boolean
+            AND (type, title, ${trustedSql(textFrontmatterSql('frontmatter'))}) IS NOT DISTINCT FROM (${input.meta.type}::text, ${m.title}::text,
+              CASE WHEN jsonb_typeof(${m.frontmatter}::jsonb) = 'object' THEN ${m.frontmatter}::jsonb - ${trustedSql(NON_TEXT_FRONTMATTER_KEYS_SQL)} ELSE ${m.frontmatter}::jsonb END)
+          THEN CASE WHEN content_author_hash = content_hash THEN content_author END ELSE ${m.contentAuthor}::text END,
+        content_author_hash = NULL
       WHERE id = ${input.pageId}`);
     // GST-1209: the generation this flip made live must tile the body it recorded, as every reader checks it; rows the
     // write staged that went missing would otherwise commit a body nothing can read.

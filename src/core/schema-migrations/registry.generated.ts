@@ -338,10 +338,16 @@ import { v334 } from './v334-learning-items.ts';
 import { v335 } from './v335-pages-spelling-key-index.ts';
 import { v336 } from './v336-files-follow-page-slug.ts';
 import { v337 } from './v337-write-gate-hold-rechecks.ts';
-import { v338 } from './v338-byte-order-slug-indexes.ts';
-import { v339 } from './v339-projection-jobs-byte-order-index.ts';
-import { v340 } from './v340-pages-projection-waiting-haystack-trgm.ts';
-import { v341 } from './v341-fact-fingerprint-v3.ts';
+import { v338 } from './v338-oauth-refresh-rotations.ts';
+import { v339 } from './v339-facts-valid-from-nullable.ts';
+import { v340 } from './v340-engine-writer-observations-write-protocol.ts';
+import { v341 } from './v341-atom-scan-input-digest.ts';
+import { v342 } from './v342-content-author-attribution.ts';
+import { v343 } from './v343-content-author-backfill.ts';
+import { v350 } from './v350-byte-order-slug-indexes.ts';
+import { v351 } from './v351-projection-jobs-byte-order-index.ts';
+import { v352 } from './v352-pages-projection-waiting-haystack-trgm.ts';
+import { v353 } from './v353-fact-fingerprint-v3.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -682,4 +688,10 @@ export const MIGRATIONS: Migration[] = [
   v339,
   v340,
   v341,
+  v342,
+  v343,
+  v350,
+  v351,
+  v352,
+  v353,
 ];

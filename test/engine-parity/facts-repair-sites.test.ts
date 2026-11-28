@@ -395,7 +395,7 @@ describe('engine parity: facts repair, doctor and trust statements that left exe
     const same = await engine.readSupersessionReplacement(replacement, old);
     const other = await engine.readSupersessionReplacement(elsewhere, old);
     const missing = await engine.readSupersessionReplacement(999_999, old);
-    const view = (r: typeof same) => r ? { same_page: r.same_page, fenced: r.row_num !== null, ordered: new Date(r.valid_from).getTime() >= new Date(r.old_from).getTime(), open: r.old_until === null } : null;
+    const view = (r: typeof same) => r ? { same_page: r.same_page, fenced: r.row_num !== null, ordered: new Date(r.valid_from!).getTime() >= new Date(r.old_from!).getTime(), open: r.old_until === null } : null;
     expect({ same: view(same), other: view(other), missing: view(missing) }).toEqual({
       same: { same_page: true, fenced: true, ordered: true, open: true }, other: { same_page: false, fenced: true, ordered: true, open: true }, missing: null });
     await engine.linkSupersededFact(old, replacement);

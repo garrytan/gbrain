@@ -132,6 +132,10 @@ const JSON_ROWS: Record<string, JsonRow> = {
   setup: { ok: ['setup', 'claude-code', '--dry-run', '--json', '--gbrain-bin', process.execPath], fail: ['setup', 'codex', '--json'], okOnEmpty: true },
   // Spring-loaded skills: the catalog listing reads the binary only; an unknown skill name is a skill_not_found envelope.
   'bundled-skill': { ok: ['bundled-skill', '--json'], fail: ['bundled-skill', 'definitely-not-a-skill', '--json'], okOnEmpty: true },
+  // Roadmap PR 3: the value card on the fixture brain; with no brain it is a no_brain envelope.
+  value: { ok: ['value', '--json'], fail: ['value', '--json'] },
+  // Opt-in telemetry: status reads local settings only; with no telemetry address the pulse is a telemetry_pulse_unavailable envelope.
+  telemetry: { ok: ['telemetry', '--json'], fail: ['telemetry', 'pulse', '--json'], okOnEmpty: true },
 };
 
 function parsedShape(mode: 'document' | 'ndjson', stdout: string): unknown[] {

@@ -36,6 +36,11 @@ it. The exact wording is
 Nothing ever becomes "confirmed by you" without you typing a confirmation
 token at a terminal on the brain host. `--yes` never confirms.
 
+A correction you give an agent can be saved as a standing rule with `correct`
+(see [standing rules](standing-rules.md)). The rule reads "you told your
+agent this" and reaches every session only after you approve its exact
+revision at your own terminal; it never raises any page's or fact's trust tier.
+
 ## What you get by default
 
 - **Labels on everything.** Every item an agent reads back (search, recall,
@@ -299,7 +304,9 @@ could be lifted to "your notes" by an earlier claim (#6533).
 whose own signals now say lower, and `gbrain trust claim-sources --relower`
 lowers them. It only lowers: it never raises a row, it touches only rows with
 `write_origin.channel = "trust_claim"`, rows on a lowered page follow it, and
-each lowered row records `write_origin.channel = "trust_relower"`.
+each lowered row records `write_origin.channel = "trust_relower"`. It leaves
+alone a row you confirmed or lowered with `gbrain trust confirm` or `lower`,
+and the facts on a page you confirmed.
 
 Legacy Life Chronicle event pages (`captured_via: life-chronicle:auto`) are
 model summaries of another page (#9284). A claim caps them at "written by an

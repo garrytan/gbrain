@@ -53,6 +53,7 @@ src/commands/doctor/remediate.ts	kind_compare	1
 src/commands/doctor/report-remote.ts	kind_compare	2
 src/commands/embeddings.ts	kind_compare	2
 src/commands/engine-status.ts	kind_compare	6
+src/commands/engine-swap-failback.ts	kind_compare	1	the swap record names the old engine; failback checks other users of a Postgres primary by pg_stat_activity and of a PGLite primary by its lock holder
 src/commands/enrich.ts	kind_compare	1
 src/commands/extract-attendance-repair.ts	kind_compare	3
 src/commands/git.ts	kind_compare	1	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
@@ -118,6 +119,7 @@ src/core/embedding-ann-build.ts	kind_compare	1
 src/core/embedding-dim-check.ts	kind_compare	2
 src/core/engine-connect.ts	kind_compare	1
 src/core/engine-open.ts	kind_compare	4
+src/core/engine-swap/collation-report.ts	kind_compare	1	the swap report names lists whose order changes only for a Postgres source; PGLite and Rust both sort text in byte order
 src/core/facts/drain-scheduler.ts	kind_compare	2
 src/core/facts/drain.ts	kind_compare	2
 src/core/facts/fts-index.ts	kind_compare	1
@@ -219,3 +221,4 @@ src/core/vector-index.ts	kind_compare	5
 src/core/vector-prewarm.ts	kind_compare	2
 src/mcp/resolve-ipc-binding.ts	kind_compare	1
 src/mcp/status-mode.ts	kind_compare	1
+src/core/telemetry/client.ts	kind_compare	2	opt-in telemetry's deployment label (deploymentOf): it names the engine for the report and sends 'unknown' for any other kind, so a third engine never falls into a pglite or postgres branch

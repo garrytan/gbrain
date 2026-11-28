@@ -110,6 +110,7 @@ mod purge_effects;
 mod receipt_compaction;
 mod receipt_list;
 mod retained_sources;
+mod retention_purge;
 mod sync_conversions;
 mod sync_orphan_reads;
 mod sync_pass_pages;
@@ -122,6 +123,11 @@ mod worktree_admission;
 mod worktree_claim_tests;
 mod worktree_rows;
 mod worktrees;
+
+/// Whether the source holds a worktree binding at its current incarnation (the doctor's `bound`).
+pub(crate) fn is_source_claimed(read: &dyn KvRead, source_id: &str) -> Result<bool> {
+    worktrees::is_source_claimed_in(read, source_id)
+}
 mod write_claim_terms;
 mod writer_status;
 mod writer_status_queue;
@@ -149,6 +155,7 @@ pub use notifier::{
 pub use op_checkpoint::AtomGenerationBump;
 pub use topology_store::{TopologyRead, TopologyWrite};
 mod trust_scan_cursor;
+mod upkeep;
 
 pub(crate) use op_checkpoint::{
     delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,
@@ -171,6 +178,9 @@ pub use purge_effects::{
     GitEffectsCarryingArgs, PageGitEffectsArgs, PurgeEffectDataArgs, PurgeGitEffectRow,
 };
 pub use receipt_list::{IncarnationRequestFilter, WriteRequestListFilter};
+pub use retention_purge::{
+    ExpiringOrigin, ManagedPurgeCandidate, PurgeFailureRow, ReleasedPurgeOrigin,
+};
 pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
 pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;

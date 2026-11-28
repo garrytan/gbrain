@@ -35,6 +35,7 @@ import { resolveStrictEntityReference } from '../entities/resolve.ts';
 import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
 import { RELINK_OPERATION } from '../facts/relink-publish.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 import { coordinatedDatabaseWrite } from '../persistence/database-write.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
@@ -126,7 +127,8 @@ export const factsRehomeRepair: RepairHandler = {
       if (!state || state.from_live || !state.to_live || JSON.stringify((state.ids ?? []).map(Number)) !== JSON.stringify(entity.ids)) return false;
       await dropRekeyDuplicates(tx, entity.source_id, { where: 'f.entity_slug = $2 AND f.row_num IS NULL', entity: '$3::text', sms: 'f.source_markdown_slug',
         params: [entity.slug, target] });
-      await tx.rehomeEntityFacts(entity.source_id, entity.slug, target);
+      // #10003: the facts move to another key with their text unchanged, so they keep their stored trust tier.
+      await withTrustKeep(tx, ['facts'], () => tx.rehomeEntityFacts(entity.source_id, entity.slug, target));
       return true;
     };
     const managed = await coordinatedDatabaseWrite({ ...ctx, sourceId: entity.source_id }, RELINK_OPERATION, target, [entity.slug, target], tx => move(tx));

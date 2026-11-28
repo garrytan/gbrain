@@ -99,6 +99,8 @@ type StreamedImportOptions = {
   firstCommitAt?: Date;
   /** GBRA-217: a sync import's reason from Git and history-gap marker for the snapshot this import archives. */
   history?: import('../page-state/versions.ts').VersionHistory;
+  /** GST-4056: the channel of this write, stored as the page's content author; default the content's own `ingested_via`. */
+  content_author?: string | null;
   /**
    * A page write of the file's content (`gbrain put|capture --file` on the trusted local CLI), not a file import: the
    * file records no origin (no source_path or file source_uri), no other file's slug claim applies, the staging is a
@@ -406,6 +408,7 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   if (parsed.type === 'household' || (existing && !existing.deleted_at && existing.type === 'household') || parsed.frontmatter.household_role !== undefined || existing?.frontmatter?.household_role !== undefined) {
     return hold(slug, size, 'household write admission reads the stored page and the whole incoming one');
   }
+  if (parsed.type === 'rule' || (existing && !existing.deleted_at && existing.type === 'rule')) return hold(slug, size, 'standing rule admission reads the stored page and the whole incoming one');
   const typeClass = parsed.typeExplicit === true && opts.activePack ? classifyStoredType(parsed.type, opts.activePack) : null;
   const typeWarning = typeClass?.kind === 'alias_of' ? { kind: 'alias_of' as const, type: parsed.type, canonical: typeClass.canonical, directory: typeClass.directory }
     : typeClass?.kind === 'undeclared' ? { kind: 'undeclared' as const, type: parsed.type } : undefined;
@@ -466,7 +469,8 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   const meta = { type: parsed.type, title: parsed.title, frontmatter: parsed.frontmatter as JsonObject, page_kind: 'markdown' as const,
     effective_date: effectiveDate, effective_date_source: effectiveDateSource, import_filename: filename,
     ...(opts.content ? { source_path: null, source_kind: null, source_uri: null, ingested_via: null, ...opts.content.provenance }
-      : { source_path: relativePath, source_kind: null, source_uri: fileOriginUri(existing?.source_uri, sourceRoot, relativePath), ingested_via: null }) };
+      : { source_path: relativePath, source_kind: null, source_uri: fileOriginUri(existing?.source_uri, sourceRoot, relativePath), ingested_via: null }),
+    content_author: opts.content_author !== undefined ? opts.content_author : opts.content?.provenance?.ingested_via ?? null };
   const refs = prepared.body.body_flags.has_protected ? [] : [...codeRefs.refs.values()];
   const apply = async (tx: BrainEngine, preimage?: PageSnapshot | null) => {
     if (existing) await tx.createVersion(slug, preimage ? { sourceId, ...opts.history, preimage } : { sourceId, ...opts.history });

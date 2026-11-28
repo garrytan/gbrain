@@ -28,7 +28,7 @@ export const PROPOSAL_LINK_SOURCE = 'qm-proposal';
 /** How soon a proposer polls an awaiting_owner proposal (or its expiry, when sooner). */
 export const PROPOSAL_RETRY_AFTER_MS = 300_000;
 /** Approval checks whose refusal closes a proposal: failed (the person or the grant) and conflict (the target moved). */
-const FAILED_CODES = new Set(['actor_unlinked', 'actor_not_attested', 'permission_denied', 'page_not_found', 'source_changed']);
+const FAILED_CODES = new Set(['actor_unlinked', 'actor_not_attested', 'permission_denied', 'page_not_found', 'source_changed', 'secret_in_write']);
 /** Upkeep closes an awaiting proposal failed on these (permission_denied is run-scoped to ItemRun, so it is decided first); any other error is one row's. */
 const UPKEEP_CLOSE_CODES = new Set(['actor_unlinked', 'actor_not_attested', 'permission_denied']);
 
@@ -274,7 +274,7 @@ async function prepareApproval(ctx: OperationContext, row: MemoryProposal): Prom
 }
 
 /** OV3: a proposed link's target exists in the source and the person it was proposed for may still read it. */
-export async function linkTargetReadable(engine: SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'hasLabelledOnlyMember' | 'hasLabelledOnlyMemberAmong' | 'getConfig' | 'readLinkedMember' | 'readPageSnapshot' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readPagePrivacyHidden' | 'readLinkTargetPages' | 'readAccessTokenAttest' | 'readOauthClientAttest'>, authority: WriteAuthority, sourceId: string, slug: string): Promise<boolean> {
+export async function linkTargetReadable(engine: SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'hasLabelledOnlyMember' | 'hasLabelledOnlyMemberAmong' | 'getConfig' | 'getConfigValues' | 'readLinkedMember' | 'readPageSnapshot' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readPagePrivacyHidden' | 'readLinkTargetPages' | 'readPageHiddenFromWriter' | 'readAccessTokenAttest' | 'readOauthClientAttest'>, authority: WriteAuthority, sourceId: string, slug: string): Promise<boolean> {
   const target = await engine.readPageSnapshot(slug, { sourceId });
   if (!target || target.page.deleted_at) return false;
   const { authorizePageVisibility } = await import('./page-visibility.ts');

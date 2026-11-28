@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 330442,
-    "stdoutSha256": "93694bea2273151eb4455b991d134f4dd84d26483b1d69518ee5c97fbe851c77",
+    "stdoutBytes": 336173,
+    "stdoutSha256": "16b97302f64d2b48eaba0eb5b2909720a5549e3acd315dd7ae560f39be62939d",
     "toolNames": [
       "remember",
       "entity",
@@ -101,6 +101,7 @@
       "storage_update",
       "reveal_secret",
       "check_claims",
+      "correct",
       "policy_check",
       "agent_policy",
       "capabilities",
@@ -225,7 +226,9 @@
       "learned_keep",
       "learned_undo",
       "onboarding_status",
-      "onboarding_off"
+      "onboarding_off",
+      "propose_jobs",
+      "propose_decide"
     ],
     "tools": [
       {
@@ -4835,6 +4838,114 @@
         "scope": "read"
       },
       {
+        "description": "Only when the user corrects a wrong fact or asks for a standing rule: saves the rule and replaces fact_id with corrected_fact (or withdraws it); over MCP it often waits for owner approval first. Anything else to save: call remember. Branch on state and next.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "correct",
+        "parameters": {
+          "checks": "array?",
+          "content_origin": "string?",
+          "corrected_fact": "string?",
+          "entity": "string?",
+          "fact_id": "string?",
+          "provenance": "string?",
+          "receipt_id": "string?",
+          "request_id": "string?",
+          "resume": "boolean?",
+          "rule": "string?",
+          "scope": "string?",
+          "source_id": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "checks": {
+              "description": "Regression checks for gbrain rules check: [{question, expect[], reject[]}].",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "expect": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "question": {
+                    "type": "string"
+                  },
+                  "reject": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "content_origin": {
+              "description": "user_said only; tool_output and inferred are refused.",
+              "enum": [
+                "user_said",
+                "tool_output",
+                "inferred"
+              ],
+              "type": "string"
+            },
+            "corrected_fact": {
+              "description": "The right fact.",
+              "type": "string"
+            },
+            "entity": {
+              "description": "Subject slug.",
+              "type": "string"
+            },
+            "fact_id": {
+              "description": "The wrong fact.",
+              "type": "string"
+            },
+            "provenance": {
+              "description": "Where the user said it.",
+              "type": "string"
+            },
+            "receipt_id": {
+              "description": "Alone: that receipt's status.",
+              "type": "string"
+            },
+            "request_id": {
+              "description": "Reuse only to retry.",
+              "type": "string"
+            },
+            "resume": {
+              "description": "With receipt_id: run the steps not yet committed.",
+              "type": "boolean"
+            },
+            "rule": {
+              "description": "The rule, in the user's words.",
+              "type": "string"
+            },
+            "scope": {
+              "description": "me (default) or team.",
+              "enum": [
+                "me",
+                "team"
+              ],
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Write source.",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
         "description": "Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. Advisory: allow, ask, deny or none (no policy), with requires_approval and any day, week or month budget left. To hold budget for a spend, call policy_reserve instead.",
         "idempotent": true,
         "local_only": false,
@@ -5320,7 +5431,7 @@
         "scope": "admin"
       },
       {
-        "description": "Get job status and details by ID. Agent-scoped tokens (no admin) see only jobs they own.",
+        "description": "Get job status and details by ID. Remote callers see only the jobs they submitted, unless bound to the brain owner.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5344,7 +5455,7 @@
         "scope": "admin"
       },
       {
-        "description": "Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Agent-scoped tokens (no admin) wait only on jobs they own.",
+        "description": "Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Remote callers wait only on the jobs they submitted, unless bound to the brain owner.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5373,7 +5484,7 @@
         "scope": "admin"
       },
       {
-        "description": "List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope (agent-scoped tokens see only jobs they own).",
+        "description": "List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope; remote callers (agent-scoped tokens too) see only the jobs they submitted, unless bound to the brain owner.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5476,7 +5587,7 @@
         "scope": "admin"
       },
       {
-        "description": "Get structured progress for a running job. Agent-scoped tokens (no admin) see only jobs they own.",
+        "description": "Get structured progress for a running job. Remote callers see only the jobs they submitted, unless bound to the brain owner.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5718,7 +5829,7 @@
         "scope": "admin"
       },
       {
-        "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.",
+        "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Remote callers watch only the jobs they submitted, unless bound to the brain owner. If no wake arrives, call wait_job.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -7826,7 +7937,7 @@
               "type": "string"
             },
             "valid_from": {
-              "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Default: now().",
+              "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Omitted: the event date stays unknown.",
               "type": "string"
             },
             "visibility": {
@@ -7854,6 +7965,7 @@
           "grep": "string?",
           "include_expired": "boolean?",
           "include_pending": "boolean?",
+          "include_undated": "boolean?",
           "limit": "number?",
           "max_chars": "integer?",
           "min_trust": "string?",
@@ -7898,6 +8010,10 @@
               "description": "Pending count.",
               "type": "boolean"
             },
+            "include_undated": {
+              "description": "With since: also facts with no event date saved inside the window.",
+              "type": "boolean"
+            },
             "limit": {
               "description": "Per-arm max (default 50, cap 100).",
               "type": "number"
@@ -7919,7 +8035,7 @@
               "type": "string"
             },
             "query": {
-              "description": "Also search pages (results[]).",
+              "description": "Search pages and rank facts.",
               "type": "string"
             },
             "question": {
@@ -7983,6 +8099,7 @@
           "entity_refs": "array?",
           "include_private": "boolean?",
           "include_quarantined": "boolean?",
+          "include_rules": "boolean?",
           "intent": "string?",
           "min_trust": "string?",
           "prefer_source_id": "string?",
@@ -8029,6 +8146,10 @@
             },
             "include_quarantined": {
               "description": "Admin or memory_confirm: quarantined cards.",
+              "type": "boolean"
+            },
+            "include_rules": {
+              "description": "true: add your confirmed standing rules (rules field).",
               "type": "boolean"
             },
             "intent": {
@@ -10295,6 +10416,69 @@
         "schema": {
           "properties": {},
           "required": [],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Jobs your agent could take on, found in data already in the brain with no model call: people waiting on the user, threads they owe a reply, recurring meetings with no prep page, bulk senders they never wrote to, and the same question asked in two agents. Each job has a count, the pages it rests on, a sentence, and the installed skill or gbrain command that does it. The owner only. Offer one job at a time; propose_decide records the user's yes or no.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "propose_jobs",
+        "parameters": {
+          "days": "number?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "days": {
+              "description": "How many days back to look (1-90, default 7).",
+              "type": "number"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Record the user's answer to one proposed job (the owner only): accepted or declined, by signal. A declined job is not offered again at session start. Writes only the first-session record, then reads it back: say it was recorded only when verified is true.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "propose_decide",
+        "parameters": {
+          "decision": "string",
+          "signal": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "decision": {
+              "description": "The user's answer.",
+              "enum": [
+                "accepted",
+                "declined"
+              ],
+              "type": "string"
+            },
+            "signal": {
+              "description": "The job's signal, as propose_jobs returns it.",
+              "enum": [
+                "waiting_on_you",
+                "owe_reply",
+                "meeting_prep",
+                "repeat_question",
+                "bulk_senders"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "signal",
+            "decision"
+          ],
           "type": "object"
         },
         "scope": "write"

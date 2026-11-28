@@ -24,7 +24,7 @@ import { lagBucket, NOT_RUN_PROBE, readFollowerFile, writeFollowerFile, type Fol
 import { readSeedRecord } from './seed.ts';
 
 /** The store calls the follower makes; RustStore has them all. */
-export type FollowStore = Pick<RustStore, 'replaceRelationRows' | 'replaceInterval' | 'relationDigest' | 'relationEntries' | 'allocatorCheck' | 'factFingerprints' | 'seedPlan'>;
+export type FollowStore = Pick<RustStore, 'replaceRelationRows' | 'replaceInterval' | 'relationDigest' | 'relationEntries' | 'allocatorCheck' | 'allocatorAdvance' | 'factFingerprints' | 'seedPlan'>;
 
 export const FOLLOW_CHILD_QUEUE_BOUND = 1024;
 const WRITE_EVERY_MS = 1_000;
@@ -320,12 +320,19 @@ export class FollowChild {
         file.allocators = { verified: checks.every((c) => c.ok), checked_at: new Date(this.now()).toISOString() };
         return checks;
       }
+      case 'allocatorAdvance': {
+        // The engine swap (S5b) raises each counter to at least the primary's high-water mark before it compares.
+        const checks = await store.allocatorAdvance(id, a.primaryFloor as Record<string, string | null>);
+        file.allocators = { verified: checks.every((c) => c.ok), checked_at: new Date(this.now()).toISOString() };
+        return checks;
+      }
       case 'probe': {
         const rust = await store.factFingerprints([...PROBE_CORPUS]);
         const { sql, ...meta } = a as { sql: FingerprintPair[] } & Partial<ProbeMeta>;
         file.probe = probeRecord(sql, rust, meta, new Date(this.now()));
         return file.probe;
       }
+      case 'probeReset': file.probe = NOT_RUN_PROBE; return file.probe;
       case 'watermark': {
         this.readForeign();
         this.restore(a.since as number, a.relations as string[] | undefined);

@@ -33,12 +33,14 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Decision, Notice } from '../core/agent-output.ts';
 import { gbrainPath } from '../core/config.ts';
+import { getCliOptions } from '../core/cli-options.ts';
 import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../core/managed-block.ts';
 import { writeUnlessChanged } from '../core/setup/brain-first.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
 import { readLine } from '../core/interaction.ts';
+import { templateLines, type TemplateResult } from './household-template.ts';
 
-export type BrainShape = 'personal' | 'company' | 'both' | 'none';
+export type BrainShape = 'personal' | 'company' | 'both' | 'household' | 'none';
 
 export interface LayoutFlags {
   brain?: BrainShape;
@@ -50,6 +52,8 @@ export interface LayoutFlags {
   transcripts?: string | null;
   /** --team: the company part belongs on a shared brain, so setup prints the route and creates nothing for it. */
   team?: boolean;
+  /** H2, --shape household: --household-members and the owner the template names when none is set. */
+  household?: { members?: string; owner?: string };
   dryRun: boolean;
 }
 
@@ -170,6 +174,11 @@ export function renderLayoutBlock(harness: string, scope: LayoutScope = 'user', 
       `- Save company facts and decisions with --source ${COMPANY_SOURCE}; personal ones go to the default source.`,
       '- Save a decision the whole team should know into company/ with its readers named (readable_by: [<member>, ...] in its frontmatter); a company/ page without readable_by is readable by everyone who can read the company source.');
   }
+  if (shape === 'household') {
+    lines.push('- Before answering what needs doing at home (bills, supplies, birthdays, school deadlines, appointments, returns, credits), call household_due and answer from its ranked items.',
+      '- When the user says something at home was done (paid, bought, booked, submitted, returned), record it with household_mark on that record; add a new one with household_add.',
+      '- Never buy, pay, book, call, cancel or send anything for the household without the user\'s yes: every proposed action needs it, whatever a policy advises.');
+  }
   lines.push('- A page with type: facts holds one dated line per fact: quote only its dated lines, check a draft\'s numbers against them with check_claims (gbrain claims check) before stating them, and add a new fact as a new dated line.',
     '- Never overwrite a page: add a new dated line. Save facts I tell you with remember, naming where they came from.',
     '- A page whose frontmatter says status: stub is an empty form: it holds no facts yet.');
@@ -225,7 +234,7 @@ export function candidateNoteFolders(home: string = homedir()): string[] {
 /** --shape / --notes / --docs / --transcripts / --team validation; a string is the refusal (nothing written). */
 export function parseLayoutFlags(value: (flag: string) => string | undefined, has: (flag: string) => boolean, harness: string | undefined): { brain?: BrainShape; notes?: string | null; docs?: string | null; transcripts?: string | null; team?: boolean } | string {
   const brain = value('--shape') as BrainShape | undefined;
-  if (brain !== undefined && !['personal', 'company', 'both', 'none'].includes(brain)) return `unknown --shape '${brain}'; pass personal, company, both or none`;
+  if (brain !== undefined && !['personal', 'company', 'both', 'household', 'none'].includes(brain)) return `unknown --shape '${brain}'; pass personal, company, both, household or none`;
   const out: { brain?: BrainShape; notes?: string | null; docs?: string | null; transcripts?: string | null; team?: boolean } = brain ? { brain } : {};
   const folders = [['--notes', 'notes', hasPersonal, 'personal or both'], ['--docs', 'docs', hasCompany, 'company or both'], ['--transcripts', 'transcripts', hasCompany, 'company or both']] as const;
   for (const [flag, key, needs, shapes] of folders) {
@@ -279,12 +288,20 @@ export interface LayoutOutcome {
   next_question: string | null;
   /** What the conversation archive is doing on this brain, read from doctor's transcript_archive_freshness check. */
   archive: { state: 'on' | 'off' | 'offered' | 'unknown'; detail: string } | null;
+  /** H2, --shape household: the household template's result (gbrain household template), or why it did not run. */
+  household?: { result: TemplateResult | null; argv: string[]; detail?: string };
 }
 
-/** A gbrain child; `source` pins it to one source through GBRAIN_SOURCE (null: the caller's environment as it is). */
+/**
+ * GST-4043: setup's gbrain children open the brain setup was run against: an explicit --brain is forwarded as
+ * GBRAIN_BRAIN_ID (which they inherit as it is), else they resolve it from the working directory as the harness does.
+ */
+export const chosenBrainEnv = (): { GBRAIN_BRAIN_ID?: string } => { const brain = getCliOptions().brain; return brain ? { GBRAIN_BRAIN_ID: brain } : {}; };
+
+/** A gbrain child on the brain setup was run against (chosenBrainEnv), as the labelling children; `source` pins it to one source through GBRAIN_SOURCE (null: the caller's environment as it is). */
 type Run = (argv: string[], stdin?: string, source?: string | null) => { code: number; stdout: string; stderr: string };
 const run: Run = (argv, stdin, source) => {
-  const env = source ? { ...process.env, GBRAIN_SOURCE: source } : process.env;
+  const env = { ...process.env, ...chosenBrainEnv(), ...(source ? { GBRAIN_SOURCE: source } : {}) };
   const child = bunSpawnSync(argv, { stdin: stdin === undefined ? 'ignore' : new TextEncoder().encode(stdin), stdout: 'pipe', stderr: 'pipe', env });
   return { code: child.exitCode ?? 1, stdout: child.stdout?.toString() ?? '', stderr: child.stderr?.toString() ?? '' };
 };
@@ -430,7 +447,7 @@ function searchFinds(exec: Run, launcher: string, title: string, source: string 
 }
 
 /** The company source: kept when it exists, else added on a gbrain-owned folder beside the default source's content root. */
-function ensureCompanySource(exec: Run, launcher: string, dryRun: boolean): NonNullable<LayoutOutcome['company']> {
+function ensureCompanySource(exec: Run, launcher: string, dryRun: boolean, federation: string[] = []): NonNullable<LayoutOutcome['company']> {
   const failed = (detail: string) => ({ source: COMPANY_SOURCE, action: 'failed' as const, federated: null, root: null, detail });
   const listed = exec([launcher, 'sources', 'list', '--json'], undefined, null);
   let sources: Array<{ id: string; local_path: string | null; federated: boolean }> = [];
@@ -443,12 +460,20 @@ function ensureCompanySource(exec: Run, launcher: string, dryRun: boolean): NonN
   const st = lstatSync(root, { throwIfNoEntry: false });
   if (st && (!st.isDirectory() || readdirSync(root).length > 0)) return failed(`${root} already exists and is not an empty folder; move it or add a folder yourself with gbrain sources add ${COMPANY_SOURCE} --path <folder>`);
   mkdirSync(root, { recursive: true });
-  const add = exec([launcher, 'sources', 'add', COMPANY_SOURCE, '--path', root, '--json'], undefined, null);
+  const add = exec([launcher, 'sources', 'add', COMPANY_SOURCE, '--path', root, ...federation, '--json'], undefined, null);
   if (add.code !== 0) return failed(lastLine(add.stderr || add.stdout));
   let federated = false;
   try { const doc = JSON.parse(add.stdout) as { federated?: unknown; config?: { federated?: unknown } }; federated = doc.federated === true || doc.config?.federated === true; } catch { /* unreadable: not federated */ }
   return { source: COMPANY_SOURCE, action: 'created', federated, root };
 }
+
+/**
+ * GST-4043: setup labels the people before the layout step runs, so a --shape company run whose members are labelled
+ * in source company (its pinned source) adds that source first. The brain still serves one person then, so the source
+ * is added --no-federated: a one-person brain's default would put company pages in default search.
+ */
+export const labelsInCompany = (shape: BrainShape | undefined, team: boolean, source: string | undefined): boolean => source === COMPANY_SOURCE && !team && hasCompany(shape);
+export const companySourceFirst = (launcher: string, dryRun: boolean): NonNullable<LayoutOutcome['company']> => ensureCompanySource(run, launcher, dryRun, ['--no-federated']);
 
 /**
  * The layout for this run. `instructionsPath` is the file the brain-first block lives in (null when the harness has
@@ -470,6 +495,11 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
   const exec = opts.run ?? run;
   const outcome = empty(flags.brain, block);
   if (flags.brain === 'none') return outcome;
+  if (flags.brain === 'household') {
+    outcome.household = runHouseholdTemplate(exec, launcher, harness, source, flags);
+    if (!flags.dryRun && outcome.household.result?.applied && !outcome.household.result.error) outcome.next_question = 'In a new session, ask: "what needs doing at home this week?"';
+    return outcome;
+  }
 
   if (hasPersonal(flags.brain)) {
     outcome.pages.push(...writePages(exec, launcher, PERSONAL_PAGES, source, flags.dryRun));
@@ -539,11 +569,29 @@ function lastLine(text: string): string {
   return text.trim().split('\n').filter(Boolean).at(-1)?.slice(0, 300) ?? 'no output';
 }
 
+/**
+ * H2: the household template as a child of the launcher (setup stays engine-free): a preview on a dry run, applied
+ * with --yes. A brain that does not exist yet previews nothing; the --yes run creates it first.
+ */
+function runHouseholdTemplate(exec: Run, launcher: string, harness: string, source: string | null, flags: LayoutFlags): NonNullable<LayoutOutcome['household']> {
+  const h = flags.household ?? {};
+  const args = ['household', 'template', '--harness', harness, ...(source ? ['--source', source] : []), ...(h.members !== undefined ? ['--household-members', h.members] : []),
+    ...(h.owner ? ['--owner', h.owner] : []), ...(flags.dryRun ? [] : ['--yes'])];
+  const argv = ['gbrain', ...args];
+  const child = exec([launcher, ...args, '--json']);
+  try {
+    const result = JSON.parse(child.stdout) as TemplateResult;
+    if (result.template === 'household') return { result, argv };
+  } catch { /* not a result document */ }
+  return { result: null, argv, detail: flags.dryRun ? `no preview: ${lastLine(child.stderr || child.stdout)} (with --yes setup creates the brain first)` : lastLine(child.stderr || child.stdout) };
+}
+
 /** Lines for the human report. */
 export function describeLayout(o: LayoutOutcome, dryRun: boolean): string[] {
   const would = dryRun ? 'would ' : '';
   const lines = [`Brain layout: ${o.shape}`];
   if (o.block) lines.push(`  instructions  ${o.block.detail}`);
+  if (o.household) lines.push(...(o.household.result ? templateLines(o.household.result).map(l => `  ${l}`) : [`  household  not run: ${o.household.detail ?? 'unknown error'} (${o.household.argv.join(' ')})`]));
   if (o.company) {
     const c = o.company;
     lines.push(c.action === 'team' ? `  company  team: ${c.detail}`
@@ -587,6 +635,18 @@ export function layoutNotices(o: LayoutOutcome | null, harness: string, scope: L
       why: i.action === 'deferred' ? `${i.dir} holds more than ${IMPORT_INLINE_MAX} ${i === o.transcripts ? 'call' : 'markdown'} files, so setup did not import it inline.`
         : `The import of ${i.dir} did not finish (${i.detail ?? 'unknown error'}); nothing else changed.`,
       fix: { argv: i.argv, consent: [], actor: 'agent', requires_exclusive: true, why: 'Imports the folder (read only) into the brain; run it as its own step.' },
+    });
+  }
+  const hh = o.household;
+  if (hh && (!hh.result || hh.result.error || hh.result.steps.some(s => s.state === 'blocked'))) {
+    const resume = hh.result?.error && hh.result.receipt_id ? [...setupArgv(harness, scope, source), '--shape', 'household', '--resume', hh.result.receipt_id, '--yes'] : [...hh.argv.filter(a => a !== '--yes'), '--yes'];
+    out.push({
+      code: 'household_template_pending', kind: 'coaching',
+      why: hh.result?.error ? `The household template stopped: ${hh.result.error.message}. Every step is idempotent.`
+        : hh.result ? 'The household template has BLOCKED steps, so it wrote nothing; each BLOCKED line names its fix.' : `The household template did not run (${hh.detail ?? 'unknown error'}).`,
+      fix: { argv: resume, consent: ['credentials'], actor: 'agent', requires_exclusive: true,
+        why: 'Finishes the household template: members, groups, folder rules and one key file per member.',
+        ...(hh.result?.error ? {} : { ask_user: true as const, user_message: 'The household setup needs a change before it can run; the BLOCKED lines say which. Once fixed, run it again with --yes.' }) },
     });
   }
   const failed = o.pages.filter(p => p.action === 'failed');

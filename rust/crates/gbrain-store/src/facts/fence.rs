@@ -191,7 +191,7 @@ fn preimage(row: &FactRecord) -> Value {
         "entity_slug": row.entity_slug,
         "source": row.source,
         "expired_at": opt_time(row.expired_at_us),
-        "valid_from": jsonb_time(row.valid_from_us),
+        "valid_from": row.valid_from().map(jsonb_time),
         "valid_until": opt_time(row.valid_until_us),
         "superseded_by": row.superseded_by,
         "consolidated_at": opt_time(row.consolidated_at_us),

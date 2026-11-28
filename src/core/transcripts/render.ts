@@ -367,8 +367,8 @@ function messageBlocks(anchor: string, text: string, maxBytes: number): string[]
  * cross-slug frontmatter-id match as a duplicate, so it must be
  * collision-proof across harnesses, days, and fallback session ids.
  */
-export function transcriptPartId(meta: Pick<ParsedSession['meta'], 'harness' | 'sessionId'>, part: number): string {
-  return `${meta.harness}-${transcriptFullId(meta.sessionId)}-p${part}`;
+export function transcriptPartId(meta: Pick<ParsedSession['meta'], 'harness' | 'sessionId'>, part: number, provider?: string): string {
+  return `${provider ?? meta.harness}-${transcriptFullId(meta.sessionId, provider)}-p${part}`;
 }
 
 /**
@@ -382,7 +382,7 @@ export function transcriptPartId(meta: Pick<ParsedSession['meta'], 'harness' | '
  */
 export function renderSessionParts(
   redacted: RedactedSession,
-  opts: { sourcePath: string; partTargetBytes?: number; layout?: TranscriptLayout; existing?: boolean; owner?: SpeakerOwnerStamp } = { sourcePath: '' },
+  opts: { sourcePath: string; partTargetBytes?: number; layout?: TranscriptLayout; existing?: boolean; owner?: SpeakerOwnerStamp; provider?: string } = { sourcePath: '' },
 ): RenderSessionResult {
   const partTargetBytes = opts.partTargetBytes ?? PART_TARGET_BYTES;
   if (!Number.isSafeInteger(partTargetBytes) || partTargetBytes <= 0) {
@@ -402,7 +402,7 @@ export function renderSessionParts(
   const baseSlug = buildTranscriptSlug(meta.harness, dateIso, {
     sessionId: meta.sessionId,
     title: meta.title,
-  });
+  }, opts.provider);
   // One or more rendered blocks per message: the whole message is escaped,
   // then split into continuation blocks (same anchor) when it cannot fit a part.
   let lastTs = firstTs;
@@ -436,7 +436,7 @@ export function renderSessionParts(
     throw new Error(`session ${meta.sessionId} renders ${groups.length} parts at ${partTargetBytes} bytes per part, over the ${TRANSCRIPT_MAX_PARTS}-part cap; nothing was written for it`);
   }
   const single = (opts.layout ?? 'single') === 'single' && groups.length === 1;
-  const title = meta.title?.trim() || `${meta.harness} session ${meta.sessionId.slice(0, 12)}`;
+  const title = meta.title?.trim() || `${opts.provider ?? meta.harness} session ${meta.sessionId.slice(0, 12)}`;
   const partTitle = (part: number): string => {
     const suffix = single ? '' : ` (part ${part})`;
     const cps = [...title];
@@ -447,7 +447,7 @@ export function renderSessionParts(
   const parts: RenderedPart[] = groups.map((group, idx) => {
     const part = idx + 1;
     const slug = part === 1 ? baseSlug : `${baseSlug}-p${part}`;
-    const frontmatterId = transcriptPartId(meta, part);
+    const frontmatterId = transcriptPartId(meta, part, opts.provider);
     const imperatives = single || !redacted.imperativeFlags
       ? imperativesFlagged
       : new Set(group.filter((b) => redacted.imperativeFlags![b.message]).map((b) => b.message)).size;
@@ -457,7 +457,8 @@ export function renderSessionParts(
       date: dateIso.slice(0, 10),
       id: frontmatterId,
       transcript_import: {
-        harness: meta.harness,
+        harness: opts.provider ?? meta.harness,
+        ...(opts.provider !== undefined ? { format: meta.harness } : {}),
         session_id: meta.sessionId,
         version: TRANSCRIPT_IMPORT_VERSION,
         part,
@@ -465,6 +466,7 @@ export function renderSessionParts(
         ...(imperatives > 0 ? { imperatives_flagged: imperatives } : {}),
       },
     };
+    if (opts.provider !== undefined) fm.trust_tier = 'external_untrusted';
     const owner = opts.owner && meta.ownerBasis ? speakerOwnerOf([...new Set(group.map((b) => b.message))].map((i) => messages[i]!), meta.ownerBasis, opts.owner.member) : null;
     if (owner) fm[SPEAKER_OWNER_KEY] = owner;
     const body = group.map((b) => b.text).join('\n\n');

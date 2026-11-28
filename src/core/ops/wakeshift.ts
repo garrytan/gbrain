@@ -68,7 +68,12 @@ export interface WatchPrincipal { kind: 'oauth_client' | 'legacy_token' | 'local
 
 /** A watch and its terms acceptance are keyed to the credential (principal, bound member), so an attested person (x-qm-actor) never runs one. */
 function refuseAttested(): void {
-  if (currentCallerAccess().actor) {
+  const { actor, audience } = currentCallerAccess();
+  if (!actor && audience?.length) {
+    throw opError('actor_not_attested', 'Wakeshift watches cannot run for an audience yet: a watch and its terms acceptance are kept to the credential, not the audience a call names, so one audience would see or end another\'s. Nothing was read or written.',
+      'Call it without an audience; for a job, call wait_job instead, and for a write, get_write_request.', { reason: 'audience_not_supported' });
+  }
+  if (actor) {
     throw opError('actor_not_attested', `Wakeshift watches cannot run as an attested person yet: a watch and its terms acceptance are kept to the credential, not the person ${ACTOR_HEADER} names, so one person would see or end another's. Nothing was read or written.`,
       `Call it without ${ACTOR_HEADER}; for a write, call get_write_request instead.`, { reason: 'op_not_attested' });
   }
@@ -196,7 +201,7 @@ const watch_job: Operation = {
   description: 'This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes '
     + '(completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn '
     + 'or keep working. The wake names the job and says to call get_job for the result; it carries no page text. '
-    + 'Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.',
+    + 'Remote callers watch only the jobs they submitted, unless bound to the brain owner. If no wake arrives, call wait_job.',
   params: {
     id: { type: 'number', required: true, description: 'Job ID (from submit_job, submit_agent or list_jobs).' },
     ...CALLER_PARAMS,

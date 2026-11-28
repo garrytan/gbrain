@@ -257,7 +257,7 @@ async function replayDraft(tx: BrainEngine, intent: PurgeMirrorIntent, lifetimes
   }
   const f = intent.facts[0]!;
   // The claim's subject, also when its history carries the other fingerprint form (legacy-fingerprint.ts): the intent's
-  // hash and the restored claims' current and pre-v341 fingerprints, the intent's own hash first.
+  // hash and the restored claims' current and pre-v353 fingerprints, the intent's own hash first.
   const legacy = claims.filter(mayHaveLegacyFingerprint);
   const [known] = await tx.executeRaw<{ subject_key: string; slug: string; page_lifetime: string | null }>(`SELECT subject_key, slug, page_lifetime::text AS page_lifetime
     FROM belief_events WHERE source_id = $1 AND subject_kind = 'fact' AND (claim_fp = $2${legacy.length ? ` OR claim_fp IN (SELECT gbrain_fact_fingerprint(c) FROM unnest($3::text[]) AS c

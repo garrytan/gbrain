@@ -48,6 +48,9 @@ const PEOPLE_BASE = 'https://people.googleapis.com/v1';
 
 const PAGINATION_CAP = 500;
 
+/** A paginated listing's bounds: `onCutShort` runs when a `partialOk` listing stops at `maxPages` with pages left. */
+export interface GmailListOptions { signal?: AbortSignal; maxPages?: number; partialOk?: boolean; onCutShort?: () => void }
+
 /** Retry budget for a 401 needing a token refresh-and-retry. */
 const DEFAULT_RETRIES = 2;
 
@@ -188,13 +191,14 @@ export class GoogleApiClient {
    * treat a truncated list as complete), or returns the partial batch when
    * `partialOk` is set (callers with their own resume cursor — the Gmail
    * backfill — make forward progress from whatever landed instead of
-   * wedging forever on a >cap window).
+   * wedging forever on a >cap window), calling `onCutShort` first so the
+   * caller can tell a partial batch from a complete one.
    */
   async drainPages<T>(
     build: (pageToken: string | null) => string,
     pick: (body: Record<string, unknown>) => { items: T[]; nextPageToken: string | null },
     apiHint: ApiHint,
-    opts: { signal?: AbortSignal; maxPages?: number; partialOk?: boolean } = {},
+    opts: GmailListOptions = {},
   ): Promise<T[]> {
     const out: T[] = [];
     let pageToken: string | null = null;
@@ -206,7 +210,10 @@ export class GoogleApiClient {
       if (!nextPageToken) return out;
       pageToken = nextPageToken;
     }
-    if (opts.partialOk) return out;
+    if (opts.partialOk) {
+      opts.onCutShort?.();
+      return out;
+    }
     throw new CredentialError('upstream', `: pagination cap (${cap}) hit on ${apiHint}`);
   }
 }
@@ -428,10 +435,7 @@ export class GmailClient extends GoogleApiClient {
   }
 
   /** Message ids matching a Gmail search query (includes SENT; excludes SPAM/TRASH). */
-  async listMessageIds(
-    q: string,
-    opts: { signal?: AbortSignal; maxPages?: number; partialOk?: boolean } = {},
-  ): Promise<Array<{ id: string; threadId: string }>> {
+  async listMessageIds(q: string, opts: GmailListOptions = {}): Promise<Array<{ id: string; threadId: string }>> {
     return this.drainPages(
       (t) =>
         `${GMAIL_BASE}/users/me/messages?maxResults=100&q=${encodeURIComponent(q)}${t ? `&pageToken=${encodeURIComponent(t)}` : ''}`,
@@ -724,12 +728,14 @@ export class CalendarClient extends GoogleApiClient {
 
 // ── People (Contacts) ────────────────────────────────────────────────────────
 
+interface RawFieldMetadata { primary?: boolean; source?: { type?: string } }
+
 interface RawPerson {
   resourceName: string;
   etag?: string;
   names?: Array<{ displayName?: string; metadata?: { primary?: boolean } }>;
-  emailAddresses?: Array<{ value?: string }>;
-  phoneNumbers?: Array<{ value?: string; canonicalForm?: string }>;
+  emailAddresses?: Array<{ value?: string; metadata?: RawFieldMetadata }>;
+  phoneNumbers?: Array<{ value?: string; canonicalForm?: string; metadata?: RawFieldMetadata }>;
   organizations?: Array<{ name?: string; title?: string; metadata?: { primary?: boolean } }>;
   memberships?: Array<{ contactGroupMembership?: { contactGroupResourceName?: string } }>;
   metadata?: { deleted?: boolean };
@@ -746,9 +752,12 @@ interface RawContactGroup {
  * #6324: the People field mask every contacts request carries. A syncToken is
  * only valid for requests with the parameters that minted it, so the sweep
  * records this string next to the token (`contacts_person_fields`) and
- * re-lists when it changes. Change it here and nowhere else.
+ * re-lists when it changes. Change it here and nowhere else. #10246: `metadata`
+ * is what carries `deleted: true` on a delta's tombstone (a deleted or
+ * merged-away contact); without it the API sends a bare {resourceName, etag}
+ * and the page is never retired.
  */
-export const CONTACT_PERSON_FIELDS = 'names,emailAddresses,organizations,phoneNumbers,memberships';
+export const CONTACT_PERSON_FIELDS = 'names,emailAddresses,organizations,phoneNumbers,memberships,metadata';
 
 /** Google's built-in groups (`contactGroups/myContacts`, `starred`, …) say nothing a page should carry. */
 const SYSTEM_CONTACT_GROUPS = new Set(
@@ -758,6 +767,30 @@ const SYSTEM_CONTACT_GROUPS = new Set(
 /** Bounded directory walk: 1000 groups a page, ten pages; past that the result is explicitly incomplete. */
 const CONTACT_GROUP_PAGES = 10;
 
+/** People API sources of the account a card is linked to (READ_SOURCE_TYPE_PROFILE), not values written on the card. */
+const LINKED_PROFILE_SOURCES = new Set(['ACCOUNT', 'PROFILE', 'DOMAIN_PROFILE']);
+
+/**
+ * #10556: a card linked to a Google account also lists every value on that account (in a Workspace domain, the
+ * account's primary address, its aliases and its directory phone), so a card whose old address became an alias on
+ * someone else's account claimed that person's addresses and phone. A contact keeps the values on its own card (an
+ * entry with no source is the card's). A card with no address of its own keeps the linked account's primary address
+ * (else its first), and one left with neither an address nor a phone keeps the account's primary phone, so it stays
+ * matchable.
+ */
+function cardValues(p: RawPerson): { emails: string[]; phones: string[] } {
+  const pick = <T extends { metadata?: RawFieldMetadata }>(entries: T[] | undefined, value: (e: T) => string, valid: (v: string) => boolean) => {
+    const all = (entries ?? []).filter((e) => valid(value(e)));
+    const card = [...new Set(all.filter((e) => !LINKED_PROFILE_SOURCES.has(e.metadata?.source?.type ?? '')).map(value))];
+    const fallback = all.find((e) => e.metadata?.primary) ?? all[0];
+    return { card, fallback: fallback ? [value(fallback)] : [] };
+  };
+  const emails = pick(p.emailAddresses, (e) => (e.value ?? '').trim().toLowerCase(), (v) => v.includes('@'));
+  const phones = pick(p.phoneNumbers, (n) => (n.canonicalForm ?? n.value ?? '').trim(), (v) => v.length > 0);
+  const kept = emails.card.length > 0 ? emails.card : emails.fallback;
+  return { emails: kept, phones: phones.card.length > 0 || kept.length > 0 ? phones.card : phones.fallback };
+}
+
 function contactData(p: RawPerson): ContactData {
   const primaryName = p.names?.find((n) => n.metadata?.primary) ?? p.names?.[0];
   const primaryOrg = p.organizations?.find((o) => o.metadata?.primary) ?? p.organizations?.[0];
@@ -765,12 +798,7 @@ function contactData(p: RawPerson): ContactData {
     resourceName: p.resourceName,
     ...(p.etag ? { etag: p.etag } : {}),
     displayName: primaryName?.displayName ?? null,
-    emails: (p.emailAddresses ?? [])
-      .map((e) => (e.value ?? '').trim().toLowerCase())
-      .filter((e) => e.includes('@')),
-    phones: [...new Set((p.phoneNumbers ?? [])
-      .map((n) => (n.canonicalForm ?? n.value ?? '').trim())
-      .filter((n) => n.length > 0))],
+    ...cardValues(p),
     organization: primaryOrg?.name ?? null,
     title: primaryOrg?.title ?? null,
     groups: [...new Set((p.memberships ?? [])

@@ -259,7 +259,7 @@ describe('the write-time chronicle decision', () => {
   parityTest('an upsert that wins keeps the events and judge columns and clears the campaign stamp; a guarded one changes nothing', {
     methods: ['putPage', 'upsertChronicleRow', 'readChronicleRow'], requires: 'raw_sql',
   }, async (engine) => {
-    // The Rust arm's named stop (RUST_ENGINE.md row 59): the columns no served Rust writer sets are seeded through SQL, so
+    // The Rust arm's named stop (RUST_ENGINE.md row 68): the columns no served Rust writer sets are seeded through SQL, so
     // the Rust arm stops on raw_sql here; the Rust store test chronicle_state::an_upsert_that_wins_* pins the same rule on
     // the store's records.
     const page = await engine.putPage('meetings/stamped-example', { type: 'meeting', title: 'Stamped', compiled_truth: 'A body.', timeline: '' });

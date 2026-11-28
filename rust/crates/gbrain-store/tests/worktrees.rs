@@ -593,6 +593,63 @@ fn a_transfer_accept_moves_the_owner_binding_and_content_receipt_to_the_successo
 }
 
 #[test]
+fn a_cross_host_accept_carries_git_durability_and_a_plain_rebind_keeps_it() {
+    // #10123: `carryDurability` takes the input value when it is set, else the existing one
+    // (`COALESCE(EXCLUDED.git_durability, existing)`); without it an existing binding keeps its own.
+    let dir = TempDir::new("worktrees-carry");
+    let store = open(&dir);
+    let incarnation = source(&store, "work", json!({}));
+    seed(&store, "work", &incarnation);
+    let hosts = |store: &Store| -> Value {
+        let state: Value = serde_json::from_str(&store.writer_admin_state_text().unwrap()).unwrap();
+        state["hosts"].clone()
+    };
+    let durability = |store: &Store, host_id: &str| -> Value {
+        hosts(store)
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|h| h[1] == host_id)
+            .map(|h| h[4].clone())
+            .unwrap()
+    };
+    let with = |host_id: &str, path: &str, g: Option<&str>, carry: bool| -> HostBindingInsert {
+        let mut h = host(WORKTREE, host_id, path);
+        h.git_durability = g.map(str::to_owned);
+        h.carry_durability = carry;
+        h
+    };
+
+    // A new binding takes the carried value.
+    store
+        .upsert_host_binding(&with(HOST_B, "/var/tmp/b", Some("enabled"), true))
+        .unwrap();
+    assert_eq!(durability(&store, HOST_B), json!("enabled"));
+    // A carry with no value keeps the existing one.
+    store
+        .upsert_host_binding(&with(HOST_B, "/var/tmp/b2", None, true))
+        .unwrap();
+    assert_eq!(durability(&store, HOST_B), json!("enabled"));
+    // A carry with a value replaces it.
+    store
+        .upsert_host_binding(&with(HOST_B, "/var/tmp/b3", Some("disabled"), true))
+        .unwrap();
+    assert_eq!(durability(&store, HOST_B), json!("disabled"));
+    // Without carry an existing binding keeps its own, whatever the input says.
+    store
+        .upsert_host_binding(&with(HOST_A, "/var/tmp/a2", Some("disabled"), false))
+        .unwrap();
+    assert_eq!(durability(&store, HOST_A), json!("enabled"));
+    // A value the CHECK refuses is refused, and nothing changes.
+    assert!(
+        store
+            .upsert_host_binding(&with(HOST_B, "/var/tmp/x", Some("sometimes"), true))
+            .is_err()
+    );
+    assert_eq!(durability(&store, HOST_B), json!("disabled"));
+}
+
+#[test]
 fn the_binding_reads_name_orphans_every_worktree_and_foreign_owners() {
     let dir = TempDir::new("worktrees-binding-reads");
     let store = open(&dir);

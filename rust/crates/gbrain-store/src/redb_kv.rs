@@ -79,6 +79,31 @@ impl RedbKv {
         Self::init(db)
     }
 
+    /// Opens the record file at `path` only if it is there: never creates it (`store_missing`
+    /// when it is absent), so a store moved away during an open is not replaced.
+    pub fn open_existing_path(path: &Path) -> Result<Self> {
+        if !path.is_file() {
+            return Err(StoreError::new(
+                crate::error::STORE_MISSING,
+                format!("{} is not there; nothing was created", path.display()),
+            ));
+        }
+        let db = Database::builder().open(path).map_err(|e| {
+            if path.is_file() {
+                map(e)
+            } else {
+                StoreError::new(
+                    crate::error::STORE_MISSING,
+                    format!(
+                        "{} went away during the open; nothing was created",
+                        path.display()
+                    ),
+                )
+            }
+        })?;
+        Self::init(db)
+    }
+
     /// Opens (creating if absent) a database on any byte file.
     pub fn open_backend(backend: Box<dyn FileBackend>) -> Result<Self> {
         let db = Database::builder()
@@ -139,6 +164,10 @@ impl Kv for RedbReadOnlyKv {
             READ_ONLY_TRANSACTION,
             "this brain was opened read-only; nothing was written",
         ))
+    }
+
+    fn is_read_only(&self) -> bool {
+        true
     }
 
     fn version(&self) -> Result<u64> {

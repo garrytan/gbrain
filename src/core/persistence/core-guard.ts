@@ -26,6 +26,7 @@ import type { Page } from '../types.ts';
 import type { Action } from '../agent-output.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { opError } from '../ops/contract.ts';
+import { servesRawSql } from '../rust-engine/errors.ts';
 import { readFix } from '../ops/op-fix.ts';
 import {
   CORE_DOCS, CORE_MAX_PAGES, coreChars, coreMarking, coreUsage, listCorePages, readCoreSettings, renderCorePage, type CoreSettings,
@@ -42,9 +43,11 @@ export function coreLockSources(sourceId: string): string[] {
  * FOR UPDATE in id order inside the publish transaction (transaction-scoped,
  * PgBouncer-safe). See the module comment for the global order.
  */
-export async function lockCoreSources(tx: Pick<BrainEngine, 'executeRaw'>, sourceIds: readonly string[]): Promise<void> {
+export async function lockCoreSources(tx: Pick<BrainEngine, 'executeRaw' | 'lockSourceForUpdate'>, sourceIds: readonly string[]): Promise<void> {
   const ids = [...new Set(sourceIds)].sort();
   if (!ids.length) return;
+  // An engine without raw SQL (Rust) admits one write transaction at a time, so its typed lock is a no-op and the order is moot.
+  if (!servesRawSql(tx)) { for (const id of ids) await tx.lockSourceForUpdate(id); return; }
   // The id order never reaches output: it is the row-lock order on sources, shared with sources.ts lockAllSourceRows and topology-locks.ts, so it stays plain ORDER BY id.
   await tx.executeRaw('SELECT id FROM sources WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE', [ids]);
 }

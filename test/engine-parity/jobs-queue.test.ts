@@ -45,6 +45,8 @@ const { parityTest } = parityArms(testBackends());
 
 const PAST = '2000-01-01T00:00:00.000Z';
 const FAR = '2099-01-01T00:00:00.000Z';
+/** A fenced caller: the OAuth client as the principal of its jobs and as the `__owner_client_id` stamp of the rows that record none (GST-4010). */
+const clientOwner = (id: string, actor: readonly [string, string, string, string] = ['', '', '', '']) => ({ principal: { kind: 'oauth_client', id }, clientId: id, actor });
 const OTHER_AUTHORITY = { version: 1, kind: 'remote_generic', principal: { kind: 'oauth_client', id: 'client-a' } } as unknown as SubmissionAuthority;
 
 function values(name: string, extra: Partial<JobInsertValues> = {}): JobInsertValues {
@@ -490,13 +492,13 @@ describe('engine parity: minion queue', () => {
       const ids = (rows: JobRow[]) => rows.map(r => Number(r.id) - base).sort((a, b) => a - b);
       const rel$ = (id: number) => id - base;
       // The audience is the sorted distinct list: ['b','a','a'] reads 'a,b'; a lone value that is not a list reads '!'.
-      const wrongAudience = await engine.cancelJobs(all, { ownerClientId: 'client-a', ownerActor: ['s', 'e', 'm', 'b,a'] });
-      const array = await engine.cancelJobs(all, { ownerClientId: 'client-a', ownerActor: ['s', 'e', 'm', 'a,b'] });
-      const none = await engine.cancelJobs(all, { ownerClientId: 'client-a', ownerActor: ['s', 'e', 'm', ''] });
-      const noGrant = await engine.cancelJobs(all, { ownerClientId: 'client-a', ownerActor: ['', '', '', ''] });
-      const odd = await engine.cancelJobs(all, { ownerClientId: 'client-a', ownerActor: ['', '42', 'm', '!'] });
-      const noActor = await engine.cancelJobs(all, { ownerClientId: 'client-a' });
-      const otherClient = await engine.cancelJobs(all, { ownerClientId: 'client-b', ownerActor: ['s', 'e', 'm', 'a,b'] });
+      const wrongAudience = await engine.cancelJobs(all, { owner: clientOwner('client-a', ['s', 'e', 'm', 'b,a']) });
+      const array = await engine.cancelJobs(all, { owner: clientOwner('client-a', ['s', 'e', 'm', 'a,b']) });
+      const none = await engine.cancelJobs(all, { owner: clientOwner('client-a', ['s', 'e', 'm', '']) });
+      const noGrant = await engine.cancelJobs(all, { owner: clientOwner('client-a', ['', '', '', '']) });
+      const odd = await engine.cancelJobs(all, { owner: clientOwner('client-a', ['', '42', 'm', '!']) });
+      const noActor = await engine.cancelJobs(all, { owner: clientOwner('client-a') });
+      const otherClient = await engine.cancelJobs(all, { owner: clientOwner('client-b', ['s', 'e', 'm', 'a,b']) });
       const unfenced = await engine.cancelJobs([j.otherMember, j.unowned]);
       return {
         wrongAudience: ids(wrongAudience), array: ids(array), none: ids(none), noGrant: ids(noGrant), odd: ids(odd), noActor: ids(noActor),
@@ -1133,9 +1135,9 @@ describe('engine parity: minion queue', () => {
       return {
         all: await ids({ limit: 100 }), pages, limit: await ids({ limit: 2 }), status: await ids({ limit: 100, status: 'active' }), queue: await ids({ limit: 100, queue: 'side' }),
         name: await ids({ limit: 100, name: 'fenced' }), combined: await ids({ limit: 100, name: 'work', queue: 'default' }), nothing: await ids({ limit: 100, name: 'absent' }),
-        owner: await ids({ limit: 100, ownerClientId: 'client-a', ownerActor: ['s', 'e', 'm', 'a,b'] }), ownerNoGrant: await ids({ limit: 100, ownerClientId: 'client-a', ownerActor: ['', '', '', ''] }),
-        ownerOdd: await ids({ limit: 100, ownerClientId: 'client-a', ownerActor: ['', '42', 'm', '!'] }), ownerNoActor: await ids({ limit: 100, ownerClientId: 'client-a' }),
-        ownerOther: await ids({ limit: 100, ownerClientId: 'client-b', ownerActor: ['s', 'e', 'm', 'a,b'] }), ownerStatus: await ids({ limit: 100, ownerClientId: 'client-a', ownerActor: ['s', 'e', 'm', ''], status: 'waiting' }),
+        owner: await ids({ limit: 100, owner: clientOwner('client-a', ['s', 'e', 'm', 'a,b']) }), ownerNoGrant: await ids({ limit: 100, owner: clientOwner('client-a', ['', '', '', '']) }),
+        ownerOdd: await ids({ limit: 100, owner: clientOwner('client-a', ['', '42', 'm', '!']) }), ownerNoActor: await ids({ limit: 100, owner: clientOwner('client-a') }),
+        ownerOther: await ids({ limit: 100, owner: clientOwner('client-b', ['s', 'e', 'm', 'a,b']) }), ownerStatus: await ids({ limit: 100, owner: clientOwner('client-a', ['s', 'e', 'm', '']), status: 'waiting' }),
         before: await ids({ limit: 100, cursor: same }), tie: await ids({ limit: 100, cursor: { micros: same.micros, id: same.id + 1_000_000 } }),
         beyond: await ids({ limit: 100, cursor: { micros: '1', id: 1 } }), map: { ...Object.fromEntries(Object.entries(j).map(([k, id]) => [k, id - base])), plain: plain - base, running: running - base },
       };

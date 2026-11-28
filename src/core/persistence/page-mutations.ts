@@ -10,6 +10,7 @@ import { isHostAbsolutePath } from '../path-confine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
 import { admitChangeReason, CHANGE_REASON_OPERATIONS } from './change-reason.ts';
+import { screenWriteSecrets, type SecretsRedacted } from './write-secrets.ts';
 import { grantedWriteSource, readsButWritesOnly, writeGrantRefusal } from './write-grant.ts';
 import { VERSION } from '../../version.ts';
 import { ownerBuildMismatch } from './publication-failure.ts';
@@ -62,6 +63,7 @@ import { currentCallerAccess } from '../search/private-visibility.ts';
 import { assertStorageSourceWriter } from '../storage-manifest/door.ts';
 import { OWNED_FOLDER_KINDS } from '../owned-folder/paths.ts';
 import { assertPolicySlugWrite } from '../policy/admission.ts';
+import { assertRuleSlugWrite } from '../rules/admission.ts';
 import { assertActionSlugWrite } from '../ledger/admission.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
@@ -107,7 +109,7 @@ const WRITER_ROW_SQL = 'SELECT lane,credential_hash,grant_ceiling,revoked_at FRO
 export const SCREENING_SHARED_READS: ReadonlySet<string> = new Set([
   WRITER_ROW_SQL,
 ]);
-/** The shared reads above, plus their typed twins: the brain identity always, the unlocked writer row when `extra` names it. */
+/** The shared reads above, plus their typed twins: the brain identity and the unlocked writer row. */
 export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string>): BrainEngine {
   const reads = new Map<string, Promise<unknown>>();
   const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
@@ -261,7 +263,7 @@ export interface PageBatchMember { id: string; index: number; size: number; requ
 export async function submitPageMutation(ctx: OperationContext,
   input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; timelineSection?: TimelineSection; databaseOnly?: 'overwrite_restore' | 'detached';
     /** commit_page_upload: `params.body_ref` names the caller's sealed upload session (persistence/page-upload.ts). */
-    stagedBody?: true; unsourcedForkGuard?: true }): Promise<Record<string, unknown>> {
+    stagedBody?: true; unsourcedForkGuard?: true; serverComposed?: true }): Promise<Record<string, unknown>> {
   assertPersistenceAccepting(ctx.engine);
   // #6007: wait_ms is a reply deadline from arrival, never part of the write's identity.
   const arrived = performance.now();
@@ -292,7 +294,8 @@ export async function submitPageMutation(ctx: OperationContext,
   }
   const response = await withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, row, ctx.config, waitMs())), false));
   emitFenceNotice(ctx, response, row.slug);
-  return { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}) };
+  return { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}),
+    ...(prepared.secretsRedacted ? { secrets_redacted: prepared.secretsRedacted } : {}) };
 }
 
 /**
@@ -390,8 +393,25 @@ export async function preparePageAdmission(ctx: OperationContext,
     /** #6712 `repair overwritten-edits`: publish to the database only, so the restore never rewrites the committed file. */
     databaseOnly?: 'overwrite_restore' | 'detached'; stagedBody?: true;
     /** pages-02: put_page's handler (and put_pages, and commit_page_upload for a new page, when the caller named no source) asks for the unsourced-put fork refusal, applied to a fresh request after the write authority. */
-    unsourcedForkGuard?: true }
-): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined } | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null }> {
+    unsourcedForkGuard?: true;
+    /** GST-4024: the page text is rebuilt by the server from the stored page; the operation screened the caller's own text (secrets.on_write). */
+    serverComposed?: true }
+): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined; secretsRedacted?: undefined }
+  | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null; secretsRedacted: SecretsRedacted | null }> {
+  // A body over the page ceiling can never be admitted: refuse it as a caller error before the journal
+  // reserves intent bytes, so an oversized write never reads as retryable queue_capacity.
+  const body = input.params.content;
+  const bodyBytes = (input.operation === 'put_page' || input.operation === 'capture') && typeof body === 'string' && body.length > PAGE_MAX_BYTES / 3
+    ? Buffer.byteLength(body, 'utf-8') : 0;
+  if (bodyBytes > PAGE_MAX_BYTES) {
+    throw new OperationError('request_too_large', contentSizeHold(bodyBytes, PAGE_MAX_BYTES)!.message,
+      `Nothing was admitted or written, and the same content is refused on every retry. Pages up to ${PAGE_MAX_BYTES} bytes are stored and searchable; send a smaller page.`);
+  }
+  // secrets.on_write: a remote write's text is screened before anything reads it, so a refused or redacted value is never
+  // journaled and every guard below checks the parameters that are. A server-composed resubmit carries stored text the
+  // caller never sent, so only what its operation screened is screened.
+  const screened = input.serverComposed ? { params: input.params, redacted: null } : screenWriteSecrets(ctx, input.operation, input.params);
+  input = { ...input, params: screened.params };
   if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
     if (ctx.remote !== false || input.managedFileImport !== true || !OWNER_FILE_INTENTS.has(String(input.params.kind)) ||
       ['preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
@@ -423,22 +443,14 @@ export async function preparePageAdmission(ctx: OperationContext,
     throw new OperationError('invalid_params', 'keep_hidden_rows is reserved for trusted local ingestion.',
       'Drop keep_hidden_rows and submit the page without it; a remote put_page already keeps the rows its caller could not read.');
   }
-  // A body over the page ceiling can never be admitted: refuse it as a caller error before the journal
-  // reserves intent bytes, so an oversized write never reads as retryable queue_capacity.
-  const body = input.params.content;
-  const bodyBytes = (input.operation === 'put_page' || input.operation === 'capture') && typeof body === 'string' && body.length > PAGE_MAX_BYTES / 3
-    ? Buffer.byteLength(body, 'utf-8') : 0;
-  if (bodyBytes > PAGE_MAX_BYTES) {
-    throw new OperationError('request_too_large', contentSizeHold(bodyBytes, PAGE_MAX_BYTES)!.message,
-      `Nothing was admitted or written, and the same content is refused on every retry. Pages up to ${PAGE_MAX_BYTES} bytes are stored and searchable; send a smaller page.`);
-  }
-  const { page_batch: _forged, timeline_section: _section, [GUEST_NOTE_INTENT_KEY]: _guestNote, ...params } = input.params;
+  const { page_batch: _forged, timeline_section: _section, [GUEST_NOTE_INTENT_KEY]: _guestNote, ...params } = screened.params;
   const p: Record<string, unknown> = { ...params, ...parseMutationPrecondition(params) };
   if (p.content_origin !== undefined) contentOriginTier(p.content_origin);
   if (input.batch) p.page_batch = { id: input.batch.id, index: input.batch.index, size: input.batch.size, ...(input.batch.repeats?.length ? { repeats: input.batch.repeats } : {}) };
   const requestId = input.batch ? input.batch.requestId : typeof p.request_id === 'string' ? p.request_id : randomUUID();
   const sourceId = pageMutationSource(ctx, p, input.operation);
   assertPolicySlugWrite(ctx.remote !== false, p);
+  assertRuleSlugWrite(ctx.remote !== false, p);
   assertActionSlugWrite(ctx.remote !== false, p);
   await initializeLocalPersistence(ctx);
   const captureSlug = input.operation === 'capture' ? await resolveCaptureFile(ctx, sourceId, p) : null;
@@ -624,7 +636,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     && !publishesDatabaseOnly(join(binding.local_path, binding.relative_path), slug, snapshot)) {
     throw colonSlugWindowsRefusal(slug, sourceId);
   }
-  return { typeWarning, slugAdvisory, admission: { origin: ctx.admissionOrigin, principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
+  return { typeWarning, slugAdvisory, secretsRedacted: screened.redacted, admission: { origin: ctx.admissionOrigin, principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId: input.batch ? undefined : clientRequestIdOf(params.request_id), callerIntent, intent, authority,
     ...(input.operation === 'edit_page' ? { terminalReservation: receiptReservation({ intent, authority }, (await import('./page-edit.ts')).EDIT_PAGE_RECEIPT_RESERVE) } : {}),
     worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null, deferrable: true } };

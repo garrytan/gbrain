@@ -635,7 +635,8 @@ impl Store {
     /// `ids` that passes `pageReadFilter(.., scope, live)` and `servedTextProjectionFilter` (and
     /// `safeChunksFilter` with `safe_chunks`). `chars` is `char_length` (code points) and `bytes`
     /// `octet_length` of the compiled truth (NULL counts 0); with `timeline`, a timeline holding a
-    /// character outside `[[:space:]]` adds the separator and its own length. The SQL leaves the
+    /// character outside `[[:space:]]` adds the separator and its own length; without it `bytes`
+    /// adds the whole timeline's length and `chars` stays the compiled truth's. The SQL leaves the
     /// row order to the plan; here it is the order of `ids`, each page once.
     pub fn read_long_page_sizes(&self, input: &LongPageSizeInput) -> Result<Vec<Value>> {
         let read = self.read()?;
@@ -657,12 +658,18 @@ impl Store {
             }
             let body = page.compiled_truth.as_deref().unwrap_or("");
             let (mut chars, mut bytes) = (body.chars().count(), body.len());
-            if input.include_timeline
-                && let Some(timeline) = page.timeline.as_deref()
-                && timeline.chars().any(|c| !is_pg_space(c))
-            {
-                chars += TIMELINE_SEPARATOR_LEN + timeline.chars().count();
-                bytes += TIMELINE_SEPARATOR_LEN + timeline.len();
+            let timeline = page.timeline.as_deref();
+            if input.include_timeline {
+                if let Some(timeline) = timeline
+                    && timeline.chars().any(|c| !is_pg_space(c))
+                {
+                    chars += TIMELINE_SEPARATOR_LEN + timeline.chars().count();
+                    bytes += TIMELINE_SEPARATOR_LEN + timeline.len();
+                }
+            } else {
+                // Without the timeline the characters stay the compiled truth's; the bytes still count the
+                // whole timeline, since the read returns it.
+                bytes += timeline.map_or(0, str::len);
             }
             rows.push(json!({ "id": id, "chars": chars, "bytes": bytes }));
         }
@@ -729,13 +736,15 @@ impl Store {
         Ok(out)
     }
 
-    /// `wordLexemes(words)` under the English configuration: `[{ w, lexemes }]`, each word's
-    /// `tsvector_to_array(to_tsvector(w))` (sorted as the tsvector holds them).
-    pub fn word_lexemes(&self, words: &[String]) -> Result<Vec<Value>> {
+    /// `wordLexemes(words)` under the text search configuration `config` (absent: `english`):
+    /// `[{ w, lexemes }]`, each word's `tsvector_to_array(to_tsvector(config, w))` (sorted as the
+    /// tsvector holds them).
+    pub fn word_lexemes(&self, words: &[String], config: Option<&str>) -> Result<Vec<Value>> {
+        let config = crate::keyword::FtsConfig::parse(config)?;
         words
             .iter()
             .map(|w| {
-                let vector = crate::keyword::to_tsvector(w)?;
+                let vector = crate::keyword::to_tsvector_in(config, w)?;
                 let lexemes: Vec<&str> = vector.entries.iter().map(|e| e.lexeme.as_str()).collect();
                 Ok(json!({"w": w, "lexemes": lexemes}))
             })

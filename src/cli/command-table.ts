@@ -153,6 +153,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // conformance targets, the cost-gated --synthesize flag).
   { name: 'protocol', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/protocol.ts') },
   { name: 'errors', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', read_only: true, load: () => import('./commands/errors.ts') },
+  // gbrain telemetry: opt-in usage telemetry controls; engine-free, and the detached `telemetry sync` child skips startup hooks.
+  { name: 'telemetry', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', skipStartupHooks: true, load: () => import('./commands/telemetry.ts') },
   { name: 'bundled-skill', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', read_only: true, skipStartupHooks: true, load: () => import('./commands/bundled-skill.ts') },
   // GBRA-377: `skills index|resolve` (routed by cli/command-route.ts); engine-free on every install shape.
   { name: 'skill-resolver', phase: 'pre-connect', thinClient: 'none', selfHelp: true, skipStartupHooks: true, load: () => import('./commands/skill-resolver.ts') },
@@ -388,6 +390,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'takes', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true, load: () => import('./commands/takes.ts') },
   { name: 'onboard', phase: 'post-connect', thinClient: 'none', help: () => import('./help/onboard.ts'), load: () => import('./commands/onboard.ts') },
   { name: 'onboarding', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/onboarding.ts') },
+  // roadmap PR 3: the value card, trusted local CLI only in phase 1 (no MCP operation, no thin-client routing).
+  { name: 'value', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', read_only: true, slowRead: () => 'the value card counts', load: () => import('./commands/value.ts') },
+  { name: 'propose', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/propose.ts') },
   { name: 'founder', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/founder.ts') },
   { name: 'profile', phase: 'post-connect', thinClient: 'none', selfHelp: true, json: 'document', load: () => import('./commands/profile.ts') },
   { name: 'think', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/think.ts') },
@@ -408,6 +413,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'loops', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/loops.ts') },
   // CLI_ONLY: C3 claims check; trusted-local op dispatch of check_claims (a thin client calls the check_claims MCP tool).
   { name: 'claims', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/claims.ts') },
+  // CLI_ONLY: C2 standing rules; trusted-local op dispatch of correct (a thin client calls the correct MCP tool) and the rules commands.
+  { name: 'correct', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/correct.ts') },
+  { name: 'rules', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/rules.ts') },
   // CLI_ONLY: household records (agent platform H1); trusted-local op dispatch of the household_* ops.
   { name: 'household', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/household.ts') },
   // CLI_ONLY: pinned questions (C4); trusted-local op dispatch of the questions_* ops.

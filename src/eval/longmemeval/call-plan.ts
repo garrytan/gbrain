@@ -74,6 +74,7 @@ export const EXPANSION_TOOL_ALLOWANCE_TOKENS = 1024;
 /** Output defaults the AI SDK applies when expansion sends no max_tokens (@ai-sdk/anthropic getModelCapabilities). */
 const EXPANSION_DEFAULT_MAX_OUT: ReadonlyArray<{ provider: string; match: string; maxOut: number }> = [
   { provider: 'anthropic', match: 'claude-haiku-4-5', maxOut: 64_000 },
+  { provider: 'anthropic', match: 'claude-haiku-5-5', maxOut: 128_000 },
 ];
 const EXPANSION_MAX_VARIANT_CHARS = 500;
 /** The longest synopsis the wrapper keeps (embedding-context.ts SUMMARY_HARD_CAP_CHARS). */
@@ -257,7 +258,7 @@ export async function buildLmeCallPlan(input: LmeCallPlanInput): Promise<CallPla
   if (expansionLive) {
     const { parsed } = resolveRecipe(expansionModel);
     const hit = EXPANSION_DEFAULT_MAX_OUT.find(d => d.provider === parsed.providerId && parsed.modelId.includes(d.match));
-    if (!hit) throw new CallPlanRefusal(`--call-plan cannot bound expansion on ${expansionModel}: expansion sends no max_tokens and the provider's output default for that model is not known to the planner; use expansion_model anthropic:claude-haiku-4-5-20251001 or --expansion-replay FILE`);
+    if (!hit) throw new CallPlanRefusal(`--call-plan cannot bound expansion on ${expansionModel}: expansion sends no max_tokens and the provider's output default for that model is not known to the planner; use expansion_model anthropic:claude-haiku-5-5 or --expansion-replay FILE`);
     expansionMaxOut = hit.maxOut;
   }
   const topNIn = Math.max(knobs.reranker_top_n_in, knobs.diverse_pool_depth);
@@ -374,7 +375,7 @@ export async function buildLmeCallPlan(input: LmeCallPlanInput): Promise<CallPla
   if (providers.length > 0) pre.push(`provider keys for ${providers.join(', ')} set at run time`);
   pre.push('the reader, claim extractor, embedding and rerank lanes have no spend cap in this command');
   pre.push(`${questions.length} question(s) after --question-ids / --limit; haystacks chunked offline at ${maxChunkTokens} max chunk tokens (GBRAIN_MAX_CHUNK_TOKENS or the embedding model's limit), the same functions the import uses`);
-  if (has('expansion')) pre.push(`expansion model ${expansionModel} from expansion_model in ~/.gbrain/config.json (default anthropic:claude-haiku-4-5-20251001); expansion sends no max_tokens, so max_out_tokens=${expansionMaxOut} is the AI SDK's default for that model; the structured-output tool block is budgeted at ${EXPANSION_TOOL_ALLOWANCE_TOKENS} tokens per call`);
+  if (has('expansion')) pre.push(`expansion model ${expansionModel} from expansion_model in ~/.gbrain/config.json (default anthropic:claude-haiku-5-5); expansion sends no max_tokens, so max_out_tokens=${expansionMaxOut} is the AI SDK's default for that model; the structured-output tool block is budgeted at ${EXPANSION_TOOL_ALLOWANCE_TOKENS} tokens per call`);
   if (has('embed_doc') || has('embed_query')) pre.push(`embedding model ${embedModel} from embedding_model in ~/.gbrain/config.json or GBRAIN_EMBEDDING_MODEL (${envState(['GBRAIN_EMBEDDING_MODEL'])}); embed_query counts ${replay ? 'the recorded --expansion-replay variants' : expansionLive ? '3 query variants (the question + 2 rewrites of at most 500 characters) per expanded question' : 'one query per question'}${synopsis ? '; embed_doc includes the synopsis re-embed with a 300-character synopsis per chunk' : ''}${factArm ? '; embed_doc includes a fact-keyed re-embed of every chunk of each extractable session at the 8000-character input cap' : ''}`);
   if (has('rerank')) pre.push(`reranker ${pins.reranker.model} (search.reranker.model pin or snapshot, else the default); rerank in_tokens bound each question's ${topNIn} largest chunks, each sent with the query`);
   if (has('trajectory_extract')) pre.push(`trajectory_extract model ${input.extractorModel} from env GBRAIN_MODEL, else the utility tier default keyed on provider keys (${envState(['GBRAIN_MODEL', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY'])}; ~/.gbrain/config.json keys also count); one call per distinct session page`);

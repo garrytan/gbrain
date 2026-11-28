@@ -11,7 +11,7 @@
 import { isEngineCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, dirname, isAbsolute, join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { spawn, spawnSync } from '../core/spawn.ts';
 import { gbrainPath, isThinClient, loadConfig, toEngineConfig } from '../core/config.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -29,6 +29,7 @@ import { compareWriterVersions } from '../core/persistence/writer-versions.ts';
 import { resolveQuietHoursWindow, resolveSelfUpgradeMode } from '../core/self-upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
+import { isProcessAlive } from '../core/pglite-lock.ts';
 import {
   classifyGbrainCommand, collectHostProcesses, copyFix, gbrainEntry, launcherName, mismatchedBuilds, PENDING_BUILD, planRestart, runRestartSteps, verifyRestart,
   homeFromPsEnvironment, unitFromCgroup,
@@ -101,6 +102,16 @@ function packageNameAt(root: string): string | null | undefined {
   }
 }
 
+function linuxProcessExited(pid: number): boolean {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const state = stat[stat.lastIndexOf(')') + 2];
+    return state === 'Z' || state === 'X';
+  } catch {
+    return !isProcessAlive(pid);
+  }
+}
+
 /** This user's processes from `ps` (Linux and macOS), or the given pids; null when ps cannot run. */
 function readProcessTable(uid: number | undefined, pids?: number[]): ProcessTableRow[] | null {
   const select = pids ? ['-p', pids.join(',')] : uid === undefined ? ['-x'] : ['-U', String(uid)];
@@ -113,9 +124,11 @@ function readProcessTable(uid: number | undefined, pids?: number[]): ProcessTabl
     const elapsed = parseEtimeToMs(m[3]!);
     const pid = Number(m[1]);
     const ppid = Number(m[2]);
+    const gbrainHome = processHome(pid);
+    if (gbrainHome == null && process.platform === 'linux' && linuxProcessExited(pid)) return [];
     const cwd = processCwd(pid);
     const unit = classifyGbrainCommand(m[4]!, { cwd, packageName: packageNameAt }) === 'serve' ? processUnit(pid) : null;
-    return [{ pid, ppid, command: m[4]!, started_ms: elapsed === null ? null : now - elapsed, gbrain_home: processHome(pid), cwd, unit: unit && unitRunsServe(unit, pid, ppid) ? unit : null }];
+    return [{ pid, ppid, command: m[4]!, started_ms: elapsed === null ? null : now - elapsed, gbrain_home: gbrainHome, cwd, unit: unit && unitRunsServe(unit, pid, ppid) ? unit : null }];
   });
   if (process.platform !== 'darwin') return rows;
   const homes = darwinProcessHomes(select, new Map(rows.map(row => [row.pid, row.command])));
@@ -184,6 +197,10 @@ export function serveLauncher(declared: string | undefined = loadConfig()?.self_
   return declared === 'external' ? { kind: 'declared', wait_ms: HANDOFF_WAIT_MS, pid: null } : null;
 }
 
+function workerLauncher(): AutopilotLauncher | null {
+  return loadConfig()?.self_upgrade?.worker_launcher === 'external' ? { kind: 'declared', wait_ms: HANDOFF_WAIT_MS, pid: null } : null;
+}
+
 /** The launcher matters only for a running autopilot, so a host without one never reads the crontab. */
 export function launcherFor(processes: HostProcess[], launcher: () => AutopilotLauncher | null = autopilotLauncher): AutopilotLauncher | null {
   return processes.some(p => p.role === 'autopilot') ? launcher() : null;
@@ -238,14 +255,25 @@ async function hostSources(withHeartbeats = true): Promise<{ sources: ProcessSou
   return { sources, notes, close, pidFile: DEFAULT_PID_FILE };
 }
 
+/**
+ * #10536: how this build runs itself, so a restart step's `gbrain …` starts the installed build even when Bun's bin
+ * directory is not on PATH: a compiled binary is its own executable, a package install is Bun running its entry file.
+ */
+function selfInvocation(): string[] {
+  const entry = process.argv[1];
+  if (!entry) return ['gbrain'];
+  return /^(\/\$bunfs\/|[A-Za-z]:[\\/]~BUN[\\/])/.test(entry) ? [process.execPath] : [process.execPath, ...process.execArgv, entry];
+}
+
 /** The real executor for restart steps; `pidFile` is the default supervisor PID file. */
 /** Runs restart commands without blocking the event loop (the autopilot daemon keeps its timers and signals); a command still running after `timeoutMs` is killed. */
-export function hostExecutor(pidFile: string, timeoutMs = 600_000): RestartExecutor {
+export function hostExecutor(pidFile: string, timeoutMs = 600_000, self: string[] = selfInvocation()): RestartExecutor {
   return {
     run: (argv, env) => new Promise(resolve => {
       let output = '';
       let timedOut = false;
-      const child = spawn(argv[0]!, argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : process.env });
+      const [cmd, ...args] = argv[0] === 'gbrain' ? [...self, ...argv.slice(1)] : argv;
+      const child = spawn(cmd!, args, { stdio: ['ignore', 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : process.env });
       const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
       child.stdout?.on('data', chunk => { output += chunk; });
       child.stderr?.on('data', chunk => { output += chunk; });
@@ -261,13 +289,14 @@ export function hostExecutor(pidFile: string, timeoutMs = 600_000): RestartExecu
   };
 }
 
-/** SIGTERM pid only while it is still the MCP server or autopilot the plan saw: same role, same start time (ps reports it to the second). */
-function terminateIfUnchanged(pid: number, startedMs: number | null, role: 'mcp' | 'autopilot' | 'serve'): 'stopped' | 'gone' | 'changed' {
+/** SIGTERM pid only while it is still the process the plan saw: same role, same start time (ps reports it to the second). */
+const terminateIfUnchanged: RestartExecutor['terminate'] = (pid, startedMs, role) => {
   const row = readProcessTable(undefined, [pid])?.find(r => r.pid === pid);
   if (!row) return 'gone';
   if (classifyGbrainCommand(row.command, { cwd: row.cwd, packageName: packageNameAt }) !== role || startedMs === null || row.started_ms === null || Math.abs(row.started_ms - startedMs) > 2_000) return 'changed';
+  if (role === 'worker' && (!row.gbrain_home || resolve(row.gbrain_home) !== resolve(brainHome()))) return 'changed';
   try { process.kill(pid, 'SIGTERM'); return 'stopped'; } catch { return 'gone'; }
-}
+};
 
 const describe = (p: Pick<HostProcess, 'role' | 'pid' | 'version'>) => `${p.role} pid ${p.pid} (${p.version ? `v${p.version}` : 'build not recorded'})`;
 
@@ -347,7 +376,7 @@ export async function preflightHostRestart(opts: HostRestartOptions): Promise<bo
   try {
     const services = hostServices();
     const processes = await collectHostProcesses(sources);
-    const plan = planRestart(processes, { expected: PENDING_BUILD, serveService: services.serve, autopilotService: services.autopilot, stopMcp: opts.stopMcp, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(processes), serveLauncher: serveLauncher() });
+    const plan = planRestart(processes, { expected: PENDING_BUILD, serveService: services.serve, autopilotService: services.autopilot, stopMcp: opts.stopMcp, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(processes), serveLauncher: serveLauncher(), workerLauncher: workerLauncher() });
     const refusal = restartRefusal(plan, opts.rerunArgv, false);
     if (!refusal) return true;
     setCliExitVerdict(writeCliError(refusal, 'upgrade', { json: opts.json }));
@@ -366,7 +395,7 @@ export async function upgradeRestartReadiness(): Promise<RestartPlan | null> {
   const processes = sources.processTable() === null ? null : await collectHostProcesses(sources);
   if (!processes) return null;
   const services = hostServices();
-  return planRestart(processes, { expected: PENDING_BUILD, serveService: services.serve, autopilotService: services.autopilot, stopMcp: false, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(processes), serveLauncher: serveLauncher() });
+  return planRestart(processes, { expected: PENDING_BUILD, serveService: services.serve, autopilotService: services.autopilot, stopMcp: false, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(processes), serveLauncher: serveLauncher(), workerLauncher: workerLauncher() });
 }
 
 /** `gbrain upgrade --restart-only [--stop-mcp] [--dry-run] [--json]`: restart every process onto the installed build and verify. */
@@ -375,7 +404,7 @@ export async function runHostRestart(opts: HostRestartOptions & { dryRun: boolea
   try {
     const services = hostServices();
     const before = await collectHostProcesses(sources);
-    const plan = planRestart(before, { expected: VERSION, serveService: services.serve, autopilotService: services.autopilot, stopMcp: opts.stopMcp, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(before), serveLauncher: serveLauncher() });
+    const plan = planRestart(before, { expected: VERSION, serveService: services.serve, autopilotService: services.autopilot, stopMcp: opts.stopMcp, ownInstallRoot: ownInstallRoot(), autopilotLauncher: launcherFor(before), serveLauncher: serveLauncher(), workerLauncher: workerLauncher() });
     const { probeCliSocket } = await import('../core/cli-socket/probe.ts');
     const warmBefore = await probeCliSocket();
     const planDoc = { expected: VERSION, processes: before, steps: plan.steps, manual: plan.manual, warm_socket: warmBefore, notes };

@@ -17,6 +17,8 @@ import type { ListReadMembers } from './engine-members/list-reads.ts';
 import type { SurfacedReadMembers } from './engine-members/surfaced-reads.ts';
 import type { HandoverReadMembers } from './engine-members/handover-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import type * as CollateGuestSources from './engine-sql/collate-guest-sources.ts';
+import type * as GuestNotes from './engine-sql/guest-notes.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as LinkSlugReadsSql from './engine-sql/link-slug-reads.ts';
 import type * as SlugSpellingsSql from './engine-sql/slug-spellings.ts';
@@ -62,8 +64,8 @@ import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginCla
 import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingReserveInput } from './engine-sql/page-embedding-budget.ts';
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
-import type { PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourcesNotReadableOpts, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourcePathRow } from './engine-sql/sources.ts';
+import type { PageDateFieldsByIdRow, PageDateFieldsRow, PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
+import type { ActiveSourceConfigRow, DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourcesNotReadableOpts, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourcePathRow } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder,
   NotifierSourceRow, NotifierStatusRow, PendingWantedMarker, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput, FirstDueRow,
@@ -74,7 +76,7 @@ import type {
   SourceStateRow, WorktreeBinding, HostTopologyRow,
 } from './engine-sql/write-misc.ts';
 import type { ChronicleJudgeKey, ChronicleRowKey, ChronicleRowUpsert } from './engine-sql/chronicle-ledger.ts';
-import type { StoredPageHead } from './engine-sql/page-mutation-reads.ts';
+import type { StoredPageHead, StoredPageLabels } from './engine-sql/page-mutation-reads.ts';
 import type { PageChunkCounts, WindowChunkRow } from './engine-sql/page-window-chunks.ts';
 import type { ChronicleLedgerRow } from './chronicle/contract.ts';
 import type { WorktreeClaimStore } from './engine-sql/worktree-claim.ts';
@@ -180,6 +182,7 @@ import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './en
 import type { PageRevisionWriter, RevisionWriterRequest } from './engine-sql/sync-run-reads.ts';
 import type { RepairBusyRows } from './engine-sql/repair-busy.ts';
 import type { SourceDeleteImpact, SourceDeleteResult, SourceSyncStampOptions, SourceIncarnationListRow as SourcesIncarnationRow, SyncCheckpointAdvance } from './engine-sql/sources.ts';
+import type { IgnoredLabelPageRow } from './engine-sql/entity-reads.ts';
 import type { SyncAdmissionEffectsInput } from './engine-sql/sync-admission.ts';
 import type { SyncImportPageQuery, SyncImportPageRow, SyncImportPageWindow } from './engine-sql/sync-pass-pages.ts';
 
@@ -836,7 +839,8 @@ export interface FactRow {
    */
   notability: 'high' | 'medium' | 'low';
   context: string | null;
-  valid_from: Date;
+  /** Event time; null when the event date is unknown (#10288), which reads order by created_at. */
+  valid_from: Date | null;
   valid_until: Date | null;
   expired_at: Date | null;
   superseded_by: number | null;
@@ -876,7 +880,7 @@ export interface NewFact {
   entity_slug?: string | null;
   visibility?: FactVisibility;          // default 'private'
   context?: string | null;
-  valid_from?: Date;                   // default now()
+  valid_from?: Date | null;            // null or omitted: event date unknown, stored NULL (#10288)
   valid_until?: Date | null;
   /**
    * v0.46 (#3014) — explicit expiry timestamp. When set, the row is
@@ -954,9 +958,12 @@ export interface FactListOpts {
    * not by when the underlying event occurred. Off by default, so the
    * facts meta-hook's hot-memory injection cache (`facts/meta-hook.ts`,
    * a 24h recency window re-ranked by decayed confidence) keeps its
-   * creation-time semantics unchanged.
+   * creation-time semantics unchanged. #10288: an event-time read matches
+   * only facts with a known event date unless `includeUndated` is set.
    */
   eventTime?: boolean;
+  /** With `eventTime`: also return facts whose event date is unknown (valid_from NULL), placed by created_at. For unbounded timelines only, never a window. */
+  includeUndated?: boolean;
   /**
    * When true, exclude the durable audit checkpoint rows that
    * extract-conversation-facts writes into the facts table
@@ -1452,13 +1459,25 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readFederationExposedPages(sourceId: string, hidePrivate: boolean): Promise<FederationExposureSql.FederationExposedRow[]>;
 
   /** One source row (id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides), or null when no source has that id. */
-  getSource(sourceId: string): Promise<SourceDetailRow | null>;
+  getSource(sourceId: string, opts?: { timeoutMs?: number }): Promise<SourceDetailRow | null>;
 
   /**
    * Local paths of every source that has one (non-null, non-empty), in no particular order. The filesystem lock
    * (`withSourceFilesystemLock`) canonicalizes each to pick the outermost worktree root an import locks.
    */
   listSourceLocalPaths(): Promise<string[]>;
+  /** The active sources with their raw config, by id (the read that scopes a legacy remote caller). */
+  listActiveSourceConfigs(): Promise<ActiveSourceConfigRow[]>;
+  /**
+   * Live pages of one source, by slug or updated since a database timestamp, that carry a privacy label gbrain does not
+   * recognize and no visibility key (`ignoredPrivacyLabelSql`), at most `limit` (default 100,000), in no set order.
+   */
+  readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string },
+    opts?: { limit?: number; timeoutMs?: number }): Promise<IgnoredLabelPageRow[]>;
+  /** The type and frontmatter of the live page at `slug` in the source, or null; `timeoutMs` bounds Postgres (default 1 s). */
+  readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }): Promise<IgnoredLabelPageRow | null>;
+  /** Whether this connection's role owns the gbrain tables (so it can apply migrations); false only when it provably does not. */
+  ownsSchemaTables(): Promise<boolean>;
 
   /** How many sources that are not archived have a non-empty local path (the readiness sync probe). */
   countRepoBoundSources(): Promise<number>;
@@ -1639,6 +1658,18 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   hasCompanyBrainReceipt(sourceId: string): Promise<boolean>;
   /** The source's guest_sources row and whether row-level security hides guest_sources; throws the missing-table error on an old schema. */
   readGuestSourceRow(sourceId: string): Promise<GuestSourceLookupRow>;
+  /** Whether guest_sources holds a row for the source (the record `guests init` writes). A Rust brain keeps none and refuses (capability guest_sources). */
+  hasGuestSourceRow(sourceId: string): Promise<boolean>;
+  /** Writes the source's guest_sources row, or merges `writers` into it (distinct, in byte order; the row keeps its ceiling), and answers the row (guests/sources.ts initGuestSource). */
+  upsertGuestSource(sourceId: string, writers: readonly string[], trustCeiling: string): Promise<CollateGuestSources.GuestSourceRow>;
+  /** The live page at `slug` in each guest source (only `guestSource` when given), by source id in byte order (guests/promote.ts). */
+  listGuestNotes(slug: string, guestSource?: string): Promise<Array<{ id: number; source_id: string }>>;
+  /** Publication's recheck of a guest source: its writers under a share lock, with gbrain.guest_note set to `requestId` (guests/admission.ts); null with no guest_sources row. */
+  claimGuestNotePublication(sourceId: string, requestId: string): Promise<{ writers: string[] } | null>;
+  /** Writes the guest mark of the page at the mark's (sourceId, slug), saved now; how many rows it wrote (guests/admission.ts insertGuestMark). */
+  insertGuestMark(mark: GuestNotes.GuestMarkInsert): Promise<number>;
+  /** The guest marks of `pageIds`, each with whether its page was promoted (guests/marker.ts loadGuestMarks). */
+  readGuestMarks(pageIds: readonly number[]): Promise<GuestNotes.GuestMarkRow[]>;
   /** The guest sources (config `guest: true` or a guest_sources row) among `sourceIds`, in no particular order. */
   listGuestSourceIds(sourceIds: readonly string[]): Promise<string[]>;
   /** Whether any source is a guest source. */
@@ -1661,6 +1692,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   getWorktreeBinding(sourceId: string, hostId: string | null): Promise<WorktreeBinding | null>;
   /** Every worktree host `hostId` binds, with its owner, epoch, state and topology generation, in no set order (the topology lock's local read). */
   listHostTopologyRows(hostId: string): Promise<HostTopologyRow[]>;
+  /** Every host binding of `hostId` with a local path, with the source a worktree binding names on it (or null), by byte path (doctor foreign_writers). */
+  listHostRepositoryRoots(hostId: string): Promise<Array<{ local_path: string; source_id: string | null }>>;
+  /** The queued and running git effects that name a relative path, with their source and worktree roots (doctor foreign_writers). */
+  listPendingGitEffectPaths(hostId: string | null): Promise<Array<{ rel: string; source_path: string | null; worktree_path: string | null }>>;
   /** The source bindings of one worktree, by byte source id. */
   listWorktreeMembers(worktreeId: string): Promise<Array<{ source_id: string; relative_path: string }>>;
   /**
@@ -1741,6 +1776,14 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readStoredPageHead(sourceId: string, slug: string): Promise<StoredPageHead | null>;
   /** A version's `source_path` when the version belongs to `pageId`, or null. */
   readVersionSourcePath(versionId: number, pageId: number): Promise<string | null>;
+  /** The columns the enforced member's label check compares, as stored (soft-deleted too, no withdrawal overlay), or null. */
+  readStoredPageLabels(sourceId: string, slug: string): Promise<StoredPageLabels | null>;
+  /** Whether the member's read policy admits the page at (source, slug), soft-deleted too; null when no row is there. */
+  readMemberPageReadable(sourceId: string, slug: string, identity: readonly string[], satisfied: readonly string[], labelled: boolean): Promise<boolean | null>;
+  /** The `<source>:<rule id>` of every folder rule covering `slug` in the source, with or without a page; null when none. */
+  readSlugFolderRules(sourceId: string, slug: string): Promise<string[] | null>;
+  /** Each of `slugs` that names a page and no page the caller's policy admits outside `hiddenSources`, in byte order. */
+  readHiddenPageSlugs(slugs: readonly string[], hiddenSources: readonly string[]): Promise<string[]>;
   /** The text chunk a get_page window around `chunkId` centers on, when it is a chunk of `pageId` at its live generation, or null. */
   readWindowChunk(chunkId: number, pageId: number): Promise<WindowChunkRow | null>;
   /** The chunk count of `pageId` at its live generation and how many of those chunks have a vector (get_page body none). */
@@ -3857,6 +3900,13 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    */
   pruneHoldingPageVersions(pageId: number): Promise<number>;
   /**
+   * #9737 (engine-sql/version-prune.ts): removes exactly the inline (not segmented) saved versions an approved `gbrain pages
+   * prune-history` plan named, under the caller's page lock, and marks the history it cut. Nothing goes when the page is no
+   * longer live at the named source and slug (or of the `type` a --type plan selected) or is an agent_policy page; `keep`
+   * also spares the page's newest `keep` versions. Answers how many it deleted.
+   */
+  pruneInlineVersionsById(page: { pageId: number; sourceId: string; slug: string; type?: string | null; keep?: number | null }, versionIds: readonly number[]): Promise<number>;
+  /**
    * v0.31.8 (D12): `opts.sourceId` source-scopes both the version lookup
    * and the page revert. Without it, multi-source brains can revert the
    * wrong row when the slug exists in 2+ sources.
@@ -4053,6 +4103,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   // Page visibility guards (engine-sql/page-visibility.ts): the current caller's page policy, rendered in its access record.
   /** Whether a row of the page (live or soft-deleted) fails the current caller's policy: `read` (access, then privacy) or `access` alone. */
   readPageHiddenFromCaller(sourceId: string, slug: string, opts: { policy: PagePolicyPart }): Promise<boolean>;
+  /** Whether the live page passes the empty-identity page policy with privacy (no reader identity, grant or satisfied rule counts; the caller's folder coverage and owner flag do); false for a missing or soft-deleted page. */
+  readPageWorldVisible(sourceId: string, slug: string): Promise<boolean>;
   /** For each (source_id, slug) that names a page row, whether a live row of it passes the current caller's policy; in no set order. */
   readCallerPageAccess(pages: readonly { source_id: string; slug: string }[], opts: { policy: PagePolicyPart }): Promise<CallerPageAccessRow[]>;
   /** The opening read of a remote page write's visibility check: labelled-only members, what a reader identity could open on the page the empty-identity policy hides, owner-only sources. */
@@ -4070,6 +4122,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   deleteOwnedLinks(originPageId: number | string, linkSource: string, ids: readonly (number | string)[]): Promise<number>;
   /** The live pages of the source among `slugs`: readable under the writer's policy (null: every page) and shown by the privacy part. */
   readLinkTargetPages(sourceId: string, slugs: readonly string[], policy: WriterReadPolicy | null): Promise<LinkTargetPage[]>;
+  /** Whether some row of the slug, live or soft-deleted, fails the writer's read policy (the privacy part too when `hidePrivate`); false when no row exists. */
+  readPageHiddenFromWriter(sourceId: string, slug: string, policy: WriterReadPolicy, hidePrivate: boolean): Promise<boolean>;
   /** Re-arms, once each, the `links` effects of requests published together; returns how many. */
   rearmLinksEffects(opts: LinksRearm): Promise<number>;
   /** Whether page `pageId` has a queued or running facts backstop effect, or a facts-absorb job in `jobStates` (engine-sql/facts-backstop.ts). */
@@ -4081,6 +4135,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   // Relational recall arm page reads (engine-sql/relational-reads.ts).
   /** The refs naming a live, unquarantined page of an unarchived source that `policy` admits (`pageReadFilter` live); in no set order. */
   readAdmittedPageRefs(refs: readonly PageRefRow[], policy: PageReadPolicy): Promise<PageRefRow[]>;
+  /** The observation-date inputs (frontmatter, import filename) of the refs' live pages that `policy` admits (search/evidence-date.ts); in no set order. */
+  readAdmittedPageDateFields(refs: readonly PageRefRow[], policy: PageReadPolicy): Promise<PageDateFieldsRow[]>;
+  /** The observation-date inputs of the page rows `ids` name, soft-deleted included (search/evidence-date.ts); in no set order. */
+  readPageDateFieldsByIds(ids: readonly number[]): Promise<PageDateFieldsByIdRow[]>;
   /** The refs' pages that `policy` admits and the search visibility clause shows, with the bounded body prefix as `synopsis`; in no set order. */
   readPageSynopses(refs: readonly PageRefRow[], policy?: PageReadPolicy): Promise<RelationalPageRow[]>;
   /** At most two slugs of live, unretired pages of `sourceId` whose type is in `types` and whose title matches `title` case-insensitively; in no set order. */
@@ -4196,7 +4254,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   ): Promise<{ migrated: number }>;
 
   // Config
-  getConfig(key: string): Promise<string | null>;
+  getConfig(key: string, opts?: { timeoutMs?: number }): Promise<string | null>;
   setConfig(key: string, value: string): Promise<void>;
   /**
    * v0.32.3 — delete a config row. Returns the number of rows deleted (0 or 1).

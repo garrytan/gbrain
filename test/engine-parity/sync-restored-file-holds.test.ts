@@ -13,16 +13,16 @@
  *    expectations, never one arm against another, and has no Rust arm.
  *  - Seam: none. Real managed sync, the delete intent, the retention purge and the repair, as the CLI runs them.
  *
- * Rust arm (known stop, pinned by name): managed sync, the delete intent and the retention purge read and write their rows
- * through `executeRaw` (the persistence journal, sync holds and deletion markers in `op_checkpoints`,
- * src/core/persistence/sync-pass.ts `readFileRemovingDeletes`), which the Rust engine refuses with
- * `engine_capability_missing` naming `raw_sql`. The case's first engine call is that raw SQL, so on Rust it ends on the
- * refusal; the harness fails the arm if it ever returns instead (then it must return what PGLite returns). Owner: the Rust
- * persistence members (typed managed-sync pass reads: the journal's delete receipts, sync holds and deletion markers).
+ * Rust arm (a managed stop, by name, RUST_ENGINE.md row 47): the source is created through the harness fixture
+ * (createSource), and on a Rust brain the first managed sync refuses `engine_capability_missing` naming
+ * `managed_persistence` (`performManagedSync`), before any work; the case asserts that refusal (rethrowManagedStop) and
+ * stops there. Managed mode on Rust is the managed-mode program's (lane LM), after the Dec 1 swap; the delete intent,
+ * the retention purge and the repair behind it still read their rows through `executeRaw` (the persistence journal, sync
+ * holds and deletion markers in `op_checkpoints`, src/core/persistence/sync-pass.ts `readFileRemovingDeletes`).
  */
 import { describe, expect } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,7 +38,9 @@ import { readGitSourceHolds } from '../../src/core/persistence/sync-holds.ts';
 import { resolveRepairScope } from '../../src/core/repair/core.ts';
 import { repairRunner } from '../../src/core/repair/registry.ts';
 import { purgeDeletedPagesCoordinated } from '../../src/core/persistence/purge-deleted.ts';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
+import { rethrowManagedStop } from '../helpers/rust-by-design-stop.ts';
+import { activatePersistence } from '../../src/core/persistence/activation.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
@@ -62,8 +64,8 @@ async function gitEffectsSettled(engine: BrainEngine): Promise<void> {
 describe('engine parity: a file restored after a delete asks first', () => {
   parityTest(
     'a restored file is held tombstone_edited, re-screened purged_differs after the retention purge, and comes back only on repair file-drift --prefer file',
-    { methods: ['executeRaw', 'readPageSnapshot'], timeout: 240_000 },
-    async (engine) => {
+    { methods: ['executeRaw', 'readPageSnapshot'], requires: 'managed_persistence', timeout: 240_000 },
+    async (engine, backend) => {
       const home = mkdtempSync(join(tmpdir(), 'gbrain-parity-lc1-'));
       try {
         return await withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }, async () => {
@@ -78,13 +80,24 @@ describe('engine parity: a file restored after a delete asks first', () => {
             writeFileSync(join(root, 'notes', 'ivy.md'), note('Ivy', 'Ivy private note. Okapi keyword.'));
             writeFileSync(join(root, 'notes', 'jon.md'), note('Jon', 'Jon note.'));
             commit(root, 'fixture');
-            // Rust stops here: raw_sql (see the header).
-            await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-            await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [SOURCE, root]);
+            // A SQL brain claims the worktree with managed persistence off, then turns it on; a Rust brain has no such switch.
+            if (backend !== 'rust') await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+            await createSource(engine, backend, SOURCE, {}, root);
             await claimWorktree(engine, SOURCE, root);
-            await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+            // A Rust brain activates through the production path (activatePersistence), as the other managed cases do.
+            if (backend !== 'rust') await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+            else await activatePersistence(engine, { confirmQuiesced: true });
             const sync = () => performManagedSync(engine, { sourceId: SOURCE, noPull: true, noEmbed: true, noExtract: true });
-            await sync();
+            // The Rust arm's managed stop, by name (RUST_ENGINE.md row 47): the managed sync refuses managed_persistence, or,
+            // with the hold lifted, raw_sql at its first raw read. Either way nothing is half-written: no page of the
+            // source exists and the checkout's files keep their bytes.
+            const files = () => ['ivy', 'jon'].map(n => readFileSync(join(root, 'notes', `${n}.md`), 'utf8'));
+            const before = files();
+            await sync().catch(async (e: unknown) => {
+              const pages = await Promise.all(['notes/ivy', 'notes/jon'].map(slug => engine.readPageSnapshot(slug, { sourceId: SOURCE, includeDeleted: true })));
+              expect({ pages: pages.map(p => p?.page.slug ?? null), files: files() }).toEqual({ pages: [null, null], files: before });
+              return rethrowManagedStop(e);
+            });
             const ctx = { engine, config: { engine: engine.kind }, logger: quiet, dryRun: false, remote: false, sourceId: SOURCE } as unknown as OperationContext;
             const holds = async () => ((await readGitSourceHolds(engine, { sourceIds: [SOURCE] }))[0]?.holds ?? [])
               .map(hold => [hold.path, hold.code, hold.meta.state ?? null, hold.meta.restored ?? null]).sort();

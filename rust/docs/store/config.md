@@ -34,8 +34,10 @@ the install defaults (`voyage:voyage-4`, 1024). A stored width with no known mod
 | `brain.listConfigKeys(prefix)` | sorted `string[]`; the prefix is literal (`%` and `_` are plain characters) | `listConfigKeys` |
 | `brain.getAllConfig()` | `{ [key]: value }` | `getAllConfig` |
 
-The engine's `readStoredConfigValue(key)` (`src/core/rust-engine/store-members/config.ts`, the `sync.admission` read of
-`readSyncAdmission`) is `brain.getConfig(key)`: the stored row, `null` without one.
+`readStoredConfigValue(key)`, the `sync.admission` read of `readSyncAdmission`, is not served on a Rust brain: it is
+classified `pages` with the comment "held: no Rust store member yet" (`src/core/rust-engine/members/content.ts:6`) and
+`src/core/rust-engine/store-members/config.ts` does not export it. The native `brain.getConfig(key)` above is the
+stored row, `null` without one; no TypeScript member passes `readStoredConfigValue` to it.
 
 ## Dream map rows
 

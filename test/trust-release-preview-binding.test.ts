@@ -73,10 +73,10 @@ const editValidUntil = (engine: BrainEngine) => engine.transaction(tx => withCoo
   "UPDATE pages SET compiled_truth = replace(compiled_truth, '2026-12-31', '2099-12-31') WHERE source_id='default' AND slug=$1", [slug]), TEST_WRITE_ATTRIBUTION));
 
 /** A remember held by the external quarantine; on a repo-less brain its release is database-only. */
-async function holdRemember(engine: BrainEngine, ctx: OperationContext, entity: string | null): Promise<string> {
+async function holdRemember(engine: BrainEngine, ctx: OperationContext, entity: string | null, validFrom?: string): Promise<string> {
   await enableTrustProtections(engine);
   let ref = '';
-  try { await operationsByName.remember.handler(ctx, { fact: CLAIM, ...(entity ? { entity } : {}), provenance: 'email', content_origin: 'tool_output', request_id: randomUUID() }); }
+  try { await operationsByName.remember.handler(ctx, { fact: CLAIM, ...(entity ? { entity } : {}), ...(validFrom ? { valid_from: validFrom } : {}), provenance: 'email', content_origin: 'tool_output', request_id: randomUUID() }); }
   catch (e) { ref = JSON.parse((e as { detail: string }).detail).hold_ref; }
   expect(ref).toMatch(/^h\d+$/);
   return ref;
@@ -216,7 +216,7 @@ for (const backend of testBackends()) {
 
     test('on a repo-less brain the preview shows the held payload fields the database-only release raises', () => repoLessBrain(databaseUrl, async (engine, ctx) => {
       await operationsByName.put_page.handler(ctx, { slug, request_id: randomUUID(), content: PAGE });
-      const ref = await holdRemember(engine, ctx, slug);
+      const ref = await holdRemember(engine, ctx, slug, '2026-01-01');
       const preview = await previewOwnerAction(engine, { action: 'release', ref });
       for (const field of ['kind "fact"', 'visibility "world"', 'source "email"', 'valid from "']) expect(preview.summary).toContain(field);
       expect(await apply(engine, ref, preview.binding)).toMatchObject({ status: 'released', tier: 'user_confirmed' });

@@ -47,14 +47,15 @@ Flags:
                        proves it. A one-person setup on a brain that already serves several
                        people (2+ enabled members) refuses rather than write a connection bound
                        to nobody, unless this harness's entry or config mcp.stdio_member binds it.
-  --members IDS        The people of --serves several, comma-separated (e.g. alice-example,bob-example).
+  --members IDS        The people the brain serves, comma-separated (e.g. alice-example,bob-example).
+                       Naming them turns on per-member access (--serves several is implied).
   --labelled-only      With --serves several: each member's key reads only pages labelled for
                        that member (readable_by or a rule), never the owner's. Opt-in.
   --open-history       With --serves several on a brain that serves one person and already holds
                        pages: let the members read them. Without it or --labelled-only, setup
                        refuses (setup_history_choice_required) and writes nothing.
   --members-file PATH  The same, one id per line.
-  --owner ID           With --serves several: the brain owner, added as a member and named with
+  --owner ID           With --serves several or --shape household: the brain owner, added as a member and named with
                        gbrain access owner set when the brain has none (default: your login name
                        as a member id). An existing owner is kept. No key is rebound: setup lists
                        the keys bound to no member with the auth rescope command for each.
@@ -120,6 +121,16 @@ Flags:
                        serves one person) with empty pages for company facts,
                        decisions, pricing, customers, calls and playbooks, and the
                        matching lines in that block. --shape both does personal too.
+  --shape household    claude-code, codex: set the brain up for a household. Preview first;
+                       --yes applies: the owner, another adult, a labelled-only helper and
+                       family chat (an audience member), the household groups, one folder
+                       rule per household folder (each naming the owner), and one key per
+                       member in a 0600 file under <config>/member-keys/ (never printed;
+                       children get none), plus a household block in the instructions.
+                       --household-members adult:ID,helper:ID,chat:ID or none changes who.
+                       --status [--receipt ID] prints the run's receipt and what each key
+                       reads; --resume ID --yes finishes a stopped run.
+                       Guide: docs/tutorials/household-brain.md.
   --shape none         Remove that block; the pages stay.
   --notes DIR          With --shape personal or both: import a notes folder (absolute or
                        ~/), read only, then check keyless search finds a note in it. Over

@@ -116,11 +116,12 @@ export async function listPreviewHashCheckpoints(raw: Raw, op: string, previewHa
  */
 export async function writeOpCheckpointRecords(raw: Raw, op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown }>): Promise<void> {
   if (!rows.length) return;
-  await raw.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-    SELECT $1, entry->>'fingerprint', jsonb_build_array(entry->'record') FROM jsonb_array_elements($2::text::jsonb) AS entry
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [op, JSON.stringify(rows.map(({ fingerprint, record }) => ({ fingerprint, record })))]);
+  await raw.executeRaw(WRITE_OP_CHECKPOINT_RECORDS_SQL, [op, JSON.stringify(rows.map(({ fingerprint, record }) => ({ fingerprint, record })))]);
 }
+/** The one statement `writeOpCheckpointRecords` sends (op_checkpoints only): the shadow write sampler judges the member by it (shadow/write-capture.ts). */
+export const WRITE_OP_CHECKPOINT_RECORDS_SQL = `INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
+    SELECT $1, entry->>'fingerprint', jsonb_build_array(entry->'record') FROM jsonb_array_elements($2::text::jsonb) AS entry
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`;
 
 /**
  * Deletes the checkpoints whose stamp is older than `ttlDays` days and that no exemption holds, and returns how many

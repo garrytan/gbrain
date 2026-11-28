@@ -15,7 +15,9 @@ graph maintenance, and full-backup limits before enabling capabilities.
 mcp"*. On your computer, the `remote-mcp` skill publishes and grants; inside
 the Bot, the paste-in prompt below installs the connection.
 
-This guide covers the **Grok Bot personal agent**. The `grok` coding CLI has a
+This guide covers two paths: **grok.com's custom connector**, tested end to end
+on 2026-11-24, and the **Grok Bot personal agent**, whose native connection is
+untested and keeps the thin-CLI path. The `grok` coding CLI has a
 separate [Grok Build guide](../mcp/GROK.md). A Grok API key configures a model
 provider; it does not install memory in Grok Bot.
 
@@ -23,12 +25,46 @@ provider; it does not install memory in Grok Bot.
 
 | Your situation | Use |
 | --- | --- |
-| You have (or can run) GBrain on your own computer — recommended | [Publish it over MCP](remote-mcp.md) with `gbrain mcp expose --funnel` (Funnel, because the Bot runs in the vendor's cloud, not on your tailnet), grant the Bot a client, then install the thin CLI inside the Bot ([hosted harness access](hosted-harness-access.md), adapter `grok-bot`). Memory lives where you can back it up and inspect it. |
+| You use Grok on grok.com and your brain runs on your computer | [Add a custom connector](#grok-on-grokcom-add-a-custom-connector-tested-2026-11-24): your `/mcp` URL, Grok registers itself, you approve it in your own browser. Tested 2026-11-24 on the web app only |
+| You have (or can run) GBrain on your own computer — recommended for Grok Bot | [Publish it over MCP](remote-mcp.md) with `gbrain mcp expose --funnel` (Funnel, because the Bot runs in the vendor's cloud, not on your tailnet), grant the Bot a client, then install the thin CLI inside the Bot ([hosted harness access](hosted-harness-access.md), adapter `grok-bot`). Memory lives where you can back it up and inspect it. |
 | Already have a hosted GBrain elsewhere (cloud host, team brain) | Same client-side steps: [hosted harness access](hosted-harness-access.md), adapter `grok-bot`; choose the thin CLI for the complete remote command path |
 | No always-on machine; want a brain that stays online | Hosted GBrain at [gbrain.io](https://gbrain.io/?ref=grok-bot), then connect the Bot with the connection details gbrain.io gives you |
 | No always-on machine; want memory inside your Bot only | [Local setup](#alternative-install-gbrain-inside-the-bot) below; no model API key needed for the first fact/recall test |
 | Want to keep the connection tailnet-only | Joining the Bot's runtime to your tailnet (userspace `tailscaled` with an ephemeral auth key) is possible in principle; it is advanced, not automated by gbrain, and unverified against a real Bot |
 | Want a native Grok Bot MCP plugin | Native plugin authentication is unverified and release-gated; use the supported thin CLI path until an actual Bot pilot establishes the native connection |
+
+## Grok on grok.com: add a custom connector (tested 2026-11-24)
+
+This path was run end to end on 2026-11-24 against gbrain 0.60.768.0, with a
+scratch keyless brain on the owner's own computer. It covers grok.com's web app
+only: the Grok Bot runtime and reconnecting an existing connection were not
+tested, so those keep the CLI path below.
+
+1. On the computer that holds the brain, publish it with self-registration on:
+
+   ```bash
+   gbrain mcp expose --funnel --enable-dcr
+   ```
+
+   Funnel, because grok.com reaches your brain from the internet. `--enable-dcr`
+   lets Grok register itself; every registration still waits for your approval.
+2. On grok.com, open Connect Apps, choose **Add a custom connector**, and fill
+   the **Add MCP Server** form: a name such as `GBrain` and your brain's
+   `/mcp` URL as the Server URL. Leave the header row empty.
+3. Grok registers itself and opens a popup on your brain's owner login page.
+   Approve it from your own browser as in
+   [approve a connector from your own browser](../mcp/ADMIN.md#approve-a-connector-from-your-own-browser):
+   the client is named `Grok`, its redirect is
+   `https://grok.com/connectors-oauth-exchange-code/`, and it asks for read and
+   write. The connector then shows Connected.
+4. In a fresh chat that doesn't mention GBrain, ask about something you saved.
+   In the test, Grok searched its own memory and the web first, then called the
+   connector and answered with the saved fact.
+
+Measured with an agent driving the browser: about 2 minutes from Add to the
+login page, 2 minutes for the owner approval, and 2.5 minutes for the recall. A
+person needs about a minute of clicks plus the owner sign-in. To disconnect,
+remove the connector in Grok and revoke the client on your brain's Agents page.
 
 ## Recommended: your brain on your computer, reached over MCP
 
@@ -58,7 +94,8 @@ gbrain connect with --harness grok-bot, that credentials file, --install and
 --root /workspace/gbrain. Use the generated absolute /workspace/gbrain/bin/gbrain
 launcher for every memory command. Keep secrets out of chat and command output.
 
-Run gbrain mcp verify and show me the server checks. Save the generated
+Run gbrain mcp verify --credentials-file /private/bot-example.json and show
+me the server checks. Save the generated
 GBRAIN-INSTRUCTIONS.md as a private native skill and enable it for this Bot;
 keep your current identity and other instructions. Then remember a harmless
 randomized test fact with provenance, recall it in a fresh conversation, and
@@ -68,6 +105,23 @@ tell me which native steps remain unverified.
 The Bot's memory now lives on your machine: back it up, inspect it, and
 revoke the Bot's client on the host whenever it should stop. `gbrain mcp
 expose --status` on your computer re-checks the service and the public URL.
+
+### Troubleshoot calls from the Bot
+
+- **Check the connection from the Bot.** Run `whoami` through the generated
+  launcher to check the client and source. A platform connector's Connected
+  badge, missing tool namespace, or trust refusal for the current turn isn't
+  a GBrain server response.
+- **Keep the CLI result intact.** Capture stdout and stderr separately and
+  save the CLI's exit status before parsing JSON. Don't pipe `2>&1` into a JSON
+  parser. Check each command's `--help`; don't assume every command takes
+  `--json`. If your helper closes stdin, pass the Markdown to
+  `put <slug> --content "$markdown"` as an argument instead of redirecting it.
+- **Check a lost write reply before retrying.** For `put`, keep the UUID you
+  passed as `--request-id`. Use the same launcher to run
+  `write-request -- <request-id>`. If it's pending, wait; if it committed,
+  read the page back. If there is no receipt and you've confirmed nothing was
+  written, retry the same write with the same request ID.
 
 ## Alternative: install GBrain inside the Bot
 
@@ -103,7 +157,8 @@ Grok documents one account-wide cloud computer: files, browser sessions, and
 command-line credentials are shared. It names `/workspace` for durable files
 and treats manually installed packages as replaceable. Use one root and its
 repair helper across Bots; separate Bot names or GBrain sources do not create
-a privacy boundary on that computer.
+a privacy boundary on that computer. A shared GBrain client doesn't isolate
+Bot personas or prove which Bot made a call.
 [Grok Bot computer documentation](https://docs.x.ai/grok-bot/computer-and-apps)
 (updated August 11, 2026; checked September 9, 2026).
 
@@ -194,7 +249,8 @@ and the Bot's native skill activation are separate observed steps. Before
 calling your installation complete, check:
 
 - For the published-brain path: `gbrain mcp expose --status` verifies on your
-  computer and `gbrain mcp verify` passes its server checks from inside the Bot.
+  computer and `gbrain mcp verify --credentials-file <handoff-file>` passes its
+  server checks from inside the Bot.
 - The launcher writes, recalls, corrects, and forgets the randomized test fact.
 - A fresh conversation invokes that same launcher through the native skill.
 - Every intended Bot uses the same root; concurrent calls recover from a busy

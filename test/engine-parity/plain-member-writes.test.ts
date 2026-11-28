@@ -5,9 +5,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on every arm a plain member's put_page and capture are written and the attested door marks only the
- *    member with the grant as labelled-only. A labelled-only member's unlabelled put_page is refused: on PGLite and
- *    Postgres with access_labelled_only_unnamed; on Rust loudly with engine_capability_missing (row 32e-b, the
- *    labelled-only policy, is a named stop there).
+ *    member with the grant as labelled-only. A labelled-only member's unlabelled put_page is refused with
+ *    access_labelled_only_unnamed on every arm (row 32e-b-3 made the Rust create check answer as PGLite does).
  *  - Regression: the write check (persistence/page-visibility.ts writerLabelledOnly) read the owner with raw SQL, which
  *    the Rust engine refuses, so every remote write on a Rust brain with a labelled-only member was refused.
  *  - Why existing coverage misses it: the write parity cases run on brains with no labelled-only member, where the
@@ -84,12 +83,12 @@ describe('engine parity: a plain member writes on a brain with a labelled-only m
     expect(seen[0]!.stored).toEqual({ page: ['Note', 'note', 'Harbor notes.', null], versions: 0 });
   }, 120_000);
 
-  test('a labelled-only member\'s unlabelled put_page is refused on every arm (on Rust loudly: row 32e-b)', async () => {
+  test('a labelled-only member\'s unlabelled put_page is refused with access_labelled_only_unnamed on every arm (row 32e-b-3)', async () => {
     for (const arm of arms()) {
       await resetArm(arm);
       await seed(arm.engine, arm.backend);
       const outcome = await write(arm.engine, 'carol-example', 'put_page', 'notes/by-carol');
-      expect({ backend: arm.backend, outcome }).toEqual({ backend: arm.backend, outcome: arm.backend === 'rust' ? 'engine_capability_missing' : 'access_labelled_only_unnamed' });
+      expect({ backend: arm.backend, outcome }).toEqual({ backend: arm.backend, outcome: 'access_labelled_only_unnamed' });
     }
     expect(arms().length).toBeGreaterThan(0);
   }, 120_000);

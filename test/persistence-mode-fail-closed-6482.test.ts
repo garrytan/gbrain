@@ -10,6 +10,7 @@
  * shapes, and `withConnectorSync` / `beginConnectorSync` take the unmanaged
  * path (and write the attempt checkpoint) on an empty read.
  */
+import { JOURNAL_LIMITS_SQL } from '../src/core/persistence/limits.ts';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
@@ -18,7 +19,6 @@ import type { SqlEngine } from '../src/core/persistence/model.ts';
 import { managedPersistenceEnabled, readManagedMode, readPersistenceBrain } from '../src/core/persistence/ownership.ts';
 import { inspectPersistenceBrain } from '../src/core/persistence/managed-mode.ts';
 import { readWriterDiagnostics } from '../src/core/persistence/diagnostics.ts';
-import { JOURNAL_LIMITS_SQL } from '../src/core/persistence/limits.ts';
 import { assertUnmanagedCanonicalWriter } from '../src/core/persistence/maintenance.ts';
 import { beginConnectorSync, withConnectorSync } from '../src/core/persistence/connector-sync.ts';
 import { renderCliError } from '../src/core/agent-output.ts';

@@ -519,7 +519,7 @@
               "explicit_retention_days": null,
               "over_target": false,
               "target_bytes": 8589934592,
-              "used_bytes": 19163
+              "used_bytes": 19195
             },
             "inspected": 2,
             "outstanding": [],
@@ -529,7 +529,7 @@
             "verify": "gbrain doctor --only persistence_capacity --json"
           },
           "elapsed_ms": "<volatile>",
-          "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 19163 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+          "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 19195 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
           "name": "persistence_capacity",
           "status": "ok"
         },
@@ -1277,14 +1277,14 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1416 column(s) verified against live schema",
+          "message": "1417 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 197 table(s) the applied migrations create exist.",
+          "message": "All 198 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -2408,7 +2408,7 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
-          "message": "Subagent tier resolves to default (claude-sonnet-4-6) — full tool-loop capability",
+          "message": "Subagent tier resolves to default (claude-sonnet-5-5) — full tool-loop capability",
           "name": "subagent_capability",
           "status": "ok"
         },
@@ -2928,6 +2928,13 @@
           "elapsed_ms": "<volatile>",
           "message": "No agent policy is set; policy_check answers none (gbrain policy init sets one).",
           "name": "policy_valid",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "No confirmed standing rules to check (gbrain correct saves one).",
+          "name": "rules_regression",
           "status": "ok"
         },
         {
@@ -4465,7 +4472,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "Active pack gbrain-base-v2@1.7.0+b64f249b is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.7.0+f1691ae3 is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },

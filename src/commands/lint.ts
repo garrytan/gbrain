@@ -18,8 +18,8 @@ import { readSourceFileSync, writeSourceFileSync, hasSourceFilesystemLock, withS
  *   gbrain lint <file.md>          # lint single file
  */
 
-import { readdirSync, statSync, lstatSync, existsSync } from 'fs';
-import { join, relative, dirname } from 'path';
+import { readdirSync, statSync, lstatSync, existsSync, realpathSync } from 'fs';
+import { join, relative, dirname, resolve, sep } from 'path';
 import { isAborted } from '../core/abort-check.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
 import { parseDateLoose } from '../core/effective-date.ts';
@@ -37,7 +37,12 @@ import { loadActivePackForLocalEngine } from '../core/schema-pack/best-effort.ts
 import { safeCliToken, sanitizeTypeForDisplay, storedTypeMissesPack, type TypeUsagePack } from '../core/schema-pack/type-usage.ts';
 import { parseLineGrammar } from '../core/line-grammar.ts';
 import { stripCodeBlocks } from '../core/markdown-code.ts';
-import { pathToSlug } from '../core/sync.ts';
+import { isSyncable, isSyncStrategy, matchesAnyGlob, pathToSlug, readMetafilePagesMode } from '../core/sync.ts';
+import { diskMetafileHeads, metafilePagePredicate } from '../core/sync-metafile-pages.ts';
+import { isReservedSkillBundlePath } from '../core/skill-reserved-paths.ts';
+import { relativeEscapesRoot } from '../core/path-confine.ts';
+import { getWorktreeBinding } from '../core/persistence/ownership.ts';
+import { syncExcludePatterns } from '../core/persistence/sync-discovery.ts';
 import { isManagedBrain } from '../core/cycle/phase-table.ts';
 import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../core/persistence/prepared-maintenance.ts';
 import { fileMatchesSnapshot, prepareFileTarget } from '../core/persistence/page-prepare.ts';
@@ -757,6 +762,29 @@ async function publishLintFix(engine: BrainEngine, authority: MaintenanceAuthori
 }
 
 /**
+ * #10442: the source whose root on this host holds `target` (the named source first, else the deepest root), with the
+ * target's path below that root and the source's sync strategy; null when no root holds it. A source's root is its
+ * active worktree binding on this host (the checkout managed sync reads, even when `sources.local_path` is unset or
+ * names another host's path), else its registered local path.
+ */
+async function managedSourceRoot(engine: BrainEngine, target: string, sourceId: string | undefined)
+  : Promise<{ root: string; prefix: string; strategy: unknown } | null> {
+  const real = realpathSync.native(target);
+  const held = (await Promise.all((await engine.listAllSources()).map(async source => {
+    const binding = await getWorktreeBinding(engine, source.id);
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- this host's own worktree binding row; containment is checked below with relativeEscapesRoot
+    const path = binding?.state === 'active' && binding.local_path ? resolve(binding.local_path, binding.relative_path ?? '') : source.local_path;
+    if (!path) return [];
+    let root: string;
+    // silent-read-ok: a root missing on this disk holds no file this walk read
+    try { root = realpathSync.native(path); } catch { return []; }
+    const prefix = relative(root, real);
+    return relativeEscapesRoot(prefix) ? [] : [{ id: source.id, root, prefix: prefix.split(sep).join('/'), strategy: source.config?.strategy }];
+  }))).flat();
+  return held.find(source => source.id === sourceId) ?? held.sort((a, b) => b.root.length - a.root.length)[0] ?? null;
+}
+
+/**
  * Library-level lint. Throws on validation errors (missing target, target
  * not found); lints otherwise. Does NOT print human-readable details (the
  * CLI wrapper handles that) — returns counts so Minions handlers can
@@ -780,7 +808,21 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   }
 
   const isSingleFile = statSync(opts.target).isFile();
-  const pages = isSingleFile ? [opts.target] : collectPages(opts.target, opts.exclude ?? []);
+  let pages = isSingleFile ? [opts.target] : collectPages(opts.target, opts.exclude ?? []);
+  const owner = managed && !isSingleFile ? await managedSourceRoot(opts.engine!, opts.target, opts.sourceId) : null;
+  if (owner) {
+    // #10442: a managed source's directory lint covers the files its sync imports, by the managed discovery rules
+    // (sync.exclude, the source's strategy with its metafile and pruned-path rules, reserved skillpack paths), judged
+    // by each file's path below the source root; scaffolding and skill bundles are not pages there. A single-file
+    // target, or a directory outside every registered source, still lints every file it names.
+    const exclude = await syncExcludePatterns(opts.engine!);
+    const metafilePage = metafilePagePredicate(await readMetafilePagesMode(opts.engine!), diskMetafileHeads(owner.root));
+    const strategy = isSyncStrategy(owner.strategy) ? owner.strategy : 'markdown';
+    pages = pages.filter(file => {
+      const path = [owner.prefix, relative(opts.target, file).split(sep).join('/')].filter(Boolean).join('/');
+      return !isReservedSkillBundlePath(path) && !matchesAnyGlob(path, exclude) && isSyncable(path, { strategy, metafilePage });
+    });
+  }
   opts.onPagesCollected?.(pages.length);
 
   // Resolve content-sanity config and the active pack once for this lint

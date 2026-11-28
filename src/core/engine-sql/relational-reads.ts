@@ -31,6 +31,41 @@ export async function readAdmittedPageRefs(exec: LegacyUnscopedRead, refs: reado
   );
 }
 
+const DATE_FIELDS_JOIN = 'JOIN unnest($1::text[], $2::text[]) AS w(source_id, slug) ON p.source_id = w.source_id AND p.slug = w.slug';
+
+/** A page's observation-date inputs: its frontmatter (a JSON object or its text) and import filename. */
+export interface PageDateFieldsRow { source_id: string; slug: string; frontmatter: unknown; import_filename: string | null }
+
+/**
+ * The observation-date inputs of the refs' pages that `policy` admits (its source scope, private-page filter and
+ * trust floor; `pageReadFilter` live), in no set order (search/evidence-date.ts `factObservationDates`). A ref listed
+ * twice answers twice. The text is the one evidence-date.ts sent (pinned in test/engine-sql-caller-raw-sql-pins.test.ts).
+ */
+export async function readAdmittedPageDateFields(exec: LegacyUnscopedRead, refs: readonly PageRefRow[], policy: PageReadPolicy): Promise<PageDateFieldsRow[]> {
+  if (!refs.length) return [];
+  const params: unknown[] = [refs.map(ref => ref.source_id), refs.map(ref => ref.slug)];
+  const filter = pageReadFilter('p', policy, params, true);
+  return exec.executeRaw<PageDateFieldsRow>(
+    `SELECT p.source_id, p.slug, p.frontmatter, p.import_filename FROM pages p
+     ${DATE_FIELDS_JOIN} WHERE ${filter}`, params,
+  );
+}
+
+/** A page's observation-date inputs by id (`readPageDateFieldsByIds`). */
+export interface PageDateFieldsByIdRow { id: number; slug: string; frontmatter: unknown; import_filename: string | null }
+
+/**
+ * The observation-date inputs of each of `ids` that names a page row (a soft-deleted page included, as the SQL sets
+ * no filter), in no set order (search/evidence-date.ts `loadPageDateHeaders`, for page hits already read under the
+ * caller's policy). The text is the one evidence-date.ts sent (pinned in test/engine-sql-caller-raw-sql-pins.test.ts).
+ */
+export async function readPageDateFieldsByIds(exec: LegacyUnscopedRead, ids: readonly number[]): Promise<PageDateFieldsByIdRow[]> {
+  if (!ids.length) return [];
+  const rows = await exec.executeRaw<{ id: number | string; slug: string; frontmatter: unknown; import_filename: string | null }>(
+    'SELECT id, slug, frontmatter, import_filename FROM pages WHERE id = ANY($1::int[])', [[...ids]]);
+  return rows.map(r => ({ ...r, id: Number(r.id) }));
+}
+
 /** A page the walk reached: its title, type and bounded body prefix (`boundedBodyPrefixSql`). */
 export interface RelationalPageRow { page_id: number; slug: string; source_id: string; title: string; type: string; synopsis: string | null }
 

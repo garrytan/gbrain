@@ -204,7 +204,8 @@ describe('generic remote job authority', () => {
     expect((await get.handler(ctx(), { id: result.id }) as Record<string, unknown>).submission_authority).toBeUndefined();
     const local = await queue.add('maintenance', {});
     await engine.executeRaw("UPDATE minion_jobs SET status = 'failed' WHERE id = $1", [local.id]);
-    await expect(jobsOperations.find(op => op.name === 'retry_job')!.handler(ctx(), { id: local.id })).rejects.toThrow('submitting principal');
+    // GST-4010: a remote caller never sees a job the local operator queued, so its restart reads as a missing id.
+    await expect(jobsOperations.find(op => op.name === 'retry_job')!.handler(ctx(), { id: local.id })).rejects.toThrow('Job not found');
   }));
 
   test('#7241: a remote submit carrying __submitter never shows as a local submitter', () => isolated(async () => {

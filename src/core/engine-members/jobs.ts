@@ -200,8 +200,8 @@ export interface JobsMembers {
   readEngineMigrationHistory(): Promise<EngineMigrationHistory>;
   /** Every row of a table the copier carries whole, by id (sources: `default` first); null when the schema lacks it. */
   readMigrationRows(table: MigrationTable): Promise<MigrationRows | null>;
-  /** A page's origin, kind and provenance columns and whether its projection is sealed, in any deletion state; null for none. */
-  readMigrationPageColumns(slug: string, sourceId: string): Promise<MigrationPageColumns | null>;
+  /** A page's origin, kind and provenance columns and whether its projection is sealed, in any deletion state; null for none. `contentHash`: the author (GST-4056) is returned only while it names that text. */
+  readMigrationPageColumns(slug: string, sourceId: string, contentHash?: string | null): Promise<MigrationPageColumns | null>;
   /** The manual dated statements of the relationships a page starts. */
   listManualLinkTransitions(slug: string, sourceId: string): Promise<ManualLinkTransition[]>;
   /** Timeline rows of live pages. */

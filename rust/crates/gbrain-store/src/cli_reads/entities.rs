@@ -5,11 +5,13 @@
 //! Frontmatter values are read as PostgreSQL's `->>` reads them (see [`arrow_text`]).
 
 use crate::Store;
+use crate::access_rules::stamped;
 use crate::chunks::SAFE_FENCE_CHUNKER_VERSION;
 use crate::cli_reads::pg_text::{pg_lower, regex_char_matches};
 use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, like, page_hidden};
+use crate::kv::KvRead;
 use crate::link_queries::ranks;
 use crate::links::out_links;
 use crate::pages::{PageRecord, all_pages, read_page_by_id};
@@ -271,6 +273,24 @@ pub struct NameVariantCandidateRow {
     pub page_type: String,
     pub frontmatter: Map<String, Value>,
     pub probe_hits: u64,
+}
+
+/// One name-variant candidate as an entity-card row (`listNameVariantCardCandidates`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NameVariantCardCandidateRow {
+    #[serde(flatten)]
+    pub card: EntityCardRow,
+    pub probe_hits: u64,
+}
+
+/// One name-variant page row (`readVisibleVariantPages`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct VariantPageRow {
+    pub slug: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    pub frontmatter: Map<String, Value>,
 }
 
 /// The distinct pages linking to one page (`countDistinctInboundLinkers`).
@@ -587,23 +607,14 @@ impl Store {
             {
                 continue;
             }
-            out.push(EntityCardRow {
-                compiled_truth: bounded_body_prefix(&*read, &p)?,
-                updated_at: iso(p.updated_at_us),
-                last_retrieved_at: crate::page_ops::retrievals::last_retrieved_us(&*read, p.id)?
-                    .map(iso),
-                frontmatter: Value::Object(p.frontmatter.clone()),
-                slug: p.slug,
-                source_id: p.source_id,
-                title: p.title,
-                page_type: p.page_type,
-            });
+            out.push(card_row(&*read, p)?);
         }
         Ok(out)
     }
 
     /// `readIgnoredPrivacyLabelPages(sourceId, scope)`: the live pages of the source in the scope
-    /// that carry a privacy label key and no `readable_by`. The caller applies the label rule
+    /// that carry a privacy label key, no `readable_by` and no folder rule (`folder_rule_ids IS
+    /// NULL`, [`stamped`]). The caller applies the label rule
     /// (`ignoredPrivacyLabels`) and the limit.
     pub fn read_ignored_privacy_label_pages(
         &self,
@@ -625,7 +636,8 @@ impl Store {
             }
         };
         let read = self.read()?;
-        Ok(all_pages(&*read)?
+        let mut rows = Vec::new();
+        for p in all_pages(&*read)?
             .into_iter()
             .filter(|p| p.source_id == source_id && p.deleted_at_us.is_none() && in_scope(p))
             .filter(|p| !p.frontmatter.contains_key("readable_by"))
@@ -634,11 +646,17 @@ impl Store {
                     .iter()
                     .any(|k| p.frontmatter.contains_key(*k))
             })
-            .map(|p| LabelPageRow {
+        {
+            // `p.folder_rule_ids IS NULL`: a page a folder rule covers is not an unprotected label.
+            if stamped(&*read, &p.source_id, &p.slug)? {
+                continue;
+            }
+            rows.push(LabelPageRow {
                 page_type: p.page_type,
                 frontmatter: p.frontmatter,
-            })
-            .collect())
+            });
+        }
+        Ok(rows)
     }
 
     /// `listUnretiredPagesBySlugPattern(sourceId, patterns, limit)`: the live, unretired pages of the
@@ -675,39 +693,80 @@ impl Store {
         source_id: &str,
         q: &NameVariantCandidateQuery,
     ) -> Result<Vec<NameVariantCandidateRow>> {
+        self.list_visible_name_variant_candidates(source_id, q, None)
+    }
+
+    /// `listVisibleNameVariantCandidates(sourceId, q, policy)`: `listNameVariantCandidates` with the
+    /// page policy (`page_hidden`) applied before the limit; a `None` policy reads every page.
+    pub fn list_visible_name_variant_candidates(
+        &self,
+        source_id: &str,
+        q: &NameVariantCandidateQuery,
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<Vec<NameVariantCandidateRow>> {
         let read = self.read()?;
-        let mut rows = Vec::new();
-        for p in all_pages(&*read)? {
-            if p.source_id != source_id || p.deleted_at_us.is_some() {
-                continue;
-            }
-            if !(q.types.contains(&p.page_type) || any_like(&p.slug, &q.slug_patterns, false)?) {
-                continue;
-            }
-            let mut hits = 0u64;
-            for probe in &q.probes {
-                if like(&p.title, probe, true)? || like(&p.slug, probe, true)? {
-                    hits += 1;
-                }
-            }
-            if hits == 0 {
-                continue;
-            }
-            rows.push(NameVariantCandidateRow {
+        Ok(name_variant_pages(&*read, source_id, q, policy)?
+            .into_iter()
+            .map(|(p, hits)| NameVariantCandidateRow {
                 slug: p.slug,
                 title: p.title,
                 page_type: p.page_type,
                 frontmatter: p.frontmatter,
                 probe_hits: hits,
+            })
+            .collect())
+    }
+
+    /// `listNameVariantCardCandidates(sourceId, q, policy)`: the candidates
+    /// `listVisibleNameVariantCandidates` reads, in the same order and under the same page policy,
+    /// as entity-card rows (`readEntityCardRows`) with their `probe_hits`.
+    pub fn list_name_variant_card_candidates(
+        &self,
+        source_id: &str,
+        q: &NameVariantCandidateQuery,
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<Vec<NameVariantCardCandidateRow>> {
+        let read = self.read()?;
+        name_variant_pages(&*read, source_id, q, policy)?
+            .into_iter()
+            .map(|(p, probe_hits)| {
+                Ok(NameVariantCardCandidateRow {
+                    card: card_row(&*read, p)?,
+                    probe_hits,
+                })
+            })
+            .collect()
+    }
+
+    /// `readVisibleVariantPages(sourceId, slugs, policy)`: the live page of the source at each of
+    /// `slugs`, in `slugs` order (a repeated slug reads once per mention), skipping a slug with no
+    /// live page and, under a policy, a page `page_hidden` hides.
+    pub fn read_visible_variant_pages(
+        &self,
+        source_id: &str,
+        slugs: &[String],
+        policy: Option<&PrivacyPolicy>,
+    ) -> Result<Vec<VariantPageRow>> {
+        let read = self.read()?;
+        let mut rows = Vec::new();
+        for slug in slugs {
+            let Some(p) = crate::pages::read_page(&*read, source_id, slug)?
+                .filter(|p| p.deleted_at_us.is_none())
+            else {
+                continue;
+            };
+            if let Some(policy) = policy
+                && page_hidden(&*read, &p, policy)?
+            {
+                continue;
+            }
+            rows.push(VariantPageRow {
+                slug: p.slug,
+                title: p.title,
+                page_type: p.page_type,
+                frontmatter: p.frontmatter,
             });
         }
-        rows.sort_by(|a, b| {
-            b.probe_hits
-                .cmp(&a.probe_hits)
-                .then_with(|| a.title.chars().count().cmp(&b.title.chars().count()))
-                .then_with(|| a.slug.cmp(&b.slug))
-        });
-        rows.truncate(usize::try_from(q.limit).unwrap_or(usize::MAX));
         Ok(rows)
     }
 
@@ -1070,6 +1129,65 @@ fn names_as_word(text: &str, names: &[Vec<char>]) -> bool {
                     .zip(&chars[start..end])
                     .all(|(p, t)| regex_char_matches(*p, *t, false))
         })
+    })
+}
+
+/// The live pages of the source that are name-variant candidates for `q` (a type in `types` or a
+/// slug matching `slug_patterns`, and a title or slug matching a probe, ILIKE) and that `policy`
+/// (when given) does not hide, with their probe hits. Most hits first, then the shortest title
+/// (code points), then slug in byte order; at most `q.limit`.
+fn name_variant_pages(
+    read: &dyn KvRead,
+    source_id: &str,
+    q: &NameVariantCandidateQuery,
+    policy: Option<&PrivacyPolicy>,
+) -> Result<Vec<(PageRecord, u64)>> {
+    let mut rows = Vec::new();
+    for p in all_pages(read)? {
+        if p.source_id != source_id || p.deleted_at_us.is_some() {
+            continue;
+        }
+        if !(q.types.contains(&p.page_type) || any_like(&p.slug, &q.slug_patterns, false)?) {
+            continue;
+        }
+        let mut hits = 0u64;
+        for probe in &q.probes {
+            if like(&p.title, probe, true)? || like(&p.slug, probe, true)? {
+                hits += 1;
+            }
+        }
+        if hits == 0 {
+            continue;
+        }
+        if let Some(policy) = policy
+            && page_hidden(read, &p, policy)?
+        {
+            continue;
+        }
+        rows.push((p, hits));
+    }
+    rows.sort_by(|(a, a_hits), (b, b_hits)| {
+        b_hits
+            .cmp(a_hits)
+            .then_with(|| a.title.chars().count().cmp(&b.title.chars().count()))
+            .then_with(|| a.slug.cmp(&b.slug))
+    });
+    rows.truncate(usize::try_from(q.limit).unwrap_or(usize::MAX));
+    Ok(rows)
+}
+
+/// One entity-card row for a live page, as `readEntityCardRows` reads it: the bounded body
+/// prefix and the page's last retrieval time.
+fn card_row(read: &dyn KvRead, p: PageRecord) -> Result<EntityCardRow> {
+    Ok(EntityCardRow {
+        compiled_truth: bounded_body_prefix(read, &p)?,
+        updated_at: iso(p.updated_at_us),
+        last_retrieved_at: crate::page_ops::retrievals::last_retrieved_us(read, p.id)?.map(iso),
+        frontmatter: Value::Object(p.frontmatter),
+        slug: p.slug,
+        source_id: p.source_id,
+        title: p.title,
+        page_type: p.page_type,
     })
 }
 

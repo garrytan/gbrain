@@ -52,6 +52,11 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
     case 'store_closed':
       return opError('engine_closed', `The Rust engine's store is closed, so ${ctx.member} did not run.`,
         'Open the brain again with openEngine or connect() before calling it.', { detail: `member=${ctx.member}` });
+    case 'store_missing':
+      // The store's own last line (the CLI's connect refuses first, src/core/engine-connect.ts): a store that must be
+      // there was not, and the open created nothing.
+      return opError('brain_missing', `The Rust store is not there (an unmounted drive or a moved folder?), so ${ctx.member} did not open it. Nothing was created there.`,
+        'Mount or move the brain back, or point `database_path` in the gbrain config at where it lives now.', { reason: 'missing_brain', detail });
     case 'store_locked':
       return opError('rust_store_locked', 'Another gbrain process or engine has this brain open, so the Rust engine opened nothing.',
         'Stop the other process that is using this brain, or disconnect the other engine, then try again.', { retryable: true, detail });
@@ -73,12 +78,30 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
       return new PageSnapshotAmbiguousError();
     case 'constraint_violation':
       return factsUniqueViolation(error);
+    case 'guest_source_guard:pages':
+    case 'guest_source_guard:facts':
+    case 'guest_source_guard:takes':
+    case 'guest_source_guard:timeline_entries':
+      return guestSourceGuard(error, code.slice('guest_source_guard:'.length));
     case 'unmodeled_input':
       // An input the store does not read as Postgres does: refused by name, before anything is written.
       return refusalFor(ctx.member, detail);
     default:
       return error;
   }
+}
+
+/**
+ * A guest-source rule of the trust trigger (rust/crates/gbrain-store/src/guest_sources.rs): the error the trigger
+ * raises, SQLSTATE `P0001` with the same message, constraint `guest_source_guard`, the table, and the trigger function
+ * in `where`, so persistence/publication-failure.ts reads it as it reads the SQL engines' refusal.
+ */
+function guestSourceGuard(error: unknown, table: string): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return Object.assign(new Error(message), {
+    severity: 'ERROR', code: 'P0001', schema_name: 'public', table_name: table, constraint_name: 'guest_source_guard',
+    where: 'PL/pgSQL function gbrain_stamp_trust_tier() line 1 at RAISE',
+  });
 }
 
 /** `engine_capability_missing` for `member`, under the capability the member table gives it, naming what was refused. */

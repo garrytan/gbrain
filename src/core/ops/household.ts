@@ -19,6 +19,7 @@ import { callerIdentities, callerIsOwner, currentCallerAccess, resolveExcludePri
 import { assertRemoteReadersValid, pageNotVisibleError, remoteTargetHidden } from '../persistence/page-visibility.ts';
 import { initializeLocalPersistence, pageMutationSource, requestPrincipalForContext, submitPageMutation } from '../persistence/page-mutations.ts';
 import { admitChangeReason } from '../persistence/change-reason.ts';
+import { screenWriteSecrets } from '../persistence/write-secrets.ts';
 import { assertReplayIntent, getWriteRequest, intentDigest } from '../persistence/journal.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { serializeMarkdown } from '../markdown.ts';
@@ -30,7 +31,7 @@ import {
   RECURS, readHouseholdRecord, strictDate, strictMonthDay, type HouseholdIssue, type HouseholdKind, type HouseholdRecord,
 } from '../household/record.ts';
 import { assessHouseholdRecord, calendarDay, rankAssessments, type HouseholdAssessment, type HouseholdState } from '../household/assess.ts';
-import { aboutOf, classifySubjects, householdWriteAdmission, nonOwnerChildRefusal, placedReaders, placeHouseholdFrontmatter, placeRecord, readersWiderThanTable, refuseAccountNumbers, roleClass, type SubjectClass } from '../household/placement.ts';
+import { aboutOf, classifySubjects, householdWriteAdmission, nonOwnerRoleRefusal, placedReaders, placeHouseholdFrontmatter, placeRecord, readersWiderThanTable, refuseAccountNumbers, roleClass, type SubjectClass } from '../household/placement.ts';
 
 /** Records one household_due call reads at most; past it the answer is partial with no counts. */
 export const HOUSEHOLD_SCAN_CAP = 2_000;
@@ -235,8 +236,6 @@ function timelineLine(day: string, event: string, note: string | null): string {
   return `- **${day}** | household — ${event}${note ? `: ${note}` : ''}`;
 }
 
-/** On a brain that serves several people, only the owner's remote connection makes a subject a child: one refusal, whatever records exist. */
-
 /**
  * Writes `household_role` on each subject page (creating a minimal page when none exists). A subject that goes from another
  * role to child first has the records about it narrowed to adults (`audience: adults`), so none is shared for a moment.
@@ -250,15 +249,16 @@ async function classifySubjectPages(ctx: OperationContext, sourceId: string, abo
     if (snapshot && await remoteTargetHidden(ctx.engine, ctx.remote, sourceId, slug)) throw opError('page_not_found', `Page not found: ${slug}`, 'Name a subject page this connection can read.');
     if (live && String(live.page.frontmatter?.household_role ?? '') === role) continue;
     if (live) assertInlineBody(live.page, 'household_add about_role');
+    if (ctx.remote !== false && !callerIsOwner() && await placedReaders(ctx.engine, 'adults')) throw nonOwnerRoleRefusal(slug, role);
     if (role === 'child' && roleClass(live?.page.frontmatter?.household_role) !== 'child') {
-      if (ctx.remote !== false && !callerIsOwner() && await placedReaders(ctx.engine, 'adults')) throw nonOwnerChildRefusal(slug);
       pinned.push(...(await replaceHouseholdRecords(ctx, sourceId, [slug], { pin: true })).replaced);
     }
     const title = live?.page.title ?? slug.split('/').pop()!.replace(/-/g, ' ');
     const fm = { ...(live?.page.frontmatter ?? {}), household_role: role };
     const content = serializeMarkdown(Object.fromEntries(Object.entries(fm).filter(([k]) => !['type', 'title', 'tags'].includes(k))),
       live?.page.compiled_truth ?? `# ${title}`, live?.page.timeline ?? '', { type: (live?.page.type ?? (slug.startsWith('people/') ? 'person' : 'note')) as never, title, tags: live?.tags ?? [] });
-    await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content, source_id: sourceId, ...(snapshot ? { expected_revision: snapshot.revision } : {}) } });
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug, content, source_id: sourceId, ...(snapshot ? { expected_revision: snapshot.revision } : {}) },
+      ...(live ? { serverComposed: true as const } : {}) });
     changed.push(slug);
   }
   return { classified: changed, pinned };
@@ -288,7 +288,7 @@ export async function replaceHouseholdRecords(ctx: OperationContext, sourceId: s
       if (JSON.stringify([fm.household_audience ?? null, fm.readable_by ?? null]) === before) continue;
       assertInlineBody(snap.page, 'household_replace');
       await submitPageMutation(ctx, { operation: 'put_page', params: { slug: row.slug, source_id: sourceId, expected_revision: snap.revision,
-        content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, snap.page.timeline ?? '', snap.tags) } });
+        content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, snap.page.timeline ?? '', snap.tags) }, serverComposed: true });
       replaced.push(row.slug);
     }
     if (rows.length < 500) break;
@@ -399,7 +399,7 @@ const household_add: Operation = {
       if (snap && await remoteTargetHidden(ctx.engine, ctx.remote, sourceId, subject)) throw opError('page_not_found', `Page not found: ${subject}`, 'Name a subject page this connection can read.');
       const live = snap && !snap.page.deleted_at ? snap.page : null;
       if (live && String(live.frontmatter?.household_role ?? '') === role) continue;
-      if (role === 'child' && placed && !callerIsOwner()) throw nonOwnerChildRefusal(subject);
+      if (placed && !callerIsOwner()) throw nonOwnerRoleRefusal(subject, role);
       if (live) assertInlineBody(live, 'household_add about_role');
       if (role === 'child') {
         if (remote) for (const row of await ctx.engine.listPages({ type: HOUSEHOLD_TYPE as never, sourceId, sort: 'slug', limit: 100_000, omitBodies: true }) as unknown as HouseholdPage[]) {
@@ -412,6 +412,8 @@ const household_add: Operation = {
       await householdWriteAdmission(ctx.engine, sourceId, subject, { type: live?.type ?? (subject.startsWith('people/') ? 'person' : 'note'),
         frontmatter: { ...(live?.frontmatter ?? {}), household_role: role }, tags: [] }, snap?.page ?? null, remote);
     }
+    // GST-4024: under block, a secret in the new record is refused before any subject or record is rewritten for it.
+    if (role && !prior) screenWriteSecrets(ctx, 'household_add', { ...recordParams, ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) });
     const subjects = role && !prior ? await classifySubjectPages(ctx, sourceId, about, role) : { classified: [], pinned: [] };
     const result = await submitPageMutation(ctx, { operation: 'put_page', params: { ...recordParams, ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) } });
     const { classified, pinned } = subjects;
@@ -471,8 +473,10 @@ const household_mark: Operation = {
     if (!HOUSEHOLD_EVENTS.includes(event)) throw invalidParam(ctx, 'household_mark', 'event', 'household_mark: unknown event.', { choices: HOUSEHOLD_EVENTS });
     const slug = typeof p.slug === 'string' ? p.slug.trim().toLowerCase().replace(/\.md$/, '') : '';
     if (!slug) throw invalidParam(ctx, 'household_mark', 'slug', 'household_mark: slug is required.', { example: 'household/money/bill/water' });
-    const note = capText(p.note);
     refuseAccountNumbers(accountNumberFields({ note: p.note, due: p.due }));
+    // GST-4024: the write below carries the stored record too, so secrets.on_write screens only the caller's note here.
+    const screened = screenWriteSecrets(ctx, 'household_mark', { note: capText(p.note), ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) });
+    const note = screened.params.note as string | null;
     const due = p.due === undefined ? null : strictDate(p.due);
     if (p.due !== undefined && !due) throw invalidParam(ctx, 'household_mark', 'due', 'household_mark: due must be YYYY-MM-DD.', { example: '2026-12-10' });
     const sourceId = pageMutationSource(ctx, p, 'household_mark');
@@ -496,8 +500,8 @@ const household_mark: Operation = {
     applyEvent(ctx, read.record, fm, event, day, due);
     const timeline = [snap.page.timeline?.trim(), timelineLine(day, event, note)].filter(Boolean).join('\n');
     const result = await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: sourceId, expected_revision: snap.revision,
-      content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, timeline, snap.tags), ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) } });
-    return { ...result, slug, event, on: day, status: fm.status ?? 'active' };
+      content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, timeline, snap.tags), ...(typeof screened.params.request_id === 'string' ? { request_id: screened.params.request_id } : {}) }, serverComposed: true });
+    return { ...result, slug, event, on: day, status: fm.status ?? 'active', ...(screened.redacted ? { secrets_redacted: screened.redacted } : {}) };
   },
 };
 

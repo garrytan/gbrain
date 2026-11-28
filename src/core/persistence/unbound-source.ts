@@ -111,6 +111,33 @@ export function unboundSourceError(sourceId: string, path: string | null, scope:
   return error;
 }
 
+/**
+ * #10067: forget on a read-only mirror with no canonical owner, of a claim a page file in the mirror carries. Refused
+ * like any unbound write (a database-only withdrawal would come back on a rebuild from Git), named for what it is: the
+ * mirror's upstream repository is authoritative and gbrain never writes its checkout. `path` only for trusted local callers.
+ */
+export function readOnlyMirrorForgetError(sourceId: string, factId: number, why: 'mirror_read_only' | 'url_clone', path: string | null): OperationError {
+  const writable = why === 'mirror_read_only'
+    ? ` If this checkout should publish instead, make the source writable (preview: gbrain sources mirror-writable ${sourceId} --dry-run, then run it without --dry-run), ${unboundBindCommand(sourceId, path)}, and forget fact ${factId} again.`
+    : '';
+  const error = new OperationError('owner_unavailable',
+    `Source '${sourceId}' is a read-only mirror with no canonical owner, so forget cannot withdraw fact ${factId}: a page file in the mirror carries it, and gbrain never writes the mirror's checkout.`,
+    `Nothing was withdrawn. Remove the claim at the authoritative source: edit the page in the upstream repository this mirror follows, then update the mirror from it: on a brain that is not managed, gbrain sync --source ${sourceId} pulls and reindexes it; a managed brain needs the source bound first (${unboundBindCommand(sourceId, path)}), then gbrain sources refresh ${sourceId}.${writable}`,
+    UNBOUND_SOURCE_DOCS);
+  error.detail = 'read_only_mirror';
+  error.retryable = false;
+  error.fix = {
+    ask_user: true,
+    consent: [],
+    actor: 'user',
+    why: `Source '${sourceId}' copies another repository, which is the authoritative copy of the claim; withdrawing it here only would not last.`,
+    user_message: `Source '${sourceId}' is a read-only copy of another repository, so I can't forget this fact here: it lives in a page file that comes from upstream. You can remove it in the upstream repository and refresh the mirror${why === 'mirror_read_only' ? ', or make this source writable first' : ''}; I can explain either.`,
+    docs: UNBOUND_SOURCE_DOCS,
+    requires_exclusive: false,
+  };
+  return error;
+}
+
 export type UnboundWriteDecision = { kind: 'claim' } | { kind: 'database_only'; reason: 'connector_database' | 'unbound_source' };
 
 /**

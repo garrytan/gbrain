@@ -11,7 +11,10 @@ import { ATOM_KIND, atomGenerationAdapter, atomOwnerKey, atomPagePin, TRANSCRIPT
 import { markdownItem } from '../generations/adapters/page.ts';
 import type { GenerationKey } from '../generations/contract.ts';
 import { publishGeneration } from '../generations/publish.ts';
+import { originGone } from '../generations/proofs.ts';
+import { throwIfAborted } from '../abort-check.ts';
 import type { ExtractAtomsItem } from './extract-atoms-input.ts';
+import { renamedOriginSlugs } from './extract-atoms-page-state.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
 
 /**
@@ -32,6 +35,27 @@ export async function publishUnmanagedAtoms(engine: BrainEngine, sourceId: strin
   }
   if (outcome.state === 'held') console.error(heldLine(opts.originLabel, key, outcome.reason));
   return outcome;
+}
+
+/**
+ * GST-4020: retire, through each old key's generation, the atoms a page's earlier extraction left under a slug a rename
+ * moved it from (renamedOriginSlugs: only a generation this same page produced, by the page id its pin carries). The page
+ * is gone from that slug, so the old key's input is gone (`originGone`); a page since created there is held and left
+ * live. It runs before the page's own publication, so a stop between the two leaves nothing old live. Returns the
+ * retired slugs.
+ */
+export async function retireRenamedOriginAtoms(engine: BrainEngine, sourceId: string, item: { slug: string; identity?: { pageId: number } },
+  opts: { runId: string; originLabel: string; signal?: AbortSignal }): Promise<string[]> {
+  const retired: string[] = [];
+  if (!item.identity) return retired;
+  for (const from of await renamedOriginSlugs(engine, sourceId, item.slug, item.identity.pageId)) {
+    throwIfAborted(opts.signal, 'extract_atoms');
+    const key: GenerationKey = { kind: ATOM_KIND, sourceId, ownerKey: atomOwnerKey({ kind: 'page', slug: from }) };
+    const outcome = await publishGeneration(engine, atomGenerationAdapter, { key, items: [], proof: originGone(), runId: opts.runId, context: { postCommit: [] } });
+    if (outcome.state === 'held') console.error(heldLine(opts.originLabel, key, outcome.reason));
+    else retired.push(...outcome.retired);
+  }
+  return retired;
 }
 
 /** GBRA-161: the input pin an unmanaged item was read at (a page's is bound to its row and revision, see atomPagePin). */
@@ -106,4 +130,16 @@ export async function resolveTranscriptAtomSlug(engine: BrainEngine, sourceId: s
     `SELECT locator FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`,
     [sourceId, ATOM_KIND, atomOwnerKey({ kind: 'transcript', transcriptKey: item.transcriptKey ?? item.filePath })]);
   return mine?.locator === held.source_path ? legacy : atomSlug(title, item.filePath, item.transcriptKey ?? item.filePath, undatedDate);
+}
+
+/**
+ * #10270: a page whose complete read already has a held result for its current input pin and the current policy (the
+ * hold ids `currentHoldIds` returns, bound at `placeholder`) is skipped by the phase (`heldForInput`), so discovery and
+ * the backlog leave it out too; doctor's `generation_held` lists it with its release.
+ */
+export function heldAtomInputExclusionSql(placeholder: string): string {
+  return `AND NOT EXISTS (SELECT 1 FROM derived_generations dg
+        WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
+          AND dg.hold_id = ANY(${placeholder}::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
+          AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))`;
 }

@@ -207,7 +207,7 @@ for (const backend of backends) {
 
       const columns = (await engine.executeRaw<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_name='write_gate_holds' AND column_name IN ('page_id','page_candidates') ORDER BY 1")).map(c => c.column_name);
       expect(columns).toEqual(['page_candidates', 'page_id']);
-      // The replay ends at the latest schema version: the trunk's four migrations (v338 to v341) sit above v333 here.
+      // The replay ends at the latest schema version: the trunk's four migrations (v350 to v353) sit above v333 here.
       expect(await engine.getConfig('version')).toBe(String(LATEST_SCHEMA_VERSION));
       expect((await holdStates(engine, sourceId)).find(s => s.id === Number(old!.id))).toMatchObject({ page_id: null, page_candidates: null, slug: 'notes/early' });
       const indexes = (await engine.executeRaw<{ indexname: string }>("SELECT indexname FROM pg_indexes WHERE tablename='write_gate_holds'")).map(i => i.indexname);

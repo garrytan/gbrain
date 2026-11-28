@@ -236,7 +236,7 @@ inferred end, whether its date is earlier or later.
 
 | Setting | Default |
 |---|---|
-| `dream.edge_contradictions.mode` | `apply` for certified models (`claude-haiku-4-5`, the utility default, plus `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-fable-5-1`, `gpt-6.1-sol`); `propose` for any other chat model; `off` without one |
+| `dream.edge_contradictions.mode` | `apply` for certified models (`claude-haiku-4-5`, `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-fable-5-1`, `gpt-6.1-sol`); `propose` for any other chat model, including the utility default `claude-haiku-5-5`; `off` without one |
 | `models.dream.edge_contradictions` | utility tier |
 | `dream.edge_contradictions.max_subjects` | 200 per cycle |
 | `dream.edge_contradictions.max_usd` | $1.00 per cycle |

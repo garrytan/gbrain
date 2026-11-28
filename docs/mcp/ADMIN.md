@@ -105,6 +105,31 @@ If the request expired, was completed, or the server restarted, restart the
 connection from the native client to obtain a new request. Reissuing a login
 link cannot recreate a lost OAuth request or verifier.
 
+### Approve a connector from your own browser
+
+A connector that registers itself (dynamic client registration, as grok.com's
+custom connector does) opens the brain's owner login page in a popup. The
+brain's owner approves it privately, without an agent in the middle:
+
+1. Keep that popup or tab: its address is the brain's `/admin/` page with an
+   `oauth_request` that identifies the waiting connector.
+2. Sign in as the owner in that same browser. A browser that already has an
+   owner session goes straight to the approval page. Otherwise, run the command
+   the page shows in your own terminal on the computer that runs the brain
+   (`gbrain mcp admin login-link --url https://brain.example.com/mcp
+   --oauth-request REQUEST_ID --admin-token-file ~/.gbrain/serve/admin-token`)
+   and open the link it prints in that browser, or use the owner bootstrap
+   credential under the page's fold.
+3. Review the client, redirect URI, permissions and source, then approve. The
+   connector finishes its own token exchange.
+4. If the request expired, was completed, or the server restarted, start again
+   from the connector's Add step.
+
+Whoever opens the login link is signed in as the owner, so it never goes
+through an assistant's chat: run the command yourself rather than asking an
+agent to. When someone else runs the brain host, the page's folded prompt asks
+them for the link, and they deliver it to you privately as described above.
+
 ## Register and connect a client
 
 First choose how the **intended harness** connects:
@@ -328,7 +353,8 @@ the request log. Removing a member stays a brain-host command
 (`gbrain access member rm`).
 
 New `memory-reader`, `memory-writer` and `coding-agent` grants are callable on
-the full surface and list the seven memory verbs plus `request_tools`, which
+the full surface and list the seven memory verbs, `correct` (when the grant
+can write) and `request_tools`, which
 returns any other tool's schema (`gbrain auth clients` shows the surface as
 `full (set by install)`); `gbrain agent register` daily-driver and coding-agent
 clients without `--surface` do the same. Their operation snapshot is still the
@@ -506,8 +532,12 @@ Fix it by binding first:
   `gbrain auth rescope --token <name> --may-act-for <members>`, and have its
   harness name each request's audience. For a local stdio agent, label each
   person and bind its server with
-  `gbrain setup <harness> --serves several --members <id,...>`
-  (`--stdio-member <member>` when one person alone uses it).
+  `gbrain setup claude-code --members <id,...>` or `gbrain setup codex --members <id,...>`
+  (`--stdio-member <member>` when one person alone uses it); for another harness, preview
+  `gbrain access serves several --members <id,...>`, then apply it with `--yes`. For a
+  bot harness (OpenClaw, Hermes, Grok Bot, Muse), which setup cannot bind, set
+  `gbrain config set mcp.stdio_may_act_for <members>`; once it holds a valid list (not
+  `none`), doctor stops flagging those harnesses. A Claude Code channel plugin keeps its finding.
 - Narrowing only, which leaves the credential unbound: when the channels sit
   in different sources, grant one audience's source with
   `gbrain auth rescope --token <name> --sources <source>` (or for a new harness

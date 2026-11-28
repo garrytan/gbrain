@@ -35,9 +35,12 @@ describe('migrations full-record golden', () => {
     const golden = buildMigrationsGolden(MIGRATIONS);
     // 331 is master's access_read_log (sync 11); 332 is master's engine_writer_observations, 333 its hold-page-id and 334 its
     // learning_items (#10193), 335 its pages_spelling_key_index (#10168), 336 its files_follow_page_slug (#10294) and 337 its
-    // write_gate_hold_rechecks (#10317); 338 is the cli-members line's byte-order slug indexes, 339 the trunk's projection-jobs
-    // index, 340 the pages projection-waiting words index and 341 fact_fingerprint_v3: renumbered above master's v337 (sync 18).
-    expect(golden.gaps).toEqual([17, 18, 19, 100]);
+    // write_gate_hold_rechecks (#10317); 350 is the cli-members line's byte-order slug indexes, 351 the trunk's projection-jobs
+    // index, 352 the pages projection-waiting words index and 353 fact_fingerprint_v3: renumbered above master's v350
+    // (oauth_refresh_rotations, #10485) and the open master PRs' claims (sync 20). Sync 21 brought master's 338 to 343
+    // (oauth_refresh_rotations, facts_valid_from_nullable, engine_writer_observations_write_protocol, atom_scan_input_digest,
+    // content_author_attribution and its backfill); 344 to 349 stay gaps until master's next migrations arrive.
+    expect(golden.gaps).toEqual([17, 18, 19, 100, 344, 345, 346, 347, 348, 349]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);
   }, 60_000);

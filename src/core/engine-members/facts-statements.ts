@@ -27,6 +27,7 @@ import type * as FactTextRepairSql from '../engine-sql/fact-text-repair.ts';
 import type * as LabelRepairSql from '../engine-sql/label-repair-reads.ts';
 import type * as SegmentedPurgeWritesSql from '../engine-sql/segmented-purge-writes.ts';
 import type * as OriginHoldsSql from '../engine-sql/origin-holds.ts';
+import type * as RetentionPurgeSql from '../engine-sql/retention-purge.ts';
 import type * as PagePurgeJournalSql from '../engine-sql/page-purge-journal.ts';
 import type * as PagePurgeSql from '../engine-sql/page-purge.ts';
 import type * as PagePurgeSweepSql from '../engine-sql/page-purge-sweep.ts';
@@ -376,6 +377,31 @@ export interface FactsStatementMembers {
   recordOwedPurgeRows(pageId: number, requestId: string): Promise<OriginHoldsSql.OwedPurgeRows>;
   /** Removes the park or owed-purge records of these pages; how many. Writes op_checkpoints; run it in the purge transaction. */
   deleteOriginHoldRows(op: 'derived-origin-park' | 'owed-page-purge', pageIds: readonly number[]): Promise<number>;
+  // The retention purge's bookkeeping (engine-sql/retention-purge.ts): op_checkpoints parks and records, the carry's origin read, the candidate selection.
+  /** Drops the owner purge a park of `op` holds once its page's tombstone is not the one recorded. Writes op_checkpoints. */
+  releaseStaleOriginParkHolds(op: string): Promise<void>;
+  /** The owed-purge records of `op` whose tombstone still exists as recorded, by fingerprint. Reads op_checkpoints and pages. */
+  listOwedPurgeRecords(op: string): Promise<Array<{ owed: RetentionPurgeSql.OwedPurgeRecord | string }>>;
+  /** Drops the owed-purge records of `op` whose tombstone changed. Writes op_checkpoints. */
+  pruneOwedPurgeRecords(op: string): Promise<void>;
+  /** Drops the parks of `op` whose page is no tombstone. Writes op_checkpoints. */
+  pruneOriginParkRecords(op: string): Promise<void>;
+  /** Drops the failure records of `op` whose tombstone changed. Writes op_checkpoints. */
+  prunePurgeParkRecords(op: string): Promise<void>;
+  /** Records one more failure of a tombstone. Writes op_checkpoints. */
+  recordPurgeFailureRecord(row: RetentionPurgeSql.PurgeFailureRow): Promise<void>;
+  /** Removes one failure record. Writes op_checkpoints. */
+  deletePurgeParkRecord(op: string, key: string): Promise<void>;
+  /** Marks the failure records of a source whose writer is not active. Writes op_checkpoints. */
+  markPurgeParksInactive(op: string, sourceId: string): Promise<void>;
+  /** Drops the marked failure records of a source whose writer is active again; how many. Writes op_checkpoints. */
+  dropRearmedPurgeParks(op: string, sourceId: string): Promise<number>;
+  /** The parked origins a manual purge's preview counts as released, under the purge's other holds. Reads pages and op_checkpoints. */
+  listReleasedPurgeOrigins(release: readonly number[], excludeIds: readonly number[], hours: string): Promise<RetentionPurgeSql.ReleasedPurgeOrigin[]>;
+  /** The managed purge's candidates under every hold, oldest tombstone first. Reads pages, sources and op_checkpoints. */
+  listManagedPurgeCandidates(hours: string, release: readonly number[], hold: readonly number[]): Promise<RetentionPurgeSql.ManagedPurgeCandidate[]>;
+  /** The soft-deleted privacy origins expired past `hours`, by id. Read the alias-honoring setting first. Reads pages. */
+  listExpiringOriginPages(hours: string): Promise<RetentionPurgeSql.ExpiringOrigin[]>;
   /** The newest delete_page request of the source with this request id, null for none. Reads persistence_requests. */
   readDeletePageRequest(sourceId: string, requestId: string): Promise<FactsPurgeSql.DeletePageRequestRow | null>;
   /** The request's effects in kind order, each with whether any target is parked. Reads persistence_effects. */
@@ -476,6 +502,12 @@ export interface FactsStatementMembers {
   readChunkKeepState(pageId: number, provenanceModel: string | null, column: ProjectionRebuildSql.KeepColumn): Promise<ProjectionRebuildSql.ChunkKeepState[]>;
   /** Clears and marks pending the vector in `column` of each chunk of the page that is of another model, embedded from other text, or not in `currentIds`. */
   clearUnkeptChunkVectors(pageId: number, provenanceModel: string | null, column: ProjectionRebuildSql.KeepColumn, currentIds: readonly number[]): Promise<void>;
+  /** Every stored chunk of the page with its recorded embedding input hash (the contextual-mode proof). */
+  readChunkInputHashes(pageId: number): Promise<ProjectionRebuildSql.ChunkInputHash[]>;
+  /** Clears the vector in `column` and its embedding record on the named chunks of the page and marks them pending now. */
+  clearChunkEmbeddingsByIds(pageId: number, column: ProjectionRebuildSql.KeepColumn, ids: readonly number[]): Promise<void>;
+  /** Records `hashes[i]` as the embedding input hash of the page's chunk `ids[i]`. */
+  writeChunkInputHashes(pageId: number, ids: readonly number[], hashes: readonly string[]): Promise<void>;
   /** Stamps the chunker version a sealed projection was built with on the page. */
   setProjectionChunkerVersion(sourceId: string, slug: string, version: number): Promise<void>;
   /** Whether a queue row of a live inline page (with `media`, or a sealable image) is queued and not marked failed. */
@@ -716,7 +748,7 @@ export interface FactsStatementMembers {
   stampConversationSourceWindows(pairs: ReadonlyArray<{ id: number; w: FactsConversationSql.SourceWindow | null }>): Promise<void>;
   /** A page's active conversation facts, audit rows aside. */
   countActiveConversationFacts(sourceId: string, slug: string): Promise<number>;
-  /** The value hash of the slot's latest conversation-source value at or before `validFrom`, null when there is none. */
+  /** The value hash of the slot's latest conversation-source value at or before `validFrom` (an undated row is as of its save time, #10288), null when there is none. */
   readConversationSlotValueHash(sourceId: string, entitySlug: string, dimension: string, validFrom: Date | string): Promise<{ value_hash: string } | null>;
   /** Deletes a page's audit (outcome) rows; returns the ids removed. */
   deleteConversationOutcomeRows(sourceId: string, slug: string): Promise<Array<{ id: number }>>;
@@ -726,14 +758,16 @@ export interface FactsStatementMembers {
   maxConversationRowNum(sourceId: string, slug: string): Promise<number | string | null>;
   /** The slot keys the page's facts already hold. */
   listHeldFactSlots(sourceId: string, slug: string): Promise<FactsConversationSql.HeldFactSlotRow[]>;
-  /** The page's conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
+  /** The page's active conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
   countPageConversationFacts(sourceId: string, slug: string): Promise<number>;
   /** The page's active conversation facts anchored to window `key`. */
   countConversationWindowFacts(sourceId: string, slug: string, key: string): Promise<number>;
   /** The page's active conversation facts a settled collection keeping window `keys` removes: anchored to another window, or unanchored. */
   countConversationFactsOutsideWindows(sourceId: string, slug: string, keys: readonly string[]): Promise<number>;
-  /** Clears a page's prior extractor batch before a replacement, keeping the history other records depend on: a row an open loop or another fact's `superseded_by` references is expired, never deleted, and rows `gbrain repair conversation-labels` retired stay expired. */
+  /** Clears a page's prior extractor batch before a replacement without losing history (#10443): every active extractor fact is expired and keeps its row; only the page's audit checkpoint rows are deleted. */
   clearConversationPageFacts(sourceId: string, slug: string, windows?: { keys: readonly string[]; keep: boolean; unanchored: boolean }): Promise<number>;
+  /** Narrows the page's expired extractor copies of the claims `facts` to private, matched by claim fingerprint (#10443). */
+  narrowConversationExpiredCopies(sourceId: string, slug: string, facts: string[]): Promise<void>;
   /** The oldest active fence row of the page holding the same claim and source, whatever its visibility. */
   findSameClaimFenceRow(sourceId: string, slug: string, fact: string, source: string | null): Promise<{ id: number | string; visibility: string } | null>;
   /** An ontology observation the page already holds at the same key as fact `factId` (preferring an active one). */
@@ -752,7 +786,7 @@ export interface FactsStatementMembers {
   listEntityHintPages(sourceId: string, slugs: string[]): Promise<FactsConversationSql.EntityHintPageRow[]>;
   /** Locks one page row until the transaction ends. */
   lockPageById(pageId: number): Promise<void>;
-  /** The page's expired conversation facts that a relink had linked to a still-live entity page, newest first. */
+  /** The page's expired conversation facts, newest first; `carried` marks one a relink had linked to a still-live entity page (#10443: the caller takes each claim's newest row). */
   listClearedRelinkedFacts(sourceId: string, slug: string): Promise<FactsConversationSql.ClearedRelinkedFactRow[]>;
   /** How many of the facts `ids` carry an embedding. */
   countEmbeddedFactsAmong(sourceId: string, ids: number[]): Promise<number>;
@@ -821,6 +855,8 @@ export interface FactsStatementMembers {
   listFactSourcePages(ids: readonly number[]): Promise<FactsRecallSql.FactSourcePageRow[]>;
   /** The typed-claim facts held on one of `pageSlugs` about one of `entitySlugs` (the facts arm's superseded-claim read), in no set order. */
   listTypedClaimFactsAtPages(pageSlugs: readonly string[], entitySlugs: readonly string[]): Promise<FactsRecallSql.TypedClaimFactRow[]>;
+  /** Each fact's source, holding page slug and entity (search/evidence-date.ts), any source and state, in no set order. */
+  listFactHoldingRefs(ids: readonly number[]): Promise<FactsRecallSql.FactHoldingRefRow[]>;
   /** Every active conversation slot row of the given slots under the pool read policy, by valid_from, id. */
   listSlotRows(scope: FactsTrustSql.FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<FactsRecallSql.SlotFactRow[]>;
   /** The (source, entity) pairs among `keys` that hold an active pool fact and have no live page. */
@@ -831,6 +867,8 @@ export interface FactsStatementMembers {
   listPoolEntityPairs(scope: FactsTrustSql.FactPoolScope, filters: FactsTrustSql.FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>>;
   /** The whole fact rows of these ids within these sources. */
   listFactRowsByIds(sourceIds: readonly string[], ids: readonly number[]): Promise<FactsRecallSql.FactRowSqlShape[]>;
+  /** The whole fact rows of these ids read again under the pool's read policy and filters, so a fact narrowed since the pool read is not returned (recall, #10225). */
+  listPooledFactRows(scope: FactsTrustSql.FactPoolScope, filters: FactsTrustSql.FactPoolFilters | undefined, ids: readonly number[]): Promise<FactsRecallSql.FactRowSqlShape[]>;
   /** The provenance slug of each open non-conversation stint of an entity's (normalised) dimension, each once, sorted. */
   listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string): Promise<string[]>;
   /** The newest open, active, non-conversation stint of the dimension other than `excludeId`, with its stored tier; null: none. */
@@ -896,6 +934,10 @@ export interface FactsStatementMembers {
   expireApprovedFacts(sourceId: string, factIds: readonly number[]): Promise<number[]>;
   /** visibility: makes the named database-only world facts private; the ids it changed. Writes facts. */
   tightenDatabaseFactVisibility(sourceId: string, factIds: readonly number[]): Promise<number[]>;
+  /** visibility: a fact's visibility and whether it is unexpired, in any source. Reads facts. */
+  readFactLiveVisibility(factId: number): Promise<{ visibility: string; live: boolean } | undefined>;
+  /** visibility: makes the named world fact at fence row `rowNum` private when unexpired; the ids it changed. Writes facts. */
+  tightenFencedFactVisibility(sourceId: string, factId: number, rowNum: number): Promise<number[]>;
   /** moved-pages: each named page's access key (derived readers, folder rule ids, readable_by, world snapshot). Reads pages. */
   listPageAccessKeys(pageIds: readonly number[]): Promise<RepairAppliesSql.PageAccessKey[]>;
   /** The open-twins scan: the twins of the changed pages some outside identity can read, by (source, slug), at most 50. Reads pages. */

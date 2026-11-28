@@ -1,9 +1,14 @@
 # Rust engine (experimental)
 
-This folder holds an optional Rust engine for gbrain. Nothing in gbrain uses it yet. Today it is a
-small Node-API addon that proves the pieces a Rust engine needs: that Bun can load it, call it,
-cancel its work, survive its panics and shut it down cleanly. You do not need Rust to build, test
-or run gbrain.
+This folder holds an optional Rust engine for gbrain: a Node-API addon (`crates/gbrain-napi`) over a brain
+store (`crates/gbrain-store`, see "The brain store"). A brain whose config sets `engine: 'rust'` and an absolute
+`database_path` opens it through `src/core/engine-construct.ts` (the `rust` case), which loads only a verified
+cached addon or the development override (`src/core/rust-engine/addon-loader.ts`); no other engine loads it. The
+TypeScript engine (`src/core/rust-engine.ts`) serves the BrainEngine members listed in
+`src/core/rust-engine/store-members/index.ts` from the store and refuses every other member with
+`engine_capability_missing` (`src/core/rust-engine/members.ts`). The store has more native methods than those
+members call. The smoke scripts here prove that Bun can load the addon, call it, cancel its work, survive its panics
+and shut it down cleanly. You do not need Rust to build, test or run gbrain.
 
 ## What you need
 
@@ -199,15 +204,17 @@ Errors from the addon are real `Error` objects with a `code`:
 | `internal_error` | Rust code panicked. Carries a `diagnosticId`; the panic text is not sent to the caller. |
 | `engine_shutdown` | A call arrived after shutdown began. |
 | `store_locked` | Another handle or process has the brain open. |
+| `store_missing` | `open` with `createMissing: false` found no brain in the directory (no `FORMAT`, no record file). Nothing was created. The TypeScript wrapper maps it to `brain_missing`. |
 | `format_unknown` | `FORMAT` or the format record is not a version this build reads. Nothing was written. |
 | `store_closed` | The brain is not open on this handle. |
 | `store_io` | The file system or the storage engine failed; the write did not commit. |
-| `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. |
-| `invalid_state` | The call does not fit the handle's state (`open` on an open handle), or `finishWrite` met a request that already ended. |
+| `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. A restore rotates the brain id in the format record first and `FORMAT` after; a `FORMAT` that still names the id the record says it rotated from is stale, not another brain, and the next open rebuilds it. Restores run one at a time in a process, and a restore first brings a stale `FORMAT` up to the id the record holds before it commits another rotation, so `FORMAT` is never more than one rotation behind; if that write fails it refuses with `store_io` and changes nothing. |
+| `invalid_state` | The call does not fit the handle's state (`open` on an open handle; `restoreQuarantine` inside a transaction, or with a restore id already applied), or `finishWrite` met a request that already ended. |
 | `snapshot_cancelled` | `snapshotTo` was cancelled with `snapshotCancel`. It removed what it wrote and released its read before it rejected. |
-| `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. |
+| `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. `restoreQuarantine` on a handle that was opened read-only raises it first, before it repairs `FORMAT` or touches anything else. |
+| `restore_refused` | `restoreQuarantine` changed nothing: the store holds unfinished write work, a recovery record, a live OAuth client or local writer registration (nothing revokes them yet), activated shared-skill publication, a shared-skill member, delivery batch or policy, or `mcp.publish_skills` on (nothing switches them off yet), or a record of a kind this build has not classified. The message is `<reason>: <count>`, with the kinds named in parentheses for `unclassified_state` (for example `access tokens (jobs 0x2b)`, `OAuth tokens (jobs 0x2c)` or `OAuth codes (jobs 0x2d)`) the ids for `archived_authority` and the names for `shared_skill_state`; the reasons are `pending_requests`, `recovery_required`, `archived_authority`, `shared_skill_state` and `unclassified_state`. (`purge_replay` comes only from `restoreCensus`, for the purge ids the caller passes it; `restoreQuarantine` passes none.) `gbrain backup restore` is to map the census blockers and this error to `restore_step_unsupported`; that command does not call the restore step yet. |
 | `unmodeled_input` | An input written in a form the store does not read the way Postgres does (a resolved date with a zone followed by an offset such as `PST+1`, or a date after 2037 in a zone with daylight saving time). Nothing was written; the engine refuses the call as `engine_capability_missing`, naming the member and the input. |
-| `invalid_argument` | A malformed argument. |
+| `invalid_argument` | A malformed argument. `restoreQuarantine` also refuses, changing nothing, a plan whose sources or settings do not match the store, whose settings list leaves one out or names one twice. |
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |
 | `page_not_found` | `addTag`, `addPageTagsById`, `createVersion`, `addLink` or `addTimelineEntry` named a page that does not exist. |
@@ -216,7 +223,7 @@ Errors from the addon are real `Error` objects with a `code`:
 | `revision_conflict` | `expectedRevision` does not match the page. |
 | `revision_required` | The page exists and the caller sent `force: false` without `expectedRevision`. |
 | `empty_overwrite` | A blank body would replace a page that has content. |
-| `origin_claimed` | A page write or `restorePage` would make a second live page of a source recording one `source_path`. The message is JSON (`source_id`, `source_path`, `holders`, `slug`); the binding maps it to `page_identity_changed`. |
+| `origin_claimed` | A page write or `restorePage` would make a second live page of a source recording one `source_path`. The message is JSON (`source_id`, `source_path`, `holders`, `slug`); the binding maps it to `page_identity_changed`. `restoreQuarantine` also raises it, changing nothing, when rebasing a managed source's page origins would put two live pages on one origin; that message is plain text naming the source. |
 | `source_changed` | `sourceIncarnation` is not the source's current incarnation. |
 | `idempotency_conflict` | A request id was used for different content. |
 | `admission_refused` | The principal or the brain has too many unfinished writes. |

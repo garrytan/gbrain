@@ -6,16 +6,22 @@
  *    estimated: true; a replay with the same request_id names the same action; a done action is never edited;
  *    totals split evidenced, user_confirmed and estimated, never total minutes_saved and skip superseded actions;
  *    a member reads only its own actions and a guest none; two concurrent reserves at a budget boundary cannot
- *    both be allowed; an expired hold counts toward nothing; a partial scan returns no totals.
+ *    both be allowed; an expired hold counts toward nothing; a partial scan returns no totals. Follow-ups: only rows the
+ *    caller reads count toward the scan bound; a live hold counts in every window until it settles, and its spend in
+ *    the window it settles in; a reserve waits for a ledger write still publishing; a changed retry or a failed write
+ *    never replays as success; only a done correction supersedes; a member's ordinary readable page is evidence; budget
+ *    sums are exact in decimals.
  * 2. Fails when: any of those leaks, double counts, or lets an agent label its own amount confirmed.
  * 3. Real seams: PGLite and Postgres engines, MCP dispatchToolCall with remote=true, the real page write path.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import * as pageMutations from '../src/core/persistence/page-mutations.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { opError } from '../src/core/ops/contract.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { applyPolicyChange } from '../src/core/policy/store.ts';
 import { checkPolicy } from '../src/core/policy/check.ts';
@@ -24,8 +30,8 @@ import { parsePolicyFence, renderPolicyFence, type PolicyRule } from '../src/cor
 import type { TerminalProbe } from '../src/core/policy/authority.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { actionSlug, validateActionFrontmatter } from '../src/core/ledger/action.ts';
-import { HOLD_TTL_MS, MAX_SINCE_DAYS, confirmAction, ledgerReader, ledgerReport, logAction, parseSince, policyReserve, usageLookup } from '../src/core/ledger/store.ts';
-import { ledgerTotals, renderDigest, windowStart, type StoredAction } from '../src/core/ledger/totals.ts';
+import { HOLD_TTL_MS, MAX_SINCE_DAYS, confirmAction, ledgerReader, ledgerReport, logAction, parseSince, policyReserve, settleLedgerWrites, usageLookup } from '../src/core/ledger/store.ts';
+import { ledgerTotals, renderDigest, windowStart, windowUsage, type StoredAction } from '../src/core/ledger/totals.ts';
 import { runLedger } from '../src/commands/ledger.ts';
 import { ruleFromArgs } from '../src/commands/policy.ts';
 import { caught } from './helpers/agent-envelope.ts';
@@ -262,6 +268,170 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
     expect(denied).toMatchObject({ decision: 'deny', reservation: null });
   });
 
+  test('other people\'s actions never make a member\'s read partial; only rows the caller reads count toward the bound', async () => {
+    const ctx = ctxFor(engine, false);
+    for (let i = 0; i < 4; i++) await logAction(ctx, { verb: 'send', summary: `Owner note ${i}`, estimated: true });
+    await withCallerAccess(BOB, () => logAction(ctxFor(engine, true), { verb: 'send', summary: 'Sent a card', estimated: true }));
+    const since = new Date(Date.now() - 3600_000); const until = new Date(Date.now() + 1000);
+    const bob = await withCallerAccess(BOB, () => ledgerReport(engine, ledgerReader(true), { since, until, max: 2, verb: 'send' }));
+    expect(bob.state).toBe('complete');
+    if (bob.state === 'complete') expect(bob.totals.actions).toBe(1);
+    expect((await ledgerReport(engine, ledgerReader(false), { since, until, max: 2 })).state).toBe('partial');
+  });
+
+  test('a hold made before UTC midnight counts in the new day until it settles, and its spend counts in the day it settles', async () => {
+    const rules: PolicyRule[] = [{ id: 'taxi-day', verb: 'spend', decision: 'allow', limit: { amount: 50, currency: 'USD' }, window: 'day', merchant: 'taxi-example' }, { id: 'spend', verb: 'spend', decision: 'ask' }];
+    await applyPolicyChange(engine, { scope: 'owner', rules, change: 'taxi budget', probe: owner });
+    const ctx = ctxFor(engine, false);
+    const before = new Date('2026-01-14T23:30:00Z'); const after = new Date('2026-01-15T00:30:00Z');
+    const r = await policyReserve(ctx, { verb: 'spend', amount: { amount: 40, currency: 'USD' }, merchant: 'taxi-example', summary: 'Airport taxi' }, before);
+    expect(r.decision).toBe('allow');
+    expect((await usageLookup(engine, ledgerReader(false), after)(rules, { verb: 'spend' })).get('taxi-day')).toEqual({ spent: 0, held: 40 });
+    await logAction(ctx, { verb: 'spend', action_id: r.reservation!.action_id, status: 'done', spent: 38, currency: 'USD', estimated: true }, after);
+    expect((await usageLookup(engine, ledgerReader(false), after)(rules, { verb: 'spend' })).get('taxi-day')).toEqual({ spent: 38, held: 0 });
+    const late = await policyReserve(ctx, { verb: 'spend', amount: { amount: 5, currency: 'USD' }, merchant: 'taxi-example', summary: 'Late taxi' }, before);
+    const expired = await caught(() => logAction(ctx, { verb: 'spend', action_id: late.reservation!.action_id, status: 'done', spent: 5, currency: 'USD', estimated: true }, new Date(before.getTime() + HOLD_TTL_MS + 60_000)));
+    expect((expired as { code: string }).code).toBe('action_transition_invalid');
+    await applyPolicyChange(engine, { scope: 'owner', rules: [{ id: 'spend', verb: 'spend', decision: 'ask' }], change: 'restore', probe: owner });
+  });
+
+  test('a reserve waits for a ledger write still being published, so an accepted hold always counts', async () => {
+    const ctx = ctxFor(engine, false);
+    const first = await logAction(ctx, { verb: 'send', summary: 'Sent a note', estimated: true });
+    await engine.executeRaw("UPDATE persistence_requests SET state='running' WHERE slug=$1", [first.action_id]);
+    let answered = false;
+    const reserve = policyReserve(ctx, { verb: 'send', amount: { amount: 1, currency: 'USD' }, summary: 'Postage' }).then(r => { answered = true; return r; });
+    await new Promise(r => setTimeout(r, 400));
+    expect(answered).toBe(false);
+    await engine.executeRaw("UPDATE persistence_requests SET state='committed' WHERE slug=$1", [first.action_id]);
+    expect((await reserve).reservation).toBeTruthy();
+  });
+
+  test('a reserve waits for a queued or live ledger write; a running write whose claim expired is left to recovery', async () => {
+    const stuck = await logAction(ctxFor(engine, false), { verb: 'send', summary: 'Sent a card', estimated: true });
+    const set = (sql: string) => engine.executeRaw(`UPDATE persistence_requests SET ${sql} WHERE slug=$1`, [stuck.action_id]);
+    try {
+      await set("state='running', claim_expires_at=now() + interval '1 hour', updated_at=now()");
+      expect((await caught(() => settleLedgerWrites(engine, Date.now() + 200)) as { code: string }).code).toBe('ledger_busy');
+      await set("state='running', claim_expires_at=now() - interval '1 hour'");
+      await settleLedgerWrites(engine, Date.now() + 200);
+      await set("state='queued', claim_expires_at=NULL, updated_at=now() - interval '1 hour'");
+      expect((await caught(() => settleLedgerWrites(engine, Date.now() + 200)) as { code: string }).code).toBe('ledger_busy');
+      await engine.executeRaw('ALTER TABLE persistence_requests DISABLE TRIGGER gbrain_request_deferred');
+      await set("state='deferred', claim_expires_at=NULL");
+      expect((await caught(() => settleLedgerWrites(engine, Date.now() + 200)) as { code: string }).code).toBe('ledger_busy');
+    } finally {
+      await set("state='committed'");
+      await engine.executeRaw('ALTER TABLE persistence_requests ENABLE TRIGGER gbrain_request_deferred');
+    }
+  });
+
+  test('an action a newer gbrain wrote, with a field this one does not know, still counts', async () => {
+    const ctx = ctxFor(engine, false);
+    const since = new Date(Date.now() - 3600_000);
+    const a = await logAction(ctx, { verb: 'spend', summary: 'Paid a locksmith', spent: 80, currency: 'USD', estimated: true, counterparty: 'locksmith-example' });
+    await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"future_field": {"x": 1}}'::jsonb WHERE slug=$1`, [a.action_id]);
+    const report = await ledgerReport(engine, ledgerReader(false), { since, until: new Date(Date.now() + 1000), counterparty: 'locksmith-example' });
+    if (report.state !== 'complete') throw new Error('partial');
+    expect(report.totals.spent.estimated).toEqual({ USD: 80 });
+    expect(validateActionFrontmatter({ future_field: 1 }).ok).toBe(false);
+    const held = await policyReserve(ctx, { verb: 'send', amount: { amount: 2, currency: 'USD' }, summary: 'Courier' });
+    await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"future_field": 1}'::jsonb WHERE slug=$1`, [held.reservation!.action_id]);
+    const moved = await caught(() => logAction(ctx, { verb: 'send', action_id: held.reservation!.action_id, status: 'cancelled' }));
+    expect((moved as { code: string }).code).toBe('action_not_found');
+  });
+
+  test('a retry with the same request_id but a changed call is refused, a reserve replay keeps its first answer, and a failed write replays its failure', async () => {
+    const ctx = ctxFor(engine, false);
+    const request_id = randomUUID();
+    await logAction(ctx, { verb: 'spend', summary: 'Paid parking', spent: 6, currency: 'USD', estimated: true, request_id });
+    const changed = await caught(() => logAction(ctx, { verb: 'spend', summary: 'Paid parking', spent: 60, currency: 'USD', estimated: true, request_id }));
+    expect((changed as { code: string }).code).toBe('idempotency_conflict');
+    await applyPolicyChange(engine, { scope: 'owner', rules: [{ id: 'cafe-day', verb: 'spend', decision: 'allow', limit: { amount: 20, currency: 'USD' }, window: 'day', merchant: 'cafe-example' }, { id: 'spend', verb: 'spend', decision: 'ask' }], change: 'cafe budget', probe: owner });
+    const rid = randomUUID();
+    const input = { verb: 'spend' as const, amount: { amount: 3, currency: 'USD' }, merchant: 'cafe-example', summary: 'Coffee', request_id: rid };
+    const res = await policyReserve(ctx, input);
+    expect(res.decision).toBe('allow');
+    const resChanged = await caught(() => policyReserve(ctx, { ...input, amount: { amount: 30, currency: 'USD' } }));
+    expect((resChanged as { code: string }).code).toBe('idempotency_conflict');
+    await applyPolicyChange(engine, { scope: 'owner', rules: [{ id: 'spend', verb: 'spend', decision: 'deny' }], change: 'deny spend', probe: owner });
+    expect(await policyReserve(ctx, input)).toMatchObject({ decision: 'allow', replayed: true, reservation: { action_id: res.reservation!.action_id } });
+    await applyPolicyChange(engine, { scope: 'owner', rules: [{ id: 'spend', verb: 'spend', decision: 'ask' }], change: 'restore', probe: owner });
+    const move = { verb: 'spend' as const, action_id: res.reservation!.action_id, status: 'cancelled' as const, request_id: randomUUID() };
+    await logAction(ctx, move);
+    const changedAfterCancel = await caught(() => policyReserve(ctx, { ...input, amount: { amount: 30, currency: 'USD' } }));
+    expect((changedAfterCancel as { code: string }).code).toBe('idempotency_conflict');
+    const oldRid = randomUUID();
+    const old = await policyReserve(ctx, { ...input, request_id: oldRid });
+    await engine.executeRaw("UPDATE pages SET frontmatter = frontmatter - 'request_hash' WHERE slug=$1", [old.reservation!.action_id]);
+    await logAction(ctx, { verb: 'spend', action_id: old.reservation!.action_id, status: 'cancelled', request_id: randomUUID() });
+    const oldChanged = await caught(() => policyReserve(ctx, { ...input, request_id: oldRid, amount: { amount: 30, currency: 'USD' } }));
+    expect((oldChanged as { code: string }).code).toBe('idempotency_conflict');
+    await engine.executeRaw("UPDATE persistence_requests SET state='failed', error_code='storage_error', error_message='disk full' WHERE id = (SELECT id FROM persistence_requests WHERE slug=$1 ORDER BY created_at DESC LIMIT 1)", [res.reservation!.action_id]);
+    const failed = await caught(() => logAction(ctx, move));
+    expect((failed as { code: string }).code).toBe('storage_error');
+  });
+
+  test('an unfinished correction leaves the done action counted, and a filter never brings back a corrected action', async () => {
+    const ctx = ctxFor(engine, false);
+    const since = new Date(Date.now() - 3600_000);
+    const a = await logAction(ctx, { verb: 'spend', summary: 'Paid a plumber', spent: 120, currency: 'USD', estimated: true, counterparty: 'plumber-example' });
+    await logAction(ctx, { verb: 'spend', status: 'proposed', summary: 'Plumber, corrected?', spent: 100, currency: 'USD', estimated: true, counterparty: 'plumber-example', supersedes: a.action_id });
+    const pending = await ledgerReport(engine, ledgerReader(false), { since, until: new Date(Date.now() + 1000), counterparty: 'plumber-example' });
+    if (pending.state !== 'complete') throw new Error('partial');
+    expect(pending.totals.spent.estimated).toEqual({ USD: 120 });
+    await logAction(ctx, { verb: 'spend', summary: 'Paid a drain firm, not the plumber', spent: 110, currency: 'USD', estimated: true, counterparty: 'drain-example', supersedes: a.action_id });
+    const fixed = await ledgerReport(engine, ledgerReader(false), { since, until: new Date(Date.now() + 1000), counterparty: 'plumber-example' });
+    if (fixed.state !== 'complete') throw new Error('partial');
+    expect(fixed.totals.actions).toBe(0);
+    expect(fixed.totals.spent.estimated).toEqual({});
+  });
+
+  test('a member\'s evidence is any page it can read the ordinary way, not only one labelled for it', async () => {
+    const out = await withCallerAccess(ALICE, () => logAction(ctxFor(engine, true), { verb: 'spend', summary: 'Bought ink', spent: 40, currency: 'USD', evidence: [{ ref: 'inbox/acme-example-receipt' }] }));
+    expect(out.claim_basis).toBe('evidenced');
+    await submitPageMutation(ctxFor(engine, false), { operation: 'put_page', params: { slug: 'inbox/acme-example-secret', content: '---\ntitle: Secret\nvisibility: private\n---\n\nPrivate note\n' } });
+    await submitPageMutation(ctxFor(engine, false), { operation: 'put_page', params: { slug: 'inbox/acme-example-derived', content: '---\ntitle: Derived\nderived_from: [inbox/acme-example-secret]\n---\n\nOrder total 12.00 USD\n' } });
+    const hidden = await withCallerAccess(ALICE, () => dispatchToolCall(engine, 'get_page', { slug: 'inbox/acme-example-derived' }, REMOTE));
+    expect(JSON.stringify(hidden)).not.toContain('Order total 12.00');
+    const derived = await withCallerAccess(ALICE, () => logAction(ctxFor(engine, true), { verb: 'spend', summary: 'Bought more ink', spent: 12, currency: 'USD', estimated: true, evidence: [{ ref: 'inbox/acme-example-derived' }] }));
+    expect(derived).toMatchObject({ claim_basis: 'estimated', evidence: [{ ref: 'inbox/acme-example-derived', resolved: false }] });
+  });
+
+  test('a done correction that is later reversed still supersedes the action it corrected', async () => {
+    const ctx = ctxFor(engine, false);
+    const since = new Date(Date.now() - 3600_000);
+    const a = await logAction(ctx, { verb: 'spend', summary: 'Paid a roofer', spent: 100, currency: 'USD', estimated: true, counterparty: 'roofer-example' });
+    const fix = await logAction(ctx, { verb: 'spend', summary: 'Roofer, corrected', spent: 90, currency: 'USD', estimated: true, counterparty: 'roofer-example', supersedes: a.action_id });
+    await logAction(ctx, { verb: 'spend', action_id: fix.action_id, status: 'reversed' });
+    const report = await ledgerReport(engine, ledgerReader(false), { since, until: new Date(Date.now() + 1000), counterparty: 'roofer-example' });
+    if (report.state !== 'complete') throw new Error('partial');
+    expect(report.totals.spent.estimated).toEqual({});
+  });
+
+  test('a reserve that waited for a pending write reads its clock after the wait, so a hold made meanwhile counts', async () => {
+    await applyPolicyChange(engine, { scope: 'owner', rules: [{ id: 'tools-day', verb: 'spend', decision: 'allow', limit: { amount: 50, currency: 'USD' }, window: 'day', merchant: 'hardware-example' }, { id: 'spend', verb: 'spend', decision: 'ask' }], change: 'tools budget', probe: owner });
+    const ctx = ctxFor(engine, false);
+    const input = { verb: 'spend' as const, amount: { amount: 40, currency: 'USD' }, merchant: 'hardware-example', summary: 'A drill' };
+    const later = await policyReserve(ctx, input, new Date(Date.now() + 300));
+    expect(later.decision).toBe('allow');
+    await engine.executeRaw("UPDATE persistence_requests SET state='running', claim_expires_at=now() + interval '1 hour' WHERE slug=$1", [later.reservation!.action_id]);
+    const waiting = policyReserve(ctx, { ...input, summary: 'Another drill' });
+    await new Promise(r => setTimeout(r, 600));
+    await engine.executeRaw("UPDATE persistence_requests SET state='committed' WHERE slug=$1", [later.reservation!.action_id]);
+    expect((await waiting).decision).not.toBe('allow');
+    await applyPolicyChange(engine, { scope: 'owner', rules: [{ id: 'spend', verb: 'spend', decision: 'ask' }], change: 'restore', probe: owner });
+  });
+
+  test('a write still publishing names the request_id to retry with, even one gbrain made up', async () => {
+    const spy = spyOn(pageMutations, 'submitPageMutation').mockRejectedValueOnce(opError('write_pending', 'still writing', 'retry'));
+    try {
+      const pending = await caught(() => logAction(ctxFor(engine, false), { verb: 'send', summary: 'Sent flowers', estimated: true }));
+      expect((pending as { code: string }).code).toBe('write_pending');
+      expect((pending as { detail?: string }).detail).toMatch(/^request_id=[0-9a-f-]{36}$/);
+    } finally { spy.mockRestore(); }
+  });
+
   test('a read past the scan bound returns state partial with no totals and the narrower call', async () => {
     const report = await ledgerReport(engine, ledgerReader(false), { since: new Date(Date.now() - 86_400_000), until: new Date(Date.now() + 1000), max: 2 });
     expect(report.state).toBe('partial');
@@ -285,6 +455,15 @@ describe('budget windows', () => {
     expect(evaluatePolicy(rules, { verb: 'spend', amount: { amount: 5, currency: 'USD' } }).decision).toBe('ask');
     expect(evaluatePolicy(rules, { verb: 'spend', amount: { amount: 5, currency: 'USD' } }, new Map([['b', { spent: 40, held: 0 }]])).decision).toBe('allow');
     expect(evaluatePolicy(rules, { verb: 'spend', amount: { amount: 15, currency: 'USD' } }, new Map([['b', { spent: 40, held: 0 }]])).decision).toBe('ask');
+  });
+
+  test('budget sums are exact for decimal amounts: 0.10 used and 0.20 asked fits a 0.30 budget', () => {
+    const rules: PolicyRule[] = [{ id: 'b', verb: 'spend', decision: 'allow', limit: { amount: 0.3, currency: 'USD' }, window: 'day' }];
+    expect(evaluatePolicy(rules, { verb: 'spend', amount: { amount: 0.2, currency: 'USD' } }, new Map([['b', { spent: 0.1, held: 0 }]])).decision).toBe('allow');
+    const now = new Date('2026-11-25T12:00:00Z');
+    const row = (n: number, spent: number): StoredAction => ({ slug: `actions/2026/11/01knzz000000000000000000${n}a`, record: { action: { verb: 'spend', status: 'done', at: '2026-11-25T10:00:00Z', summary: 'x', actor: 'owner' },
+      money: { currency: 'USD', spent, estimated: true }, evidence: [], approval: { by: 'owner' }, claim_basis: 'estimated' } });
+    expect(windowUsage([row(1, 0.1), row(2, 0.2)], { verb: 'spend', currency: 'USD', since: windowStart('day', now) }, now)).toEqual({ spent: 0.3, held: 0 });
   });
 
   test('a ledger read reaches back at most MAX_SINCE_DAYS, so one call runs a bounded number of month queries', () => {

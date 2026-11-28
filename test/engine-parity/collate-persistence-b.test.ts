@@ -294,7 +294,7 @@ describe('purge reads sort tombstones and park records by byte', () => {
     return { candidates, keyOrder: keys.map(key => (JSON.parse(key) as string[]).slice(0, 2).join('/')) };
   }));
 
-  // The Rust arm's stop, by design (RUST_ENGINE.md row 56): the tie this case checks needs tombstones of two sources deleted
+  // The Rust arm's stop, by design (RUST_ENGINE.md row 65): the tie this case checks needs tombstones of two sources deleted
   // at one instant, which a Rust brain cannot stamp (each soft delete takes its own store time), so the fixture is raw SQL and
   // the case stays on the SQL arms. The Rust store serves listUnreviewedSyncTombstones; rust/crates/gbrain-store/tests/repair_scans.rs
   // writes the records it reads.
@@ -343,7 +343,7 @@ describe('the reconcile audit pages by byte slug', () => {
 describe('origin reads sort source ids by byte', () => {
   const page = (slug: string) => ({ type: 'note' as const, title: slug, compiled_truth: `body of ${slug}`, timeline: '' });
 
-  // The Rust arm's stop, by design (RUST_ENGINE.md row 57): twin pages (two live pages of one source with one source_path)
+  // The Rust arm's stop, by design (RUST_ENGINE.md row 66): twin pages (two live pages of one source with one source_path)
   // exist only on a SQL brain made before pages_live_origin_key, so the fixture drops that index through raw SQL. The Rust
   // store holds one live origin per source and refuses a second (origin_claimed), so it never has a twin to count.
   parityTest('originTwinCounts lists the sources holding twin pages by byte id, and its limit keeps the byte-first ones', {

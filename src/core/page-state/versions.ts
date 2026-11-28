@@ -116,6 +116,17 @@ export async function pruneSegmentedVersions(tx: BrainEngine, pageId: number): P
 }
 
 /**
+ * #9737: the owner's `gbrain pages prune-history` removes exactly the inline saved versions its approved plan named, under
+ * the caller's page lock, and records the gap like every other prune (the typed member `pruneInlineVersionsById`, SQL in engine-sql/version-prune.ts). Segmented
+ * versions keep their own retention, and an agent_policy page or a soft-deleted page keeps every version, and so does a
+ * page no longer at the source and slug the plan named (renamed or moved since the preview) or no longer of the type a
+ * --type plan selected. Returns the versions deleted.
+ */
+export async function pruneInlineVersionsById(tx: BrainEngine, page: { pageId: number; sourceId: string; slug: string; type?: string | null; keep?: number | null }, versionIds: readonly number[]): Promise<number> {
+  return tx.pruneInlineVersionsById(page, versionIds);
+}
+
+/**
  * `revert_version` of a segmented page or version is not available until the
  * segment writer (Wave B PR 3): the version's body lives in segments, and the
  * revert path rebuilds the page from an inline body. Refused before anything is written.

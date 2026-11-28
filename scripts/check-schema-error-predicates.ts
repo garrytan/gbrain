@@ -32,6 +32,7 @@ const BROAD = new Set(['isUndefinedColumnError', 'isUndefinedTableError']);
 
 /** Files allowed to keep a broad schema-error predicate. Each entry names its reason; a stale entry fails. */
 const ALLOWLIST: Record<string, string> = {
+  'src/core/engine-sql/cli-reads-import.ts': 'listSourceRecords keeps the sources-load.ts 42703 fallback to the minimal columns (moved here from loadAllSources); per-column audit is a follow-up',
   'src/core/oauth-provider.ts': 'OAuth token/client degrade ladders retry narrower projections on any 42703; per-column audit is a follow-up',
   'src/core/grants/legacy-token.ts': 'maps a missing grant column to grant_schema_required (a refusal, never a silent ok)',
   'src/core/item-failure.ts': 'classifies a missing table or column as run-scoped (the unit stops, never a silent ok or a skipped item)',
@@ -39,7 +40,6 @@ const ALLOWLIST: Record<string, string> = {
   'src/core/ops/request-tools.ts': 'surface-column degrade on the request-tools op; per-column audit is a follow-up',
   'src/core/token-mint.ts': 'maps a missing grant column to a schema refusal (never a silent ok)',
   'src/core/trust/min-trust.ts': 'maps a missing min_trust column to migrations_pending (a refusal, never a silent ok)',
-  'src/core/engine-sql/cli-reads-import.ts': 'listSourceRecords keeps the sources-load.ts 42703 fallback to the minimal columns (moved here from loadAllSources); per-column audit is a follow-up',
   'src/core/migration-orchestration-lock.ts': 'lock probe treats a pre-lock schema as "no lock held" before migrations run',
 };
 

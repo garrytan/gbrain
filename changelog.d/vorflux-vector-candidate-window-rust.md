@@ -1,0 +1,4 @@
+**Vector search on a Rust brain now returns the same pages as Postgres and PGLite when many chunks are equally close or one page crowds the nearest results.**
+
+### Fixed
+- `searchVector` on a Rust brain scored every chunk and kept each page's best one. Postgres and PGLite first take a candidate window, the nearest `offset + max(limit * 5, 100)` chunks by distance and then chunk id, keep each page's best chunk among those, and widen the window up to three times when it holds too few pages. With more tied chunks than the window holds, or one page whose chunks fill it, the Rust brain could answer a different page. The Rust store now takes the same window over its exact distance order and reads only the pages of the nearest chunks. On a 50,000-page test brain this also made filtered vector searches about twice as fast (a 4% source: 104 to 57 ms at p50).

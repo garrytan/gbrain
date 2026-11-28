@@ -54,12 +54,12 @@ const REFUSED_OPS = [
   'get_recent_transcripts', 'sources_inspect', 'sources_add', 'sources_remove', 'connector_sync',
   'code_traversal_cache_clear', 'migrate_embeddings', 'purge_deleted_pages', 'sync_brain',
   'policy_check', 'agent_policy', 'capabilities', 'log_action', 'ledger', 'policy_reserve',
-  'onboarding_status', 'onboarding_off',
+  'onboarding_status', 'onboarding_off', 'propose_jobs', 'propose_decide',
   // writes outside the checked set: batch, upload, label, history, fact and queue writes
   'abort_page_upload', 'begin_page_upload', 'commit_page_upload', 'get_page_upload', 'upload_page_part', 'put_pages',
   'put_raw_data', 'put_skill', 'delete_skill', 'delete_page', 'restore_page', 'revert_version', 'cancel_write_request',
   'list_write_requests', 'confirm_memory', 'promote_guest_note', 'extract_entities', 'extract_facts', 'forget',
-  'forget_fact', 'household_add', 'household_mark', 'household_replace', 'learned_keep', 'learned_undo', 'log_ingest', 'loops_close', 'loops_mute', 'loops_unmute', 'memory_conversation_mode', 'memory_propose',
+  'forget_fact', 'correct', 'household_add', 'household_mark', 'household_replace', 'learned_keep', 'learned_undo', 'log_ingest', 'loops_close', 'loops_mute', 'loops_unmute', 'memory_conversation_mode', 'memory_propose',
   'memory_write', 'mute_notice', 'ontology_propose', 'questions_pin', 'questions_refresh', 'questions_unpin', 'rate_answer',
   'takes_add', 'takes_resolve', 'takes_supersede', 'takes_update', 'entity_identity_link', 'entity_identity_unlink',
   'extraction_review', 'takes_rebuild', 'takes_remove',
@@ -120,7 +120,7 @@ export const CLI_COMMAND_CLASSES: Readonly<Record<string, EnforcedClass | Enforc
     'transcripts', 'models', 'takes', 'onboard', 'founder', 'profile', 'think', 'notability-eval', 'waiting', 'loops', 'household',
     'questions', 'edge-proposals', 'memory-proposals', 'core', 'connectors', 'wakeshift', 'pages', 'quarantine', 'beliefs',
     'trust', 'guests', 'dedupe', 'watch', 'storage', 'code-def', 'code-refs', 'reindex-code', 'reindex-search-vector', 'reindex-frontmatter',
-    'backfill', 'code-callers', 'code-callees', 'repos', 'secrets', 'apple-contacts', 'policy', 'claims', 'ledger', 'onboarding',
+    'backfill', 'code-callers', 'code-callees', 'repos', 'secrets', 'apple-contacts', 'policy', 'claims', 'ledger', 'onboarding', 'value', 'correct', 'rules', 'propose', 'telemetry',
   ].map(n => [n, 'refused' as const])),
 };
 

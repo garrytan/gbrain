@@ -205,8 +205,15 @@ function parseArgs(args: string[]): DreamArgs {
     dreamExit(usageError('--input cannot be combined with --date / --from / --to', 'Use --input <file> alone, or the date filters alone.'), json);
   }
 
-  // --input implies --phase synthesize.
+  if (inputIdx !== -1 && !inputFile) {
+    dreamExit(usageError('--input <file>: missing value. Usage: gbrain dream --input <transcript-file>', 'Example: gbrain dream --input ~/transcripts/2026-04-25.txt'), json);
+  }
+  // --input implies --phase synthesize; only synthesize reads it.
   if (inputFile && phases.length === 0) phases = ['synthesize'];
+  if (inputFile && !phases.includes('synthesize')) {
+    dreamExit(usageError(`--input is read only by the synthesize phase, and --phase named ${phases.join(', ')}`,
+      'Add --phase synthesize, or drop --input to run the named phase(s) over their usual inputs.'), json);
+  }
 
   // v0.41.13: --source <id> (and the --source-id alias) drives per-source
   // cycle scoping. Resolution rules:
@@ -329,7 +336,8 @@ function parseArgs(args: string[]): DreamArgs {
  *      `no_brain_dir` and runs the DB-only phases (resolve_symbol_edges, embed,
  *      orphans, ...). This is what makes `gbrain dream` work on a postgres /
  *      Supabase brain with no checkout. `runDream` owns the only hard error:
- *      no checkout AND no engine = truly nothing to run.
+ *      no checkout AND no engine = truly nothing to run. A configured
+ *      synthesize cutoff also supports a repo-less source.
  *
  * Still never walks cwd for a `.git` — only the explicit / source / config
  * signals are trusted.
@@ -399,7 +407,9 @@ re-scores the corpus and reconciles the queued synthesis backlog.
 Options:
   --dry-run           Preview all fixes without writing. Note: synthesize
                       runs the cheap scored triage pass (caches verdicts),
-                      but skips the synthesis subagents; propose_takes,
+                      but skips the synthesis subagents. With a cutoff
+                      set, a paused or cooling synthesize phase counts
+                      candidates without triage. The propose_takes,
                       grade_takes and calibration_profile are skipped.
                       "--dry-run" does NOT mean "zero LLM calls."
   --json              Emit the CycleReport as JSON (agent-readable)
@@ -446,10 +456,13 @@ Options:
                       naming used by import/extract/graph-query.
 
   --input <file>      Synthesize a specific transcript file (implies
-                      --phase synthesize). Bypasses corpus-dir scan.
+                      --phase synthesize; an explicit --phase list must
+                      include synthesize). Bypasses the corpus-dir scan,
+                      but still honors dream.synthesize.since.
   --date YYYY-MM-DD   Synthesize transcripts dated for one specific day.
   --from YYYY-MM-DD   Backfill range start (use with --to).
-  --to   YYYY-MM-DD   Backfill range end.
+  --to   YYYY-MM-DD   Backfill range end. All three date flags use the UTC
+                      file modification day for undated writeback files.
 
   --drain             Bounded backlog drain for --phase extract_atoms
                       (the default phase when --drain is set). Holds the
@@ -488,6 +501,7 @@ Examples:
 
 Configure synthesize:
   gbrain config set dream.synthesize.session_corpus_dir /path/to/transcripts
+  gbrain config set dream.synthesize.since 2026-09-02T12:00:00Z  # optional inclusive cutoff
   gbrain config set cycle.timezone Asia/Kolkata  # optional; defaults to host timezone
 
 Related:
@@ -612,6 +626,14 @@ async function runDrain(
   const { runExtractAtomsDrainForSource } = await import('../core/cycle/extract-atoms-drain.ts');
 
   const extractionSourceId = resolvedSourceId ?? 'default';
+
+  // #9888: a source with extract_atoms off has nothing to drain; say why instead of a bare zero.
+  const policySkip = await (await import('../core/cycle/source-atom-policy.ts')).sourceAtomPolicySkip(engine, extractionSourceId);
+  if (policySkip) {
+    if (opts.json) await writeJsonDocument(JSON.stringify({ phase: 'extract_atoms', status: 'skipped', dry_run: opts.dryRun === true, extracted: 0, skipped: 0, remaining: 0, batches: 0, summary: policySkip.summary, ...policySkip.details }, null, 2));
+    else console.log(`[drain] ${policySkip.summary}; nothing to drain`);
+    return;
+  }
 
   // Dry-run: preview the backlog without holding the lock or extracting.
   if (opts.dryRun) {

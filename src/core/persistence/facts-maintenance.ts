@@ -11,6 +11,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { hostFix, opTransport, readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
+import { offRulePage } from '../rules/admission.ts';
 import { appendContextNote, type InferredVia } from '../facts/subject-infer.ts';
 import { inferenceNote } from '../facts/subject-infer-write.ts';
 import { resolveDefaultVisibility } from '../facts/visibility.ts';
@@ -49,7 +50,7 @@ export interface ManagedFactsResult {
 export interface ManagedFactsRefusal { slug: string; code: string; request_id: string }
 export interface ManagedFactOrigin { slug: string; pageId: number; revision: string; }
 export type FrozenExtractedFact = Omit<NewFact, 'embedding' | 'valid_from' | 'valid_until' | 'expired_at'> & {
-  embedding: number[] | null; valid_from: string; valid_until: string | null;
+  embedding: number[] | null; valid_from: string | null; valid_until: string | null;
   /** #5836: a write-time inferred subject dedups exact text only, never superseding or dropping a similar fact. */
   entity_inferred?: InferredVia;
 };
@@ -396,19 +397,36 @@ export async function resumeManagedFacts(engine: BrainEngine, session: ManagedFa
   return collectManagedFacts(engine, session, session.entityMoveRetry ? await followEntityMoves(engine, session, rows) : rows);
 }
 
-/** Every request journaled under the session's batch key, once its completion receipt validates; null when nothing was accepted. */
+/**
+ * Every request journaled under the session's batch key, once its completion receipt validates; null when nothing was accepted.
+ *
+ * #9302: one admission transaction writes a batch's entity requests and then its completion, which names them
+ * (`children`), so each read here goes through an index: the completion by its request id (the principal's unique
+ * key), its entities by id. A completion whose intent was compacted away keeps only its entity count, and its
+ * entities, journaled just before it, are read walking the principal's journal down from it until that many are found.
+ * With no completion, the batch key is checked on completion rows alone, whose intents are small: the old single
+ * `request_id OR batch key` read could use no index for the JSON arm and detoasted every extract_facts intent the
+ * principal ever journaled (embeddings included), about 14 s a batch on a small instance.
+ */
 async function storedBatch(engine: BrainEngine, session: ManagedFactsSession): Promise<WriteRequest[] | null> {
-  const rows = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE operation='extract_facts'
-    AND source_id=$1 AND source_incarnation=$2::uuid AND principal_kind=$3 AND principal_id=$4
-    AND (request_id=$6::uuid OR COALESCE(intent->>'batchKey',outcome->>'batch_key')=$5) ORDER BY sequence`, [session.authority.sourceId, session.authority.sourceIncarnation,
-    session.authority.principal.kind, session.authority.principal.id, session.batchKey, session.completionRequestId]);
-  if (!rows.length) return null;
-  const completion = rows.find(row => row.request_id === session.completionRequestId);
-  if (!completion) throw opError('storage_error', 'The accepted facts batch has no completion receipt.',
-    `Facts batch requests were accepted in source ${session.authority.sourceId} but their completion request ${session.completionRequestId} was never journaled, so the outcome is unconfirmed. Inspect accepted request ${rows[0].request_id} before resubmitting anything.`,
-    { fix: receiptFix(rows[0].request_id) });
+  const journal = (where: string, params: unknown[]) => engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests
+    WHERE operation='extract_facts' AND source_id=$1 AND source_incarnation=$2::uuid AND principal_kind=$3 AND principal_id=$4 AND ${where}`,
+    [session.authority.sourceId, session.authority.sourceIncarnation, session.authority.principal.kind, session.authority.principal.id, ...params]);
+  const [completion] = await journal('request_id=$5::uuid', [session.completionRequestId]);
+  if (!completion) {
+    const [orphan] = await journal(`slug='__managed_facts_complete__' AND COALESCE(intent->>'batchKey',outcome->>'batch_key')=$5 ORDER BY sequence LIMIT 1`, [session.batchKey]);
+    if (!orphan) return null;
+    throw opError('storage_error', 'The accepted facts batch has no completion receipt.',
+      `Facts batch requests were accepted in source ${session.authority.sourceId} but their completion request ${session.completionRequestId} was never journaled, so the outcome is unconfirmed. Inspect accepted request ${orphan.request_id} before resubmitting anything.`,
+      { fix: receiptFix(orphan.request_id) });
+  }
   await validateManagedFactsCompletion(engine, session, completion);
-  return rows;
+  const children = (completion.intent as ManagedFactIntent | null)?.children;
+  const count = Number(completion.outcome?.entity_requests);
+  const entities = children ? await journal('id=ANY($5::uuid[])', [children])
+    : await journal(`sequence<$5 AND slug<>'__managed_facts_complete__' AND COALESCE(intent->>'batchKey',outcome->>'batch_key')=$6
+      ORDER BY sequence DESC LIMIT $7`, [completion.sequence, session.batchKey, Number.isInteger(count) ? count : null]);
+  return [...entities, completion].sort((a, b) => Number(a.sequence) - Number(b.sequence));
 }
 
 const isEntityRequest = (row: WriteRequest) => (row.intent?.kind ?? row.outcome?.kind) === 'managed_facts_entity';
@@ -625,7 +643,7 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
   for (const fact of facts) {
     if (ctx.abortSignal?.aborted) throw new DOMException('Fact extraction was aborted before admission.', 'AbortError');
     if (ctx.notabilityFilter === 'high-only' && fact.notability !== 'high' || ctx.notabilityFilter === 'medium-and-up' && fact.notability === 'low') continue;
-    const resolved = fact.entity_slug ? await resolveEntitySlugWithSource(engine, sourceId, fact.entity_slug) : null;
+    const resolved = offRulePage(fact.entity_slug ? await resolveEntitySlugWithSource(engine, sourceId, fact.entity_slug) : null);
     const entitySlug = resolved && resolved.source !== 'fallback_slugify' ? resolved.slug : null;
     const attributed = entitySlug ?? (options.attributeFallback && resolved ? resolved.slug : null);
     // GST-2492: on a strict source a kept fallback entity is held on its holding page (its folder's under a folder rule).
@@ -640,7 +658,7 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
     // #5836: an inferred subject carries its provenance note into the fence cell and the row.
     group.push({ ...fact, entity_slug: attributed, visibility, context: fact.entity_inferred ? appendContextNote(context, inferenceNote(fact.entity_inferred)) : context,
       embedding: fact.embedding ? Array.from(fact.embedding) : null,
-      valid_from: (factEventTime(fact, ctx) ?? new Date()).toISOString(), valid_until: fact.valid_until?.toISOString() ?? null });
+      valid_from: factEventTime(fact, ctx)?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null });
     groups.set(slug, group);
   }
   const inputs: ManagedFactsEntityInput[] = [];

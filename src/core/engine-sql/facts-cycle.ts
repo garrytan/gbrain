@@ -241,6 +241,7 @@ export async function findBulkFactDays(raw: EngineRawRead, sourceIds: string[] |
     ), bulk AS (
       SELECT a.source_id, a.day, count(*) AS n, count(DISTINCT a.entity_slug) AS entities, t.n AS source_facts
         FROM active a JOIN totals t ON t.source_id = a.source_id
+       WHERE a.day IS NOT NULL
        GROUP BY a.source_id, a.day, t.n
       HAVING count(*) >= ${rule.min_facts}::int AND count(*) >= t.n * ${rule.min_share}::float8 AND count(DISTINCT a.entity_slug) >= ${rule.min_entities}::int
     )
@@ -507,7 +508,7 @@ export interface FenceFactCells {
 export async function updateFenceFactCells(raw: EngineRawRead, sourceId: string, id: number | string, cells: FenceFactCells): Promise<void> {
   await raw(
     `UPDATE facts SET kind = $3, visibility = $4, notability = $5, context = $6,
-          valid_from = COALESCE($7::timestamptz, valid_from),
+          valid_from = CASE WHEN $7::timestamptz IS NULL OR valid_from = $7::timestamptz OR date_trunc('second', valid_from) = $7::timestamptz THEN valid_from ELSE $7::timestamptz END,
           valid_until = CASE WHEN $8::boolean THEN $9::timestamptz ELSE valid_until END,
           expired_at = CASE WHEN $10::timestamptz IS NULL THEN NULL ELSE COALESCE(expired_at, $10::timestamptz) END,
           source = $11, confidence = $12,

@@ -24,3 +24,5 @@ equal ages) break by bytes here.
 Steps that stay raw and refuse by name on an engine without raw SQL: a fenced fact's or a page's label write in
 `visibility`, the `open-facts` apply and `--undo`, the `private-labels` apply, a `fact-claim-dates` page move, and the
 fence projection of a page write (`take-supersession`, `accepted-takes`, `redacted-facts`, `lost-fence-rows`).
+
+`readFactLiveVisibility(factId)` answers a fact's `visibility` and whether it is unexpired (`live`), in any source, or nothing for an unknown id. `tightenFencedFactVisibility({ sourceId, ids: [factId] }, rowNum)` makes the named world fact of the source private when it sits at fence row `rowNum` and is unexpired, and answers the ids it changed (`gbrain repair visibility`, a fenced row the page write kept world).

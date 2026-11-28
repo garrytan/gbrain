@@ -19,8 +19,8 @@ one write at a time.
 | `brain.getPageSealState(pageId)` | the page's `chunker_version` (0 when it has none), or `null` for a missing, soft-deleted or segmented page. The TypeScript member returns `{ chunker_version }` or `null` | `getPageSealState` |
 | `brain.refreshPageOrigin(slug, { sourceId, sourcePath, sourceUri })` | nothing. Sets a live page's `source_path` and, when `sourceUri` is not `null`, its `source_uri`. A missing or soft-deleted page, or one that already holds both, changes nothing. An origin another live page of the source holds is `origin_claimed`, as the unique index `pages_live_origin_key` refuses it | `refreshPageOrigin` |
 | `brain.setChunkerVersion(slug, version, sourceId?)` | nothing. Sets the page's `chunker_version`, live or soft deleted; a missing page changes nothing. `version` is the text JavaScript binds (`String(version)`), cast as Postgres casts text to `smallint`: a fraction or other text is `invalid_argument` (`invalid input syntax for type smallint: "1.5"`), a value outside -32768..32767 is `invalid_argument` (`value "40000" is out of range for type smallint`) | `setChunkerVersion` |
-| `brain.readSourceChunkerVersion(sourceId)` | the chunker version on the source record, or `null` before the first stamp and for an unknown source | `readSourceChunkerVersion` |
-| `brain.setSourceChunkerVersion(sourceId, version)` | whether the source exists. Stamps `version` on the source record; an unknown source changes nothing. The TypeScript member returns nothing | `setSourceChunkerVersion` |
+| `brain.readSourceChunkerVersion(sourceId)` | the chunker version on the source record, or `null` before the first stamp and for an unknown source | none (native only, not a `BrainEngine` member) |
+| `brain.setSourceChunkerVersion(sourceId, version)` | whether the source exists. Stamps `version` on the source record; an unknown source changes nothing. | none (native only, not a `BrainEngine` member) |
 | `brain.writeTextProjectionSeal(slug, { sourceId, revision, timelineText })` | nothing. When `revision` equals the page's `knowledge_revision` (case-insensitive, as a uuid compares), sets `text_projection_revision` and records `timelineText` as the timeline the keyword index reads. A page whose revision moved on, or a missing page, changes nothing. A `revision` that is not a uuid is `invalid_argument` (`invalid input syntax for type uuid: "nope"`) | `writeTextProjectionSeal` |
 | `brain.moveChunkIndexes(pageId, waves)` | nothing. Each wave is a list of `{ id, to, projected_byte_start?, projected_byte_end? }`. Wave by wave, each chunk of the page with the id moves to `to` with its postings and vector; a chunk that lands (`to >= 0`) takes the move's span (`NULL` when the move has none), a parked one (`to < 0`) keeps its own. An id the page does not hold is ignored. A wave that leaves two chunks at one index is `constraint_violation` (`duplicate key value violates unique constraint "idx_chunks_page_index"`) | `moveChunkIndexes` |
 | `brain.getChunkReuseRows(slug, sourceId?)` | `[{ chunk_index, embedding_input_hash, contextual_retrieval_mode, text_only, unembedded }]`, every stored chunk of the page (soft deleted or not), by chunk index. `text_only` is true when the chunk's embedded text hash equals the hash of its text; `unembedded` when it has no vector and no recorded input or text hash | `getChunkReuseRows` |
@@ -44,10 +44,13 @@ one write at a time.
 
 ## TypeScript members
 
-`src/core/rust-engine/store-members/import-members.ts` answers the seven members above on a Rust brain
-and `store-members/aliases.ts` answers `replaceDerivedAliases`. Each calls the binding method of the same
-name through `storeCall`. `setChunkerVersion` sends `String(version)`; `moveChunkIndexes` sends only the
-id, target and span of each move. The capability is `pages` for `getPageSealState`, `refreshPageOrigin`
-and `replaceDerivedAliases`, and `chunks` for the rest.
-
-The parity cases are in `test/engine-parity/import-members.test.ts`.
+The store's binding has all the methods above, but the TypeScript engine serves only one of them. The only member
+`src/core/rust-engine/store-members/import-members.ts` exports is `getPageSealState` (line 7), which calls the binding
+method of the same name through `storeCall` (capability `pages`, `src/core/rust-engine/members.ts:57`). Six more are
+`BrainEngine` members that no `store-members` module exports, so each still refuses a Rust brain with
+`engine_capability_missing`: `refreshPageOrigin`, `replaceDerivedAliases` (`store-members/aliases.ts` does not export it),
+`setChunkerVersion`, `writeTextProjectionSeal`, `moveChunkIndexes` and `getChunkReuseRows` (capabilities `pages` and
+`chunks`, `members.ts:56-61, 158-161`). `readSourceChunkerVersion` and `setSourceChunkerVersion` are native-only: they
+are not `BrainEngine` members and appear in no TypeScript file (`rg readSourceChunkerVersion src` finds nothing), so no
+TypeScript caller can reach them. The native methods exist and the store tests run them; no TypeScript member calls them
+yet. `getPageSealState` is exercised in `test/persistence-bounded-reads.test.ts`.

@@ -201,6 +201,7 @@ fn duplicate(read: &dyn KvRead, f: &FactRecord) -> Result<bool> {
                 && d.dimension.as_deref() == Some(dimension)
                 && d.value_hash.as_deref() == Some(hash)
                 && d.source_markdown_slug.as_deref() == Some(f.source.as_str())
+                && d.valid_from().is_some()
                 && d.valid_from_us == f.valid_from_us
         }))
 }

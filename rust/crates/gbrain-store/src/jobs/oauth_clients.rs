@@ -408,6 +408,16 @@ pub(super) fn all_clients(read: &dyn KvRead) -> Result<Vec<ClientRecord>> {
     bad.map_or(Ok(rows), Err)
 }
 
+/// The ids of the clients that are not deleted: archived authority a restore refuses.
+pub(crate) fn live_client_ids(read: &dyn KvRead) -> Result<Vec<String>> {
+    let rows = all_clients(read)?;
+    Ok(rows
+        .into_iter()
+        .filter(|c| c.deleted_at.is_none())
+        .map(|c| c.client_id)
+        .collect())
+}
+
 /// The shadow seed (`seed.rs`): stores a client's spend columns copied from another engine (`budget_usd_per_day` in
 /// dollars, as the column holds it). `false` when the client id is already stored.
 pub(crate) fn seed_client(

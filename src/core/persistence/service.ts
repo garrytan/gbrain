@@ -36,6 +36,7 @@ import { withdrawnFromDetail } from '../facts/withdrawal.ts';
 import { heldFileDiagnostic, storedCheckoutRefusal } from './verb-errors.ts';
 import { isMissingPageMessage } from './page-identity.ts';
 import { registerPersistenceConsumerConfig } from '../embedding-disabled.ts';
+import { sharedFileAudienceReason } from './publication-failure.ts';
 
 interface Service { consumer: PersistenceConsumerLike; heartbeat?: ConsumerHeartbeat; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
 const services = new WeakMap<BrainEngine, Service>();
@@ -439,6 +440,9 @@ export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number 
     const pending = pendingImportRefusal(row, row.authority?.remote === true);
     Object.assign(error, { suggestion: pending.suggestion, fix: pending.fix, reason: pending.reason, detail: pending.detail, docs: pending.docs ?? error.docs });
   }
+  // A shared-file audience refusal (shared-skills/publication.ts) answers with the closed reason it was stored with.
+  const audience = isTerminal(row) && reason === 'local_conflict' ? sharedFileAudienceReason(row.error_detail) : undefined;
+  if (audience) error.reason = audience;
   const checkout = isTerminal(row) ? storedCheckoutRefusal((row.error_detail as { origin?: unknown } | null | undefined)?.origin, row.source_id, row.slug || null) : undefined;
   if (checkout) Object.assign(error, { suggestion: checkout.suggestion, fix: checkout.fix, detail: checkout.detail, docs: checkout.docs });
   // GST-2462 (D2): a page whose file left git can still be narrowed: name the page rule, not only the ghost-page repair (which deletes it).
@@ -464,7 +468,9 @@ export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number 
     }
     if (content.key || content.line !== undefined) error.detail = [content.key ? `key ${content.key}` : '', content.line !== undefined ? `line ${content.line}` : ''].filter(Boolean).join(', ');
   }
-  const withdrawn = isTerminal(row) ? withdrawnFromDetail(row.error_detail) : undefined;
+  // A remote requester never reads a stored withdrawal's detail (a refusal stored before this rule, or a managed
+  // extraction's locked check, may hold one): it gets the plain refusal, as factWithdrawnRefusal answers it.
+  const withdrawn = isTerminal(row) && row.authority?.remote === false ? withdrawnFromDetail(row.error_detail) : undefined;
   if (withdrawn) error.withdrawn = withdrawn;
   // An engine's typed capability refusal: the waiter's error names the member and capability the way the refusal did
   // (rust-engine/errors.ts), so a caller classifies it as that refusal. The message already names both.

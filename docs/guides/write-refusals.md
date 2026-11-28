@@ -288,6 +288,7 @@ with each file and fix the ones that need no guessing."*
 | <a id="frontmatter_alias_limit"></a>`frontmatter_alias_limit` | A file whose exact bytes an older gbrain imported and validated nests YAML aliases in its frontmatter that expand past the size limit (#7018). This release refuses them on purpose, so only that file is held (its page keeps the last imported version) and the rest of the source syncs; it is never a parser regression. | Reduce the alias nesting in the frontmatter (or write the values out), or remove the file, then commit and `gbrain sync --source <source> --no-pull`. The hold re-screens when the file changes. Before 4b such a file stopped the source as `sync_parser_regression`; the workaround there was `GBRAIN_SYNC_PARSER_REGRESSION=hold` for the process that syncs. |
 | <a id="visibility_noncanonical"></a>`visibility_noncanonical` | The file's frontmatter asks for `visibility: private` in a spelling page privacy does not read: another case (`Visibility: private`, `visibility: Private`), a block scalar, a list, a flow mapping or a merge key. Page privacy reads only the exact lowercase key and value, so importing it would store a world-readable page its author believes is private. Git sync (classic and managed) holds the file and the rest of the source syncs; `gbrain import` (with or without a Git checkout) refuses it and imports the rest. An existing page keeps its last imported version. Company-brain connects and syncs, and the GitHub and Google connectors on a database-only source, hold it the same way (#7880); `gbrain repair url-clone-fences` lists a clone file whose HEAD asks for it this way under this code; apply restores the file from HEAD with its fence rows kept database-only, so the clone can pull, but does not import HEAD and reports `held` (#7897). `put_page`, `edit_page`, `capture`, `ingest_capture`, `brainstorm --save` and `sources reconcile` refuse the same request as [`visibility_not_applied`](#visibility_not_applied). Doctor `git_held_files` counts the held files and the stored pages that ask for private this way (`details.visibility_noncanonical`). | Write `visibility: private` on its own frontmatter line (lowercase key and value), commit, and run `gbrain sync --source <source> --no-pull` (or import the file again). The hold re-screens when the file changes; no frontmatter repair rewrites a privacy request. For a stored page doctor names, rewrite its frontmatter the same way with `put_page` or by editing its file. |
 | <a id="readers_noncanonical"></a>`readers_noncanonical` | The frontmatter names the page's readers with a key that is not exactly `readable_by`: another case (`Readable_By`, `READABLE_BY`), a hyphen or space for the underscore (`readable-by`, `readable by`) or `readableBy`. Page access reads only the exact lowercase `readable_by` key, so the page would be stored as an ordinary page every member can read while its author believes it is restricted. `put_page`, `edit_page` and `capture` refuse the write with this code and store nothing (a remote caller's message does not echo the spelling); `ingest_capture`, `brainstorm --save` and `sources reconcile` refuse it the same way. Git sync (classic and managed) holds the file and the rest of the source syncs; `gbrain import` refuses the file and imports the rest. An existing page keeps its last imported version. A page that carries the exact `readable_by` key as well as another spelling is refused too, because it is not clear which one the author meant. Pages already stored with such a key are not rewritten; the next `put_page`, `edit_page` or import of one is refused until the key is fixed, and `gbrain doctor` counts them (`git_held_files`, `details.readers_noncanonical`) and names the first five. | Write the key as `readable_by` (lowercase, with an underscore) on its own frontmatter line, for example `readable_by: [alice-example]`, remove any other spelling of it, then submit again with a new `request_id`, or commit and run `gbrain sync --source <source> --no-pull`, or import the file again. The hold re-screens when the file changes; no frontmatter repair rewrites who may read a page. Renaming the key restricts the page to the members it lists, so list the owner's member too if the owner's member-bound keys must still read it, then check who can read it with `gbrain access check --token <name> --as <member>`. |
+| <a id="slug_too_long"></a>`slug_too_long` | A new file's page slug (its path without `.md`, or its `slug:` line) is over 255 characters (#10080). Every operation that names a page refuses such a slug, so a page stored under one could never be read, repaired or removed again. Git sync holds the file and the rest of the source syncs; `gbrain import` on an unmanaged brain skips it and imports the rest. A page an older sync already stored under such a slug keeps syncing and reindexing, and can be removed with `gbrain delete` (and restored or purged). | Move the file to a shorter path or give it a shorter `slug:` line, commit, then `gbrain sync --source <source> --no-pull`. |
 | <a id="tag_too_long"></a>`tag_too_long` | A frontmatter tag (or an `add_tag` tag) is over 2688 bytes, the longest tag the btree indexes on `tags` store (#7052). Before this check the database insert failed with error 54000 and the write reported `storage_error`. On a write nothing is written; Git sync holds the file and the rest of the source syncs; `gbrain import` skips it and imports the rest. The message names the tag's position and size, never its text. | Shorten the tag or split it into shorter tags, then write the page again (for a file: edit it, commit and `gbrain sync --source <source> --no-pull`). |
 | <a id="parser_regression"></a>`parser_regression` | A file whose exact bytes imported under an earlier gbrain is now refused. It is held and the rest of the source syncs (the default; `GBRAIN_SYNC_PARSER_REGRESSION=stop` stops the run instead). This is a gbrain bug. | Report it with the gbrain version, the file and the code; upgrade or pin the last good version. After a fixed gbrain is installed, `gbrain sources retry-held <source>` and then `gbrain sync --source <source> --no-pull` re-screen it. |
 | <a id="settle_mismatch"></a>`settle_mismatch` | A live managed sync pass settled this file at the same level in three consecutive passes, but the next round never classified it settled (#6712). Instead of re-importing it every pass, sync held it at that level and stamped the rest of the source. The hold records the level and `meta.mismatch_streak`. The file is usually fine: a path that keeps coming back unsettled points to a broken writer, a stuck effect or a damaged record. | Run `gbrain doctor --json` and `gbrain sources writer status --source <source> --json` (both read-only), fix or report what they name with the gbrain version, then `gbrain sources retry-held <source>` and `gbrain sync --source <source> --no-pull`. A mismatch that comes back is held again after three passes. |
@@ -728,7 +729,15 @@ with `unbound_source`, and so do `remember` about an existing entity page and
 `forget` or `forget_fact` of a claim that a canonical file carries (their
 frozen code stays `unavailable`, with `write_error: owner_unavailable` and the
 same detail and fix; a claim that only database-only pages carry is still
-withdrawn, database-only). What works:
+withdrawn, database-only). On a read-only mirror (`gbrain sources
+mirror-readonly`, or a clone gbrain owns) that `forget` refusal says so, with
+`detail: read_only_mirror`: the mirror's upstream repository is the
+authoritative copy, so remove the claim there and update the mirror from it
+(`gbrain sync --source <id>` on a brain that is not managed; a managed brain
+binds the source first with `gbrain sources writer claim`, then runs
+`gbrain sources refresh <id>`), or make the source writable with
+`gbrain sources mirror-writable <id>` and bind it before forgetting again
+(#10067). What works:
 
 1. **Write the file, commit, sync** (the classic write path). Write or edit
    `<checkout>/<slug>.md`, check generated frontmatter with
@@ -850,7 +859,8 @@ credential-shaped value turns up, it blocks a push, leaves an entry out of
 compiled context, skips a relay, or is replaced in output with a
 `<REDACTED:pattern>` token (for example `<REDACTED:url_credentials>`). The
 stored page never changes: redaction applies to what a caller receives, not
-to your files or database.
+to your files or database, unless the brain host turns on
+[`secrets.on_write`](#secret_in_write) for remote writes.
 
 | Where | What happens | What to do |
 | --- | --- | --- |
@@ -861,10 +871,40 @@ to your files or database.
 | Retrieval output | The value is replaced with `<REDACTED:pattern>`; everything else in the result is unchanged. | Nothing. Read the page on the brain host if you need the value (see what stays raw below). |
 | Page reads | Not redacted. | See [what stays raw by design](#what-stays-raw-by-design). |
 | Configured providers | Not redacted yet. | See [what stays raw by design](#what-stays-raw-by-design). |
+| Remote page writes, when the brain host sets `secrets.on_write` | `block`: refused with `secret_in_write` before anything is saved. `redact`: saved with each value replaced by `<REDACTED:pattern>`, and the result's `secrets_redacted` gives the count and pattern names. Off by default. | See [secrets in remote writes](#secret_in_write). |
 
 An allowlist entry stops pushes and compiled context from refusing a
 finding. It does not turn off retrieval redaction: search and recall still
 replace an allowlisted value.
+
+<a id="secret_in_write"></a>
+### Secrets in remote writes
+
+A brain that serves agents over MCP can screen the page text they write, so a
+credential an agent pastes is never stored where every reader and model
+provider sees it. On the brain host, `gbrain config set secrets.on_write block`
+refuses such a write with `secret_in_write` and saves nothing;
+`gbrain config set secrets.on_write redact` saves it with each value replaced
+by `<REDACTED:pattern>` and reports `secrets_redacted: { count, patterns }`.
+`off` is the default. The setting lives in the host's `~/.gbrain/config.json`,
+so no remote caller can change it, and a value other than these three screens
+as `block`.
+
+It covers `put_page`, `put_pages` (per page), `edit_page` (the new text, not
+the `old_text` it replaces), `append_page`, `capture`, `add_timeline_entry`,
+the `takes_*` writes and `remember`. A chunked upload is screened on its whole
+assembled body at `commit_page_upload`, so a value split across two
+`upload_page_part` calls is found; the upload is discarded with its parts and
+nothing is written, under `redact` too, because an uploaded body is bound to
+the SHA-256 declared at begin and is never rewritten. Local CLI writes, sync
+and imports are not screened. Refusals and receipts name pattern names and a
+count, never the value. Documentation stand-ins pass: the AWS documentation's
+example key id, a database URL whose user and password are the words user and
+password, masks such as `***`, and
+environment variable names.
+
+**Say to your agent:** *"Write down how the deploy is wired, but name the
+secret that holds the token instead of pasting it."*
 
 ### Shapes this scanner catches
 

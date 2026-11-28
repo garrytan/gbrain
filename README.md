@@ -386,6 +386,14 @@ flowchart LR
 
 **Why the graph matters.** Vector search finds similar text; graph retrieval follows stored relationships. Extracted edges are evidence to inspect, not proof that a relationship is true. Graph freshness depends on the write path and maintenance described in [memory boundaries](docs/guides/memory-boundaries.md#page-writes-and-the-graph-are-separate-outcomes). Deep dive: [retrieval architecture](docs/architecture/RETRIEVAL.md); [entity recall](docs/guides/entity-recall.md).
 
+## Privacy & telemetry
+
+gbrain sends no automatic usage reports unless you say yes. This release ships no telemetry address, so by default it sends nothing and setup doesn't ask. To test a server, set `GBRAIN_TELEMETRY_URL` in your own environment and supply its publishable key in `GBRAIN_TELEMETRY_KEY` if it needs one. A repository's `.env` cannot set these. Once a release ships an address, your agent asks you once on first setup. Any setup or upgrade results from before you answer wait in a local file (at most 50, for 7 days), are sent only if you say yes, and are deleted if you say no.
+
+A yes sends your answer, which harness setup ran and whether it worked, upgrade results, the doctor score band, counts of commands and error codes, the gbrain version, OS and, unless you pick `anonymous`, a random install id. It never sends your pages, slugs, titles, queries, file paths, source names, hostnames or error messages. `gbrain telemetry show` prints what is waiting, the next payload and a summary of recent sends; add `--json` to see their payloads. `gbrain telemetry off` turns off reporting and deletes the queue. `gbrain telemetry forget` asks the server to delete your install's record and unlink its stored events from the id, so they remain only as anonymous rows. Stored events are kept for 400 days. At any tier, `pulse` can contact a configured server, and `forget` can too if a local install id exists. The server side isn't deployed yet. The [deployment blockers](TODOS.md#opt-in-telemetry-client-follow-ups-filed-2026-11-22-telemetry-pr-2) include a send that finishes on the server after a successful `forget` and brings back the record.
+
+Data goes to a Supabase project gbrain shares with gstack, in its own tables, through one validated endpoint; the public key the client sends can't read or write any table. Aggregates are public (`gbrain telemetry pulse`). An agent can still answer for you if it ignores its instructions, which is why the question names you as the one to answer. Full field list: [docs/guides/telemetry.md](docs/guides/telemetry.md).
+
 ## Troubleshooting
 
 Start with `gbrain doctor`. For database access failures, use `gbrain engine status --probe` and `gbrain db-repair` before changing configuration.
@@ -407,6 +415,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 - [MCP task guide](docs/mcp/README.md) — deployment and per-client setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [MCP administration](docs/mcp/ADMIN.md) — owner dashboard access, client registration, OAuth, permissions, and token recovery
 - [Evals](docs/eval/) and [research](docs/research/) — methods and results
+- [How gbrain compares](docs/proof.md) — six measured results against simpler setups, including two where the simpler setup wins; [what you'd build without gbrain](docs/guides/what-youd-build.md)
 - [Rust engine plan](docs/designs/RUST_ENGINE.md) — design for a third storage engine; the experimental Rust store already serves keyword search, title search, chunk reads, vector search, embeddings, links, takes, salience, facts, page operations, raw data and file records, ontology claims, chronicle projections, eval capture, dream verdicts, contradiction runs and the code call graph, and a second process on the same brain reaches it through the owner process; the CLI opens it only when `~/.gbrain/config.json` sets `"engine": "rust"` by hand (experimental: commands that need raw SQL, such as `import`, refuse with `engine_capability_missing`); its [research maps](docs/designs/rust-engine/research/README.md) and [review record](docs/designs/rust-engine/review-record.md)
 - [`docs/ethos/`](docs/ethos/) — philosophy (thin harness, fat skills, markdown as recipes, origin story)
 - [`AGENTS.md`](AGENTS.md) — entry point for non-Claude agents

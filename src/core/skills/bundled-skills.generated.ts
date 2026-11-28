@@ -103,6 +103,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -114,6 +116,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -125,6 +129,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -132,7 +138,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "ask-user",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -143,6 +151,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/regex-discipline.md",
       "conventions/test-before-bulk.md",
       "conventions/untrusted-content.md"
@@ -157,6 +167,7 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
       "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -168,6 +179,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "conventions/test-before-bulk.md"
     ]
@@ -180,6 +193,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
       "conventions/cron-via-minions.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/subagent-routing.md"
     ]
   },
@@ -189,6 +204,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -200,6 +217,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -207,7 +226,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "brain-taxonomist",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -217,7 +238,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -230,6 +253,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
       "conventions/cron-via-minions.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/page-privacy.md",
       "conventions/quality.md",
       "conventions/subagent-routing.md",
@@ -241,7 +266,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "capture",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -252,6 +279,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/test-before-bulk.md",
       "conventions/untrusted-content.md"
     ]
@@ -262,6 +291,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "_output-rules.md",
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "conventions/test-before-bulk.md"
     ]
@@ -272,6 +303,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/regex-discipline.md",
       "conventions/test-before-bulk.md",
       "conventions/untrusted-content.md"
@@ -282,7 +315,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -295,6 +330,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
       "conventions/cron-via-minions.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/regex-discipline.md",
       "conventions/subagent-routing.md",
       "conventions/test-before-bulk.md"
@@ -308,6 +345,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "conventions/test-before-bulk.md"
     ]
@@ -318,6 +357,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -329,6 +370,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/test-before-bulk.md",
       "conventions/untrusted-content.md"
     ]
@@ -340,7 +383,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -349,6 +394,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/cron-via-minions.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/subagent-routing.md",
       "conventions/test-before-bulk.md"
     ]
@@ -367,14 +414,18 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "daily-task-manager",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "daily-task-prep",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -385,6 +436,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/test-before-bulk.md"
     ]
   },
@@ -393,6 +446,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -400,7 +455,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "db-repair",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -411,6 +468,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -421,7 +480,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -431,6 +492,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -440,6 +503,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "conventions/untrusted-content.md"
     ]
@@ -449,6 +514,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "owner",
     "assets": [
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/page-privacy.md",
       "conventions/quality.md"
     ]
@@ -457,7 +524,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "functional-area-resolver",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -465,21 +534,27 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "gbrain-upgrade",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "google-loops",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -489,6 +564,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -497,6 +574,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -507,6 +586,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -516,14 +597,18 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "mcp-access",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -532,6 +617,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/test-before-bulk.md"
     ]
   },
@@ -542,6 +629,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -553,6 +642,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -563,6 +654,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
       "conventions/brain-routing.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "conventions/untrusted-content.md"
     ]
@@ -573,7 +666,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/cron-via-minions.md",
+      "conventions/cross-modal.yaml",
       "conventions/exec-output.md",
+      "conventions/model-routing.md",
       "conventions/subagent-routing.md"
     ]
   },
@@ -585,6 +680,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -592,14 +689,18 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "postgres-adopt",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "publish",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -607,14 +708,18 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "remote-mcp",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -624,6 +729,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -632,7 +739,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "_output-rules.md",
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -643,6 +752,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "conventions/test-before-bulk.md",
       "conventions/untrusted-content.md"
@@ -655,7 +766,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -664,6 +777,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/schema-evolution.md"
     ]
   },
@@ -671,14 +786,18 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "schema-unify",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "setup",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -686,6 +805,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -693,7 +814,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "skill-creator",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -701,6 +824,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "owner",
     "assets": [
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "skill-optimizer/skillopt-benchmark.jsonl"
     ]
@@ -709,21 +834,27 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "skillpack-check",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "smoke-test",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "soul-audit",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -731,7 +862,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -742,6 +875,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -768,6 +903,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -775,13 +912,15 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "webhook-transforms",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   }
 ];
 
 export const BUNDLED_SKILL_FILES: Readonly<Record<string, string>> = {
-  "_brain-filing-rules.json": "{\n  \"version\": \"1.0.0\",\n  \"companion\": \"_brain-filing-rules.md\",\n  \"description\": \"Canonical (machine-readable) brain filing rules. The .md companion is the human explainer; this JSON is what `gbrain check-resolvable` audits against. Keep both in sync.\",\n  \"rules\": [\n    {\n      \"kind\": \"person\",\n      \"directory\": \"people/\",\n      \"examples\": [\"founders\", \"investors\", \"attendees\", \"contacts\"],\n      \"description\": \"A page whose primary subject is one person.\"\n    },\n    {\n      \"kind\": \"company\",\n      \"directory\": \"companies/\",\n      \"examples\": [\"portfolio companies\", \"acquirers\", \"vendors\"],\n      \"description\": \"A page whose primary subject is one company or organization.\"\n    },\n    {\n      \"kind\": \"deal\",\n      \"directory\": \"deals/\",\n      \"examples\": [\"seed rounds\", \"acquisitions\"],\n      \"description\": \"A page whose primary subject is a financing or M&A transaction.\"\n    },\n    {\n      \"kind\": \"meeting\",\n      \"directory\": \"meetings/\",\n      \"examples\": [\"1:1s\", \"pitches\", \"pods\"],\n      \"description\": \"A meeting transcript or minutes. Propagate entities to companies/ and people/ pages.\"\n    },\n    {\n      \"kind\": \"concept\",\n      \"directory\": \"concepts/\",\n      \"examples\": [\"mental models\", \"theses\", \"frameworks\"],\n      \"description\": \"A reusable idea, framework, or mental model not tied to a specific person/company.\"\n    },\n    {\n      \"kind\": \"project\",\n      \"directory\": \"projects/\",\n      \"examples\": [\"internal initiatives\", \"multi-session work\"],\n      \"description\": \"A multi-session piece of work with its own arc.\"\n    },\n    {\n      \"kind\": \"analysis\",\n      \"directory\": \"analysis/\",\n      \"examples\": [\"deep dives\", \"comparative studies\"],\n      \"description\": \"A long-form analysis of a specific topic.\"\n    },\n    {\n      \"kind\": \"civic\",\n      \"directory\": \"civic/\",\n      \"examples\": [\"policy analysis\", \"government topics\"],\n      \"description\": \"Public-sector, policy, or civic-issue content.\"\n    },\n    {\n      \"kind\": \"writing\",\n      \"directory\": \"writing/\",\n      \"examples\": [\"essays\", \"drafts\", \"published pieces\"],\n      \"description\": \"A piece of prose authored by the user.\"\n    },\n    {\n      \"kind\": \"guide\",\n      \"directory\": \"guides/\",\n      \"examples\": [\"runbooks\", \"how-to docs\"],\n      \"description\": \"A guide or runbook authored for future reference.\"\n    },\n    {\n      \"kind\": \"tech\",\n      \"directory\": \"tech/\",\n      \"examples\": [\"APIs\", \"libraries\", \"language notes\"],\n      \"description\": \"Technical references and tooling notes not tied to a specific company.\"\n    },\n    {\n      \"kind\": \"finance\",\n      \"directory\": \"finance/\",\n      \"examples\": [\"market data\", \"metrics\"],\n      \"description\": \"Financial reference data not tied to a single deal.\"\n    },\n    {\n      \"kind\": \"personal\",\n      \"directory\": \"personal/\",\n      \"examples\": [\"logistics\", \"family\"],\n      \"description\": \"Personal-life content — kept separate from work.\"\n    },\n    {\n      \"kind\": \"idea\",\n      \"directory\": \"ideas/\",\n      \"examples\": [\"product ideas\", \"essay seeds\", \"back-of-envelope concepts\"],\n      \"description\": \"Generative ideas the user might build, write, or expand later. Stub-shaped pages that mature over time. voice-note-ingest, archive-crawler, and similar capture-flavored skills file here when content is something to potentially act on.\"\n    },\n    {\n      \"kind\": \"research\",\n      \"directory\": \"research/\",\n      \"examples\": [\"web-research deltas\", \"freshness checks\", \"citation-verified claims\"],\n      \"description\": \"Web-research output: what is NEW vs already-known about a topic, citation-checked claims, freshness deltas. perplexity-research and academic-verify file here.\"\n    },\n    {\n      \"kind\": \"original\",\n      \"directory\": \"originals/\",\n      \"examples\": [\"the user's own theses\", \"frameworks the user generated\", \"novel observations the user expressed\"],\n      \"description\": \"Pages where the user is the primary author of the idea — original thinking, not summarizations of someone else's work. voice-note-ingest, archive-crawler, signal-detector route content here when the user is the originator.\"\n    },\n    {\n      \"kind\": \"voice-note\",\n      \"directory\": \"voice-notes/\",\n      \"examples\": [\"raw transcripts\", \"audio capture pages\"],\n      \"description\": \"Voice-note transcript holders, especially when the content is a random thought that doesn't cleanly fit originals/, concepts/, or another subject directory. voice-note-ingest is the primary writer.\"\n    },\n    {\n      \"kind\": \"openclaw\",\n      \"directory\": \"openclaw/\",\n      \"examples\": [\"agent-state notes\"],\n      \"description\": \"Notes about the host OpenClaw agent itself, not the underlying entities.\"\n    },\n    {\n      \"kind\": \"synthesis-output\",\n      \"directory\": \"media/books/\",\n      \"examples\": [\"personalized book mirrors\", \"two-column chapter analyses\"],\n      \"description\": \"Sanctioned exception to 'file by primary subject' for sui generis synthesized output that is one-of-one to a single book and a specific reader. Format-prefixed under media/<format>/ is allowed for synthesis output only, never for raw ingest. See _brain-filing-rules.md.\"\n    },\n    {\n      \"kind\": \"synthesis-output\",\n      \"directory\": \"media/articles/\",\n      \"examples\": [\"personalized article reads\", \"long-form content tailored to reader\"],\n      \"description\": \"Same sanctioned exception as media/books/. One-of-one synthesis output of an article personalized for the reader. Distinct from raw article ingest, which goes to the article's primary-subject directory.\"\n    },\n    {\n      \"kind\": \"daily\",\n      \"directory\": \"daily/\",\n      \"examples\": [\"daily/calendar/YYYY-MM-DD.md\", \"daily/notes/YYYY-MM-DD.md\"],\n      \"description\": \"Date-keyed pages for events, calendar entries, or daily notes. Calendar imports land at daily/calendar/YYYY-MM-DD.md with attendees cross-linked to people/. Use when the primary subject is the date itself, not a person or topic.\"\n    },\n    {\n      \"kind\": \"media-format\",\n      \"directory\": \"media/\",\n      \"examples\": [\"media/x/{handle}/\", \"media/audio/\", \"media/video/\"],\n      \"description\": \"Format-prefixed parent for media-by-source-format ingest. Subdirectories like media/x/{handle}/ hold X/Twitter archives, media/audio/ holds podcast/voice captures. The format-prefix lives only when the content is sui generis to the source format AND lacks a clean primary-subject directory. Prefer subject-by-subject filing; fall through to media/ only when the source format IS the unifying frame.\"\n    },\n    {\n      \"kind\": \"inbox\",\n      \"directory\": \"inbox/\",\n      \"examples\": [\"captured thoughts\", \"pasted snippets awaiting filing\"],\n      \"description\": \"Raw captured content awaiting filing; `gbrain capture` writes here. Move a page to its primary-subject directory once it is understood.\"\n    },\n    {\n      \"kind\": \"conversation\",\n      \"directory\": \"conversations/\",\n      \"examples\": [\"conversations/chatgpt/{thread-slug}.md\", \"conversations/claude/{thread-slug}.md\"],\n      \"description\": \"Imported chat exports (ChatGPT, Claude, etc.) where the conversation itself is the artifact. Cross-link concepts and people from the conversation; the conversation page is the source-of-truth for the dialog. Distinct from voice-notes/ (which holds raw voice capture).\"\n    }\n  ],\n  \"sources_dir\": {\n    \"directory\": \"sources/\",\n    \"purpose\": \"ONLY for raw data: bulk imports, API dumps, periodic captures. A page with a clear primary subject (person, company, concept) does NOT belong here.\",\n    \"not_for\": [\"articles about a person\", \"analyses of a company\", \"reusable frameworks\"]\n  },\n  \"notes\": [\n    \"The PRIMARY SUBJECT of the content determines the directory, not the format or source skill.\",\n    \"When in doubt: what would you search for to find this page again?\",\n    \"Cross-link from related directories via back-links — do not duplicate content.\"\n  ],\n  \"dream_synthesize_paths\": {\n    \"description\": \"Single source of truth for the v0.23 dream-cycle synthesize/patterns trusted-workspace allow-list. The cycle's synthesize phase reads this list and threads it as `allowed_slug_prefixes` to every subagent it dispatches; put_page enforces it server-side. Editing this list is the ONLY way to add a new directory the synthesis subagent may write to.\",\n    \"globs\": [\n      \"wiki/personal/reflections/*\",\n      \"wiki/originals/*\",\n      \"wiki/personal/patterns/*\",\n      \"wiki/people/*\",\n      \"dream-cycle-summaries/*\"\n    ]\n  }\n}\n",
+  "_brain-filing-rules.json": "{\n  \"version\": \"1.0.0\",\n  \"companion\": \"_brain-filing-rules.md\",\n  \"description\": \"Canonical (machine-readable) brain filing rules. The .md companion is the human explainer; this JSON is what `gbrain check-resolvable` audits against. Keep both in sync.\",\n  \"rules\": [\n    {\n      \"kind\": \"person\",\n      \"directory\": \"people/\",\n      \"examples\": [\"founders\", \"investors\", \"attendees\", \"contacts\"],\n      \"description\": \"A page whose primary subject is one person.\"\n    },\n    {\n      \"kind\": \"company\",\n      \"directory\": \"companies/\",\n      \"examples\": [\"portfolio companies\", \"acquirers\", \"vendors\"],\n      \"description\": \"A page whose primary subject is one company or organization.\"\n    },\n    {\n      \"kind\": \"deal\",\n      \"directory\": \"deals/\",\n      \"examples\": [\"seed rounds\", \"acquisitions\"],\n      \"description\": \"A page whose primary subject is a financing or M&A transaction.\"\n    },\n    {\n      \"kind\": \"meeting\",\n      \"directory\": \"meetings/\",\n      \"examples\": [\"1:1s\", \"pitches\", \"pods\"],\n      \"description\": \"A meeting transcript or minutes. Propagate entities to companies/ and people/ pages.\"\n    },\n    {\n      \"kind\": \"concept\",\n      \"directory\": \"concepts/\",\n      \"examples\": [\"mental models\", \"theses\", \"frameworks\"],\n      \"description\": \"A reusable idea, framework, or mental model not tied to a specific person/company.\"\n    },\n    {\n      \"kind\": \"project\",\n      \"directory\": \"projects/\",\n      \"examples\": [\"internal initiatives\", \"multi-session work\"],\n      \"description\": \"A multi-session piece of work with its own arc.\"\n    },\n    {\n      \"kind\": \"analysis\",\n      \"directory\": \"analysis/\",\n      \"examples\": [\"deep dives\", \"comparative studies\"],\n      \"description\": \"A long-form analysis of a specific topic.\"\n    },\n    {\n      \"kind\": \"civic\",\n      \"directory\": \"civic/\",\n      \"examples\": [\"policy analysis\", \"government topics\"],\n      \"description\": \"Public-sector, policy, or civic-issue content.\"\n    },\n    {\n      \"kind\": \"writing\",\n      \"directory\": \"writing/\",\n      \"examples\": [\"essays\", \"drafts\", \"published pieces\"],\n      \"description\": \"A piece of prose authored by the user.\"\n    },\n    {\n      \"kind\": \"guide\",\n      \"directory\": \"guides/\",\n      \"examples\": [\"runbooks\", \"how-to docs\"],\n      \"description\": \"A guide or runbook authored for future reference.\"\n    },\n    {\n      \"kind\": \"tech\",\n      \"directory\": \"tech/\",\n      \"examples\": [\"APIs\", \"libraries\", \"language notes\"],\n      \"description\": \"Technical references and tooling notes not tied to a specific company.\"\n    },\n    {\n      \"kind\": \"finance\",\n      \"directory\": \"finance/\",\n      \"examples\": [\"market data\", \"metrics\"],\n      \"description\": \"Financial reference data not tied to a single deal.\"\n    },\n    {\n      \"kind\": \"personal\",\n      \"directory\": \"personal/\",\n      \"examples\": [\"logistics\", \"family\"],\n      \"description\": \"Personal-life content — kept separate from work.\"\n    },\n    {\n      \"kind\": \"idea\",\n      \"directory\": \"ideas/\",\n      \"examples\": [\"product ideas\", \"essay seeds\", \"back-of-envelope concepts\"],\n      \"description\": \"Generative ideas the user might build, write, or expand later. Stub-shaped pages that mature over time. voice-note-ingest, archive-crawler, and similar capture-flavored skills file here when content is something to potentially act on. On gbrain-base-v2, write type: concept and subtype: idea explicitly.\"\n    },\n    {\n      \"kind\": \"research\",\n      \"directory\": \"research/\",\n      \"examples\": [\"web-research deltas\", \"freshness checks\", \"citation-verified claims\"],\n      \"description\": \"Web-research output: what is NEW vs already-known about a topic, citation-checked claims, freshness deltas. perplexity-research and academic-verify file here.\"\n    },\n    {\n      \"kind\": \"original\",\n      \"directory\": \"originals/\",\n      \"examples\": [\"the user's own theses\", \"frameworks the user generated\", \"novel observations the user expressed\"],\n      \"description\": \"Pages where the user is the primary author of the idea — original thinking, not summarizations of someone else's work. voice-note-ingest, archive-crawler, signal-detector route content here when the user is the originator. On gbrain-base-v2, write type: concept and subtype: original explicitly.\"\n    },\n    {\n      \"kind\": \"voice-note\",\n      \"directory\": \"voice-notes/\",\n      \"examples\": [\"raw transcripts\", \"audio capture pages\"],\n      \"description\": \"Voice-note transcript holders, especially when the content is a random thought that doesn't cleanly fit originals/, concepts/, or another subject directory. voice-note-ingest is the primary writer.\"\n    },\n    {\n      \"kind\": \"openclaw\",\n      \"directory\": \"openclaw/\",\n      \"examples\": [\"agent-state notes\"],\n      \"description\": \"Notes about the host OpenClaw agent itself, not the underlying entities.\"\n    },\n    {\n      \"kind\": \"synthesis-output\",\n      \"directory\": \"media/books/\",\n      \"examples\": [\"personalized book mirrors\", \"two-column chapter analyses\"],\n      \"description\": \"Sanctioned exception to 'file by primary subject' for sui generis synthesized output that is one-of-one to a single book and a specific reader. Format-prefixed under media/<format>/ is allowed for synthesis output only, never for raw ingest. See _brain-filing-rules.md.\"\n    },\n    {\n      \"kind\": \"synthesis-output\",\n      \"directory\": \"media/articles/\",\n      \"examples\": [\"personalized article reads\", \"long-form content tailored to reader\"],\n      \"description\": \"Same sanctioned exception as media/books/. One-of-one synthesis output of an article personalized for the reader. Distinct from raw article ingest, which goes to the article's primary-subject directory.\"\n    },\n    {\n      \"kind\": \"daily\",\n      \"directory\": \"daily/\",\n      \"examples\": [\"daily/calendar/YYYY-MM-DD.md\", \"daily/notes/YYYY-MM-DD.md\"],\n      \"description\": \"Date-keyed pages for events, calendar entries, or daily notes. Calendar imports land at daily/calendar/YYYY-MM-DD.md with attendees cross-linked to people/. Use when the primary subject is the date itself, not a person or topic.\"\n    },\n    {\n      \"kind\": \"media-format\",\n      \"directory\": \"media/\",\n      \"examples\": [\"media/x/{handle}/\", \"media/audio/\", \"media/video/\"],\n      \"description\": \"Format-prefixed parent for media-by-source-format ingest. Subdirectories like media/x/{handle}/ hold X/Twitter archives, media/audio/ holds podcast/voice captures. The format-prefix lives only when the content is sui generis to the source format AND lacks a clean primary-subject directory. Prefer subject-by-subject filing; fall through to media/ only when the source format IS the unifying frame.\"\n    },\n    {\n      \"kind\": \"inbox\",\n      \"directory\": \"inbox/\",\n      \"examples\": [\"captured thoughts\", \"pasted snippets awaiting filing\"],\n      \"description\": \"Raw captured content awaiting filing; `gbrain capture` writes here. Move a page to its primary-subject directory once it is understood.\"\n    },\n    {\n      \"kind\": \"conversation\",\n      \"directory\": \"conversations/\",\n      \"examples\": [\"conversations/chatgpt/{thread-slug}.md\", \"conversations/claude/{thread-slug}.md\"],\n      \"description\": \"Imported chat exports (ChatGPT, Claude, etc.) where the conversation itself is the artifact. Cross-link concepts and people from the conversation; the conversation page is the source-of-truth for the dialog. Distinct from voice-notes/ (which holds raw voice capture).\"\n    }\n  ],\n  \"sources_dir\": {\n    \"directory\": \"sources/\",\n    \"purpose\": \"ONLY for raw data: bulk imports, API dumps, periodic captures. A page with a clear primary subject (person, company, concept) does NOT belong here.\",\n    \"not_for\": [\"articles about a person\", \"analyses of a company\", \"reusable frameworks\"]\n  },\n  \"notes\": [\n    \"The PRIMARY SUBJECT of the content determines the directory, not the format or source skill.\",\n    \"When in doubt: what would you search for to find this page again?\",\n    \"Cross-link from related directories via back-links — do not duplicate content.\"\n  ],\n  \"dream_synthesize_paths\": {\n    \"description\": \"Single source of truth for the v0.23 dream-cycle synthesize/patterns trusted-workspace allow-list. The cycle's synthesize phase reads this list and threads it as `allowed_slug_prefixes` to every subagent it dispatches; put_page enforces it server-side. Editing this list is the ONLY way to add a new directory the synthesis subagent may write to.\",\n    \"globs\": [\n      \"wiki/personal/reflections/*\",\n      \"wiki/originals/*\",\n      \"wiki/personal/patterns/*\",\n      \"wiki/people/*\",\n      \"dream-cycle-summaries/*\"\n    ]\n  }\n}\n",
   "_brain-filing-rules.md": f1,
   "_output-rules.md": f2,
   "academic-verify/SKILL.md": f3,

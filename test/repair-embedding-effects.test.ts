@@ -210,6 +210,77 @@ for (const kind of testBackends()) {
       expect(await effect(f.effectId)).toEqual(foreign);
     });
 
+    // #10434: writer deactivate retires the worktree a failed effect was recorded under; re-activation binds the same
+    // source incarnation to a new worktree on this host. The read-only proofs settle the effect; a retry never runs.
+    async function rebindToNewWorktree(sourceId: string, incarnation: string, effectId: string, owner = localHostId()) {
+      const [former] = await engine.executeRaw<{ id: string }>("INSERT INTO persistence_worktrees(owner_host_id,state) VALUES($1::uuid,'retired') RETURNING id", [localHostId()]);
+      const [current] = await engine.executeRaw<{ id: string }>('INSERT INTO persistence_worktrees(owner_host_id,owner_epoch) VALUES($1::uuid,2) RETURNING id', [owner]);
+      await engine.executeRaw('INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id) VALUES($1,$2::uuid,$3::uuid)', [sourceId, incarnation, current.id]);
+      await engine.executeRaw('INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4)',
+        [current.id, owner, join(scratch, `wt-${current.id}`), join(scratch, `co-${current.id}`)]);
+      await engine.executeRaw('UPDATE persistence_effects SET worktree_id=$2::uuid WHERE id=$1', [effectId, former.id]);
+      return { former: former.id, current: current.id };
+    }
+
+    check('former binding: a failed effect of a retired worktree settles as superseded once the page has verified current vectors', async () => {
+      const f = await fixture('failed');
+      const { former } = await rebindToNewWorktree(f.sourceId, f.incarnation, f.effectId);
+      await engine.putPage('page', { type: 'note', title: 'Changed', compiled_truth: 'Current' }, { sourceId: f.sourceId });
+      const current = await classicUpdate(f.sourceId);
+      await embedVectors(f.sourceId);
+      expect(await settleEmbeddingEffect(engine, { effect_id: f.effectId, state: 'failed', attempts: 5 }, { dryRun: true, config, hostId: localHostId() }))
+        .toMatchObject({ outcome: 'superseded', reason: 'current_vectors_verified' });
+      expect((await repair(f.sourceId, true)).outcomes).toEqual({ superseded: 1 });
+      expect(await effect(f.effectId)).toMatchObject({ state: 'committed', attempts: 5, worktree_id: former,
+        outcome: { embedding: 'superseded', reason: 'current_vectors_verified', verified_revision: current.revision, former_worktree_id: former } });
+      expect((await staleEmbeddingEffectsCheck(engine, [f.sourceId])).status).toBe('ok');
+    });
+
+    check('former binding: an effect that would need a retry, or whose source another host now owns, stays blocked and unchanged', async () => {
+      const own = await fixture('failed');
+      await rebindToNewWorktree(own.sourceId, own.incarnation, own.effectId);
+      const ownBefore = await effect(own.effectId);
+      expect(await settleEmbeddingEffect(engine, { effect_id: own.effectId, state: 'failed', attempts: 5 }, { dryRun: false, config, hostId: localHostId(), runId: randomUUID() }))
+        .toEqual({ outcome: 'blocked', reason: 'owner_unavailable' });
+      expect(await effect(own.effectId)).toEqual(ownBefore);
+
+      const foreign = await fixture('failed');
+      await rebindToNewWorktree(foreign.sourceId, foreign.incarnation, foreign.effectId, randomUUID());
+      await engine.putPage('page', { type: 'note', title: 'Changed', compiled_truth: 'Current' }, { sourceId: foreign.sourceId });
+      await classicUpdate(foreign.sourceId);
+      await embedVectors(foreign.sourceId);
+      const foreignBefore = await effect(foreign.effectId);
+      expect(await settleEmbeddingEffect(engine, { effect_id: foreign.effectId, state: 'failed', attempts: 5 }, { dryRun: false, config, hostId: localHostId() }))
+        .toEqual({ outcome: 'blocked', reason: 'owner_unavailable' });
+      expect(await effect(foreign.effectId)).toEqual(foreignBefore);
+    });
+
+    check('former binding: an archived source, or a multi-target effect, stays blocked and unchanged even with verified current vectors', async () => {
+      const archived = await fixture('failed');
+      await rebindToNewWorktree(archived.sourceId, archived.incarnation, archived.effectId);
+      await engine.putPage('page', { type: 'note', title: 'Changed', compiled_truth: 'Current' }, { sourceId: archived.sourceId });
+      await classicUpdate(archived.sourceId);
+      await embedVectors(archived.sourceId);
+      await engine.executeRaw('UPDATE sources SET archived=true, archived_at=now() WHERE id=$1', [archived.sourceId]);
+      const archivedBefore = await effect(archived.effectId);
+      expect(await settleEmbeddingEffect(engine, { effect_id: archived.effectId, state: 'failed', attempts: 5 }, { dryRun: false, config, hostId: localHostId() }))
+        .toEqual({ outcome: 'blocked', reason: 'owner_unavailable' });
+      expect(await effect(archived.effectId)).toEqual(archivedBefore);
+
+      const multi = await fixture('failed');
+      await rebindToNewWorktree(multi.sourceId, multi.incarnation, multi.effectId);
+      await engine.putPage('page', { type: 'note', title: 'Changed', compiled_truth: 'Current' }, { sourceId: multi.sourceId });
+      await classicUpdate(multi.sourceId);
+      await embedVectors(multi.sourceId);
+      const old = await effect(multi.effectId);
+      await engine.executeRaw('UPDATE persistence_effects SET data=$2::text::jsonb WHERE id=$1', [multi.effectId,
+        JSON.stringify({ version: 2, targets: [{ slug: 'page', page_id: old.data.page_id, revision: old.revision }] })]);
+      const multiBefore = await effect(multi.effectId);
+      expect(await settleEmbeddingEffect(engine, { effect_id: multi.effectId, state: 'failed', attempts: 5 }, { dryRun: false, config, hostId: localHostId() }))
+        .toEqual({ outcome: 'blocked', reason: 'owner_unavailable' });
+      expect(await effect(multi.effectId)).toEqual(multiBefore);
+    });
+
     check('retry_queued: a stale queued effect without vectors is re-queued, doctor stays pending, and the owner run settles it', async () => {
       const f = await fixture('stale');
       const applied = await repair(f.sourceId, true);

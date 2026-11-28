@@ -539,16 +539,7 @@ export async function readDimPinnedWidths(
       // (readContentChunksEmbeddingDim pins nspname; transitionDimPinnedColumn
       // pins table_schema) — a same-named table in another schema on a shared
       // database must not feed a wrong width into the repair DDL or verify.
-      const rows = await engine.executeRaw<{ dim: number | null }>(
-        `SELECT a.atttypmod AS dim
-           FROM pg_attribute a
-           JOIN pg_class c ON c.oid = a.attrelid
-           JOIN pg_namespace n ON n.oid = c.relnamespace
-          WHERE n.nspname = 'public' AND c.relkind = 'r'
-            AND c.relname = $1 AND a.attname = 'embedding'
-            AND a.attnum > 0 AND NOT a.attisdropped`,
-        [t.table],
-      );
+      const rows = await engine.readEmbeddingColumnTypmod(t.table);
       if (rows.length === 0) continue; // table/column absent
       const dim = rows[0]?.dim;
       out.push({ table: t.table, dims: typeof dim === 'number' && dim > 0 ? dim : null });
@@ -807,32 +798,18 @@ export async function readMigrationStatus(engine: BrainEngine): Promise<Migratio
 
   let census: Array<{ signature: string | null; pages: number }> = [];
   try {
-    const rows = await engine.executeRaw<{ signature: string | null; pages: number }>(
-      `SELECT embedding_signature AS signature, count(*)::int AS pages
-         FROM pages WHERE deleted_at IS NULL
-        GROUP BY embedding_signature ORDER BY count(*) DESC LIMIT 5`,
-    );
+    const rows = await engine.readEmbeddingSignatureCensus();
     census = rows.map((r) => ({ signature: r.signature, pages: Number(r.pages) }));
   } catch { /* report empty */ }
 
   let factsPending: number | null = null;
   try {
-    const rows = await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM facts
-        WHERE embedding IS NULL AND expired_at IS NULL
-          AND NOT (source = ANY($1::text[]))`,
-      [[...AUDIT_ROW_SOURCES]],
-    );
-    factsPending = Number(rows[0]?.n ?? 0);
+    factsPending = await engine.countUnembeddedLiveFacts([...AUDIT_ROW_SOURCES]);
   } catch { /* facts table absent — report null */ }
 
   let synopsisTier: number | null = null;
   try {
-    const rows = await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pages
-        WHERE deleted_at IS NULL AND contextual_retrieval_mode = 'per_chunk_synopsis'`,
-    );
-    synopsisTier = Number(rows[0]?.n ?? 0);
+    synopsisTier = await engine.countSynopsisTierPages();
   } catch { /* report null */ }
 
   let staleVsTarget: MigrationStatusReport['stale_vs_target'] = { target: null, stale: null, false_stamped: null };
@@ -865,13 +842,7 @@ export async function readMigrationStatus(engine: BrainEngine): Promise<Migratio
   // #4306 visibility: intentionally-skipped pages with NULL vectors.
   let embedSkipNull: number | null = null;
   try {
-    const rows = await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM content_chunks cc
-         JOIN pages p ON p.id = cc.page_id
-        WHERE cc.embedding IS NULL
-          AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`,
-    );
-    embedSkipNull = Number(rows[0]?.n ?? 0);
+    embedSkipNull = await engine.countEmbedSkipNullChunks();
   } catch { /* report null */ }
 
   let blockedProjectionPages: number | null = null;
@@ -1031,6 +1002,7 @@ export interface MigrationVerify {
      *  must never silently hide them. */
     embed_skip_null_chunks: number;
     marker: 'none' | 'same_target' | 'different_target' | 'corrupt';
+    db_plane_ok: boolean;
     file_plane_ok: boolean;
   };
 }
@@ -1158,6 +1130,11 @@ export async function verifyMigrationComplete(
     // blocker for THIS target; readMigrationStatus surfaces it.
   }
 
+  // #10231: a database label other than the target (an older release stored it without its provider) is not converged; a run rewrites only the label.
+  const dbModel = await engine.getConfig('embedding_model'), dbDims = await engine.getConfig('embedding_dimensions');
+  const dbPlaneOk = dbModel === target.toModel && Number(dbDims) === target.toDims;
+  if (!dbPlaneOk) blockers.push(`database config records ${dbModel ?? '(no model)'} at ${dbDims ?? '(no dimensions)'}d, target is ${target.toModel} at ${target.toDims}d`);
+
   const fp = opts.filePlane;
   const filePlaneOk = fp
     ? fp.model === target.toModel && Number(fp.dims) === target.toDims
@@ -1181,6 +1158,7 @@ export async function verifyMigrationComplete(
       chunkless_pages: chunkless,
       embed_skip_null_chunks: embedSkipNull,
       marker: markerState,
+      db_plane_ok: dbPlaneOk,
       file_plane_ok: filePlaneOk,
     },
   };

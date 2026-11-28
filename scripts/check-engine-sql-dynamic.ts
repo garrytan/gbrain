@@ -66,9 +66,15 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   UNVERIFIED_ARCHIVE_SQL: 'src/core/engine-sql/sources.ts: constant missing-or-epoch archive-time predicate over sources (no input)',
   CREDENTIAL_RESEAL_HELD: 'src/core/page-state/credential-reseal-hold.ts: constant live-credential-re-chunk-hold predicate over the pages alias p; the op and producer are module constants (no input)',
   NOT_CONVERSATION_SLOT_SQL: 'src/core/chronicle/ontology.ts: constant conversation-source prefix exclusion over the facts source column (no input)',
+  NON_TEXT_FRONTMATTER_KEYS_SQL: 'src/core/persistence/content-author-schema.ts: constant text[] literal of the code-constant NON_TEXT_FRONTMATTER_KEYS (GST-4056); no values',
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
+  catalogIdentifierSql: 'src/core/engine-sql/eval-harness-reads.ts: a table or column name read from information_schema (listTextBearingColumns), double-quoted with every double quote doubled; no values',
+  catalogScanHeadSql: 'src/core/engine-sql/eval-harness-reads.ts: constant slug, page id and entity projections over alias x, with catalog column names quoted by catalogIdentifierSql; no values',
+  catalogScanColumnSql: 'src/core/engine-sql/eval-harness-reads.ts: one catalog column of alias x, quoted by catalogIdentifierSql, cast to text; no values',
+  catalogScanJoinSql: 'src/core/engine-sql/eval-harness-reads.ts: the constant LEFT JOIN of pages on alias x\'s page id, or nothing; no values',
+  catalogScanLiveSql: 'src/core/engine-sql/eval-harness-reads.ts: constant live-row predicates (expired_at, deleted_at, takes.active, the page join) chosen by which catalog columns exist; no values',
   // access-grants.ts builders
   tokenGrantColumnList: 'src/core/engine-sql/access-grants.ts (from grants/model.ts): joins only TOKEN_GRANT_ROW_COLUMNS constant names, filtered by which ones pg_attribute reports present; no values',
   // facts-rest-sites builders (facts-trust.ts, facts-recall.ts)
@@ -78,8 +84,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   contestedReadableSql: 'src/core/engine-sql/facts-trust.ts: constant active and readable predicate over a caller-given constant facts alias; the policy picks among constant fragments (privateFactFilterForCaller, projectionEligibleSql) and binds no value',
   memberReadsSql: 'src/core/engine-sql/facts-trust.ts: ownerReadPolicyFragment or readPolicyFragment over a constant page alias; identities and rule ids are checked by validIdentity and validQualifiedRuleId before they are quoted in (see those entries)',
   withdrawalReachedFactSql: 'src/core/access/member-facts.ts: constant withdrawal-reached-fact predicate over caller withdrawal and fact aliases; no values',
-  // belief-ledger.ts builders (pre-v341 fingerprint probes)
-  factFingerprintV2Sql: 'src/core/facts/withdrawal-schema.ts: the pre-v341 fingerprint expression with the caller\'s constant column or alias name substituted for `claim`, over the FACT_SPACE_CLASS and FINGERPRINT_PUNCTUATION constants; no values',
+  // belief-ledger.ts builders (pre-v353 fingerprint probes)
+  factFingerprintV2Sql: 'src/core/facts/withdrawal-schema.ts: the pre-v353 fingerprint expression with the caller\'s constant column or alias name substituted for `claim`, over the FACT_SPACE_CLASS and FINGERPRINT_PUNCTUATION constants; no values',
   legacyFingerprintV2Sql: 'src/core/facts/withdrawal-schema.ts: CASE over the same constants around factFingerprintV2Sql of the caller\'s constant column or alias name; no values',
   // facts-doctor.ts builders
   entityLinkableSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant ENTITY_LINKABLE_SQL predicate (attribution.ts) over the facts alias f; no values',
@@ -167,10 +173,14 @@ const VETTED_BUILDERS: Record<string, string> = {
   contestedRefSql: 'src/core/eligibility/sql.ts: constant pending-supersede-proposal subquery over a caller alias; the table name comes from the facts/takes union, the actions are literals; no values',
   unverifiedExtractionFragment: 'src/core/extraction-review.ts: constant frontmatter predicate over a caller alias; keys and values are module constants',
   buildVisibilityClause: 'src/core/search/sql-ranking.ts: constant page visibility predicates over caller page/source aliases; options pick among constant fragments',
+  privacyLabelKeySql: 'src/core/search/ignored-privacy-labels.ts: constant has-a-privacy-label-key predicate (code-constant PRIVACY_LABEL_KEYS) over a caller alias; no values',
+  ignoredPrivacyLabelSql: 'src/core/search/ignored-privacy-labels.ts: constant ignored-privacy-label predicate (code-constant keys and type names) over a caller alias; no values',
   pageReadFilter: 'src/core/search/read-policy-sql.ts: binds scope values as params, splices only the caller alias',
   buildHardExcludeClause: 'src/core/search/sql-ranking.ts: LIKE-escaped and SQL-escaped slug prefix literals (buildLikePrefixLiteral), the ranked-search hard-exclude clause',
   buildRecencyComponentSql: 'src/core/search/sql-ranking.ts: inlines LIKE literals + numeric coefficients from the decay map, as master (planner behavior)',
   readPolicyFragment: 'src/core/search/private-visibility.ts: accessAllowedForAllSql (readers identities checked by validIdentity before they are quoted in) AND the constant privacyPartSql or TRUE over a caller page alias; no values',
+  hiddenSlugsPolicySql: 'src/core/engine-sql/page-mutation-reads.ts: callerAccessAllowedSql and the constant privacyPartSql over the constant alias p (the output guard\'s per-row test); no values',
+  memberViewPolicySql: 'src/core/engine-sql/page-mutation-reads.ts: readPolicyFragment over the constant alias p, ANDed (labelled-only member) with labelledOnlyForSql over the same alias, whose identities pass validIdentity and rule ids validQualifiedRuleId before they are quoted in; no values',
   renderWriterReadPolicy: 'src/core/engine-sql/remote-links.ts: readPolicyFragment over a code-provided alias, ANDed (labelled-only writer) with labelledOnlyForSql, whose identities pass validIdentity and rule ids validQualifiedRuleId before they are quoted in; no values',
   privacyPartSql: 'src/core/search/private-visibility.ts: the constant privacy part (snapshot, derived-origin and declared-lineage tests) over a code-provided page alias; no values',
   privatePagesFilterFragment: 'src/core/search/private-visibility.ts: constant visibility predicate over a caller alias',
@@ -252,13 +262,12 @@ const VETTED_BUILDERS: Record<string, string> = {
   precedenceSql: 'src/core/eligibility/precedence.ts: constant source-precedence CASE over caller-given constant aliases and a constant guest predicate; class names come from a constant list; no values',
   noteKeptHoldsCte: 'src/core/write-gate-binding.ts: constant data-modifying CTE that notes the holds a purge keeps for another page, over caller-given constant aliases and column expressions (a sub-select of the purge CTE, never a value); no values',
   holdResidueOfDeletedPageSql: 'src/core/write-gate-binding.ts: constant hold-left-behind-by-purged-page predicate over caller-given constant aliases and column expressions; no values',
-  privacyLabelKeySql: 'src/core/search/ignored-privacy-labels.ts: constant has-a-privacy-label-key predicate (code-constant PRIVACY_LABEL_KEYS) over a caller alias; no values',
-  ignoredPrivacyLabelSql: 'src/core/search/ignored-privacy-labels.ts: constant ignored-privacy-label predicate (code-constant keys and type names) over a caller alias; no values',
   vectorLiteralSql: 'src/core/engine-sql/facts.ts: master\'s inlined vector literal; toPgVectorLiteral output (numbers joined by commas) + a ::vector/::halfvec constant',
   temporalLinkJoinSql: 'src/core/link-validity.ts: constant LEFT JOIN onto link_relationships over a caller alias; scope is one of two literals',
   projectionEligibleSql: 'src/core/eligibility/sql.ts: read-eligibility predicate over a caller alias; splices only closed tier and reason-family vocabularies (no values)',
   pageEligibleSql: 'src/core/eligibility/sql.ts: page trust-floor and activation predicate over a caller alias; closed vocabularies only',
   relationshipFilterSql: 'src/core/link-validity.ts: relationship-state probe over a caller alias; dates pass isCalendarDate and inline as DATE literals, status/scope are literals',
+  textFrontmatterSql: 'src/core/persistence/content-author-schema.ts: constant CASE removing NON_TEXT_FRONTMATTER_KEYS_SQL from a code-provided frontmatter expression (GST-4056); no values',
 };
 
 const SQL_ARG_METHODS: Record<string, number> = { query: 0, unsafe: 0, executeRaw: 0 };

@@ -54,7 +54,7 @@ async function relevance(engine: BrainEngine, q: Parameters<BrainEngine['listFac
     entity: r.entity_slug,
     visibility: r.visibility,
     page: r.source_markdown_slug,
-    from: new Date(r.valid_from).toISOString(),
+    from: new Date(r.valid_from!).toISOString(),
     sim: r.similarity == null ? null : Math.round(Number(r.similarity) * 1e5) / 1e5,
   }));
 }

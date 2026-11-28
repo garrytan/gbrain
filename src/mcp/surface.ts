@@ -115,6 +115,8 @@ export const STARTER_OPS: ReadonlySet<string> = new Set([
   'memory_conversation_mode',
   // Agent platform H1: "what's at risk at home" is a daily-driver read (a direct literal, so subagents gain nothing).
   'household_due',
+  // Agent platform C2: the user's correction saves a standing rule and fixes the fact (a direct literal, so subagents gain nothing).
+  'correct',
 ]);
 
 /**
@@ -171,7 +173,7 @@ export function parseAdvertiseFlag(args: string[]): McpSurface | null {
   const raw = inline !== undefined ? inline.slice('--advertise='.length) : args[idx + 1];
   if (raw === undefined || raw.startsWith('--') || !isMcpSurface(raw)) {
     throw opError('invalid_params', `gbrain serve --advertise takes verbs, starter or full${raw === undefined || raw.startsWith('--') ? '' : ` (got "${raw}")`}`,
-      'Run gbrain serve --advertise verbs (list the 7 memory verbs and request_tools), gbrain serve --advertise starter or gbrain serve --advertise full. Every tool the surface allows stays callable.');
+      'Run gbrain serve --advertise verbs (list the 7 memory verbs, correct and request_tools), gbrain serve --advertise starter or gbrain serve --advertise full. Every tool the surface allows stays callable.');
   }
   return raw;
 }
@@ -288,12 +290,13 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
     infer_entity: 'false only turns entity inference off; the segmented-entity refusal\'s retry names it.',
     valid_from: 'Already accepted per item in items; it only dates the fact being written, to the same source under the same grant, and reads nothing.',
     facet: 'The brain-ops skill and docs/guides/profile.md name it; it only labels a fact for the caller\'s own profile, and the profile checks refuse any other page.',
-    content_origin: 'gbrain profile import labels each imported fact inferred; the label only lowers a write\'s trust tier, and an inferred write never supersedes a user_said fact.',
+    content_origin: 'gbrain profile import labels each imported fact inferred; a starter caller may pass only inferred or tool_output (STARTER_PARAM_VALUES), which only lower a write\'s trust tier, and an inferred write never supersedes a user_said fact.',
   },
   recall: {
     grep: 'A substring filter that only narrows the facts returned; gbrain\'s connection check passes it.',
     limit: 'Caps rows per arm at 100; gbrain\'s connection check passes it.',
     source_ids: NARROW,
+    max_chars: 'Only cuts the reply to whole facts and results within the cap, so a client with a response size limit can bound it; it reads nothing more.',
   },
   list_pages: {
     source_ids: NARROW, slug_prefix: LIST_FILTER, where: LIST_FILTER,
@@ -342,6 +345,33 @@ export function itemParamKeys(op: OperationMeta, params: Record<string, unknown>
 export const STARTER_PARAM_CEILINGS: Readonly<Record<string, Readonly<Record<string, number>>>> = {
   submit_agent: { max_turns: SUBMIT_AGENT_DEFAULT_MAX_TURNS },
 };
+
+/** The only values a narrower surface accepts for a reviewed hidden parameter: starter callers may label a remember lower, never user_said. */
+export const STARTER_PARAM_VALUES: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>> = {
+  remember: { content_origin: ['inferred', 'tool_output'] },
+};
+
+/**
+ * The first parameter value in `params` (top level, then remember's items) outside the values `surface` accepts for a
+ * parameter it hides (STARTER_PARAM_VALUES), or undefined. Only a value the parameter's own enum accepts counts: anything
+ * else is left to parameter validation, which never echoes it, and a refusal here can quote the value it names.
+ */
+export function paramValueOffSurface(op: OperationMeta, params: Record<string, unknown>, surface: McpSurface): { param: string; value: unknown; allowed: readonly string[]; inItem: boolean } | undefined {
+  const values = STARTER_PARAM_VALUES[op.name];
+  if (surface === 'full' || !values) return undefined;
+  const listed = filterOpsForSurface([op], surface)[0];
+  const field = ITEM_PARAMS[op.name];
+  const items = field && Array.isArray(params[field]) ? (params[field] as unknown[]).filter((i): i is Record<string, unknown> => !!i && typeof i === 'object') : [];
+  for (const [param, allowed] of Object.entries(values)) {
+    if (listed?.params[param] !== undefined) continue;
+    const declared = (op.params[param] as { enum?: unknown[] } | undefined)?.enum ?? [];
+    for (const [where, inItem] of [[params, false], ...items.map(i => [i, true] as const)] as const) {
+      const value = where[param];
+      if (typeof value === 'string' && declared.includes(value) && !allowed.includes(value)) return { param, value, allowed, inItem };
+    }
+  }
+  return undefined;
+}
 
 /** The ceiling a surface puts on a parameter it hides, or undefined when it puts none. */
 export function paramCeiling(op: OperationMeta, param: string, surface: McpSurface): number | undefined {
@@ -494,15 +524,19 @@ export async function clientAdvertisedSurface(
 }
 
 /**
- * The tools to list: the callable set narrowed to the advertised surface
- * (never wider). A narrowed list always keeps request_tools when it is
- * callable: it is how an agent reaches the unlisted tools (the verbs surface
- * itself has none).
+ * Tools a narrowed list always keeps when they are callable. request_tools is
+ * how an agent reaches the unlisted tools; correct (GST-4058) is the only tool
+ * for a user's standing rule, and agents that never saw it fell back to
+ * remember plus forget. The verbs surface itself lists neither: it stays the
+ * seven frozen verbs.
  */
+const ALWAYS_LISTED: ReadonlySet<string> = new Set(['request_tools', 'correct']);
+
+/** The tools to list: the callable set narrowed to the advertised surface (never wider), plus ALWAYS_LISTED. */
 export function advertisedOps<T extends OperationMeta>(callable: T[], callableSurface: McpSurface, advertised: McpSurface | null): T[] {
   if (!advertised || !surfaceWiderThan(callableSurface, advertised)) return callable;
   const listed = new Set(filterOpsForSurface(callable, advertised).map(op => op.name));
-  return callable.filter(op => listed.has(op.name) || op.name === 'request_tools');
+  return callable.filter(op => listed.has(op.name) || ALWAYS_LISTED.has(op.name));
 }
 
 /**

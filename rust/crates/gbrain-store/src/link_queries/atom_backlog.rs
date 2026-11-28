@@ -8,13 +8,22 @@
 //! connector source, and no live, unmanaged atom of the same source carries its content hash's first 16
 //! characters as `source_hash`.
 //!
+//! #9888: a page of a source whose config says `extract_atoms: false` is left out; with `sourcePolicy: "excluded"` only
+//! those pages count (doctor's `policy_excluded` note).
+//!
+//! A page whose input is held (#10270) is left out too: a held `atom` generation whose hold id is one of the
+//! query's `holdIds`, that is not a partial hold, and whose input pin is the page's content hash or
+//! `<content hash>:<id>:<knowledge revision>` (`generations::atom_reads::held_atom_inputs`).
+//!
 //! Two statement exclusions find nothing to read here: the `managed-atoms` checkpoints and the
-//! `extract_atoms_page_state` rows (held, tombstoned and partial dispositions). The store has no writer of
+//! `extract_atoms_page_state` rows (held, tombstoned and partial dispositions; GST-4020's "still current" and
+//! "atoms current" tests read the same rows and `fact_withdrawals` against them). The store has no writer of
 //! either, so a page is never excluded by them; `maxInputChars` is accepted for that reason and unused.
 
 use crate::Store;
 use crate::cli_reads::pg_text::fm_text;
 use crate::error::Result;
+use crate::generations::atom_reads::held_atom_inputs;
 use crate::pages::{PageRecord, all_pages};
 use crate::sources::all_sources;
 use serde::Deserialize;
@@ -45,6 +54,13 @@ pub struct AtomBacklogQuery {
     pub max_input_chars: Option<i64>,
     #[serde(default)]
     pub connector_exclusion: Option<ConnectorExclusion>,
+    /// The hold ids of the held atom generations whose input is still current (`currentHoldIds(engine, 'atom')`).
+    #[serde(default)]
+    pub hold_ids: Vec<String>,
+    /// `apply` (or absent) leaves out the pages of a source whose config turns `extract_atoms` off (#9888); `excluded`
+    /// counts only those pages, for doctor's `policy_excluded` note.
+    #[serde(default)]
+    pub source_policy: Option<String>,
 }
 
 /// The first 16 characters of the content hash: `substring(p.content_hash from 1 for 16)`.
@@ -68,6 +84,12 @@ impl Store {
             .into_iter()
             .map(|s| (s.id, fm_text(&s.config, "kind")))
             .collect();
+        let opted_out: BTreeSet<String> = all_sources(&*read)?
+            .into_iter()
+            .filter(|s| fm_text(&s.config, "extract_atoms").as_deref() == Some("false"))
+            .map(|s| s.id)
+            .collect();
+        let only_opted_out = query.source_policy.as_deref() == Some("excluded");
         let atoms: BTreeSet<(&str, String)> = pages
             .iter()
             .filter(|p| is_unmanaged_atom(p))
@@ -76,6 +98,8 @@ impl Store {
                 Some((p.source_id.as_str(), hash))
             })
             .collect();
+        let hold_ids: BTreeSet<&str> = query.hold_ids.iter().map(String::as_str).collect();
+        let held = held_atom_inputs(&*read, &hold_ids)?;
         let mut count = 0;
         for page in &pages {
             if query
@@ -85,6 +109,9 @@ impl Store {
                 || page.deleted_at_us.is_some()
                 || !query.types.contains(&page.page_type)
             {
+                continue;
+            }
+            if opted_out.contains(&page.source_id) != only_opted_out {
                 continue;
             }
             let Some(hash) = page.content_hash.as_deref() else {
@@ -114,6 +141,14 @@ impl Store {
                 }
             }
             if atoms.contains(&(page.source_id.as_str(), hash_head(hash))) {
+                continue;
+            }
+            let owner = format!("source_slug:{}", page.slug);
+            let current = format!("{hash}:{}:{}", page.id, page.knowledge_revision);
+            if [hash, current.as_str()]
+                .into_iter()
+                .any(|pin| held.contains(&(page.source_id.clone(), owner.clone(), pin.to_string())))
+            {
                 continue;
             }
             count += 1;
