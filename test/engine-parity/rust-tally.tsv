@@ -185,6 +185,7 @@ test/engine-parity/guest-note-save.test.ts	2	0
 test/engine-parity/guest-sources.test.ts	6	0
 test/engine-parity/guests-grant-owner-clients.test.ts	2	0
 test/engine-parity/handover-reads.test.ts	2	1
+test/engine-parity/hard-delete-holds.test.ts	3	0
 test/engine-parity/harness-consumer-stop.test.ts	2	0
 test/engine-parity/held-fact-folder-rule.test.ts	1	0
 test/engine-parity/held-fence-cells.test.ts	5	0
