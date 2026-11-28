@@ -1267,3 +1267,30 @@ describe('A cleanup pass that began in an older epoch cannot delete the newer ep
     expect(stat(dir)).toMatchObject({ state: 'measured' });
   });
 });
+
+describe('An unreadable session record during the client-journal fold does not put the wrong serving process on the blocker', () => {
+  // Protects: the blocker's `serving_pid` is the session's serving process, which an earlier epoch's cleanup waits for before it removes the blocker (its delayed cumulative record may still come). Fails if a read error
+  // on the session's owed record is taken for "no record" and the folding worker's own pid is stamped instead: once that worker is gone the blocker is removed while the real serving process runs, and its late record books the whole count again.
+  // The existing unreadable-blocker test covers the other record of the same fold; no test reads the session's own file there. No production seam: `readFileSync` is the real one, observed through a spy.
+  const SES = 'p1s';
+  test('while the session record cannot be read the fold commits nothing and writes no blocker; once it can, the blocker names the serving process and the count is the same as with no error', async () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    const serving = spawnChild('sleep', ['30'], { stdio: 'ignore' }); // the session's serving process, still running
+    try {
+      writeOwed(dir, { v: 1, session: SES, serving_pid: serving.pid!, child_pid: deadPid(), owed: 3, closed: false, child_exited: false } as OwedRecord);
+      const client = new WriteTally(dir, () => null, () => true, process.pid, SES); client.missing(3, 0, 1); expect(client.flush()).toBe(true); // plain, plain, window: three lost lines tagged with the session
+      const realRead = fsm.readFileSync; let eio = true;
+      const spy = spyOn(fsm, 'readFileSync').mockImplementation(((path: unknown, ...rest: unknown[]) => { if (eio && String(path).endsWith(`write-owed.${SES}.json`)) throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }); return (realRead as (...a: unknown[]) => unknown)(path, ...rest); }) as never);
+      try {
+        const owner = new WriteTally(dir, () => epoch, () => true, process.pid);
+        owner.save();
+        expect(blockerOf(dir, SES)).toBeNull(); // was a blocker naming this worker's pid (process.pid), not the serving process
+        expect(settledTotal(dir, epoch, SES)).toBe(0); // the fold waited: no credit, no journal cursor
+        eio = false; expect(owner.save()).toBe(true); // the retry reads the record
+        expect(blockerOf(dir, SES)).toMatchObject({ v: 2, booked_epoch: epoch, serving_pid: serving.pid });
+        expect(settledTotal(dir, epoch, SES)).toBe(3);
+        expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
+      } finally { eio = false; spy.mockRestore(); }
+    } finally { serving.kill(); await gone(serving.pid!); }
+  });
+});

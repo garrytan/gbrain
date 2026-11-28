@@ -342,8 +342,15 @@ function bankSettled(dir: string, key: string, tally: WriteTallyFile | null, tot
   renameSync(tmp, writeTallyPath(dir));
   flushDirectory(dir);
 }
-/** The serving process of a session's owed record (the owner's own pid when there is none to read): the blocker carries it. */
-function servingPidOf(dir: string, key: string): number { const o = parseOwed(owedPath(dir, key)); return o === null || o === 'unreadable' ? process.pid : o.serving_pid; }
+/**
+ * The serving process of a session's owed record (the owner's own pid when there is no record): the blocker carries it. A record that cannot be read is not "no record": it throws, so the fold that asked fails and
+ * is retried, rather than stamping this worker's pid on a blocker whose session is still being served by another process.
+ */
+function servingPidOf(dir: string, key: string): number {
+  const o = parseOwed(owedPath(dir, key));
+  if (o === 'unreadable') throw new Error('owed record unreadable');
+  return o === null ? process.pid : o.serving_pid;
+}
 /**
  * Under the tally lock, makes sure `key` has a blocker for `epoch` BEFORE its window is booked: the one that exists; or, over another epoch's blocker whose window was never booked, that blocker taken over for `epoch` (same target and anchor); or a new one whose target
  * is the owed count of the session's open marker (re-read here). Null when nothing could be held: a window another epoch's blocker already booked (it is that epoch's window, never this one's), no marker any more (it was replaced by a record that closed normally, so
