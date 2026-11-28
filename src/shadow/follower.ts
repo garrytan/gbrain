@@ -16,12 +16,21 @@ import { rowDigest, sortKey, sortKeyUnsupported } from './follow-digest.ts';
 import type { Invalidation, InvalidationBatch, InvalidationSink } from './invalidations.ts';
 import type { ReadSource } from './read-pool.ts';
 import { relationRead } from './seed.ts';
+import { bookkeepingMember } from './write-capture.ts';
 
 export const FOLLOW_QUEUE_BOUND = 1024;
 export const FOLLOW_CHUNK_KEYS = 500;
 const FOLLOW_CHUNK_BYTES = 2 * 1024 * 1024;
 /** The relations a write comparison reads back (write-compare.ts `readBack`): pages and the links among them. */
 const COMPARED_RELATIONS: ReadonlySet<string> = new Set(['pages', 'links']);
+const UNMAPPED = 'unmapped_write:';
+/**
+ * Whether an item can change a row a write comparison reads: a `pages` or `links` item, or an `invalid` one (a write nothing describes), except an unmapped write by
+ * a journal member whose statements write only bookkeeping tables (write-capture.ts `bookkeepingMember`: the protocol declaration, the counter lock, the request completion,
+ * the publication's effects insert, an effect's completion, transaction settings and locks). Those are the process's own persistence bookkeeping, as its journal rows are.
+ */
+const movesComparedRows = (item: Invalidation): boolean =>
+  item.kind === 'invalid' ? !(item.reason.startsWith(UNMAPPED) && bookkeepingMember(item.reason.slice(UNMAPPED.length))) : COMPARED_RELATIONS.has(item.relation);
 const TYPED = new Set(['smallint', 'integer', 'bigint', 'uuid', 'text', 'character varying']);
 
 let lastGeneration = 0;
@@ -59,8 +68,9 @@ export class ShadowFollower implements InvalidationSink {
   /** Batches accepted by `publish` in this process: the stable rerun compares it before and after its primary read (checks.ts). */
   published = 0;
   /**
-   * Batches accepted by `publish` that can change a row a write comparison reads: one naming `pages` or `links` (rows or a whole relation), or an `invalid` item (a write nothing can describe, so it may have).
-   * The write sampler's `generation` (attach.ts `writeGeneration`): this process's own bookkeeping (journal, effect and lease rows, a link's transition rows) does not move it.
+   * Batches accepted by `publish` that can change a row a write comparison reads: one naming `pages` or `links` (rows or a whole relation), or an `invalid` item (a write nothing can describe, so it may have),
+   * other than an unmapped write by a bookkeeping journal member (`movesComparedRows`).
+   * The write sampler's `generation` (attach.ts `writeGeneration`): this process's own bookkeeping (journal, effect and lease rows, a link's transition rows, the journal members' declarations and locks) does not move it.
    */
   pageLinkWrites = 0;
   private readonly queue: InvalidationBatch[] = [];
@@ -88,7 +98,7 @@ export class ShadowFollower implements InvalidationSink {
   publish(batch: InvalidationBatch): void {
     try {
       this.published++;
-      if (batch.items.some((item) => item.kind === 'invalid' || COMPARED_RELATIONS.has(item.relation))) this.pageLinkWrites++;
+      if (batch.items.some(movesComparedRows)) this.pageLinkWrites++;
       if (this.closed) {
         // Only a write the store follows is lost: a relation outside the seed plan (a lease, a queue) never reaches it.
         if (!this.planNow || batch.items.some((item) => item.kind === 'invalid' || this.planNow!.has(item.relation))) { this.lastInvalidatedAt = Date.now(); this.lost('published_after_close'); }

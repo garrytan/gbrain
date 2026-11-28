@@ -1500,6 +1500,13 @@
             "status": "ok"
           },
           {
+            "category": "meta",
+            "elapsed_ms": "<volatile>",
+            "message": "Active pack: gbrain-base-v2 v1.7.0 (28 types, 17 link verbs)",
+            "name": "schema_pack_active",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "Auto-RLS event trigger installed",
@@ -7184,6 +7191,13 @@
             "elapsed_ms": "<volatile>",
             "message": "Every function this gbrain's schema defines has its body",
             "name": "schema_function_bodies",
+            "status": "ok"
+          },
+          {
+            "category": "meta",
+            "elapsed_ms": "<volatile>",
+            "message": "Active pack: gbrain-base-v2 v1.7.0 (28 types, 17 link verbs)",
+            "name": "schema_pack_active",
             "status": "ok"
           },
           {

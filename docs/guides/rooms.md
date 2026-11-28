@@ -47,7 +47,7 @@ nothing else.
 | `room_access` | Meaning | What the agent does |
 |---|---|---|
 | `{readable: true}` | everyone in the room could read this item themselves | use it freely in the reply |
-| `{readable: false, reason}` | someone in the room could not read it | use it to do the work; keep it out of the reply unless the ask needs it, and offer it in a direct message |
+| `{readable: false, reason}` | someone in the room could not read it | use it to do the work; keep it out of the reply unless the ask cannot be answered without it, never add it when the ask did not call for it, and offer it in a direct message |
 | `{readable: "unknown", reason}` | gbrain could not tell | treat it like `false` |
 
 Every item marked `readable: true` is one an `on_behalf_of` read for the same

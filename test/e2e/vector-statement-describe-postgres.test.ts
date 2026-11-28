@@ -64,7 +64,9 @@ run('vector statements skip the describe round trip', () => {
     const results: Array<{ hits: unknown[]; cosines: Array<{ id: number; cosine: number }> }> = [];
     await withEnv({ GBRAIN_SQL_TRACE: trace, GBRAIN_SQL_TRACE_LABEL: 'vector-describe' }, async () => {
       const engine = new PostgresEngine();
-      await engine.connect({ database_url: databaseUrl + '?prepare=false', poolSize: 1 });
+      const url = new URL(databaseUrl);
+      url.searchParams.set('prepare', 'false');
+      await engine.connect({ database_url: url.toString(), poolSize: 1 });
       try {
         for (let i = 0; i < 2; i++) {
           const hits = (await engine.searchVector(query, { limit: 5 })).map(h => [h.slug, h.chunk_id, h.score]);

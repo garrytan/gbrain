@@ -217,11 +217,15 @@ and deletes fact rows. Two rules govern it.
   in your sanitized checkout of the shared repo. The purge clones the remote
   fresh and takes the sanitized tree only from `$STAGING`, so copy the six
   folders there. The team can already read every page in them, so the export
-  list is every file they now hold:
+  list is every file they now hold. `$STAGING.base` records the commit your
+  sanitized pages sit on: the purge refuses to copy them over any page the
+  shared repo changed after it, so a teammate's newer page is never reverted:
 
   ```bash
+  BASE=$(git rev-parse --verify HEAD) || { echo "not a git checkout of the shared repo — ABORT"; exit 1; }
   STAGING="$HOME/.gbrain/backups/brainify-reaudit-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$STAGING" && chmod 700 "$STAGING"
+  echo "$BASE" > "$STAGING.base"
   for d in people meetings daily companies projects analysis; do [ -d "$d" ] && rsync -a "$d/" "$STAGING/$d/"; done
   for d in people meetings daily companies projects analysis; do [ -d "$d" ] && find "$d" -type f; done \
     | LC_ALL=C sort > "$STAGING.export-list"
