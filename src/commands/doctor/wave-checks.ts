@@ -485,6 +485,16 @@ export function checkHealthUnknown(check: Check): boolean {
   return check.details?.health === 'unknown' || check.details?.count === 'unknown';
 }
 
+/**
+ * For a remote caller only: a check whose probe failed. Besides the two detail shapes above, a check's catch path
+ * either goes through checkError (`fix_unavailable_reason: 'check_errored'`) or ends its message "Health is unknown."
+ * A remote caller's refused reads land there, so the remote handoff must not call them findings. Local doctor and
+ * remediation keep checkHealthUnknown alone, so their output does not change.
+ */
+function remoteCheckCouldNotRun(check: Check): boolean {
+  return checkHealthUnknown(check) || check.fix_unavailable_reason === 'check_errored' || check.message.endsWith('Health is unknown.');
+}
+
 export interface WaveFinding { spec: WaveCheckSpec; check: Check; state: 'ok' | 'finding' | 'unknown' }
 
 /** Run wave checks; a throwing check becomes an unknown finding instead of aborting the rest. */
@@ -499,7 +509,7 @@ export async function runWaveChecks(engine: BrainEngine, opts: WaveScope & { onl
         details: { health: 'unknown' } };
     }
     check = { ...check, name: spec.id };
-    findings.push({ spec, check, state: checkHealthUnknown(check) ? 'unknown' : check.status === 'ok' ? 'ok' : 'finding' });
+    findings.push({ spec, check, state: (opts.remote ? remoteCheckCouldNotRun(check) : checkHealthUnknown(check)) ? 'unknown' : check.status === 'ok' ? 'ok' : 'finding' });
   }
   return findings;
 }
