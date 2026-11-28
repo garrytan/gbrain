@@ -157,5 +157,26 @@ for (const kind of testBackends()) {
       expect(file(OWNER) === file(TWIN)).toBe(true);
       expect(await remember(OWNER, 'Owner Example likes chess')).toMatchObject({ status: 'inserted', entity_slug: OWNER });
     }, 300_000);
+
+    test('a row that differs from the row before it inside a UTF-8 character stores what the whole-body path stores', async () => {
+      const [a, b] = ['people/alice-example', 'people/bob-example'];
+      for (const [slug, name] of [[a, 'Alice Example'], [b, 'Bob Example']] as const) {
+        expect(await brain.call('put_page', { slug, content: proseOf(name) })).toMatchObject({ state: 'committed' });
+      }
+      // 'é' is C3 A9 and '©' is C2 A9: the second row differs from the first inside a character, one byte before its end.
+      const saves = ['The page owner wrote a résumé', 'The page owner holds the ©'];
+      for (const fact of saves) expect(await remember(a, fact)).toMatchObject({ status: 'inserted', entity_slug: a });
+      fenceAppendProbe.wholeBody = true;
+      try {
+        for (const fact of saves) expect(await remember(b, fact)).toMatchObject({ status: 'inserted', entity_slug: b });
+      } finally { fenceAppendProbe.wholeBody = false; }
+      const body = async (slug: string) => {
+        const read = await materializeSegmentedBody(brain.engine, await pageId(slug), brain.sourceId);
+        return (read.compiled_truth + '\n' + read.timeline).replaceAll(slug, '<slug>').replaceAll(/Alice Example|Bob Example/g, '<name>');
+      };
+      const spliced = await body(a);
+      expect(spliced).toContain('The page owner holds the ©');
+      expect(spliced === await body(b)).toBe(true);
+    }, 300_000);
   });
 }
