@@ -21,12 +21,15 @@ import { expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { BeliefEventInsertRow } from '../../src/core/engine-sql/belief-ledger.ts';
 import { readBeliefHistoryPage } from '../../src/core/belief/history.ts';
+import { withRemoteCaller } from '../../src/core/remote-caller.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { enableBeliefLedger } from '../../src/core/belief/coverage.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { parityArms } from './harness.ts';
 
 const { parityTest } = parityArms(testBackends());
 
+const worldOnly = <T>(fn: () => Promise<T>) => withRemoteCaller(true, () => withCallerAccess({ identity: [], audience: null, audienceIdentities: [] }, fn));
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const page = (title: string, frontmatter: Record<string, unknown> = {}) => ({ type: 'note' as const, title, compiled_truth: `${title}.`, timeline: '', frontmatter });
 
@@ -75,12 +78,12 @@ parityTest('the belief history a remote delta pages through keeps the world fact
   ]);
   await engine.markBeliefCommits([PUB]);
   // The reader a remote delta with beliefs pages through (belief/changes.ts readAll), with the remote filter it applies after the raw rows return.
-  const history = await readBeliefHistoryPage(engine, { sourceId: 'default', remote: true, afterId: 0, limit: 50, recordedAfter: since });
+  const history = await worldOnly(() => readBeliefHistoryPage(engine, { sourceId: 'default', remote: true, afterId: 0, limit: 50, recordedAfter: since }));
   const kept = history.rows.map(r => ({ type: r.event_type, kind: r.subject_kind, key: r.subject_key, value: r.value }));
   expect(kept.filter(r => r.kind === 'fact').map(r => r.value?.fact)).toEqual(['beliefmark open claim']);
   expect(kept.filter(r => r.kind === 'link').map(r => r.key)).toEqual([JSON.stringify([`L:${LT.open}`, `L:${LT.other}`, '', 'mentions'])]);
   expect(JSON.stringify(kept)).not.toMatch(/beliefmark (private|hidden)|a3/);
-  const coverage = (await engine.readBeliefCoverageEvents('default')).map(e => e.event_type);
+  const coverage = (await worldOnly(() => engine.readBeliefCoverageEvents('default'))).map(e => e.event_type);
   expect(coverage).toEqual(['coverage.started', 'coverage.complete']);
   return { kept, scanned: history.scanned, coverage, readsOnLocal: (await readBeliefHistoryPage(engine, { sourceId: 'default', remote: false, afterId: 0, limit: 50, recordedAfter: since })).rows.length };
 });
