@@ -93,8 +93,8 @@ for (const backend of testBackends()) describe(`[${backend}] speaker_owner trust
   test('a connector sync into an iMessage source is honored; the same write into an ordinary source is not', async () => {
     await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('texts', 'texts', '{\"kind\":\"imessage\"}'::jsonb)");
     const marker = { label: 'Me', basis: 'is_from_me', turns: 2 };
-    await importer('imessage/2026-01-02-example', page(marker), 'texts', null);
-    await importer('imessage/2026-01-02-example', page(marker), 'default', null);
+    for (const sourceId of ['texts', 'default']) await importFromContent(engine, 'imessage/2026-01-02-example', page(marker),
+      { noEmbed: true, sourceId, content_author: 'connector:imessage' });
     expect((await read('imessage/2026-01-02-example', 'texts'))!.status).toBe('trusted');
     expect((await read('imessage/2026-01-02-example', 'default'))!.status).toBe('untrusted_writer');
   });

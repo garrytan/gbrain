@@ -17,8 +17,9 @@
  */
 import type { ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, openSync } from 'node:fs';
+import { closeSync, linkSync, openSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { flushDirectory } from '../core/fs-durable.ts';
 import { withoutReadDeadline } from '../core/read-deadline.ts';
 import { withRequestSignal } from '../core/request-signal.ts';
 import { spawn as defaultSpawn } from '../core/spawn.ts';
@@ -26,7 +27,7 @@ import { readEpoch } from './evidence-epoch.ts';
 import { appendFault, type ShadowFault } from './ledger.ts';
 import type { MirrorTransport } from './mirror.ts';
 import { readShadowState } from './state.ts';
-import { sampleWeight, writeOwed } from './write-compare.ts';
+import { owedPath, pendingPath, sampleQualifyingWeight, sampleWeight, sessionKey, withTallyLock, writeOwed, type OwedRecord } from './write-compare.ts';
 
 export interface ShadowSupervisorOptions {
   dir: string;
@@ -84,7 +85,12 @@ function watchProcessExit(): void {
   process.on('exit', closeAllOwedAtExit);
 }
 /** The process-exit hook (and a seam for tests): every live supervisor closes its owed record with everything it accepted, synchronously. */
-export function closeAllOwedAtExit(): void { for (const supervisor of [...liveSupervisors]) supervisor.closeOwed(); }
+export function closeAllOwedAtExit(): void { for (const supervisor of [...liveSupervisors]) { supervisor.closeOwed(); supervisor.publishKeptNow(); } }
+
+/** How long this process waits for the tally lock when it publishes a kept record or clears a marker (a timeout defers to the next try; it runs in a flush turn, the exit callback, a timer or the exit hook, never inside a caller's request). */
+const KEPT_LOCK_WAIT_MS = 200;
+/** A record that could not be made durable, kept until it is: the exact record (null once it is durable and only its marker is left to clear), and whether its marker is published (linked and the directory flushed). */
+interface Kept { rec: OwedRecord | null; marked: boolean }
 
 export class ShadowSupervisor implements MirrorTransport {
   private child: ChildProcess | null = null;
@@ -110,8 +116,15 @@ export class ShadowSupervisor implements MirrorTransport {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   /** Write samples (with the losses they carry) accepted for the current child, sent or staged: the count the owed record states, so the child can settle what its pipe never delivered. */
   private acceptedWeight = 0;
+  /** The part of `acceptedWeight` that is page and link writes (`sampleQualifyingWeight`; samples owed with no line count as such): the owed record states it, so the child books only those lost against the share. */
+  private acceptedQualifying = 0;
   private owedWritten = ''; // the record `writeOwedRecord` last made durable (session, count and flags)
   private oweDirty = false; // `owe` raised the accepted weight and the record is not durable yet
+  private readonly kept = new Map<string, Kept>(); // by session key: what no record on disk states yet, across worker exits, respawns and stops
+  private keptTimer: ReturnType<typeof setTimeout> | null = null;
+  private keptDelay: number;
+  private keptDue = 0; // when the keeper's timer fires (epoch ms)
+  private refusal = ''; // the session whose kept record holds the samples refused while no worker ran (`oweRefused`)
   private childExited = false;
   private closedRecord = false; // a closed record was made durable for this session: later records stay closed
   private stdinRef: (NodeJS.WritableStream & { writableFinished?: boolean }) | null = null;
@@ -125,7 +138,7 @@ export class ShadowSupervisor implements MirrorTransport {
       ...opts,
     };
     if (!this.o.maxStagedBytes) this.o.maxStagedBytes = 2 * this.o.maxBufferedBytes;
-    this.backoffMs = this.o.minBackoffMs;
+    this.backoffMs = this.o.minBackoffMs; this.keptDelay = this.o.retryMs;
     this.lastStateCheck = this.o.now();
   }
 
@@ -165,7 +178,7 @@ export class ShadowSupervisor implements MirrorTransport {
     }
     this.flight.add(entry); if (weight > 0) this.sampleBytes += entry.bytes;
     this.staged.push({ line, entry }); this.stagedBytes += line.length;
-    this.acceptedWeight += weight;
+    this.acceptedWeight += weight; this.acceptedQualifying += sampleQualifyingWeight(line);
     this.scheduleFlush();
     return true;
   }
@@ -176,8 +189,23 @@ export class ShadowSupervisor implements MirrorTransport {
    */
   owe(n: number): boolean {
     if (!this.session || !this.child || this.disabledReason || !Number.isInteger(n) || n < 1) return false;
-    this.acceptedWeight += n; this.oweDirty = true;
+    this.acceptedWeight += n; this.acceptedQualifying += n; this.oweDirty = true; // which write each was is not known: counted as page and link writes, never as fewer
     this.scheduleFlush();
+    return true;
+  }
+
+  /**
+   * Makes `n` refused samples owed whose refusal could not be written down (the sampler's lost-line append failed): with a running worker that is `owe(n)`; with none (backoff, a failed spawn) they become a kept record of a session of their own (closed, child gone), published
+   * under the tally lock like any record and marked while it cannot be, so no refused sample lives only in memory. The next owner worker books them once, as `receipt_orphaned`.
+   */
+  oweRefused(n: number): boolean {
+    if (!Number.isInteger(n) || n < 1 || this.disabledReason) return false;
+    if (this.session && this.child) return this.owe(n);
+    const session = this.refusal ||= `r${randomBytes(8).toString('hex')}`;
+    const key = sessionKey(session);
+    const entry: Kept = this.kept.get(key) ?? { rec: { v: 1, session, serving_pid: process.pid, owed: 0, closed: true, child_exited: true }, marked: false };
+    entry.rec!.owed += n; this.kept.set(key, entry);
+    this.holdForExit(); this.armKept(true);
     return true;
   }
 
@@ -213,18 +241,89 @@ export class ShadowSupervisor implements MirrorTransport {
     (this.retryTimer as { unref?: () => void }).unref?.();
   }
 
-  /** Makes the owed record for the current session durable (once per distinct content). False when it could not be written. */
-  private writeOwedRecord(closed = false, childExited = false): boolean {
+  /**
+   * Makes the owed record for the current session durable (once per distinct content). False when it could not be written: the exact record is then kept (`keep`) and its marker is made, so status blocks and the record is retried until it is on disk, whatever
+   * the worker does. `locked`: the write takes the tally lock (a record written after its worker may be gone is one a remover could be judging); it always does when no worker is live, the child has exited or a record is kept for the session.
+   */
+  private writeOwedRecord(closed = false, childExited = false, locked = false): boolean {
     if (!this.session) return true;
-    const exited = childExited || this.childExited;
-    closed ||= this.closedRecord;
-    const mark = `${this.session}:${this.acceptedWeight}:${closed}:${exited}`;
+    const kept = this.kept.get(sessionKey(this.session))?.rec; // a retained record's lifecycle flags only ever go up: a later write for the session cannot take back an exit or a close
+    const exited = childExited || this.childExited || kept?.child_exited === true;
+    closed ||= this.closedRecord || kept?.closed === true;
+    const mark = `${this.session}:${this.acceptedWeight}:${this.acceptedQualifying}:${closed}:${exited}`;
     if (this.owedWritten === mark) return true;
+    locked ||= !this.child || exited || this.kept.has(sessionKey(this.session)); // a record written with no live worker, after the child's exit, or for a session whose record is already kept is one a remover may be judging: every such write takes the lock (a timeout is a failed write: kept and retried). A live worker's own session is settled by that worker, which is why the close at a drain stays unlocked
+    const rec: OwedRecord = { v: 1, session: this.session, serving_pid: process.pid, ...(this.child?.pid ? { child_pid: this.child.pid } : {}), owed: this.acceptedWeight, owed_qualifying: this.acceptedQualifying, closed, child_exited: exited };
     try {
-      this.o.writeOwed(this.o.dir, { v: 1, session: this.session, serving_pid: process.pid, ...(this.child?.pid ? { child_pid: this.child.pid } : {}), owed: this.acceptedWeight, closed, child_exited: exited });
+      if (locked) withTallyLock(this.o.dir, () => this.o.writeOwed(this.o.dir, rec), KEPT_LOCK_WAIT_MS); else this.o.writeOwed(this.o.dir, rec);
       this.owedWritten = mark; this.closedRecord = closed; this.childExited = exited;
+      const entry = this.kept.get(sessionKey(this.session));
+      if (entry) { entry.rec = null; this.armKept(true); } // the record is durable: only its marker is left to clear
       return true;
-    } catch { return false; }
+    } catch { this.keep(rec); return false; }
+  }
+
+  /** Keeps `rec` until it is durable and publishes its marker now (the first failure, live worker or not). */
+  private keep(rec: OwedRecord): void {
+    const key = sessionKey(rec.session);
+    const entry = this.kept.get(key) ?? { rec: null, marked: false };
+    entry.rec = rec; entry.marked ||= this.markPending(rec.session); this.kept.set(key, entry);
+    this.holdForExit(); this.armKept(true);
+  }
+
+  /**
+   * Publishes the marker: a hard link, to the session's last record or else any file the shadow directory already holds (a link copies no data; it still needs a directory entry), then the directory flushed. Only a flushed link counts as published
+   * (an `EEXIST` after an unconfirmed flush flushes again); false is retried on the keeper's timer. The link syscall itself failing is a named limit.
+   */
+  private markPending(session: string): boolean {
+    for (const target of [owedPath(this.o.dir, session), join(this.o.dir, 'child.log'), join(this.o.dir, 'state.json')]) {
+      try { linkSync(target, pendingPath(this.o.dir, session)); } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') continue;
+        if (code !== 'EEXIST') return false;
+      }
+      try { flushDirectory(this.o.dir); return true; } catch { return false; }
+    }
+    return false;
+  }
+
+  /** A supervisor that keeps a record stays reachable by the exit hook until nothing is kept. */
+  private holdForExit(): void { liveSupervisors.add(this); watchProcessExit(); }
+
+  /** One try at every kept record: marked if it is not, then (under the tally lock, in one hold) written, and its marker removed. A record already durable only has its marker cleared, never rewritten. True when nothing is kept. */
+  private tickKept(): boolean {
+    for (const [key, entry] of [...this.kept]) {
+      try {
+        withTallyLock(this.o.dir, () => {
+          if (entry.rec) {
+            const rec = entry.rec; this.o.writeOwed(this.o.dir, rec); entry.rec = null; if (key === this.refusal) this.refusal = '';
+            if (this.session === rec.session) { this.owedWritten = `${rec.session}:${rec.owed}:${rec.owed_qualifying ?? rec.owed}:${rec.closed}:${rec.child_exited}`; this.closedRecord = rec.closed; this.childExited = rec.child_exited; } // the live session's own record: not written again by its next flush
+          }
+          rmSync(pendingPath(this.o.dir, key), { force: true }); entry.marked = false; flushDirectory(this.o.dir); // unlinked: if the flush throws the entry is retried, and a later failed write makes its marker again
+        }, KEPT_LOCK_WAIT_MS);
+        this.kept.delete(key);
+      } catch { if (entry.rec && !entry.marked) entry.marked = this.markPending(entry.rec.session); } // kept: the next try (backoff) goes again
+    }
+    if (this.kept.size === 0 && !this.child) liveSupervisors.delete(this);
+    return this.kept.size === 0;
+  }
+
+  /** The exit hook's try: now, without waiting for the timer. */
+  publishKeptNow(): void { this.tickKept(); }
+
+  /** Arms the keeper's timer. A deadline already set that falls within one retry interval is never pushed back: samples that keep arriving cannot postpone the attempt (`soon` only ever brings it forward). */
+  private armKept(soon = false): void {
+    if (soon) {
+      if (this.keptTimer && this.keptDue <= Date.now() + this.o.retryMs) return;
+      this.keptDelay = this.o.retryMs;
+    } else if (this.keptTimer) return;
+    if (this.keptTimer) clearTimeout(this.keptTimer);
+    this.keptDue = Date.now() + this.keptDelay;
+    this.keptTimer = setTimeout(() => {
+      this.keptTimer = null;
+      if (!this.tickKept()) { this.keptDelay = Math.min(this.keptDelay * 2, this.o.retryMs * 50); this.armKept(); } // backoff from retryMs (100 ms) to 5 s while it keeps failing; nothing is ever dropped to bound memory
+    }, this.keptDelay);
+    (this.keptTimer as { unref?: () => void }).unref?.();
   }
 
   private forget(entry: { bytes: number; weight: number }): void {
@@ -239,7 +338,7 @@ export class ShadowSupervisor implements MirrorTransport {
    * exit came from anywhere else. A record that cannot be written leaves the older one on disk: the child that settles the session books only what that one owes (a count that is too low, never a hidden mismatch).
    */
   closeOwed(): void {
-    if (!this.session || this.acceptedWeight === 0) return;
+    if (!this.session || !this.child || this.acceptedWeight === 0) return; // a session whose worker is gone has its record kept (`keep`), not closed again here
     this.flushStaged(true);
     this.writeOwedRecord(true);
   }
@@ -308,7 +407,7 @@ export class ShadowSupervisor implements MirrorTransport {
     const child = this.child;
     if (child) this.closeOwed(); // before the input ends: the child counts what it was never sent
     this.dropStaged();
-    this.child = null; liveSupervisors.delete(this);
+    this.child = null; if (this.kept.size === 0) liveSupervisors.delete(this);
     if (child) {
       child.removeAllListeners('exit');
       try { child.stdin?.end(); } catch { /* already gone */ }
@@ -346,7 +445,7 @@ export class ShadowSupervisor implements MirrorTransport {
       });
       this.child = child;
       this.stdinRef = child.stdin as never;
-      this.dropStaged(); this.oweDirty = false; this.session = session; this.acceptedWeight = 0; this.owedWritten = ''; this.childExited = false; this.closedRecord = false;
+      this.dropStaged(); this.oweDirty = false; this.session = session; this.acceptedWeight = 0; this.acceptedQualifying = 0; this.owedWritten = ''; this.childExited = false; this.closedRecord = false;
       liveSupervisors.add(this); watchProcessExit();
       this.controlBuffer = '';
       this.lastHeartbeat = this.o.now();
@@ -408,9 +507,9 @@ export class ShadowSupervisor implements MirrorTransport {
 
   private onExit(child: ChildProcess | null, code: number | null, signal: string | null): void {
     if (child && this.child !== child) return;
-    if (child && this.acceptedWeight > 0) this.writeOwedRecord(false, true); // durable before anything about this session is reset: the next owner worker settles what the dead child never did
-    this.dropStaged();
-    this.child = null; liveSupervisors.delete(this);
+    if (child && this.acceptedWeight > 0) this.writeOwedRecord(false, true, true); // durable before anything about this session is reset (or kept, marked and retried): the next owner worker settles what the dead child never did
+    this.dropStaged(); this.oweDirty = false; // nothing queued is left for a flush to write: the exit-time record (written or kept) already states everything accepted
+    this.child = null; if (this.kept.size === 0) liveSupervisors.delete(this);
     this.clearWatchdog();
     this.rejectRequests('child_unavailable');
     if (this.disabledReason) return;

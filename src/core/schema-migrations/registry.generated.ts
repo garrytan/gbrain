@@ -341,6 +341,9 @@ import { v337 } from './v337-write-gate-hold-rechecks.ts';
 import { v338 } from './v338-oauth-refresh-rotations.ts';
 import { v339 } from './v339-facts-valid-from-nullable.ts';
 import { v340 } from './v340-engine-writer-observations-write-protocol.ts';
+import { v341 } from './v341-atom-scan-input-digest.ts';
+import { v342 } from './v342-content-author-attribution.ts';
+import { v343 } from './v343-content-author-backfill.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -680,4 +683,7 @@ export const MIGRATIONS: Migration[] = [
   v338,
   v339,
   v340,
+  v341,
+  v342,
+  v343,
 ];

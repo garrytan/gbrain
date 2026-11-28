@@ -288,6 +288,8 @@ export async function importFromContent(
      * reach the guardrail input.
      */
     keepIngestColumns?: boolean;
+    /** GST-4056: this write's channel, stored as the page's content author (default `ingested_via`; a connector passes `connector:<kind>`). */
+    content_author?: string | null;
     /** Wave B: who stages a segmented body (the journaled request's principal); unset: the local maintenance principal, kind `import`. */
     segmentedOwner?: SegmentedStagingOwner;
     /** Wave B: a segmented body an earlier preparation of this write staged (`PreparedContentImport.segmented`), reused when its inputs are unchanged. */
@@ -749,8 +751,9 @@ export async function importFromContent(
       const chunkWrites = planImportChunkWrites(fresh, kept, !segmented && !!opts.prepare && opts.boundedChunkWrites === true);
       const deferChunks = chunkReplacementDeferred = chunkWrites.defer;
       let written: Page | undefined;
-      const ingest = opts.keepIngestColumns && existing ? { source_kind: null, source_uri: null, ingested_via: null }
-        : { source_kind: opts.source_kind ?? null, source_uri: opts.source_uri ?? originUri, ingested_via: opts.ingested_via ?? null };
+      const ingest = { ...(opts.keepIngestColumns && existing ? { source_kind: null, source_uri: null, ingested_via: null }
+        : { source_kind: opts.source_kind ?? null, source_uri: opts.source_uri ?? originUri, ingested_via: opts.ingested_via ?? null }),
+        content_author: opts.content_author !== undefined ? opts.content_author : opts.ingested_via ?? null };
       await pipelined(tx, [
         () => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
         async () => { if (existing && preimage && !demote && !segmented) await tx.createVersion(slug, { ...txOpts, ...opts.history, preimage }); },
@@ -1012,6 +1015,8 @@ export async function importFromFile(
     /** GBRA-217: a sync import's reason from Git and history-gap marker for the snapshot this import archives. */ history?: import('./page-state/versions.ts').VersionHistory;
     /** Wave B: the segmented-storage policy, read once per command; with the switch on, a Markdown file over the single-string ceiling imports streamed. Absent: it refuses as before. */
     bodyPolicy?: PageBodyPolicy;
+    /** GST-4056: the channel of this write, stored as the page's content author (importFromContent `content_author`). */
+    content_author?: string | null;
   } = {},
 ): Promise<ImportResult> {
   if (needsEngineScope(engine)) return withEngineScope(engine, () => importFromFile(engine, filePath, relativePath, opts));

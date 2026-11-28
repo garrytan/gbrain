@@ -8,7 +8,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { makeGitFixture } from './helpers/git-fixture.ts';
+import { makeGitFixture, markGitDurable } from './helpers/git-fixture.ts';
 import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
@@ -40,6 +40,8 @@ function commit(root: string) { git(root, 'add', '.'); git(root, 'commit', '-qm'
 async function fixture(engine: BrainEngine, files: Record<string, string>) {
   const id = `sync-${randomUUID().replace(/-/g, '').slice(0, 20)}`, root = join(home, id);
   mkdirSync(root); await makeGitFixture(root);
+  // GST-3743: write-back reaches a non-default checkout only when this host commits it (durable); a foreign one stays database-only.
+  markGitDurable(root);
   for (const [path, text] of Object.entries(files)) writeFileSync(join(root, path), text);
   const head = commit(root);
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
@@ -81,6 +83,10 @@ test('a withdrawal written back over a committed edit: the next plain sync impor
     expect(parseFactsFence(current.page.compiled_truth).facts[0].forgotten).toBe(true);
     expect(parseFactsFence(readFileSync(join(f.root, 'z.md'), 'utf8')).facts[0].forgotten).toBe(true);
     expect(await readManagedSyncFailures(engine, [f.id])).toHaveLength(0);
+    // The durable checkout commits the write-back; the next sync imports that commit and the fact stays withdrawn.
+    expect(git(f.root, 'status', '--porcelain')).toBe('');
+    expect((await performManagedSync(engine, options)).status).toBe('synced');
+    expect(parseFactsFence((await engine.readPageSnapshot('z', { sourceId: f.id }))!.page.compiled_truth).facts[0].forgotten).toBe(true);
     expect((await performManagedSync(engine, options)).status).toBe('up_to_date');
   }
 }), 120_000);

@@ -315,6 +315,8 @@ export interface PageInput {
    * NULL on historical rows that pre-date v0.38.
    */
   ingested_at?: Date | null;
+  /** GST-4056: this write's own channel (never the first-ingest record), stored as pages.content_author (persistence/content-author-schema.ts). */
+  content_author?: string | null;
 }
 
 export interface PageFilters {

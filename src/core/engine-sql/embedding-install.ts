@@ -44,9 +44,12 @@ export async function readEmbeddingCompletion(exec: LegacyUnscopedRead, pageId: 
       FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE p.id=${pageId} AND ${generation}`)).rows;
 }
 
+/** lockEffectClaimRow's one statement (a row lock on the effect journal; the shadow write sampler judges it by this text, src/shadow/write-capture.ts). */
+export const EFFECT_CLAIM_ROW_LOCK_SQL = 'SELECT state,execution_token FROM persistence_effects WHERE id=$1 FOR UPDATE';
+
 /** The effect's state and execution token under its row lock, or null when no effect has the id. */
 export async function lockEffectClaimRow(exec: SqlExecutor, effectId: number | string): Promise<{ state: string; execution_token: string | null } | null> {
-  const [claim] = await exec.executeRaw<{ state: string; execution_token: string | null }>('SELECT state,execution_token FROM persistence_effects WHERE id=$1 FOR UPDATE', [effectId]);
+  const [claim] = await exec.executeRaw<{ state: string; execution_token: string | null }>(EFFECT_CLAIM_ROW_LOCK_SQL, [effectId]);
   return claim ?? null;
 }
 

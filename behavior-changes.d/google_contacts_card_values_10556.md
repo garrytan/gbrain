@@ -1,0 +1,4 @@
+---
+kind: action
+---
+Google contact pages now carry only the addresses and phones on the contact card itself. In a Google Workspace domain they used to also list every address on the account the card is linked to, aliases included, so two person pages could claim the same address and block attendance links on that person's meetings. Contacts whose names have no Latin letters or digits (for example Chinese names) now get a page at their stable contact-id path instead of being skipped. Existing pages change only when a contact next changes in Google; to rewrite them all and import the contacts that were skipped, run gbrain sync --source <id> --full once for each Google source with contacts. A contact whose page path belongs to another contact is now refused with contact_page_owned, and held after repeated refusals, instead of overwriting that page.

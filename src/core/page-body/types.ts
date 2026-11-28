@@ -109,6 +109,8 @@ export interface SegmentedPageMeta {
   source_uri?: string | null;
   ingested_via?: string | null;
   chunker_version?: number | null;
+  /** GST-4056: this write's own channel, stored with the flipped body's hash (PageInput.content_author). */
+  content_author?: string | null;
 }
 
 /** The body columns of a segmented page after a flip. */
@@ -142,6 +144,12 @@ export interface BodyFlipInput {
   retireMaxRows: number;
   body: SegmentedBodyColumns;
   meta: SegmentedPageMeta;
+  /**
+   * GST-4056: no manifest row changed or closed, so the staged body text is the live one, whatever chunk projection the
+   * write rebuilds. A flip that also keeps the type, title and text
+   * frontmatter changes no text, so it keeps the page's verified content author, or none, instead of `meta.content_author`.
+   */
+  textUnchanged?: boolean;
 }
 
 export interface BodyFlipResult {

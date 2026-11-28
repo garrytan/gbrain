@@ -243,7 +243,7 @@ getPage	pages	yes	52	yes	yes	yes	serves
 readPageSnapshot	pages	yes	31	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	212	yes	yes	yes	serves
+putPage	pages	yes	215	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -336,7 +336,7 @@ markPagesAttendanceBlocked	extraction	yes	1	no	yes	yes	serves
 countStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 listStaleFrontmatterKeyPages	extraction	yes	1	no	yes	yes	serves
 stripStaleFrontmatterKeys	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	37	yes	yes	yes	serves
+addLink	links	yes	38	yes	yes	yes	serves
 addLinksBatch	links	yes	1	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	1	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
