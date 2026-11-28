@@ -41,7 +41,7 @@ afterAll(async () => {
 }, 60_000);
 
 describe('full sync and the <head> sentinel (#10454)', () => {
-  test('a --full re-sync that blocks on a file it cannot read keeps the <head> row', async () => {
+  test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('a --full re-sync that blocks on a file it cannot read keeps the <head> row', async () => {
     const kept = await withEnv({ GBRAIN_SYNC_FAILURES_DIR: ledger }, async () => {
       recordFailures('default', [{ path: '<head>', error: 'git history rewritten during sync' }], 'old-commit');
       writeFileSync(join(repo, 'unreadable.md'), '---\ntype: note\ntitle: Unreadable\n---\n\nBody.\n');

@@ -2,7 +2,8 @@
  * #10466: `gbrain rules retire` (and approve, which shares the context) saves through a local context. Like every other
  * owner CLI write it waits for the commit for the CLI write wait (30 s default, GBRAIN_WRITE_WAIT_MS, --wait), not the
  * 5 s agent default, so a retire that commits a few seconds later prints its success line instead of Error
- * [write_pending]. The wait runs inside the rule lease, so it stays a minute under the lease's 5 minute takeover age.
+ * [write_pending]. An approval writes up to three times under one rule lease, so each wait is capped at 80 s, keeping
+ * all three a minute under the lease's 5 minute takeover age.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -41,7 +42,7 @@ describe('rules retire write wait (#10466)', () => {
     expect(await retireWaits('mondays', '12345')).toEqual([12345]);
   });
 
-  test('a wait longer than the rule lease allows stays a minute under its takeover age', async () => {
-    expect(await retireWaits('tuesdays', '600000')).toEqual([240_000]);
+  test('a wait longer than the rule lease allows is capped so three writes stay under its takeover age', async () => {
+    expect(await retireWaits('tuesdays', '600000')).toEqual([80_000]);
   });
 });

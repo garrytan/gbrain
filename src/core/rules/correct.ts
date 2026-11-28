@@ -721,11 +721,12 @@ export function localRulesCtx(engine: BrainEngine, sourceId = 'default'): Operat
 }
 
 /**
- * #10466: `gbrain rules approve` / `retire` wait for the commit like every other owner CLI write. The wait runs inside the
- * rule lease, which another caller may take over once it is RULE_LEASE_STALE_MS old, so it stays a minute under that.
+ * #10466: `gbrain rules approve` / `retire` wait for the commit like every other owner CLI write. The waits run inside one
+ * rule lease, which another caller may take over once it is RULE_LEASE_STALE_MS old, and an approval writes at most three
+ * times under it (proposal, fact, activation), so each wait is capped at a third of a minute under that age.
  */
 export function ownerCliRulesCtx(engine: BrainEngine, sourceId: string): OperationContext {
-  return { ...localRulesCtx(engine, sourceId), writeWaitMs: Math.min(currentCliWriteWait().waitMs, RULE_LEASE_STALE_MS - 60_000) };
+  return { ...localRulesCtx(engine, sourceId), writeWaitMs: Math.min(currentCliWriteWait().waitMs, (RULE_LEASE_STALE_MS - 60_000) / 3) };
 }
 
 function staleRevision(id: string, revision: string, current: string | null): OperationError {
