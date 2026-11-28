@@ -33,7 +33,7 @@ describe("computeMedian", () => {
     expect(computeMedian([])).toBe(0);
   });
   it("single value is itself", () => {
-    expect(computeMedian([42])).toBe(42);
+    expect(computeMedian([42])).toBe(42); // pregate-literal: UNIT_SHARDS=42 an arbitrary sample value, not the shard count
   });
   it("odd count: middle value", () => {
     expect(computeMedian([1, 5, 3])).toBe(3);

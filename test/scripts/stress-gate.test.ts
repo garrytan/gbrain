@@ -175,6 +175,7 @@ describe('race hunt plan', () => {
     expect(plan.files.every(f => f.iterations === RACE_MIN_ITERATIONS)).toBe(true);
     expect(plan.shards.length).toBeGreaterThan(2 * RACE_MAX_SHARDS);
     expect(plan.shards.length).toBeLessThanOrEqual(RACE_FLOOR_MAX_SHARDS);
+    // gstack-timing-ok: a planned estimate from the weights map, not elapsed time
     expect(plan.shards.every(s => s.estimateMs <= RACE_SHARD_BUDGET_MS)).toBe(true);
   });
 
