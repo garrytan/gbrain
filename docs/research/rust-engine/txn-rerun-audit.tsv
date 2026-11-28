@@ -1,5 +1,6 @@
 # Optimistic transaction rerun audit on rust-engine/multiuser, base 59141461ed7c3508c7af0cb20009212f5ba50934 (line numbers are base lines).
 # runOptimisticTransaction (src/core/rust-engine/optimistic-transaction.ts) runs an engine.transaction callback again after write_conflict; this lists what each callback does outside the transaction on a rerun.
+# Each callback answers two questions: does the body touch the filesystem, and does it read or set a flag or variable declared outside the callback that an earlier run already changed.
 # Section 1, every engine.transaction call in src/: 474 rows = 415 audited in this lane + 59 out of lane (46 L1, 13 src/shadow/ L2). Verdicts: FIXED 9, FOLLOW-UP 59, SAFE 48, UNREACHABLE 132, pure 226
 # Section 2, via a pass-through wrapper (not counted in section 1): 335 rows, one per caller that passes its function through a wrapper. Verdicts: FIXED 16, FOLLOW-UP 1, SAFE 69, UNREACHABLE 10, pure 239
 file:line	verdict	reason
@@ -418,52 +419,52 @@ src/core/url-source-origin.ts:246	SAFE	lockDownCheckout is an idempotent git con
 src/core/vector-index.ts:295	pure	callback reads and writes through tx and returns its result; no outer state
 src/core/vector-prewarm.ts:151	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
 src/core/write-through.ts:529	pure	callback reads and writes through tx and returns its result; no outer state
-src/commands/export.ts:112	FOLLOW-UP	out of lane: src/commands/export.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/belief/backfill.ts:104	FOLLOW-UP	out of lane: src/core/belief/backfill.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/belief/backfill.ts:163	FOLLOW-UP	out of lane: src/core/belief/backfill.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/belief/coverage.ts:38	FOLLOW-UP	out of lane: src/core/belief/coverage.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/belief/coverage.ts:59	FOLLOW-UP	out of lane: src/core/belief/coverage.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/company-brain/runtime.ts:137	FOLLOW-UP	out of lane: src/core/company-brain/runtime.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/company-brain/runtime.ts:193	FOLLOW-UP	out of lane: src/core/company-brain/runtime.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/company-brain/runtime.ts:219	FOLLOW-UP	out of lane: src/core/company-brain/runtime.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/derived-links.ts:178	FOLLOW-UP	out of lane: src/core/derived-links.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/derived-links.ts:209	FOLLOW-UP	out of lane: src/core/derived-links.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/engine-sql/facts.ts:123	FOLLOW-UP	out of lane: src/core/engine-sql/facts.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/engine-sql/facts.ts:173	FOLLOW-UP	out of lane: src/core/engine-sql/facts.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/engine-sql/facts.ts:298	FOLLOW-UP	out of lane: src/core/engine-sql/facts.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/facts/purge.ts:462	FOLLOW-UP	out of lane: src/core/facts/purge.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/mentions/pass.ts:180	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/mentions/pass.ts:182	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/mentions/pass.ts:462	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/mentions/pass.ts:521	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/mentions/pass.ts:605	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/page-body/ingest.ts:118	FOLLOW-UP	out of lane: src/core/page-body/ingest.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/page-body/ingest.ts:440	FOLLOW-UP	out of lane: src/core/page-body/ingest.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/page-body/rechunk.ts:201	FOLLOW-UP	out of lane: src/core/page-body/rechunk.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/page-body/rechunk.ts:212	FOLLOW-UP	out of lane: src/core/page-body/rechunk.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/connector-sync.ts:850	FOLLOW-UP	out of lane: src/core/persistence/connector-sync.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/connector-sync.ts:1198	FOLLOW-UP	out of lane: src/core/persistence/connector-sync.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/connector-sync.ts:1246	FOLLOW-UP	out of lane: src/core/persistence/connector-sync.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/coordinator.ts:364	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/coordinator.ts:379	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/coordinator.ts:427	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/coordinator.ts:435	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/coordinator.ts:580	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/coordinator.ts:832	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/effect-links.ts:117	FOLLOW-UP	out of lane: src/core/persistence/effect-links.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/effect-links.ts:163	FOLLOW-UP	out of lane: src/core/persistence/effect-links.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/journal.ts:273	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/journal.ts:283	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/journal.ts:499	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/journal.ts:765	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/journal.ts:802	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/journal.ts:839	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/journal.ts:871	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/journal.ts:891	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/journal.ts:1010	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/journal.ts:1149	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/persistence/rows-behind.ts:159	FOLLOW-UP	out of lane: src/core/persistence/rows-behind.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
-src/core/write-gate-recheck.ts:120	FOLLOW-UP	out of lane: src/core/write-gate-recheck.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/commands/export.ts:112	FOLLOW-UP	out of lane: src/commands/export.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/belief/backfill.ts:104	FOLLOW-UP	out of lane: src/core/belief/backfill.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/belief/backfill.ts:163	FOLLOW-UP	out of lane: src/core/belief/backfill.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/belief/coverage.ts:38	FOLLOW-UP	out of lane: src/core/belief/coverage.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/belief/coverage.ts:59	FOLLOW-UP	out of lane: src/core/belief/coverage.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/company-brain/runtime.ts:137	FOLLOW-UP	out of lane: src/core/company-brain/runtime.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/company-brain/runtime.ts:193	FOLLOW-UP	out of lane: src/core/company-brain/runtime.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/company-brain/runtime.ts:219	FOLLOW-UP	out of lane: src/core/company-brain/runtime.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/derived-links.ts:178	FOLLOW-UP	out of lane: src/core/derived-links.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/derived-links.ts:209	FOLLOW-UP	out of lane: src/core/derived-links.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/engine-sql/facts.ts:123	FOLLOW-UP	out of lane: src/core/engine-sql/facts.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/engine-sql/facts.ts:173	FOLLOW-UP	out of lane: src/core/engine-sql/facts.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/engine-sql/facts.ts:298	FOLLOW-UP	out of lane: src/core/engine-sql/facts.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/facts/purge.ts:462	FOLLOW-UP	out of lane: src/core/facts/purge.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/mentions/pass.ts:180	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/mentions/pass.ts:182	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/mentions/pass.ts:462	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/mentions/pass.ts:521	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/mentions/pass.ts:605	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/page-body/ingest.ts:118	FOLLOW-UP	out of lane: src/core/page-body/ingest.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/page-body/ingest.ts:440	FOLLOW-UP	out of lane: src/core/page-body/ingest.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/page-body/rechunk.ts:201	FOLLOW-UP	out of lane: src/core/page-body/rechunk.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/page-body/rechunk.ts:212	FOLLOW-UP	out of lane: src/core/page-body/rechunk.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/connector-sync.ts:850	FOLLOW-UP	out of lane: src/core/persistence/connector-sync.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/connector-sync.ts:1198	FOLLOW-UP	out of lane: src/core/persistence/connector-sync.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here. The run adds to the outer `admitted` counter, so a rerun after a lost commit can over-count it. Unreachable on the Rust engine today, and it changes only a report count. Fix: the body returns {row, admitted} and the caller adds after commit
+src/core/persistence/connector-sync.ts:1246	FOLLOW-UP	out of lane: src/core/persistence/connector-sync.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/coordinator.ts:364	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/coordinator.ts:379	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/coordinator.ts:427	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/coordinator.ts:435	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/coordinator.ts:580	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/coordinator.ts:832	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/effect-links.ts:117	FOLLOW-UP	out of lane: src/core/persistence/effect-links.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/effect-links.ts:163	FOLLOW-UP	out of lane: src/core/persistence/effect-links.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:273	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:283	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:499	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:765	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:802	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:839	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:871	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:891	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:1010	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:1149	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/persistence/rows-behind.ts:159	FOLLOW-UP	out of lane: src/core/persistence/rows-behind.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
+src/core/write-gate-recheck.ts:120	FOLLOW-UP	out of lane: src/core/write-gate-recheck.ts is owned by L1 (rust-engine/mu-l1-txn-audit); no edit here, the owner lane audits it
 src/shadow/follow.ts:137	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
 src/shadow/read-pool.ts:43	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
 src/shadow/replay-copy.ts:66	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
@@ -745,7 +746,7 @@ src/core/repair/managed-sync-orphans.ts:74	pure	via src/core/persistence/managed
 src/core/persistence/sync-cursor-key.ts:189	SAFE	via src/core/persistence/managed-sync-orphans.ts:199: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
 src/core/persistence/deactivation.ts:245	pure	via src/core/persistence/pre-activation-release.ts:69: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
 src/core/persistence/group-publish.ts:303	pure	via src/core/persistence/publication-deadline.ts:115, src/core/persistence/publication-deadline.ts:118: pass-through: hands the function on; the function its caller supplies has its own row
-src/core/persistence/coordinator.ts:641	FOLLOW-UP	via src/core/persistence/publication-deadline.ts:115, src/core/persistence/publication-deadline.ts:118: owner: L1 (src/core/persistence/coordinator.ts, via publicationTransaction at publication-deadline.ts:115/118). The callback sets `published = true` and publishes page files inside the run; a rerun after a lost commit reads its own new bytes and refuses with localEditRefusal. No edit here
+src/core/persistence/coordinator.ts:641	FOLLOW-UP	via src/core/persistence/publication-deadline.ts:115, src/core/persistence/publication-deadline.ts:118: owner: L1 (src/core/persistence/coordinator.ts, via publicationTransaction at publication-deadline.ts:115/118). The callback sets `published = true` and publishes page files inside the run; a rerun after a lost commit reads its own new bytes and refuses with localEditRefusal. No edit here; L1 fixes it on rust-engine/mu-l1-txn-audit (205d12229d): the rerun stops and the request goes to recoverPublication
 src/core/persistence/sync-cursor-key.ts:102	SAFE	via src/core/persistence/sync-cursor-key.ts:181: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
 src/core/persistence/sync-cursor-key.ts:139	SAFE	via src/core/persistence/sync-cursor-key.ts:181: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
 src/core/persistence/sync-run.ts:1032	FIXED	via src/core/persistence/sync-group.ts:160: admitAndSave restores the pass-batch entry at the top of each run; test test/engine-parity/sync-txn-rerun.test.ts
