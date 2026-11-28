@@ -72,7 +72,7 @@ function directory(provider: 'google' | 'apple', id: string, name = '张三') {
     baseSlug: () => provider === 'google' ? personSlugFromContact(data, false, DIR) : appleBaseSlug(apple, DIR),
     tombstoneSlugs: () => provider === 'google' ? [contactIdSlug(id, DIR)] : appleTombstoneSlugs(id, DIR),
     render,
-    write: async (relPath, body) => { writes.push(relPath); pages.set(relPath, { owner: id, body }); },
+    write: async (relPath, body) => { writes.push(relPath); pages.set(relPath, { owner: id, body }); return relPath.replace(/\.md$/, ''); },
     remove: async (relPath) => { removes.push(relPath); pages.delete(relPath); },
     skippedHandAuthored: (relPath) => { skipped.push(relPath); },
     applied: () => {},

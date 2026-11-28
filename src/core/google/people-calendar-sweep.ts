@@ -187,8 +187,9 @@ async function applyContact(deps: GoogleSyncDeps, c: ContactData,
   const contactsDir = deps.cfg.contactsDir;
   // The id-keyed lookup, ownership, collision and staged-rename rules are shared with the apple-contacts source
   // (contact-page-apply.ts); the id lookup mirrors the calendar sweep's event_id keying.
+  let existing: string | null = null;
   await applyContactPage(c.resourceName, !!c.deleted, {
-    existingPath: () => contactPageRelPathByContactId(deps, c.resourceName),
+    existingPath: async () => (existing = await contactPageRelPathByContactId(deps, c.resourceName)),
     owner: (relPath) => contactOwner(deps, relPath),
     baseSlug: () => personSlugFromContact(c, false, contactsDir),
     tombstoneSlugs: () => [personSlugFromContact(c, false, contactsDir), personSlugFromContact(c, true, contactsDir), contactIdSlug(c.resourceName, contactsDir)],
@@ -198,8 +199,10 @@ async function applyContact(deps: GoogleSyncDeps, c: ContactData,
       contactsDir,
     ),
     write: async (relPath, markdown) => {
-      await importRendered(deps, relPath, markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
-      sweep.touched.add(slugifyPath(relPath));
+      let landed = await importRendered(deps, relPath, markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
+      if (landed !== null && existing !== null && landed !== slugifyPath(existing)) landed = await storedSlug(deps, landed);
+      if (landed !== null) sweep.touched.add(landed);
+      return landed;
     },
     remove: async (relPath) => {
       await unlinkGoogleContactPage(deps.engine, deps.sourceId, slugifyPath(relPath));
@@ -208,6 +211,16 @@ async function applyContact(deps: GoogleSyncDeps, c: ContactData,
     skippedHandAuthored: (relPath) => deps.log(`[google] skipping hand-authored ${relPath}`),
     applied: () => deps.tick(`contact ${c.resourceName}`),
   });
+}
+
+/**
+ * The slug an import landed, or null. On a managed brain an accepted write can still be pending when the sweep moves
+ * on and be refused at publication (a purge tombstone the session's screen missed), so the stored page is read back,
+ * which waits for this run's own outstanding write, before anything is retired in its favour.
+ */
+async function storedSlug(deps: GoogleSyncDeps, slug: string | null): Promise<string | null> {
+  if (slug === null || !deps.managed) return slug;
+  return await deps.managed.page(slug) ? slug : null;
 }
 
 /**
@@ -463,8 +476,10 @@ async function applyEvent(deps: GoogleSyncDeps, ev: CalendarEventData, range: Ca
   const change = planCalendarPage(side, page?.relPath ?? null, await calendarPageRelPathByEventId(deps, ev.id), calendarRelPath(ev));
   if (change.kind === 'remove') await deletePageByRelPath(deps, change.relPath, ctx.summary);
   if (change.kind !== 'write' || !page) return;
-  if (change.removeFirst) await deletePageByRelPath(deps, change.removeFirst, ctx.summary);
-  await importRendered(deps, page.relPath, page.markdown, ctx.activePack, ctx.summary, ctx.countedSlugs);
+  const landed = await importRendered(deps, page.relPath, page.markdown, ctx.activePack, ctx.summary, ctx.countedSlugs);
+  if (change.retireAfter && landed !== null && landed !== slugifyPath(change.retireAfter) && await storedSlug(deps, landed) !== null) {
+    await deletePageByRelPath(deps, change.retireAfter, ctx.summary);
+  }
   deps.tick(`event ${ev.id}`);
 }
 
