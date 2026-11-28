@@ -41,6 +41,7 @@ import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { detectInstructionLike } from '../write-gate.ts';
 import { confirmOnTerminal, confirmRequiredError, terminalAuthorityProblem, type OwnerProof, type TerminalProbe } from '../policy/authority.ts';
 import { withRuleWriter } from './admission.ts';
+import { currentCliWriteWait } from '../persistence/write-wait.ts';
 import { approvalDigest, clearApproval, readApproval, readConfirmations, saveApproval, saveConfirmation, type ApprovedFact, type PendingApproval } from './confirm.ts';
 import { isRuleSlug, parseChecks, readRule, renderRulePage, ruleDigest, ruleIdOf, ruleName, ruleSlugOf, RULE_PREFIX, RULE_SCOPES, RULE_TEXT_MAX, type RuleCheck, type RuleScope, type RuleStatus } from './record.ts';
 
@@ -719,6 +720,11 @@ export function localRulesCtx(engine: BrainEngine, sourceId = 'default'): Operat
     logger: { info: () => {}, warn: (m: string) => console.error(m), error: (m: string) => console.error(m) } } as unknown as OperationContext;
 }
 
+/** #10466: `gbrain rules approve` / `retire` wait for the commit like every other owner CLI write. */
+export function ownerCliRulesCtx(engine: BrainEngine, sourceId: string): OperationContext {
+  return { ...localRulesCtx(engine, sourceId), writeWaitMs: currentCliWriteWait().waitMs };
+}
+
 function staleRevision(id: string, revision: string, current: string | null): OperationError {
   return opError('rule_revision_stale', `Revision ${revision} is not the current revision of rule ${id}${current ? ` (it is ${current})` : ''}, so nothing was approved.`,
     `Run gbrain rules show ${id} to read the current revision, then approve that one.`);
@@ -770,7 +776,7 @@ export async function approveRule(engine: BrainEngine, ref: string, opts: { sour
     const now = await engine.readPageSnapshot(slug, { sourceId });
     const at = now && !now.page.deleted_at ? String(now.revision) : null;
     if (at !== revision) throw staleRevision(rule.id, revision, at);
-    const ctx = localRulesCtx(engine, sourceId);
+    const ctx = ownerCliRulesCtx(engine, sourceId);
     await initializeLocalPersistence(ctx);
     let finalRevision = revision;
     if (rule.status === 'proposed') {
@@ -819,7 +825,7 @@ async function retireHeld(engine: BrainEngine, slug: string, sourceId: string): 
   const fm = snap!.page.frontmatter ?? {};
   const page = renderRulePage({ scope: rule.scope, status: 'retired', text: rule.text, corrects: rule.corrects, attribution: rule.attribution, receipt: rule.receipt ?? '', checks: rule.checks,
     ...(fm.visibility === 'private' ? { visibility: 'private' as const } : {}), ...(rule.readable_by ? { readable_by: rule.readable_by } : {}) });
-  const ctx = localRulesCtx(engine, sourceId);
+  const ctx = ownerCliRulesCtx(engine, sourceId);
   await initializeLocalPersistence(ctx);
   await withRuleWriter(() => submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: sourceId, content: page, expected_revision: String(snap!.revision) } }));
   await settleRetired(engine, rule.receipt, slug);
