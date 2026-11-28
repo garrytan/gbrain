@@ -8,8 +8,9 @@
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
+use serde_json::Value;
 
-use crate::store_binding::Brain;
+use crate::store_binding::{Brain, required};
 
 #[napi]
 impl Brain {
@@ -169,6 +170,22 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.delete_purged_slug_store_rows(&source_id, &slugs)
+        })
+    }
+
+    /// `deletePurgedSlugHolds`: deletes the holds of the pages' slugs (up to each `deletedAt` when given) and the holds'
+    /// receipts; resolves `{ write_gate_holds, write_gate_receipts }`.
+    #[napi]
+    pub fn delete_purged_slug_holds<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        pages: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let pages: Vec<gbrain_store::trust::write_gate::PurgedSlugPage> =
+                required(pages, "deletePurgedSlugHolds pages")?;
+            s.delete_purged_slug_holds(&source_id, &pages)
         })
     }
 

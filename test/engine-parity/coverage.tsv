@@ -1540,7 +1540,7 @@ countSegmentedVersionsOfPage	facts_cycle_sites	yes	1	no	yes	yes	serves
 insertReasonPurgeTombstones	facts_purge	yes	4	no	yes	yes	serves
 deletePurgedSlugStoreRows	facts_purge	yes	4	no	yes	yes	serves
 listPageSecretOccurrences	facts_purge	yes	3	no	yes	yes	serves
-deletePurgedSlugHolds	facts_purge	yes	1	no	yes	yes	refuses:pages
+deletePurgedSlugHolds	facts_purge	yes	3	no	yes	yes	serves
 readHeldConcept	facts_purge	yes	3	no	yes	yes	serves
 isConceptStillHeld	facts_purge	yes	2	no	yes	yes	serves
 lockHeldConcept	facts_purge	yes	2	no	yes	yes	serves

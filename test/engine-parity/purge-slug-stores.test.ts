@@ -64,7 +64,7 @@ describe('engine parity: purge slug stores', () => {
         elsewhere: await hold(engine, OTHER, 'notes/gone', 'fp-3'),
       };
       for (const [src, id] of [[SRC, holds.gone], [SRC, holds.kept], [OTHER, holds.elsewhere]] as const) await receipt(engine, src, id);
-      const out = {
+      const seen = {
         empty: await engine.deletePurgedSlugStoreRows(SRC, []),
         noPages: await engine.listPageSecretOccurrences([]),
         noSecrets: await engine.listPageSecretOccurrences([Number(gone!.id)]),
@@ -77,20 +77,126 @@ describe('engine parity: purge slug stores', () => {
         keptStores: await engine.deletePurgedSlugStoreRows(OTHER, ['notes/gone']),
         keptHolds: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/kept', id: Number(kept!.id) }]),
       };
+      // Whether the database has the secret store is the one answer that differs by engine: the Rust store keeps none.
+      const hasSecretStore = [seen.empty, seen.removed, seen.again, seen.keptStores].map(r => r.secretStore);
+      expect(hasSecretStore).toEqual(Array(4).fill(backend !== 'rust'));
+      const out = { ...seen, empty: seen.empty.removed, removed: seen.removed.removed, again: seen.again.removed, keptStores: seen.keptStores.removed };
       const stores = { take_proposals: 1, open_loops: 1, core_edit_notices: 0, page_aliases: 1, slug_aliases: 0, slug_rename_history: 0 };
       const none = { take_proposals: 0, open_loops: 0, core_edit_notices: 0, page_aliases: 0, slug_aliases: 0, slug_rename_history: 0 };
       expect(out).toEqual({
-        empty: { removed: {}, secretStore: true },
+        empty: {},
         noPages: [],
         noSecrets: [],
-        removed: { removed: stores, secretStore: true },
-        again: { removed: none, secretStore: true },
+        removed: stores,
+        again: none,
         noHolds: { write_gate_holds: 0, write_gate_receipts: 0 },
         olderThanHold: { write_gate_holds: 0, write_gate_receipts: 0 },
         holds: { write_gate_holds: 1, write_gate_receipts: 1 },
         holdsAgain: { write_gate_holds: 0, write_gate_receipts: 0 },
-        keptStores: { removed: stores, secretStore: true },
+        keptStores: stores,
         keptHolds: { write_gate_holds: 1, write_gate_receipts: 1 },
+      });
+      return out;
+    },
+  );
+
+  parityTest(
+    'deletePurgedSlugHolds drops the holds of several slugs at once, up to each page\'s deletedAt, with the receipts of those holds only',
+    { methods: ['deletePurgedSlugHolds'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, OTHER);
+      for (const slug of ['notes/one', 'notes/two', 'notes/three']) await engine.putPage(slug, note(slug));
+      const one = await engine.getPage('notes/one');
+      const two = await engine.getPage('notes/two');
+      const three = await engine.getPage('notes/three');
+      const first = await hold(engine, SRC, 'notes/one', 'fp-a');
+      const second = await hold(engine, SRC, 'notes/one', 'fp-b');
+      const twoHold = await hold(engine, SRC, 'notes/two', 'fp-c');
+      const threeHold = await hold(engine, SRC, 'notes/three', 'fp-d');
+      const elsewhere = await hold(engine, OTHER, 'notes/one', 'fp-e');
+      for (const [src, id] of [[SRC, first], [SRC, second], [SRC, twoHold], [SRC, threeHold], [OTHER, elsewhere]] as const) await receipt(engine, src, id);
+      // A receipt of another table whose target id spells a hold id is not the hold's receipt.
+      await engine.upsertWriteGateReceipt({
+        target_table: 'facts', target_id: String(first), source_id: SRC, content_hash: 'h-fact', tier: 'agent_written',
+        detector_version: 1, verdict: 'flag', reason_families: ['prompt_injection'], reasons: ['x'], detector_error: false, request_id: null,
+      });
+      const future = '2999-01-01T00:00:00.000000Z';
+      const out = {
+        // Two pages purged in one call: one bounded by a deletedAt after its holds, one unbounded; the third page's hold stays.
+        both: await engine.deletePurgedSlugHolds(SRC, [
+          { slug: 'notes/one', id: Number(one!.id), deletedAt: future },
+          { slug: 'notes/two', id: Number(two!.id), deletedAt: null },
+        ]),
+        again: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/one', id: Number(one!.id), deletedAt: future }, { slug: 'notes/two', id: Number(two!.id) }]),
+        unknownSlug: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/never', id: 987654 }]),
+        other: await engine.deletePurgedSlugHolds(OTHER, [{ slug: 'notes/three', id: Number(three!.id) }]),
+        third: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/three', id: Number(three!.id) }]),
+        elsewhere: await engine.deletePurgedSlugHolds(OTHER, [{ slug: 'notes/one', id: Number(one!.id) }]),
+      };
+      expect(out).toEqual({
+        both: { write_gate_holds: 3, write_gate_receipts: 3 },
+        again: { write_gate_holds: 0, write_gate_receipts: 0 },
+        unknownSlug: { write_gate_holds: 0, write_gate_receipts: 0 },
+        other: { write_gate_holds: 0, write_gate_receipts: 0 },
+        third: { write_gate_holds: 1, write_gate_receipts: 1 },
+        elsewhere: { write_gate_holds: 1, write_gate_receipts: 1 },
+      });
+      return out;
+    },
+  );
+
+  parityTest(
+    'deletePurgedSlugHolds reads deletedAt as Postgres text and with a UTC offset, and refuses text that is not a time',
+    { methods: ['deletePurgedSlugHolds'] },
+    async (engine) => {
+      const slugs = ['notes/z', 'notes/offset', 'notes/space', 'notes/shifted', 'notes/between', 'notes/bad'];
+      for (const slug of slugs) await engine.putPage(slug, note(slug));
+      const pages = new Map<string, number>();
+      for (const slug of slugs) pages.set(slug, Number((await engine.getPage(slug))!.id));
+      const seed = async (slug: string, fp: string) => {
+        const id = await hold(engine, SRC, slug, fp);
+        await receipt(engine, SRC, id);
+      };
+      const purge = (slug: string, deletedAt: string) => engine.deletePurgedSlugHolds(SRC, [{ slug, id: pages.get(slug)!, deletedAt }]);
+      const kept = { write_gate_holds: 0, write_gate_receipts: 0 };
+      const gone = { write_gate_holds: 1, write_gate_receipts: 1 };
+      // Each form of a time after the hold deletes it; the same form long before it keeps it.
+      const forms = [
+        ['notes/z', '2999-01-01T00:00:00.000000Z', '2000-01-01T00:00:00.000000Z'],
+        ['notes/offset', '2999-01-01T00:00:00.000000+00:00', '2000-01-01T00:00:00.000000+00:00'],
+        ['notes/space', '2999-01-01 00:00:00.123456+00', '2000-01-01 00:00:00.123456+00'],
+        ['notes/shifted', '2999-01-01 05:30:00.000000+05:30', '2000-01-01 05:30:00.000000+05:30'],
+      ] as const;
+      for (const [slug] of forms) await seed(slug, `fp-${slug}`);
+      const out: Record<string, unknown> = {};
+      for (const [slug, after, before] of forms) {
+        out[`${slug} before`] = await purge(slug, before);
+        out[`${slug} after`] = await purge(slug, after);
+        out[`${slug} again`] = await purge(slug, after);
+      }
+      // A cutoff between two holds, written with an offset: the hold seen before it goes, the one after stays.
+      await seed('notes/between', 'fp-first');
+      await new Promise(r => setTimeout(r, 60));
+      const cut = new Date(Date.now() - 30 + 5.5 * 3600_000).toISOString().replace('T', ' ').replace('Z', '000+05:30');
+      await new Promise(r => setTimeout(r, 60));
+      await seed('notes/between', 'fp-second');
+      out.between = await purge('notes/between', cut);
+      out.betweenRest = await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/between', id: pages.get('notes/between')! }]);
+      // Text that is not a time is refused before anything is deleted (each engine words the refusal its own way).
+      await seed('notes/bad', 'fp-bad');
+      out.bad = await purge('notes/bad', 'not a time').then(() => 'deleted', () => 'refused');
+      // An offset with 60 minutes is out of range for timestamptz, so every engine refuses it. (An hour beyond 15, '+16',
+      // is refused by PGLite and the Rust store but accepted by the Postgres engine, whose driver reads timestamptz
+      // parameters client-side, so it is pinned in the Rust store's unit test, not here.)
+      out['bad +05:60'] = await purge('notes/bad', '2999-01-01 00:00:00.000000+05:60').then(() => 'deleted', () => 'refused');
+      out.badRest = await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/bad', id: pages.get('notes/bad')! }]);
+      expect(out).toEqual({
+        ...Object.fromEntries(['notes/z', 'notes/offset', 'notes/space', 'notes/shifted'].flatMap(slug => [[`${slug} before`, kept], [`${slug} after`, gone], [`${slug} again`, kept]])),
+        between: gone,
+        betweenRest: gone,
+        bad: 'refused',
+        'bad +05:60': 'refused',
+        badRest: gone,
       });
       return out;
     },

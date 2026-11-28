@@ -443,7 +443,7 @@ pub(crate) fn parse_timestamptz(text: &str, what: &str) -> Result<i64> {
     parse_iso(&iso).map(|us| us - zone_us).ok_or_else(bad)
 }
 
-/// `Z`, `+HH`, `+HH:MM` or `+HHMM` (and `-`), as microseconds east of UTC.
+/// `Z`, `+HH`, `+HH:MM` or `+HHMM` (and `-`), as microseconds east of UTC; None beyond +/-15:59, as Postgres.
 fn zone_offset(zone: &str) -> Option<i64> {
     if zone == "Z" {
         return Some(0);
@@ -463,6 +463,10 @@ fn zone_offset(zone: &str) -> Option<i64> {
     } else {
         0
     };
+    // Postgres refuses a displacement beyond +/-15:59 or with 60 minutes ("time zone displacement out of range").
+    if hours > 15 || minutes > 59 {
+        return None;
+    }
     Some(sign * (hours * 3600 + minutes * 60) * 1_000_000)
 }
 

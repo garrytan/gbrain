@@ -300,7 +300,7 @@ test/engine-parity/purge-dry-run.test.ts	2	0
 test/engine-parity/purge-gazetteer.test.ts	2	0
 test/engine-parity/purge-plan.test.ts	13	0
 test/engine-parity/purge-receipt-members.test.ts	3	0
-test/engine-parity/purge-slug-stores.test.ts	0	2
+test/engine-parity/purge-slug-stores.test.ts	3	1
 test/engine-parity/purge-verify.test.ts	3	0
 test/engine-parity/purge-writes.test.ts	5	0
 test/engine-parity/put-page-missing-link.test.ts	2	0
