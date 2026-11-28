@@ -47,6 +47,7 @@ import { readWriterEvidence } from './writer-observations.ts';
 const SEAL_READ_MS = 2_000;
 
 import { PGLITE_NO_DB_CONTINUITY } from './follow-status.ts';
+import { noteLostWrite } from './follow-child.ts';
 
 export { PGLITE_NO_DB_CONTINUITY };
 
@@ -61,7 +62,23 @@ export interface SealDeps {
   reads: ReadSource;
   postgres: boolean;
   rpc: <T>(method: string, args?: Record<string, unknown>, timeoutMs?: number) => Promise<T>;
+  /** Waits before each retry of a revoke the child did not acknowledge (default `REVOKE_RETRY_MS`). */
+  revokeRetryMs?: readonly number[];
+  /** Told when a revocation starts (its reason) and when the child acknowledged it (null): a close does not seal in between. */
+  revoking?: (reason: string | null) => void;
 }
+
+/** A confirmation the child may have applied (it was sent) but did not acknowledge: it is revoked, named by this reason. */
+export const SEAL_CONFIRM_UNACKNOWLEDGED = 'seal_confirm_unacknowledged';
+/** Waits before the retries of an unacknowledged revoke. */
+export const REVOKE_RETRY_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 30_000];
+/**
+ * What `confirmSeal` leaves behind. `doubt` null: the child's validity is what it says (no seal, refused, confirmed and
+ * read quiet again, or revoked and acknowledged). A reason: a confirmation may be applied and nothing durable revokes it
+ * (the veto line could not be written and no revoke was acknowledged), so the caller runs a full pass and a close does not seal.
+ */
+export interface SealConfirmOutcome { doubt: string | null }
+const SETTLED: SealConfirmOutcome = { doubt: null };
 
 /** Tables the seed copies without a relation of their own: the pages read carries `page_projection_jobs` (seed-gaps.ts `carried`). */
 export const SEAL_CARRIED_TABLES: readonly string[] = ['page_projection_jobs'];
@@ -265,19 +282,50 @@ export async function quietSince(d: Pick<SealDeps, 'dir' | 'reads' | 'postgres'>
 
 /**
  * Confirms (or refuses) the seal the owner child took over at its start, if there is one. Never rejects. A child that
- * took no seal, or a read that fails, changes nothing: the session's own full obligation stays until a full pass.
- * Once the child took a confirmation the check is read again: a write that began after the first read (and before the
- * child applied the verdict) makes the child withdraw the confirmation (`revokeSeal`), a failed second read included.
+ * took no seal, or a read that fails before anything is sent, changes nothing: the session's own full obligation stays
+ * until a full pass. Once the child took a confirmation the check is read again: a write that began after the first
+ * read (and before the child applied the verdict) makes the child withdraw the confirmation (`revokeSeal`), a failed
+ * second read included. A confirmation that was sent but not acknowledged is revoked too: a timeout is not a
+ * cancellation, and a lost answer does not prove the child did not apply it (`seal_confirm_unacknowledged`).
  */
-export async function confirmSeal(d: SealDeps): Promise<void> {
+export async function confirmSeal(d: SealDeps): Promise<SealConfirmOutcome> {
+  let pending: { db_at: string | null } | null | undefined;
   try {
-    const state = await d.rpc<{ pending_seal?: { db_at: string | null } | null }>('state', {}, 10_000);
-    const pending = state?.pending_seal;
-    if (!pending) return;
-    const verdict = await quietSince(d, pending.db_at ?? null);
+    pending = (await d.rpc<{ pending_seal?: { db_at: string | null } | null }>('state', {}, 10_000))?.pending_seal;
+  } catch { return SETTLED; } // silent-read-ok: nothing was sent, so the child keeps its own full obligation until a full pass
+  if (!pending) return SETTLED;
+  const verdict = await quietSince(d, pending.db_at ?? null);
+  try {
     await d.rpc('confirmSeal', { db_at: pending.db_at ?? null, ok: verdict.ok, reason: verdict.ok ? null : verdict.reason }, 10_000);
-    if (!verdict.ok) return;
-    const again = await quietSince(d, pending.db_at ?? null);
-    if (!again.ok) await d.rpc('revokeSeal', { reason: again.reason }, 10_000);
-  } catch { /* the obligation stays: a full pass settles it */ }
+  } catch {
+    // A refusal that did not arrive leaves the obligation; a confirmation that may have arrived is revoked.
+    return verdict.ok ? revoke(d, SEAL_CONFIRM_UNACKNOWLEDGED) : SETTLED;
+  }
+  if (!verdict.ok) return SETTLED;
+  const again = await quietSince(d, pending.db_at ?? null);
+  return again.ok ? SETTLED : revoke(d, again.reason);
+}
+
+/**
+ * Withdraws a confirmation the child may hold. First a veto the child reads on its own, whatever happens to the pipe:
+ * a line in its invalidation file (follow-child.ts), which leaves it invalid with a full obligation. Then `revokeSeal`,
+ * sent again after each wait in `revokeRetryMs` until the child acknowledges it (a refused send or a lost answer is not
+ * the end of it). In doubt only when neither the line nor any revoke got through.
+ */
+async function revoke(d: SealDeps, reason: string): Promise<SealConfirmOutcome> {
+  d.revoking?.(reason);
+  const vetoed = noteLostWrite(d.dir, `seal_revoked:${reason}`);
+  const waits = d.revokeRetryMs ?? REVOKE_RETRY_MS;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await d.rpc('revokeSeal', { reason }, 10_000);
+      d.revoking?.(null);
+      return SETTLED;
+    } catch { /* not acknowledged: sent again after the next wait */ } // silent-read-ok: the veto line stands and the revoke is retried; a doubt left at the end is returned
+    if (attempt >= waits.length) break;
+    const ms = waits[attempt]!;
+    await new Promise<void>((resolve) => { const t = setTimeout(resolve, ms); (t as { unref?: () => void }).unref?.(); });
+  }
+  if (vetoed) { d.revoking?.(null); return SETTLED; }
+  return { doubt: reason };
 }

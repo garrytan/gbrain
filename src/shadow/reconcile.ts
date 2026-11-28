@@ -71,8 +71,11 @@ export interface ReconcilerOptions {
   follower?: ShadowFollower | null;
   /** Rows per interval; tests make it small to walk several intervals. */
   intervalRows?: number;
-  /** Awaited before the first check: the serving process's seal confirmation (seal.ts), so the check sees its outcome. */
-  ready?: () => Promise<void>;
+  /**
+   * Awaited before the first check: the serving process's seal confirmation (seal.ts), so the check sees its outcome.
+   * A `doubt` (a confirmation the child may hold that nothing durable revoked) makes the first check run a full pass.
+   */
+  ready?: () => Promise<{ doubt: string | null } | void>;
 }
 
 /** What the child's `state` call answers: the watermark, and the continuity a half-done pass may resume under. */
@@ -179,11 +182,11 @@ export class Reconciler {
 
   private async firstRun(): Promise<void> {
     try {
-      await this.o.ready?.();
+      const confirmed = await this.o.ready?.();
       if (this.stopped) return;
       const w = await this.o.rpc<StateReply>('state', {}, 10_000);
       const lastFull = readPasses(this.o.dir).filter((p) => p.kind === 'full').at(-1);
-      const due = !w.valid || readProgress(this.o.dir) !== null || fullPassDue(lastFull);
+      const due = !!confirmed?.doubt || !w.valid || readProgress(this.o.dir) !== null || fullPassDue(lastFull);
       if (due && !this.stopped) await this.run('full', undefined, { resume: true });
     } catch { /* the nightly tick tries again */ } // silent-read-ok: no pass runs, so the watermark stays as it was (invalid until a full pass) and the nightly tick retries
   }

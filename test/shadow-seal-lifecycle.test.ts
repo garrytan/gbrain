@@ -20,7 +20,7 @@ import { SHADOW_STATE_VERSION, writeShadowState, type ShadowState } from '../src
 import { SEED, startRig, until, type Rig } from './helpers/shadow-stable-harness.ts';
 
 const STATE = { version: SHADOW_STATE_VERSION, enabled: true, started_at: 'state-start-1', sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' } as ShadowState;
-const sealChecks = { mark: async () => ({ token: 'mark-1' }), confirm: async () => {} };
+const sealChecks = { mark: async () => ({ token: 'mark-1' }), confirm: async () => ({ doubt: null }) };
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });

@@ -14,7 +14,7 @@ import { ShadowFollower } from './follower.ts';
 import { openReadSource, type ReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
 import { LOST_WRITE_UNRECORDED, lostWriteRecorder } from './follow-child.ts';
-import { confirmSeal, sealMark, type SealDeps } from './seal.ts';
+import { confirmSeal, sealMark, type SealConfirmOutcome, type SealDeps } from './seal.ts';
 import { createLsnWatch, makeAskHandler, type LsnWatch } from './checks.ts';
 import { epochWatch, readEpoch } from './evidence-epoch.ts';
 import { hasCapability } from '../core/engine-capabilities.ts';
@@ -80,10 +80,11 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     dir, argv: shadowChildArgv(dir, deps.gbrainArgv), onDirty: (relation) => reconciler?.markDirty(relation),
     onAsk: (ask) => asks(ask),
     // Each new child is asked once whether the last session's seal holds; deferred, as start() runs inside a send.
-    onStart: () => { confirm = undefined; setImmediate(() => { if (sealDeps) confirm ??= (deps.sealChecks?.confirm ?? confirmSeal)(sealDeps); }); },
+    onStart: () => { confirm = undefined; revoking = null; setImmediate(() => { if (sealDeps) confirm ??= (deps.sealChecks?.confirm ?? confirmSeal)(sealDeps); }); },
     ...deps.supervisor,
   });
-  let confirm: Promise<void> | undefined; // the running child's seal confirmation (seal.ts), once asked
+  let confirm: Promise<SealConfirmOutcome> | undefined; // the running child's seal confirmation (seal.ts), once asked
+  let revoking: string | null = null; // a revocation of that confirmation not yet acknowledged (seal.ts): a close does not seal then
   let sealDeps: SealDeps | undefined; // set once the brain is seeded and has a read source
   const samples = new SampleRegistry();
   let generation: () => number | undefined = () => undefined; // the follower's write count, set once it exists
@@ -120,8 +121,8 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   watch = createLsnWatch(askReads);
   void watch.ready(); // the first freshness token, so a sample captured a moment later has one to be held to
   const asks = makeAskHandler({ engine, reads: askReads, dir, rpc, samples, watch, get follower() { return follower; } });
-  if (reads) sealDeps = { dir, reads, postgres: primaryTakesWriterHooks(state.primary_engine), rpc };
-  const askConfirm = (): Promise<void> => (sealDeps ? (confirm ??= (deps.sealChecks?.confirm ?? confirmSeal)(sealDeps)) : Promise.resolve());
+  if (reads) sealDeps = { dir, reads, postgres: primaryTakesWriterHooks(state.primary_engine), rpc, revoking: (reason) => { revoking = reason; } };
+  const askConfirm = (): Promise<SealConfirmOutcome | void> => (sealDeps ? (confirm ??= (deps.sealChecks?.confirm ?? confirmSeal)(sealDeps)) : Promise.resolve());
   // A write the child will never hear of leaves a line for whichever process owns the store next (follow-child.ts), so no
   // seal is trusted over it. One line a second is enough: the owner reads any line as "a write was lost".
   // A line that cannot be written is retried, and a live child is told at once (which revokes a seal it holds).
@@ -170,9 +171,12 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
           let refused: string | null = !settled ? 'follower_not_settled' : !follower.idle() ? 'follower_not_idle' : !lost.flush() ? LOST_WRITE_UNRECORDED : null;
           let token: string | null = null;
           if (!refused) {
-            await Promise.race([askConfirm(), new Promise((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
+            const confirmed = await Promise.race([askConfirm(), new Promise<void>((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
             const mark = await (deps.sealChecks?.mark ?? sealMark)(sealDeps);
-            if ('refused' in mark) refused = mark.refused;
+            // A confirmation left in doubt, or a revoke of it not yet acknowledged, is never sealed over.
+            if (confirmed?.doubt) refused = confirmed.doubt;
+            else if (revoking) refused = revoking;
+            else if ('refused' in mark) refused = mark.refused;
             else if (!follower.idle()) refused = 'follower_not_idle';
             else if (!lost.flush()) refused = LOST_WRITE_UNRECORDED;
             else token = mark.token;
