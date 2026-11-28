@@ -52,11 +52,11 @@ export const stampEffectClaim: StoreMember<[claim: EffectClaim], Record<string, 
  * here is in the read set). The worktree's owner and state come from its binding record (`readWorktreeOwner`), null when
  * the effect has no worktree or the row is gone. A worktree id that is not a uuid refuses as `::uuid` does.
  */
-export const lockEffectGuard: StoreMember<[worktreeId: string | null], EffectWorktreeOwner | null> = async (_brain: StoreBrain, worktreeId) => {
+export const lockEffectGuard: StoreMember<[worktreeId: string | null], EffectWorktreeOwner | null> = async (brain: StoreBrain, worktreeId) => {
   if (worktreeId !== null && !UUID.test(worktreeId)) throw new Error(`invalid input syntax for type uuid: "${worktreeId}"`);
-  // Managed mode is not served on this store, so no worktree effect is admitted: the guard answers as a brain with no
-  // worktree owner row does.
-  return null;
+  if (!worktreeId) return null;
+  const owner: { owner_host_id: string; state: string } | null = await storeCall({ member: 'lockEffectGuard' }, () => brain.readWorktreeOwner(worktreeId));
+  return owner ? { owner_host_id: owner.owner_host_id, state: owner.state } : null;
 };
 
 export const retryEffectRow: Settle<{ reason: string; delayMs: number }> = async (brain, claim) => { await settle(brain, 'retryEffectRow', claim); };
