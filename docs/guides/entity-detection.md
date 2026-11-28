@@ -137,6 +137,9 @@ is_notable(entity):
 | Media referenced | `brain/media/{type}/{slug}.md` |
 | Article ABOUT the user | `brain/media/writings/{slug}.md` |
 
+On `gbrain-base-v2`, write `type: concept` with `subtype: original` for
+`originals/` and `subtype: idea` for `ideas/`.
+
 This table is the single home for the capture/filing taxonomy. Other guides
 ([idea-capture](idea-capture.md) especially) link here rather than carrying
 their own copy.

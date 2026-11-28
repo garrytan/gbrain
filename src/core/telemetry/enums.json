@@ -1,0 +1,118 @@
+{
+  "event_type": [
+    "setup",
+    "upgrade",
+    "doctor",
+    "daily_rollup",
+    "consent"
+  ],
+  "os": [
+    "linux",
+    "darwin",
+    "win32",
+    "freebsd",
+    "other"
+  ],
+  "arch": [
+    "x64",
+    "arm64",
+    "other"
+  ],
+  "install_method": [
+    "bun_global",
+    "release_binary",
+    "git_clone",
+    "npm",
+    "unknown"
+  ],
+  "deployment": [
+    "local_pglite",
+    "local_postgres",
+    "self_hosted_http",
+    "thin_client_hosted",
+    "thin_client_self_hosted",
+    "unknown"
+  ],
+  "source": [
+    "live",
+    "test",
+    "ci",
+    "eval",
+    "capy",
+    "other"
+  ],
+  "tier": [
+    "anonymous",
+    "community"
+  ],
+  "harness": [
+    "claude_code",
+    "codex",
+    "openclaw",
+    "hermes",
+    "cursor",
+    "opencode",
+    "pi",
+    "hosted",
+    "other"
+  ],
+  "step": [
+    "brain_create",
+    "mcp_register",
+    "hooks",
+    "instructions",
+    "wiring_smoke",
+    "done"
+  ],
+  "outcome": [
+    "success",
+    "error",
+    "abort"
+  ],
+  "embedding": [
+    "none",
+    "configured"
+  ],
+  "channel": [
+    "stable",
+    "latest",
+    "tag",
+    "unknown"
+  ],
+  "score_band": [
+    "0-29",
+    "30-49",
+    "50-69",
+    "70-89",
+    "90-100"
+  ],
+  "mode": [
+    "manual",
+    "autopilot",
+    "alert"
+  ],
+  "brain_size_band": [
+    "0",
+    "1-99",
+    "100-999",
+    "1k-9.9k",
+    "10k+"
+  ],
+  "transport": [
+    "stdio",
+    "http",
+    "none"
+  ],
+  "answer": [
+    "anonymous",
+    "community"
+  ],
+  "crash_class": [
+    "Error",
+    "TypeError",
+    "RangeError",
+    "SyntaxError",
+    "ReferenceError",
+    "other"
+  ]
+}

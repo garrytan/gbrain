@@ -75,7 +75,7 @@ pub(super) fn fence_columns(out: &mut Map<String, Value>, r: &FactRecord) {
     out.insert("visibility".into(), json!(r.visibility));
     out.insert("notability".into(), json!(r.notability));
     out.insert("context".into(), json!(r.context));
-    out.insert("valid_from".into(), json!(iso(r.valid_from_us)));
+    out.insert("valid_from".into(), json!(r.valid_from().map(iso)));
     out.insert("valid_until".into(), json!(r.valid_until_us.map(iso)));
     out.insert("source".into(), json!(r.source));
     out.insert("confidence".into(), json!(real(r.confidence)));

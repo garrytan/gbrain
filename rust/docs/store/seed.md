@@ -110,6 +110,11 @@ keyset batches in key order. The relations come in groups, each in its own file 
 | `wake_crons`, `wake_cron_runs`, `wake_forgets`, `wake_terms_acceptances` | the row with its id and time, and the pending forget index | a second pending forget of one user is `constraint_violation` |
 | `mcp_request_log_rollup` | the lifetime tally per token | a null token name is the key `''`, as the family keys it |
 | `chronicle_page_state` | the ledger row with every column and its original `decided_at` and `updated_at` (`chronicle_ledger/seeded.rs`), not run through `upsertChronicleRow`'s decision rewrite | the source, then the page, must be seeded, as `upsertChronicleRow` checks them: else `source_not_found` or `page_not_found`, and nothing is written; deleting a page removes its rows and their digest entries |
+| `entity_identities` | the membership of a page in an entity group: group, source, confidence, author, time and the canonical flag | the store keys a membership by its page, so the serial `id` is not kept (named unmapped). The page must exist. A page that already holds the same source's membership is skipped (a retried batch); one that holds a membership of another source stops the import (`invalid_argument`): the store keeps one membership per page, and a loss would not stop a swap |
+| `link_relationships` | the derived state of a relationship (`from`, `to`, `link_type`, `scope`): ranges, status, dates, counts, evidence hash, `recorded_at`, `retired_at` and `refreshed_at` | both pages must exist. The row is stored under the source of its from page, as the family keys it. `refreshed_at` is the primary's, not the seed's clock. A range bound may be the explicit `-infinity` (lower) or `infinity` (upper), kept apart from an omitted bound as Postgres prints it; an exclusive `(-infinity` or inclusive `infinity]` bound is refused |
+| `link_transitions` | the dated start or end of a relationship, with its id, producer, origin page, `line_hash`, `link_source` and `created_at` | both pages, and the origin page when set, must exist. The row is stored under the source of its from page, where the evidence reads look, and keeps its own source id in the record. Another id with the identity of a held row (`origin, from, to, link_type, link_source, kind, occurred_on, producer`) is skipped. The transition id counter is raised past the highest id copied |
+| `fact_purges` | the purge tombstone (source, visibility, subject, claim hash) with its request id, actor, reason and time | the source must exist; a held key is skipped. The guard reads it for every claim saved or updated, so a purged claim stays refused. The relation is listed before `facts`, so a reconcile removes a tombstone the primary cleared before it imports the claim it guarded. The tombstone keeps only the claim hash the primary computed: when the primary's `lower()` or `[[:space:]]` differs from PGLite's for some code point, the fingerprint probe fails while any tombstone exists (`fact_purges_unverifiable`), because the claim text is gone and cannot be checked |
+| `access_tokens` | the bearer token with every column the credential family keeps: hash, name, scopes, grants, grant revision, floor, member binding, attest columns and times | the table's `CHECK` lists and the unique `token_hash` apply (`constraint_violation`, never naming a value). A token with no `created_at` is stored at time 0 (`token_without_created_at`). A `text[]` column with a NULL element (`{read,NULL}`) is refused (`invalid_argument`): the primary reads some grant arrays as a whole, so dropping the element could widen a grant. A NULL column stays NULL and an empty array stays empty. The follow removes a stale token that holds the hash of a row it imports under another id, with its digest entry, unless the store holds a newer generation of it. The hash is stored once, in the token record: the digest entry of a token holds its id only, and no loss, error or `seed.json` field carries a hash |
 
 Every id counter and sequence of these families is raised past the highest id copied. A row whose source or page is
 missing is `source_not_found` or `page_not_found`.
@@ -135,6 +140,7 @@ every other op are machine-local.
 | `search_telemetry`, `mcp_request_log`, `chat_usage_log`, `access_read_log`, `ingest_log`, `page_retrievals`, `retrieval_events`, `retrieval_event_pages`, `retrieval_event_links`, `eval_*`, `migration_impact_log`, `think_ab_results`, `take_nudge_log` | logs and counters start at zero: `gbrain search stats`, per-client usage in `gbrain auth`, `get_usage`. Lifetime request totals carry in `mcp_request_log_rollup` |
 | `query_cache`, `code_traversal_cache`, `conversation_parser_llm_cache`, `dream_verdicts`, `take_grade_cache`, `extract_rollup_7d`, `page_view_digests`, `mention_gazetteer_entries`, `page_generation_clock` | caches the next read or run rebuilds; `dream_verdicts` means each transcript is triaged again (a paid call); cached query results recompute (`page_generation_clock` is the query cache's clock, and no store read uses it) |
 | `page_segment_texts`, `page_body_manifest`, `page_segment_derivations`, `page_segment_derivation_purges`, `page_segment_derivation_purge_pages`, `page_body_staging*` | a segmented page reads as its shell, without its text or its sealed keyword vector (`segmented_body`) |
+| `page_write_guards` | a lock anchor, with no read that differs. A page write inserts the row (`INSERT ... ON CONFLICT DO NOTHING`) and then selects it `FOR UPDATE` (`src/core/page-state/guards.ts`); the row holds nothing a read returns. The store holds the same lock on the page key inside the transaction (`transactions.rs`, `lockPageKeys` and `hold_page_keys`). Its kind in `seed.json` is `lock_anchor` |
 | `persistence_*`, `write_gate_holds`, `write_gate_receipts`, `op_checkpoints` (except the rows below), `op_checkpoint_paths`, `gbrain_cycle_locks`, `sync_notifier_*`, `sync_wanted_markers`, `session_context_state`, `extract_atoms_*_state`, `page_mention_state`, `mention_index_status`, `reason_purge_tombstones`, `planner_stats_*`, `trust_policy_state`, `file_migration_ledger`, `engine_writer_observations`, `engine_writer_sessions`, `engine_writer_coverage_gaps` | the write path, locks, checkpoints and run state of the primary machine; an interrupted bulk operation starts again; the swap's writer evidence starts empty |
 
 ### Gaps: not served by the Rust store on master
@@ -148,20 +154,18 @@ relation when that family reaches master, in the same PR as the store bridge tha
 | `access_rules`, `access_policy_state`, `access_policy_revisions`, `access_policy_migrations`, `access_pending_coverage` | `rust-engine/access-rule-writes-3`, `rust-engine/access-reads-rust`, `rust-engine/chronicle-decision-rust` | folder-restricted pages read as unrestricted |
 | `access_member_links` | `rust-engine/admin-unowned-rust` | attested outside identities are unlinked from members |
 | `access_member_sources`, `access_handovers` | none found | personal sources are unbound; handover undo is lost |
-| `access_tokens` | partial on `rust-engine/main`; full on `rust-engine/access-rule-writes-3` | issued bearer tokens do not authorize |
 | `oauth_tokens` | `rust-engine/access-rule-writes-3`, `rust-engine/access-reads-rust` | issued OAuth tokens do not authorize |
 | `oauth_codes` | `rust-engine/oauth-http-rust` | an OAuth handshake in flight restarts |
 | `oauth_grant_audit`, `guest_marks`, `guest_promotions` | none found | grant audit and guest promotion history are not listed |
 | `context_volunteer_events`, `retrieval_feedback` | `rust-engine/collate-equal` | doctor volunteer counts and feedback history start empty |
 | `chronicle_judge_reservations` | `rust-engine/main` (`chronicle_ledger.rs`; not seeded) | the 24-hour judge cap restarts at zero |
 | `page_embedding_budget` | `rust-engine/main` | held large pages could embed without consent |
-| `entity_identities`, `link_relationships`, `link_transitions`, `fact_purges` | `rust-engine/main` | entity identity unions, link temporal state and the fact purge guard are missing |
 | `derivation_inputs`, `needs_rederive` | `rust-engine/derivation-trust`; `derivation_inputs` also on `rust-engine/sweep-facts-rust` | rows derived from owner-only inputs, and rows the primary hides for re-derivation, show |
 | `take_purges` | `rust-engine/page-purge-rust` (with the `putPage` purged-content guard) | a purged take or page can be written again |
 | `sync_identity_downgrades` (`op_checkpoints` rows of op `sync-identity-downgrade`) | `rust-engine/main`, `rust-engine/identity-downgrade-rust` | pending rename repairs are lost: the purge of deleted pages no longer holds the old page, so the repair can find nothing to restore |
 | `budget_ledger`, `budget_reservations` | key tag only on `rust-engine/main` | the resolver's daily budget restarts at zero |
 | `retrieval_weights` | key tag only on `rust-engine/main` | ranking: every page weight reads 0.5, so the feedback boost is off |
-| `belief_*`, `core_edit_notices`, `derived_generation_activations`, `derived_generation_attempts`, `derived_generation_valve`, `drift_decisions`, `entity_identity_reviews`, `git_canonical_brain`, `ingest_applied_captures`, `link_edge_proposals`, `loop_suppressions`, `memory_proposals`, `page_derivation_spend`, `page_extraction_state`, `page_label_guards`, `page_write_guards`, `pinned_questions`, `question_evidence`, `secret_store`, `secret_store_occurrence`, `shared_skill_*`, `source_ingestion_receipts`, `take_domain_assignments`, `take_horizons`, `take_proposals` | none on master or `rust-engine/main` | each is user data, security or spend state the primary reads |
+| `belief_*`, `core_edit_notices`, `derived_generation_activations`, `derived_generation_attempts`, `derived_generation_valve`, `drift_decisions`, `entity_identity_reviews`, `git_canonical_brain`, `ingest_applied_captures`, `link_edge_proposals`, `loop_suppressions`, `memory_proposals`, `page_derivation_spend`, `page_extraction_state`, `page_label_guards`, `pinned_questions`, `question_evidence`, `secret_store`, `secret_store_occurrence`, `shared_skill_*`, `source_ingestion_receipts`, `take_domain_assignments`, `take_horizons`, `take_proposals` | none on master or `rust-engine/main` | each is user data, security or spend state the primary reads |
 
 ### Gap columns (`seed::GAP_COLUMNS`)
 
@@ -191,14 +195,11 @@ Its Rust family must reach master first. "Branch" is the newest branch with a re
 | Gap | Rows A / B / C | Rust family | Branch, head | On `rust-engine/main` |
 | --- | --- | --- | --- | --- |
 | `git_canonical_brain` | 1 / 1 / 1 | none | none | no |
-| `page_write_guards` | 0 / 32 / 7 | none (`write_guards.rs` holds other guards) | none | no |
 | `shared_skill_state` | 1 / 1 / 1 | `shared_skill_members.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
 | `shared_skill_heads`, `shared_skill_revisions`, `shared_skill_policies`, `shared_skill_policy_audit` | 3, 3, 1, 1 / same / 0 | `shared_skill_catalog.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
 | `shared_skill_packs` | 1 / 1 / 0 | `shared_skill_publication.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
 | `chronicle_page_state` | 0 / 4 / 0 | `chronicle_ledger.rs`, `chronicle_state.rs` | `rust-engine/main` (now seeded: `seed/chronicle.rs`) | yes |
-| `link_relationships`, `link_transitions` | 0 / 68, 7 / 0 | `link_queries/link_temporal.rs` | `rust-engine/main` 0ce95bbf7f | yes |
 | `sync_identity_downgrades` | 0 / 1 / 0 | `persistence/identity_downgrade.rs` (reader); `persistence/op_checkpoint.rs` (writer, on main) | `rust-engine/identity-downgrade-rust` 73096ca1f8 | writer only |
-| `access_tokens` | 0 / 3 / 2 | `jobs/access_tokens.rs` | `rust-engine/main` 0ce95bbf7f (newer: `rust-engine/page-mutation-reads` cb983366e3) | yes |
 | `oauth_tokens` | 0 / 3 / 1 | `jobs/oauth_tokens.rs` | `rust-engine/write-path-stops-rust` d1ec6f64c1 | no |
 | `oauth_grant_audit` | 0 / 3 / 0 | `jobs/client_grants.rs` | `rust-engine/admin-followups-rust` 8e72de1bb6 | no |
 | `access_members`, `access_groups`, `access_group_members` | 0 / 2, 1, 2 / 0 | `access_members.rs` | `rust-engine/coll-pa3` 9e0c35e58c | no |
@@ -207,7 +208,6 @@ Its Rust family must reach master first. "Branch" is the newest branch with a re
 | `access_member_sources` | 0 / 1 / 0 | none | none | no |
 | `loop_suppressions` | 0 / 2 / 2 | `facts/loops/mutes.rs` | `rust-engine/repair-rust` 90a7284da0 | no |
 | `belief_events`, `belief_commit_marks`, `belief_page_lifetimes` | 0 / 24, 22, 18 / 0 | `trust/belief_events.rs`, `trust/belief_lifetimes.rs` | `rust-engine/page-purge-rust` 4bcab3a4f1 | no |
-| `fact_purges` | 0 / 1 / 0 | `facts/purge_ledger.rs` | `rust-engine/main` 0ce95bbf7f | yes |
 | `take_purges` | 0 / 1 / 0 | `facts/take_purges.rs` | `rust-engine/page-purge-rust` 4bcab3a4f1 | no |
 | `take_horizons` | 0 / 1 / 0 | `takes/horizons.rs` | `rust-engine/page-purge-rust` 4bcab3a4f1 | no |
 | `guest_sources` | 0 / 1 / 0 | `guest_sources.rs` | `rust-engine/guest-sources-rust` (copied by the seed since then) | no |
@@ -215,7 +215,9 @@ Its Rust family must reach master first. "Branch" is the newest branch with a re
 | `context_volunteer_events` | 0 / 1 / 0 | `volunteer_events.rs` | `rust-engine/collate-equal` 3a2532707c | no |
 
 `page_generation_clock` (1 row on every brain) was a gap in this measurement and is now left behind on purpose (a
-cache). No measured brain wrote rows to the other 39 gap tables. Those tables need a paid model key, a browser or tty step,
+cache). Since the measurement, `link_relationships` (0 / 68 / 0 rows), `link_transitions` (0 / 7 / 0), `access_tokens`
+(0 / 3 / 2) and `fact_purges` (0 / 1 / 0) are copied, `entity_identities` (empty on all three brains) is copied too,
+and `page_write_guards` (0 / 32 / 7) is left behind on purpose as a lock anchor (see above), so none of them counts as a gap. No measured brain wrote rows to the other 38 gap tables. Those tables need a paid model key, a browser or tty step,
 or an event the run did not make, so this measurement does not clear them.
 
 ## What the seed does not keep
@@ -240,12 +242,14 @@ ids, chunk `created_at`). `losses` counts, by reason, the rows dropped and the v
 | `spend_hold_job_dropped` | the job of a spend hold (stored as null: jobs are not copied) |
 | `segmented_version_body` | the segments a segmented page version references (its generation and size are kept) |
 | `legacy_version_columns` | a page version with NULL `title`, `type`, `tags`, `knowledge_revision` or `is_deleted`: the store holds an empty value |
+| `token_without_created_at` | the creation time of an access token whose `created_at` is NULL (the column is nullable): stored at time 0 |
 
 Some unmapped columns are expected, not losses:
 
 | Column | Why it shows in `unmapped_columns` | Readers |
 | --- | --- | --- |
 | `pages.generation` | unmapped, known value: the primary's cache clock; the Rust store keeps 1 | the `query_cache` freshness check (`query_cache` is not copied) and the dedupe plan fence (`identity-decisions.ts`, applied only when `p.generation = pl.generation`), which a Rust identity-decisions family must replace. The store refuses `applyIdentityDecisions` today, so no read differs yet |
+| `pages.content_author`, `pages.content_author_hash` | unmapped, any value: who wrote the page's live text and the hash they wrote (migration v342, GST-4056); the Rust store keeps neither | the importer-trust reads (`identity/speaker-owner.ts`, `transcripts/importer-provenance.ts`) run SQL on the primary only, so no store read differs yet; a Rust family serving them must keep both columns first |
 
 ## The seed calls
 
@@ -302,7 +306,8 @@ store takes both as lowercase hex of whole bytes and a digest is exactly 32 byte
 The relations `allocatorCheck` reports are those whose import raises an id counter: `pages`, `content_chunks`,
 `links`, `timeline_entries`, `facts`, `takes`, `page_versions`, `files`, `code_edges_chunk`, `code_edges_symbol`,
 `open_loops`, `trust_proposals`, `trust_allow_rules`, `wanted_links`, `mcp_spend_log`, `decide_calibrations`, `decision_receipts`,
-`decide_proposals`, `decide_review_proposals`, `calibration_profiles`, `wake_cron_runs` and `wake_forgets`. Every
+`decide_proposals`, `decide_review_proposals`, `calibration_profiles`, `wake_cron_runs`, `wake_forgets` and
+`link_transitions`. Every
 write that stores a row with an id (`importRelation`, `replaceRelationRows` and `replaceInterval` alike) raises its
 counter past that id, also for a row the store drops (a retired or segment chunk), so the store never hands out an id
 the primary used. A delete does not lower a counter.
@@ -375,8 +380,10 @@ relation's follow spec: `pages` (source, slug), `tags` (page, tag), `content_chu
 type, source, origin), `slug_aliases`, `page_aliases`, `facts` (the markdown row fence and the stint index), `timeline_entries` (page, date, summary, source), `takes`
 (page, row), `raw_data`, `files` (storage path), `open_loops`, `wanted_links`, `trust_proposals` (the pending key),
 `trust_allow_rules` (source, prefix, family and `removed_at`: the active key),
-`code_edges_chunk`, `code_edges_symbol`, `decide_proposals`, `decide_review_proposals` and `wake_forgets`. The holder is
-found through the digest entries' identity columns, scanning the relation's entries once per call that has a row to
+`code_edges_chunk`, `code_edges_symbol`, `decide_proposals`, `decide_review_proposals`, `wake_forgets`, `entity_identities` (source, page) and
+`link_transitions` (origin, from, to, type, link source, kind, day, producer). The holder is
+found through the digest entries' identity columns (an `access_tokens` row that takes the hash of a stored token finds that
+token by the hash itself, which no digest entry holds), scanning the relation's entries once per call that has a row to
 check (a row that moves a key, or collides), so a swap costs a pass over the relation. A stored row that has no digest entry (imported without digests) cannot be found:
 the collision stays an error, except for a row with no entry of its own, which replaces the stored row it names by its
 primary key as before.
@@ -387,7 +394,8 @@ primary key as before.
   entry go. Rows that depend on it go or change the way the primary's foreign keys say: `ON DELETE CASCADE` removes them
   and their digest entries, `SET NULL` clears the column. Deleting a page removes its tags, chunks (and their
   code edges), links from and to it, timeline entries, versions, raw data, takes (and the citations of those takes),
-  wanted links and facts reconcile mark, and the digest entries of those rows go with them.
+  wanted links, facts reconcile mark, entity identity memberships, link relationship state and link transitions, and the
+  digest entries of those rows go with them.
 - Replace (the row changed): the old row is removed or overwritten in place and the new one stored, and its dependents
   stay. Replacing a page keeps its chunks, links and tags readable. Where a relation's importer
   overwrites a different stored value itself (`sources`, `config`), the row is stored over the old one.

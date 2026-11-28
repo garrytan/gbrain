@@ -31,6 +31,7 @@ import type { LoopsExclusionPolicy } from './loops-exclusion.ts';
 import type { PrivateSenders } from './ingest-tiers.ts';
 import { CredentialError } from '../creds/errors.ts';
 import { jsonbSafeJson, truncateUtf8 } from '../text-safe.ts';
+import { CONNECTOR_AUTHOR_PREFIX } from '../persistence/content-author-schema.ts';
 
 export function myAddressSet(entry: CredentialEntry): Set<string> {
   const out = new Set<string>();
@@ -99,6 +100,8 @@ export interface GoogleSyncDeps {
   cfg: GoogleSourceConfig;
   opts: SyncOpts;
   entry: CredentialEntry;
+  /** #10094: who the owner is in reply-owed loop detection only: myAddressSet(entry) plus loops.owner_addresses, read once per sync. Ingest tiers, grace holds and paid extraction (sweep and catch-up) keep myAddressSet(entry). */
+  myAddresses: Set<string>;
   log: (msg: string) => void;
   /**
    * #5349: one forward-progress note per imported item. The progress-aware
@@ -118,6 +121,8 @@ export interface GoogleSyncDeps {
   graceBackfillSeeded?: boolean;
   /** The source's private-senders list, loaded once per run before any write (ingest-tiers.ts). */
   privateSenders?: PrivateSenders | null;
+  /** #9389: rewrite each fetched Gmail body through gmail-redact.ts before anything reads it (`google.gmail.redact_credentials`). */
+  redactCredentials?: boolean;
 }
 
 export type ActivePack = { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined;
@@ -225,6 +230,7 @@ export async function importRendered(
       noEmbed: true, // embeds handled by the size gate below, like sync
       sourceId: deps.sourceId,
       ...(activePack ? { activePack } : {}),
+      content_author: `${CONNECTOR_AUTHOR_PREFIX}google`,
     };
     const result = databaseOnly
       ? await importFromContent(deps.engine, slug, markdown, { ...opts, sourcePath: relPath, preserveGateMarkers: true, holdNoncanonicalPrivate: true })

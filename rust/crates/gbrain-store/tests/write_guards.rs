@@ -178,6 +178,7 @@ fn stamp_page_ingest_sets_the_provenance_and_refuses_a_time_that_is_not_iso() {
         source_kind: Some("import".into()),
         ingested_via: Some("parity".into()),
         ingested_at: Some(at.into()),
+        keep_ingested_at: false,
     };
     store
         .stamp_page_ingest("notes/stamped", &stamp("2026-01-02T03:04:05.678Z"))
@@ -197,6 +198,14 @@ fn stamp_page_ingest_sets_the_provenance_and_refuses_a_time_that_is_not_iso() {
     store
         .stamp_page_ingest("notes/missing", &stamp("2026-01-02T03:04:05.678Z"))
         .unwrap();
+    // GST-4056: a page that already has an ingest time keeps it when the stamp says so; the kind and channel still move.
+    let mut keep = stamp("2030-05-06T07:08:09.000Z");
+    keep.keep_ingested_at = true;
+    keep.ingested_via = Some("later".into());
+    store.stamp_page_ingest("notes/stamped", &keep).unwrap();
+    let kept = page(&store, "notes/stamped");
+    assert_eq!(kept["ingested_at"], "2026-01-02T03:04:05.678000Z");
+    assert_eq!(kept["ingested_via"], "later");
 }
 
 #[test]

@@ -129,7 +129,7 @@ fn conflict_pairs(
             Some(Claim {
                 row: r,
                 value,
-                bucket: claim_bucket(r.claim_period.as_deref(), r.valid_from_us),
+                bucket: claim_bucket(r.claim_period.as_deref(), r.at_us()),
             })
         })
         .collect();
@@ -173,8 +173,8 @@ fn conflict_pairs(
                 {
                     continue;
                 }
-                let older = o.row.valid_from_us < n.row.valid_from_us
-                    || (o.row.valid_from_us == n.row.valid_from_us && o.row.id < n.row.id);
+                let older = o.row.at_us() < n.row.at_us()
+                    || (o.row.at_us() == n.row.at_us() && o.row.id < n.row.id);
                 if !older {
                     continue;
                 }

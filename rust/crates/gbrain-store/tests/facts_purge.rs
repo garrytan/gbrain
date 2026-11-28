@@ -453,7 +453,8 @@ fn unfenced_rows_and_held_fence_rows_read_the_fence_state() {
     assert_eq!(rows[1]["attributed_to"], "user");
     assert_eq!(rows[1]["confidence"].as_f64(), Some(1.0));
     assert_eq!(rows[1]["valid_until"], Value::Null);
-    assert!(rows[1]["valid_from"].is_string());
+    // An undated fact keeps no valid_from (master #10288).
+    assert!(rows[1]["valid_from"].is_null());
     let one = b
         .list_unfenced_fact_rows(&args::<UnfencedQuery>(json!({ "sourceId": "default" })))
         .unwrap();

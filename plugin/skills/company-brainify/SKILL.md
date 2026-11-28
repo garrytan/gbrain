@@ -1,6 +1,7 @@
 ---
 name: company-brainify
 version: 1.0.0
+audience: owner
 description: >
   Extract a sanitized shared team/company brain from a personal brain.
   Strips internal ratings, compensation, performance assessments, retention

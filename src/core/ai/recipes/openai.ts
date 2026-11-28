@@ -68,8 +68,8 @@ export const openai: Recipe = {
       max_batch_tokens: 100_000,
     },
     expansion: {
-      models: ['gpt-5.6-luna', 'gpt-4o-mini'],
-      cost_per_1m_tokens_usd: 0.20, // gpt-5.6-luna baseline (price cut 2026-07-30)
+      models: ['gpt-6-luna', 'gpt-5.6-luna', 'gpt-4o-mini'],
+      cost_per_1m_tokens_usd: 0.10, // gpt-6-luna baseline
       price_last_verified: '2026-08-29',
     },
     chat: {
@@ -82,14 +82,14 @@ export const openai: Recipe = {
       // gpt-5.2 stays listed: the cross-modal + takes-quality eval judge
       // panels pin it for baseline reproducibility, and their recipe-
       // consistency guards require panel models to be listed entry points.
-      models: ['gpt-5.6', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.2', 'gpt-4o-mini'],
+      models: ['gpt-6.2-sol', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-5.6', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.2', 'gpt-4o-mini'],
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: openaiModelSupportsPromptCache,
       max_context_tokens: 1_050_000, // gpt-5.6 family window (GA 2026-07-09)
-      cost_per_1m_input_usd: 2.50, // gpt-5.6-terra baseline (the reasoning-tier default)
-      cost_per_1m_output_usd: 15.0,
-      price_last_verified: '2026-08-17',
+      cost_per_1m_input_usd: 2.00, // gpt-6.2-sol baseline (the reasoning-tier default)
+      cost_per_1m_output_usd: 10.0,
+      price_last_verified: '2026-11-22',
     },
   },
   setup_hint: 'Get an API key at https://platform.openai.com/api-keys, then `export OPENAI_API_KEY=...`',

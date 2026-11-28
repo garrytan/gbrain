@@ -28,7 +28,7 @@ import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { makeStubClient } from './helpers/longmemeval-stub.ts';
 import { readerConfigHash, resolveReaderConfig } from '../src/eval/longmemeval/reader.ts';
 
-const READER_PINS = { reader_config_hash: readerConfigHash(resolveReaderConfig(), 'anthropic:claude-sonnet-4-6') };
+const READER_PINS = { reader_config_hash: readerConfigHash(resolveReaderConfig(), 'anthropic:claude-sonnet-5-5') };
 
 /** Run with process.exit + stderr captured (the harness exits non-zero on gates). */
 async function runCapturing(args: string[], runOpts: Parameters<typeof runEvalLongMemEval>[1]): Promise<{ code: number | null; stderr: string }> {

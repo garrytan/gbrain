@@ -263,7 +263,23 @@ pub(crate) struct FactRecord {
     pub receipt: WriteReceipt,
 }
 
+/// `valid_from` NULL (#10288): the event date is unknown. The row keeps its `valid_from_us` as a plain `i64` (the
+/// stored record does not change shape) and this value, which no real date reaches, means NULL. Read it through
+/// [`FactRecord::valid_from`] or [`FactRecord::at_us`], never as a date: it sorts before every real time, as a
+/// SQL NULL never does.
+pub(crate) const UNDATED_US: i64 = i64::MIN;
+
 impl FactRecord {
+    /// `valid_from`, or `None` when the event date is unknown.
+    pub(crate) fn valid_from(&self) -> Option<i64> {
+        (self.valid_from_us != UNDATED_US).then_some(self.valid_from_us)
+    }
+
+    /// `COALESCE(valid_from, created_at)`: the event date, or the save time when it is unknown.
+    pub(crate) fn at_us(&self) -> i64 {
+        self.valid_from().unwrap_or(self.created_at_us)
+    }
+
     /// The stored tier (`storedTrustTier`).
     pub(crate) fn tier(&self) -> TrustTier {
         TrustTier::stored(Some(&self.trust_tier))
@@ -404,7 +420,7 @@ impl FactRecord {
         out.insert("visibility".into(), json!(self.visibility));
         out.insert("notability".into(), json!(self.notability));
         out.insert("context".into(), json!(self.context));
-        out.insert("valid_from".into(), json!(iso(self.valid_from_us)));
+        out.insert("valid_from".into(), json!(self.valid_from().map(iso)));
         out.insert("valid_until".into(), json!(time(self.valid_until_us)));
         out.insert("expired_at".into(), json!(time(self.expired_at_us)));
         out.insert("superseded_by".into(), json!(self.superseded_by));
@@ -1159,7 +1175,7 @@ fn js_number(n: f64) -> String {
 // Arguments.
 
 /// One `NewFact` (plus the fence columns `insertFacts` reads). Times are ISO text; the
-/// TypeScript member fills `valid_from` and computes `value_hash`.
+/// TypeScript member computes `value_hash`; a missing `valid_from` is unknown (NULL, #10288).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct NewFactInput {
@@ -1269,6 +1285,8 @@ pub struct FactQuery {
     pub offset: f64,
     pub since: Option<String>,
     pub event_time: bool,
+    /// `includeUndated`: an event-time read keeps the facts whose `valid_from` is unknown, dated by `created_at` (#10288).
+    pub include_undated: bool,
     pub after: Option<KeysetAfter>,
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
@@ -1460,7 +1478,7 @@ fn new_record(
         visibility: input.visibility.clone().unwrap_or_else(|| "private".into()),
         notability: input.notability.clone().unwrap_or_else(|| "medium".into()),
         context: input.context.clone(),
-        valid_from_us: opt_time(op, "valid_from", &input.valid_from)?.unwrap_or(now),
+        valid_from_us: opt_time(op, "valid_from", &input.valid_from)?.unwrap_or(UNDATED_US),
         valid_until_us: opt_time(op, "valid_until", &input.valid_until)?,
         source,
         source_session: input.source_session.clone(),
@@ -1746,9 +1764,9 @@ fn page_of(
 }
 
 /// A fact's newest-first ranking time: its `valid_from`, or its `created_at` when it is dated
-/// after `now` (`CASE WHEN valid_from > now() THEN created_at ELSE valid_from END`).
+/// after `now` or has no date (`CASE WHEN valid_from IS NULL OR valid_from > now() THEN created_at ELSE valid_from END`).
 pub(crate) fn ranked_time(r: &FactRecord, now: i64) -> i64 {
-    if r.valid_from_us > now {
+    if r.valid_from().is_none_or(|from| from > now) {
         r.created_at_us
     } else {
         r.valid_from_us
@@ -1969,14 +1987,19 @@ impl Store {
         let offset = count_arg(OP, "offset", q.offset)?;
         let since = time_arg(OP, "since", q.since.as_deref().unwrap_or(""))?;
         let event_time = q.event_time;
+        let include_undated = q.include_undated;
         let time = move |r: &FactRecord| {
             if event_time {
-                r.valid_from_us
+                r.at_us()
             } else {
                 r.created_at_us
             }
         };
-        self.list_facts(OP, q, time, true, offset, move |r| time(r) >= since, false)
+        // `AND valid_from IS NOT NULL` unless `includeUndated`, an event-time read only (#10288).
+        let admit = move |r: &FactRecord| {
+            (!event_time || include_undated || r.valid_from().is_some()) && time(r) >= since
+        };
+        self.list_facts(OP, q, time, true, offset, admit, false)
     }
 
     /// `listFactsKeyset`: rows after the `(created_at, id)` keyset, oldest first, each with
@@ -2223,8 +2246,8 @@ impl Store {
                         .is_some_and(|m| row.claim_metric.as_ref() != Some(m))
                     || (kind == "metric" && row.claim_metric.is_none())
                     || (kind == "event" && row.event_type.is_none())
-                    || since.is_some_and(|s| row.valid_from_us < s)
-                    || until.is_some_and(|u| row.valid_from_us > u)
+                    || since.is_some_and(|s| row.at_us() < s)
+                    || until.is_some_and(|u| row.at_us() > u)
                     || hidden_by_deleted_page(&*read, &row)?
                     || hidden_by_quarantine(&*read, &row)?
                     || hidden_by_rederive(&*read, &row)?
@@ -2235,14 +2258,14 @@ impl Store {
                 rows.push(row);
             }
         }
-        let mut newest = page_of(rows, |r| r.valid_from_us, true, 0, limit);
+        let mut newest = page_of(rows, |r| r.at_us(), true, 0, limit);
         newest.reverse();
         Ok(newest
             .iter()
             .map(|r| {
                 json!({
                     "fact_id": r.id,
-                    "valid_from": iso(r.valid_from_us),
+                    "valid_from": iso(r.at_us()),
                     "valid_until": r.valid_until_us.map(iso),
                     "metric": r.claim_metric,
                     "value": r.claim_value,
@@ -2768,6 +2791,35 @@ mod tests {
 
     fn ids(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// #10288: an undated row (`valid_from` NULL) reads as the save time wherever SQL says `COALESCE(valid_from, created_at)`.
+    #[test]
+    fn an_undated_fact_has_no_valid_from_and_reads_as_its_save_time() {
+        let undated = FactRecord {
+            valid_from_us: UNDATED_US,
+            created_at_us: 700,
+            ..row(1, "default", false)
+        };
+        assert_eq!(undated.valid_from(), None);
+        assert_eq!(undated.at_us(), 700);
+        assert_eq!(undated.to_json(false, false)["valid_from"], Value::Null);
+        // Ranked by when it was saved, never by the sentinel.
+        assert_eq!(ranked_time(&undated, 1_000), 700);
+        let dated = FactRecord {
+            valid_from_us: 400,
+            created_at_us: 700,
+            ..row(2, "default", false)
+        };
+        assert_eq!(dated.valid_from(), Some(400));
+        assert_eq!(dated.at_us(), 400);
+        assert_eq!(ranked_time(&dated, 1_000), 400);
+        // A date after now ranks by the save time, as before.
+        assert_eq!(ranked_time(&dated, 300), 700);
+        // The record shape is unchanged: the sentinel survives a store round trip.
+        let back: FactRecord =
+            serde_json::from_slice(&serde_json::to_vec(&undated).unwrap()).unwrap();
+        assert_eq!(back.valid_from(), None);
     }
 
     #[test]

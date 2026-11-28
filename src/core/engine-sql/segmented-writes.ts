@@ -35,6 +35,8 @@ export interface SegmentedRechunkPageRow {
   corpus_generation: string | null; knowledge_revision: string; sealed: boolean; updated_us: string; deleted_at: string | null;
   content_hash: string; body_bytes: number | string; truth_bytes: number | string; body_lines: number | string; segment_count: number;
   segmenter_version: number; truth_lead: string | null; timeline_lead: string | null;
+  /** GST-4056: the author the page's text is attributed to, while it is still the text that author wrote (absent from the Rust store, which keeps no authorship). */
+  content_author?: string | null;
 }
 
 /** One visible chunk row of an occurrence, as a re-chunk compares it with today's chunker. */
@@ -158,7 +160,8 @@ export async function listSegmentedRechunkCandidates(tx: Raw, chunkerVersion: nu
 const RECHUNK_PAGE_SQL = `SELECT id, slug, source_id, title, type, page_kind, frontmatter, body_generation, body_flags, chunker_version,
     contextual_retrieval_mode, corpus_generation, knowledge_revision::text AS knowledge_revision,
     (text_projection_revision = knowledge_revision) IS TRUE AS sealed, (extract(epoch FROM updated_at) * 1000000)::bigint::text AS updated_us, deleted_at, content_hash, body_bytes, truth_bytes,
-    body_lines, segment_count, segmenter_version, truth_lead, timeline_lead
+    body_lines, segment_count, segmenter_version, truth_lead, timeline_lead,
+    CASE WHEN content_author_hash = content_hash THEN content_author END AS content_author
   FROM pages WHERE id=$1 AND body_storage='segmented'`;
 
 /** Segmented page `pageId` as a re-chunk reads it, deleted or not; null when there is no such segmented page. */

@@ -41,7 +41,7 @@ export const stampPageIngest: StoreMember<[slug: string, stamp: PageIngestStamp]
   const at = stamp.ingestedAt == null ? null : new Date(stamp.ingestedAt);
   if (at && Number.isNaN(at.getTime())) throw new Error(`stampPageIngest: invalid ingested_at ${JSON.stringify(stamp.ingestedAt)}`);
   await storeCall({ member: 'stampPageIngest', slug, sourceId: stamp.sourceId }, () => brain.stampPageIngest(slug, {
-    sourceId: stamp.sourceId, sourceKind: stamp.sourceKind ?? null, ingestedVia: stamp.ingestedVia ?? null, ingestedAt: at?.toISOString() ?? null,
+    sourceId: stamp.sourceId, sourceKind: stamp.sourceKind ?? null, ingestedVia: stamp.ingestedVia ?? null, ingestedAt: at?.toISOString() ?? null, keepIngestedAt: stamp.keepIngestedAt === true,
   }));
 };
 

@@ -10,7 +10,7 @@
  *   heartbeat budget; the agent_contract check.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -19,7 +19,7 @@ import { checkError, finalizeCheckFixes, infoCheck } from '../src/commands/docto
 import { doctorCheckNames, onlyNeedsEngine, parseOnlyChecks } from '../src/commands/doctor/registry.ts';
 import { throttleDoctorHeartbeat } from '../src/commands/doctor/heartbeat.ts';
 import { agentContractCheck, agentContractEntry } from '../src/commands/doctor/checks/agent-contract.ts';
-import { readAgentContractEvents, recordAgentContractEvent } from '../src/core/agent-contract-log.ts';
+import { agentContractLogPath, readAgentContractEvents, recordAgentContractEvent } from '../src/core/agent-contract-log.ts';
 import { VERSION } from '../src/version.ts';
 import { backupCoachingDue } from '../src/core/backup/status-file.ts';
 import type { ProgressReporter } from '../src/core/progress.ts';
@@ -274,6 +274,22 @@ test('#7145: agent_contract judges the whole 7-day window, not only the newest 5
       for (let i = 0; i < 600; i++) recordAgentContractEvent({ transport: 'cli', command: 'example-op', code: 'not_found', has_suggestion: true });
       const [check] = await agentContractEntry.run({} as never) as Check[];
       expect(check).toMatchObject({ name: 'agent_contract', status: 'warn', details: { internal_errors: 1, events: 601 } });
+    });
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('#10447: a torn or non-event line in the agent-contract log hides none of the complete events around it', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-agent-contract-torn-'));
+  try {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      recordAgentContractEvent({ transport: 'cli', command: 'example-op', code: 'internal_error' });
+      appendFileSync(agentContractLogPath(), '{"ts":"2026-01-01T00:00\n42\n');
+      recordAgentContractEvent({ transport: 'cli', command: 'example-read', code: 'not_found', has_suggestion: true });
+      appendFileSync(agentContractLogPath(), '{"ts":');
+      expect(readAgentContractEvents().map(e => e.command)).toEqual(['example-op', 'example-read']);
+      expect(readAgentContractEvents(1).map(e => e.command)).toEqual(['example-read']);
+      const [check] = await agentContractEntry.run({} as never) as Check[];
+      expect(check).toMatchObject({ name: 'agent_contract', status: 'warn', details: { internal_errors: 1, events: 2 } });
     });
   } finally { rmSync(home, { recursive: true, force: true }); }
 });

@@ -291,13 +291,10 @@ export async function dropAndRebuild(
     );
   });
 
-  // Step 4: atomic swap inside a transaction.
+  // Step 4: atomic swap inside a transaction, sent through the engine so a shadowed transaction sees it.
   await engine.transaction(async (tx) => {
-    const innerSql = (tx as unknown as { sql: any }).sql;
-    if (innerSql) {
-      await innerSql.unsafe(`DROP INDEX IF EXISTS ${spec.name}`);
-      await innerSql.unsafe(`ALTER INDEX ${tempName} RENAME TO ${spec.name}`);
-    }
+    await tx.executeRaw(`DROP INDEX IF EXISTS ${spec.name}`);
+    await tx.executeRaw(`ALTER INDEX ${tempName} RENAME TO ${spec.name}`);
   });
 
   process.stderr.write(`[hnsw] rebuild complete: ${spec.name}\n`);

@@ -20,7 +20,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope, SearchResult } from '../types.ts';
 import { resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
-import { admitted, collectFactCandidates, FACTS_ARM_COSINE_MIN, laterRetractions, queryTerms, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
+import { admitted, collectFactCandidates, FACTS_ARM_COSINE_MIN, factRecency, laterRetractions, queryTerms, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
 import { readSlotHistory, slotWindows } from './slot-history.ts';
 import { enforceTokenBudget, resultTokens } from './token-budget.ts';
 import { configFlagOn, factDateHeader, factObservationDates } from './evidence-date.ts';
@@ -110,7 +110,7 @@ export async function matchQueryFacts(engine: BrainEngine, query: string, scope:
   const matched = (c: FactCandidate) => { const haystack = `${c.fact} ${c.entity_slug ?? ''}`.toLowerCase(); return terms.filter(t => haystack.includes(t)).length; };
   return candidates
     .filter(c => c.entity || (c.similarity ?? -1) >= FACT_COSINE_MIN || (terms.length > 0 && matched(c) >= Math.max(Math.min(2, terms.length), Math.ceil(terms.length * TERM_SHARE_MIN))))
-    .sort((a, b) => new Date(b.valid_from).getTime() - new Date(a.valid_from).getTime() || Number(b.id) - Number(a.id))
+    .sort((a, b) => factRecency(b) - factRecency(a) || Number(b.id) - Number(a.id))
     .slice(0, MAX_FACT_ROWS);
 }
 
@@ -139,7 +139,7 @@ function factRow(f: FactCandidate, score: number, pageSlug: string | undefined, 
     slug: `facts/${f.id}`, page_id: 0, title: f.entity_slug ? `Saved fact about ${f.entity_slug}` : 'Saved fact', type: 'note',
     chunk_text: `Saved fact (${f.kind}; valid from ${from ?? 'unknown'}${until ? ` to ${until}` : ''}; provenance: ${f.source}): ${f.fact}`,
     chunk_source: 'compiled_truth', chunk_id: -Number(f.id), chunk_index: 0, score, stale: false, source_id: f.source_id,
-    fact_row: { id: Number(f.id), valid_from: new Date(f.valid_from).toISOString(), valid_until: f.valid_until ? new Date(f.valid_until).toISOString() : null, source: f.source,
+    fact_row: { id: Number(f.id), valid_from: f.valid_from == null ? null : new Date(f.valid_from).toISOString(), valid_until: f.valid_until ? new Date(f.valid_until).toISOString() : null, source: f.source,
       ...(fromQuotedPage ? { from_quoted_page: true as const } : {}),
       ...(observed === null ? { observed_unavailable: true as const } : observed.has(Number(f.id)) ? { observed: observed.get(Number(f.id))! } : {}) },
   } as SearchResult;
@@ -159,8 +159,8 @@ async function stampSupersededClaims(engine: BrainEngine, results: SearchResult[
     for (const old of rows.filter(o => o.source_markdown_slug === r.slug && o.source_id === (r.source_id ?? o.source_id))) {
       const newer = typed.find(f => f.entity_slug === old.entity_slug && f.claim_metric === old.claim_metric
         && (!f.claim_period || !old.claim_period || f.claim_period === old.claim_period)
-        && Number(f.id) !== Number(old.id) && new Date(f.valid_from).getTime() > new Date(old.valid_from).getTime());
-      if (newer) { r.superseded_claim = { fact_id: Number(newer.id), valid_from: new Date(newer.valid_from).toISOString() }; break; }
+        && Number(f.id) !== Number(old.id) && f.valid_from != null && old.valid_from != null && new Date(f.valid_from).getTime() > new Date(old.valid_from).getTime());
+      if (newer?.valid_from != null) { r.superseded_claim = { fact_id: Number(newer.id), valid_from: new Date(newer.valid_from).toISOString() }; break; }
     }
   }
 }
@@ -313,7 +313,7 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
     const maxRows = policy.rowShare === null ? Math.min(policy.maxRows, callerRows || policy.maxRows) : Math.min(policy.maxRows, Math.max(1, Math.floor(rowCap * policy.rowShare)));
     // GBRA-574 A2: copies of one claim (exact fingerprint, capture-dedup.ts) take one row, shown as first stated; a differing value never merges.
     const byId = new Map(scored.map(c => [Number(c.id), c]));
-    const collapsed = await collapseFactReads(engine, scored.map(c => ({ ...c, id: Number(c.id), created_at: c.created_at ?? c.valid_from, visibility: c.visibility ?? '', attributed_to: c.attributed_to ?? null })));
+    const collapsed = await collapseFactReads(engine, scored.map(c => ({ ...c, id: Number(c.id), created_at: c.created_at ?? c.valid_from ?? new Date(0), visibility: c.visibility ?? '', attributed_to: c.attributed_to ?? null })));
     const members = collapsed.map(r => (r.collapsed_ids ?? [r.id]).map(id => byId.get(id)!));
     // GBRA-574 B5: later facts that retract or call off a pooled fact, read under the same policy.
     const answers = policy.dated ? await laterRetractions(engine, scope, members.flat()).catch(unlessRefused(() => new Map<number, FactCandidate[]>())) : new Map<number, FactCandidate[]>();
@@ -385,7 +385,7 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
       }
     }
     if (!chosen.length) return results;
-    chosen.sort((a, b) => new Date(a.c.valid_from).getTime() - new Date(b.c.valid_from).getTime() || Number(a.c.id) - Number(b.c.id));
+    chosen.sort((a, b) => factRecency(a.c) - factRecency(b.c) || Number(a.c.id) - Number(b.c.id));
     const pagesFloor = results.reduce((m, r) => (Number.isFinite(r.score) && r.score < m ? r.score : m), results[0]?.score ?? 1);
     const pagesTop = results.reduce((m, r) => (Number.isFinite(r.score) && r.score > m ? r.score : m), results[0]?.score ?? 1);
     const placed = chosen.flatMap(({ c, row, after }) => [{ c, row }, ...after]);

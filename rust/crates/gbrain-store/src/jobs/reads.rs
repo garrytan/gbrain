@@ -32,6 +32,10 @@ pub struct JobPageSpec {
     pub queue: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    /// GST-4010: only the jobs this caller owns (`owned_by`).
+    #[serde(default)]
+    pub owner: Option<JobOwner>,
+    /// The older fence, as that OAuth client (`owner_fence`).
     #[serde(default)]
     pub owner_client_id: Option<String>,
     #[serde(default)]
@@ -72,6 +76,79 @@ pub(super) fn actor_matches(row: &JobRecord, actor: &[String; 4]) -> bool {
         && text("external_id") == actor[1]
         && text("member") == actor[2]
         && audience == actor[3]
+}
+
+/// The credential a job was submitted by (`submission_authority.principal`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct OwnerPrincipal {
+    pub kind: String,
+    pub id: String,
+}
+
+/// GST-4010: the remote caller a fenced job read or control matches (`JobOwner`, `src/core/minions/types.ts`).
+/// `principal` is the verifier-derived credential every remote submission records as
+/// `submission_authority.principal`; `client_id` matches the `__owner_client_id` stamp of agent rows queued before
+/// submission authority existed; `actor` is `actor_matches`'s actor and audience.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobOwner {
+    #[serde(default)]
+    pub principal: Option<OwnerPrincipal>,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    pub actor: [String; 4],
+}
+
+/// `jobOwnedSql` (types.ts): the job belongs to `owner`. A job with a recorded principal matches on that principal
+/// only (its `kind` and `id` as `->>` text), so caller-visible data can never claim a remote job; a job with none
+/// (the key or the whole authority missing; a JSON `null` principal is a principal that matches nothing) matches only
+/// its `__owner_client_id` stamp. Either way its actor and audience must equal the caller's.
+pub(super) fn owned_by(row: &JobRecord, owner: &JobOwner) -> bool {
+    let principal = row
+        .submission_authority
+        .as_ref()
+        .and_then(|a| a.get("principal"));
+    let by_principal = match (&owner.principal, principal) {
+        (Some(want), Some(have)) => {
+            have.get("kind").and_then(jsonb_field_text).as_deref() == Some(want.kind.as_str())
+                && have.get("id").and_then(jsonb_field_text).as_deref() == Some(want.id.as_str())
+        }
+        _ => false,
+    };
+    let by_stamp = principal.is_none()
+        && owner.client_id.as_ref().is_some_and(|c| {
+            row.data
+                .get("__owner_client_id")
+                .and_then(jsonb_field_text)
+                .as_ref()
+                == Some(c)
+        });
+    (by_principal || by_stamp) && actor_matches(row, &owner.actor)
+}
+
+/// Whether the caller owns the row: always, with no fence.
+pub(super) fn owned_or_unfenced(row: &JobRecord, owner: Option<&JobOwner>) -> bool {
+    owner.is_none_or(|o| owned_by(row, o))
+}
+
+/// The fence a spec asks for: its `owner`, else the older `ownerClientId` / `ownerActor` pair as that OAuth client
+/// (the principal and the stamp), as `MinionQueue.cancelJobs` maps it.
+pub(super) fn owner_fence(
+    owner: &Option<JobOwner>,
+    client: &Option<String>,
+    actor: &Option<[String; 4]>,
+) -> Option<JobOwner> {
+    if let Some(owner) = owner {
+        return Some(owner.clone());
+    }
+    client.as_ref().map(|c| JobOwner {
+        principal: Some(OwnerPrincipal {
+            kind: "oauth_client".into(),
+            id: c.clone(),
+        }),
+        client_id: Some(c.clone()),
+        actor: actor.clone().unwrap_or_default(),
+    })
 }
 
 /// `submission_authority IS DISTINCT FROM '{"version":1,"kind":"application"}'::jsonb`.
@@ -412,19 +489,12 @@ impl Store {
             Some(status) => rows_with_status(&*read, status)?,
             None => all_rows(&*read)?,
         };
-        let actor = spec.owner_actor.clone().unwrap_or_default();
+        let fence = owner_fence(&spec.owner, &spec.owner_client_id, &spec.owner_actor);
         rows.retain(|r| {
             spec.queue.as_ref().is_none_or(|q| &r.queue == q)
                 && spec.name.as_ref().is_none_or(|n| &r.name == n)
                 && cursor.is_none_or(|c| (i128::from(r.created_at), r.id) < c)
-                && spec.owner_client_id.as_ref().is_none_or(|c| {
-                    r.data
-                        .get("__owner_client_id")
-                        .and_then(jsonb_field_text)
-                        .as_ref()
-                        == Some(c)
-                        && actor_matches(r, &actor)
-                })
+                && owned_or_unfenced(r, fence.as_ref())
         });
         rows.sort_by_key(|r| std::cmp::Reverse((r.created_at, r.id)));
         Ok(rows

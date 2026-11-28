@@ -315,6 +315,8 @@ export interface PageInput {
    * NULL on historical rows that pre-date v0.38.
    */
   ingested_at?: Date | null;
+  /** GST-4056: this write's own channel (never the first-ingest record), stored as pages.content_author (persistence/content-author-schema.ts). */
+  content_author?: string | null;
 }
 
 export interface PageFilters {
@@ -1161,7 +1163,7 @@ export interface SearchResult {
    */
   entity_anchored?: 'entity' | 'linked';
   /** Set on a saved-fact row the `search.query_facts_arm` arm added (search/facts-arm.ts); page_id is 0. `observed`: when it was said; `observed_unavailable`: that read failed; `contested_unavailable`: the facts block's contested lookup failed; `history_unavailable`: its slot-history read failed. */
-  fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true; contested_unavailable?: true; history_unavailable?: true };
+  fact_row?: { id: number; valid_from: string | null; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true; contested_unavailable?: true; history_unavailable?: true };
   /** Fact rows only, and what callers see of them: never a page (no slug or id); follow with `follow_up`, read `page_slug` when the entity page exists. */
   result_type?: 'fact'; fact_id?: string; page_slug?: string; follow_up?: { op: 'recall'; args: Record<string, string> };
   /** #7600, #8042: a row of third-party text (a chat page or a fact saved from one), returned fenced as quoted source material with its tool-call blocks summarized (search/transcript-quote.ts). */

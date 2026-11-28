@@ -337,3 +337,42 @@ describe('the swap report names each write type criterion 5 does not compare', (
     expect(Object.keys(WRITE_MAP).map(writeFamily)).not.toContain('fact_withdrawals');
   });
 });
+
+describe('A1: the swap check waits a bounded 60 s for a moment when every sample is settled', () => {
+  const BUSY = 'brain busy: no 60 s lull with all samples settled; retry when idle';
+  const doc = (unresolved: number) => ({
+    write_comparisons: { state: unresolved ? 'capability_missing' : 'measured', sample_rate: 1, comparable: 5000, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, ...(unresolved ? { unresolved_replays: unresolved } : {}) },
+  }) as unknown as ShadowStatus;
+  /** A clock the fake sleep advances: the wait costs no real time. */
+  function clockRig() { let t = 1_000_000; const sleeps: number[] = []; return { sleeps, clock: () => t, sleep: async (ms: number) => { sleeps.push(ms); t += ms; } }; }
+  const crit5 = (stdout: string) => (JSON.parse(stdout) as { criteria: Array<{ n: number; state: string; detail: string }> }).criteria.find((c) => c.n === 5)!;
+
+  test('a brain that is never settled for 60 s refuses criterion 5 with exactly "brain busy: no 60 s lull with all samples settled; retry when idle", after waiting 60 s and no longer', async () => {
+    const rig = clockRig(); let reads = 0;
+    const r = await run(['--to', 'rust', '--plan', '--json'], { readShadowStatus: async () => { reads++; return doc(2); }, clock: rig.clock, sleep: rig.sleep });
+    const c = crit5(r.stdout);
+    expect(c.state).toBe('missing');
+    expect(c.detail.startsWith(BUSY)).toBe(true); // verbatim
+    expect(c.detail).toContain('the child keeps up only below ~19 samples/s on this VM'); // the limit is named in the report
+    expect(rig.sleeps.reduce((a, b) => a + b, 0)).toBe(60_000); // a constant 60 s, not a setting
+    expect(reads).toBe(61);
+  });
+
+  test('a brain with a lull passes on its first settled read: it stops waiting at once and reads criterion 5 from that read', async () => {
+    const rig = clockRig(); let reads = 0;
+    const r = await run(['--to', 'rust', '--plan', '--json'], { readShadowStatus: async () => doc(++reads < 3 ? 1 : 0), clock: rig.clock, sleep: rig.sleep });
+    const c = crit5(r.stdout);
+    expect(reads).toBe(3); // the first read with nothing unsettled
+    expect(rig.sleeps).toHaveLength(2);
+    expect(c.detail).not.toContain('brain busy');
+    expect(c.state).toBe('pass');
+  });
+
+  test('a settled status, or no shadow at all, is read once and never waits', async () => {
+    const rig = clockRig(); let reads = 0;
+    await run(['--to', 'rust', '--plan', '--json'], { readShadowStatus: async () => { reads++; return doc(0); }, clock: rig.clock, sleep: rig.sleep });
+    expect([reads, rig.sleeps.length]).toEqual([1, 0]);
+    await run(['--to', 'rust', '--plan', '--json'], { readShadowStatus: async () => null, clock: rig.clock, sleep: rig.sleep });
+    expect(rig.sleeps.length).toBe(0);
+  });
+});

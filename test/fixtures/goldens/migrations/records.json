@@ -1,17 +1,11 @@
 {
   "golden": {
-    "count": 336,
+    "count": 342,
     "gaps": [
       17,
       18,
       19,
       100,
-      338,
-      339,
-      340,
-      341,
-      342,
-      343,
       344,
       345,
       346,
@@ -5527,6 +5521,84 @@
         "version": 337
       },
       {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "oauth_refresh_rotations",
+        "sql": {
+          "length": 1068,
+          "sha256": "9406039c9a23a8e1d2fe8d266c2b773e25e3b6c7d7c1a4f195d826359b02d1ae"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 338
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "facts_valid_from_nullable",
+        "sql": {
+          "length": 241,
+          "sha256": "dd6f72061b3e5339570d9d0933568be17d043206a77ed2750946612c2f77dc61"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 339
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "engine_writer_observations_write_protocol",
+        "sql": {
+          "length": 95,
+          "sha256": "2b8225456331306a06692012b83ab698ed678e65fb452ac88f061777c0b93113"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 340
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "atom_scan_input_digest",
+        "sql": {
+          "length": 94,
+          "sha256": "4d0561b9d7b02f2b210da5dd5c3c8b90352e3e8624f5c0519e82e29f194993d0"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 341
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "content_author_attribution",
+        "sql": {
+          "length": 2385,
+          "sha256": "1e4a00cf482d28d8d1ea4f720e043aac9af8129d677a4487bb78304b86cfc830"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 342
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "content_author_backfill",
+        "sql": {
+          "length": 3729,
+          "sha256": "9ab78512cb825965344a1e6db9470758c162bc703236b6e5ce2e30f2fbb8341b"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 343
+      },
+      {
         "handler": {
           "form": "arrow",
           "helpers": [
@@ -5962,6 +6034,12 @@
       335,
       336,
       337,
+      338,
+      339,
+      340,
+      341,
+      342,
+      343,
       350,
       351,
       352,

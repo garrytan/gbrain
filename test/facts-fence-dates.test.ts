@@ -84,14 +84,11 @@ describe('fence date round trip', () => {
     expect(rebuilt.map(f => new Date(f.valid_until!).getTime())).toEqual([Math.floor(until.getTime() / 1000) * 1000]);
   });
 
-  test('a default valid_from is the write instant, not the UTC date', async () => {
-    const before = Date.now();
+  test('an unknown valid_from leaves the cell empty instead of stamping the write instant', async () => {
     await writeFactsToFence(engine, { ...target, localPath: brainDir }, [input()]);
     const file = readFileSync(join(brainDir, 'people/ttl-example.md'), 'utf-8');
     const [row] = parseFactsFence(parseMarkdown(file, 'people/ttl-example.md').compiled_truth).facts;
-    const stamped = new Date(row.validFrom!).getTime();
-    expect(stamped).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000);
-    expect(stamped).toBeLessThanOrEqual(Date.now());
+    expect(row.validFrom).toBeUndefined();
   });
 
   test('a date-only valid_from keeps its date cell', async () => {

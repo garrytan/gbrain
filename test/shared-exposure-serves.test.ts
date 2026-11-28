@@ -104,7 +104,8 @@ describe('brain that serves several people', () => {
     const client = sharedTokenNotice({ kind: 'oauth_client', id: 'c1' }, { census, serves: 'several' })!;
     expect(client.fix!.argv).toEqual(['gbrain', 'auth', 'rescope', '--client', 'c1', '--member', '<member>']);
     const bot = sharedTokenNotice({ kind: 'stdio', harness: 'openclaw' }, { harness: 'openclaw', serves: 'several' })!;
-    expect(bot.why).toContain('Fix: label each person and bind this harness\'s server (gbrain setup openclaw --serves several --members <id,...>');
+    expect(bot.why).toContain('Fix: let this harness\'s server act for each person it answers (gbrain config set mcp.stdio_may_act_for <members>, after labelling them with gbrain access serves several --members <id,...>');
+    expect(bot.why).not.toContain('gbrain setup openclaw --serves several');
   });
 });
 

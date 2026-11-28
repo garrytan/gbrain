@@ -133,15 +133,15 @@ describe('BudgetTracker with pricingOverrides (#4312)', () => {
     expect(isModelPriceable('litellm:x', 'chat', overrides)).toBe(true);
   });
 
-  test('an override keyed on the dated id also prices the recipe alias (wave review)', () => {
-    // lookupPricing resolves `claude-cli:haiku` to the dated id before the
+  test('an override keyed on the resolved id also prices the recipe alias (wave review)', () => {
+    // lookupPricing resolves `claude-cli:haiku` to its canonical id before the
     // table lookup; overrideFor keyed on the raw string, so an operator rate
-    // written against the dated id was skipped for the alias and the alias
-    // billed at list price ($1/M) instead of the override.
+    // written against the resolved id was skipped for the alias and the alias
+    // billed at list price instead of the override.
     const t = new BudgetTracker({
       label: 'test',
       auditPath: auditPath(),
-      pricingOverrides: parsePricingOverrides('{"claude-cli:claude-haiku-4-5-20251001": {"input": 0.25, "output": 1.25}}'),
+      pricingOverrides: parsePricingOverrides('{"claude-cli:claude-haiku-5-5": {"input": 0.25, "output": 1.25}}'),
     });
     t.record({ modelId: 'claude-cli:haiku', inputTokens: 1_000_000, outputTokens: 0, kind: 'chat' });
     expect(t.totalSpent).toBeCloseTo(0.25, 6);

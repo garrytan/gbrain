@@ -65,16 +65,25 @@ export function capabilitySetHash(capabilities: Iterable<string>): string {
   return sha(JSON.stringify([...capabilities].sort())).slice(0, 16);
 }
 
-/** The manifest, or null when it is absent or not a manifest. */
-export function readEpoch(dir: string): EpochManifest | null {
+/** What reading the manifest found: an epoch, no manifest file at all (no epoch has opened yet), or a manifest that is there and cannot be used (a read error, a torn or foreign file). The last is never the same as the second. */
+export type EpochRead = { kind: 'epoch'; epoch: EpochManifest } | { kind: 'absent' } | { kind: 'unreadable' };
+export function readEpochState(dir: string): EpochRead {
+  let text: string;
+  try { text = readFileSync(epochPath(dir), 'utf8'); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? { kind: 'absent' } : { kind: 'unreadable' }; }
   try {
-    const m = JSON.parse(readFileSync(epochPath(dir), 'utf8')) as EpochManifest;
+    const m = JSON.parse(text) as EpochManifest;
     const i = m?.inputs;
-    if (!(m?.version === 1 && typeof m.epoch_id === 'string' && Number.isFinite(Date.parse(m.started_at)) && i && typeof i.seed_id === 'string')) return null;
+    if (!(m?.version === 1 && typeof m.epoch_id === 'string' && Number.isFinite(Date.parse(m.started_at)) && i && typeof i.seed_id === 'string')) return { kind: 'unreadable' };
     const b = m.build;
     const ok = b && typeof b === 'object' && (b.gbrain_commit === null || typeof b.gbrain_commit === 'string') && typeof b.gbrain_version === 'string' && (b.addon_target === null || typeof b.addon_target === 'string');
-    return ok ? m : { ...m, build: undefined };
-  } catch { return null; } // silent-read-ok: no readable manifest is no epoch; the status leaves every count absent
+    return { kind: 'epoch', epoch: ok ? m : { ...m, build: undefined } };
+  } catch { return { kind: 'unreadable' }; } // silent-read-ok: not silent; the caller that needs the manifest reads it as a failure, never as no epoch
+}
+
+/** The manifest, or null when it is absent or not a manifest. */
+export function readEpoch(dir: string): EpochManifest | null {
+  const read = readEpochState(dir);
+  return read.kind === 'epoch' ? read.epoch : null; // silent-read-ok: no readable manifest is no epoch; the status leaves every count absent
 }
 
 const lockPath = (dir: string): string => join(dir, 'evidence', 'epoch.lock');

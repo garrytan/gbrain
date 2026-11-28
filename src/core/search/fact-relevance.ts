@@ -58,6 +58,13 @@ export function queryTerms(query: string): string[] {
   return contentTerms(query).slice(0, MAX_QUERY_TERMS);
 }
 
+/** A question none of whose content terms is scored (only short words and dates: "AI", "2026"). */
+export const literalQuestion = (query: string) => !contentTerms(query).some(t => !neutralWord(t));
+/** Such a question's terms as written: its distinct words, stopwords dropped, at most 12 (recall's `literalFallback`). */
+export function literalTerms(query: string): string[] {
+  return [...new Set(query.toLowerCase().match(WORD_RE) ?? [])].filter(t => !STOPWORDS.has(t)).slice(0, MAX_QUERY_TERMS);
+}
+
 export const DATED_BONUS = 0.1;
 /** What a term matched only through its stem (Rogers for Roger, lives for live) adds to the score, as a share of an exact match. */
 const STEM_ONLY_WEIGHT = 0.9;
@@ -101,11 +108,13 @@ export interface FactPoolOpts {
   distinctiveTerms?: boolean;
   /** GBRA-574 B1: the named-entity arm also pools that entity's ended facts (ENDED_FACT_SQL), the most recent first. */
   history?: boolean;
+  /** Search and score a literalQuestion on its literalTerms instead of no terms (recall). */
+  literalFallback?: boolean;
 }
 
 export interface FactCandidate {
   id: number; fact: string; kind: string; entity_slug: string | null; source_id: string; source: string;
-  valid_from: Date | string; valid_until: Date | string | null; created_at?: Date | string | null; claim_metric: string | null; claim_period: string | null;
+  valid_from: Date | string | null; valid_until: Date | string | null; created_at?: Date | string | null; claim_metric: string | null; claim_period: string | null;
   /** The page the fact was taken from (its observation date) and the columns copies collapse on (capture-dedup.ts). */
   source_markdown_slug?: string | null; visibility?: string; attributed_to?: import('../engine.ts').FactAttribution | null;
   /** GBRA-574 B2: the fact's slot (facts/slots.ts), when it carries one. */
@@ -125,6 +134,8 @@ export interface FactPool {
   terms: string[];
   /** Each question and candidate word's lexemes under the brain's full-text config (empty: a stopword); null when that read failed. */
   stems: WordStems | null;
+  /** The terms are literalTerms: `scoreFactCandidates` counts short words and dates too. */
+  literal: boolean;
 }
 
 /** Word to its full-text lexemes, for `scoreFactCandidates`. */
@@ -172,7 +183,8 @@ function heldTerms(searched: string[], candidates: FactCandidate[]): string[] {
  */
 export async function collectFactCandidates(engine: BrainEngine, question: string, scope: FactPoolScope, queryEmbedding: Float32Array | null | undefined,
   opts: FactPoolOpts): Promise<FactPool> {
-  const all = contentTerms(question);
+  const literal = opts.literalFallback === true && literalQuestion(question);
+  const all = literal ? literalTerms(question) : contentTerms(question);
   const searched = opts.distinctiveTerms && all.length > MAX_QUERY_TERMS ? all.slice(-SEARCH_TERMS) : all.slice(0, MAX_QUERY_TERMS);
   const column = queryEmbedding?.length ? await factsEmbeddingColumn(engine) : null;
   const cosine = !!column && (column.dims <= 0 || column.dims === queryEmbedding!.length);
@@ -216,7 +228,15 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
   const candidates = [...found.values()];
   const terms = heldTerms(searched, candidates);
   const stems = await wordStems(engine, [...new Set([...terms, ...candidates.flatMap(c => [...wordsOf(c)])])].filter(w => !neutralWord(w)));
-  return { candidates, cosine, column: !!column, terms, stems };
+  return { candidates, cosine, column: !!column, terms, stems, literal };
+}
+
+/**
+ * The pooled facts with these ids, read again under the pool's read policy and filters, so a fact whose visibility,
+ * provenance or trust narrowed after the pool read is not returned. Throws on a database error.
+ */
+export async function readPooledFacts<T>(engine: BrainEngine, scope: FactPoolScope, filters: FactPoolFilters | undefined, ids: readonly number[]): Promise<T[]> {
+  return await engine.listPooledFactRows(scope, filters, ids) as unknown as T[];
 }
 
 /**
@@ -258,18 +278,18 @@ const NEGATED = /(?:^|[^\p{L}\p{N}'’])(?:not|never|no|[\p{L}]+n['’]t)\s+(?:[
  * GBRA-574 B5: for each fact, the later facts that retract it or call it off, oldest first. One read of the cue facts
  * about the facts' entities, the newest CALL_OFF_DEPTH per entity, under exactly the pool's read policy (active rows
  * only, so a withdrawn, forgotten or superseded fact never comes back, nor one the caller cannot read). A cue fact
- * answers a fact when it is about the same entity in the same source, is dated strictly after it, carries a cue no
+ * answers a fact when it is about the same entity in the same source, is dated strictly after it (both dated, #10288), carries a cue no
  * negation sits a word or two before (NEGATED; a cue that starts with one, "not happening", still counts), and either
  * carries the same slot (dimension and value_hash) or, on content terms other than the entity's name and the cue words,
  * has all of its terms (at least one) in the fact or shares at least two with it.
  */
 export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope, facts: readonly FactCandidate[]): Promise<Map<number, FactCandidate[]>> {
   const out = new Map<number, FactCandidate[]>();
-  const keyed = facts.filter(f => f.entity_slug);
+  const keyed = facts.filter((f): f is FactCandidate & { valid_from: Date | string } => !!f.entity_slug && f.valid_from != null);
   if (!keyed.length) return out;
   const pairs = [...new Map(keyed.map(f => [`${f.source_id}\u0000${f.entity_slug}`, f])).values()];
   const cues = await engine.listCallOffCueFacts(scope, pairs.map(f => ({ source_id: f.source_id, entity_slug: f.entity_slug! })));
-  const time = (v: Date | string) => new Date(v).getTime();
+  const time = (v: Date | string | null) => (v == null ? Number.NaN : new Date(v).getTime());
   const calledOff = (text: string) => [...text.matchAll(CALL_OFF_WORDS)].some(m => !NEGATED.test(text.slice(0, m.index)));
   const terms = (slug: string, text: string) => {
     const name = new Set(slug.toLowerCase().split(/[^\p{L}\p{N}]+/u));
@@ -278,7 +298,7 @@ export async function laterRetractions(engine: BrainEngine, scope: FactPoolScope
   for (const f of keyed) {
     const own = terms(f.entity_slug!, f.fact);
     const answers = cues.filter(r => {
-      if (r.source_id !== f.source_id || r.entity_slug !== f.entity_slug || time(r.valid_from) <= time(f.valid_from) || !calledOff(r.fact)) return false;
+      if (r.source_id !== f.source_id || r.entity_slug !== f.entity_slug || !(time(r.valid_from) > time(f.valid_from)) || !calledOff(r.fact)) return false;
       if (f.dimension && f.value_hash && r.dimension === f.dimension && r.value_hash === f.value_hash) return true;
       const theirs = [...terms(f.entity_slug!, r.fact.replace(CALL_OFF_WORDS, ' '))];
       const shared = theirs.filter(t => own.has(t)).length;
@@ -313,17 +333,23 @@ const wordsOf = (c: FactCandidate) => {
 };
 
 export const isDatedFact = (f: Pick<FactCandidate, 'valid_from' | 'created_at'>) =>
-  !!f.created_at && Math.abs(new Date(f.valid_from).getTime() - new Date(f.created_at).getTime()) > DATED_MIN_MS;
+  f.valid_from != null && !!f.created_at && Math.abs(new Date(f.valid_from).getTime() - new Date(f.created_at).getTime()) > DATED_MIN_MS;
+
+/** Newest-first sort time: the event date, or the save time when the event date is unknown (#10288). */
+export function factRecency(f: Pick<FactCandidate, 'valid_from' | 'created_at'> | undefined): number {
+  const at = f?.valid_from ?? f?.created_at;
+  return at == null ? 0 : new Date(at).getTime();
+}
 
 /**
  * Score every candidate (cosine + term share + DATED_BONUS when dated), ordered by score, newest valid_from, then id.
  * With `stems` (the pool's) a term matches a fact word sharing a lexeme, and a word with none is a stopword; dates,
- * years and auxiliaries count on neither side. A stem-only match adds STEM_ONLY_WEIGHT of an exact one to the score
- * (never to termShare, which admission reads), so "Roger" ranks the Roger fact above the Rogers one.
+ * years and auxiliaries count on neither side (both do for `literal` terms). A stem-only match adds STEM_ONLY_WEIGHT of
+ * an exact one to the score (never to termShare, which admission reads), so "Roger" ranks the Roger fact above the Rogers one.
  */
-export function scoreFactCandidates(question: string, candidates: FactCandidate[], terms = queryTerms(question), stems: WordStems | null = null): ScoredFact[] {
+export function scoreFactCandidates(question: string, candidates: FactCandidate[], terms = queryTerms(question), stems: WordStems | null = null, literal = false): ScoredFact[] {
   const lexemes = (w: string) => stems?.get(w) ?? [w];
-  const counted = (w: string) => w.length >= 3 && !STOPWORDS.has(w) && !neutralWord(w) && lexemes(w).length > 0;
+  const counted = (w: string) => (literal || (w.length >= 3 && !neutralWord(w))) && !STOPWORDS.has(w) && lexemes(w).length > 0;
   const asked = terms.filter(counted);
   return candidates.map(c => {
     const words = [...wordsOf(c)].filter(counted);
@@ -336,7 +362,7 @@ export function scoreFactCandidates(question: string, candidates: FactCandidate[
     const cosine = c.similarity ?? 0;
     return { candidate: c, cosine, matched: hits.length, terms: asked.length, termShare, score: cosine + scoredShare + (isDatedFact(c) ? DATED_BONUS : 0) };
   }).sort((a, b) => b.score - a.score
-    || new Date(b.candidate.valid_from).getTime() - new Date(a.candidate.valid_from).getTime()
+    || factRecency(b.candidate) - factRecency(a.candidate)
     || b.candidate.id - a.candidate.id);
 }
 

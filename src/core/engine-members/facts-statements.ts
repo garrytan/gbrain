@@ -748,7 +748,7 @@ export interface FactsStatementMembers {
   stampConversationSourceWindows(pairs: ReadonlyArray<{ id: number; w: FactsConversationSql.SourceWindow | null }>): Promise<void>;
   /** A page's active conversation facts, audit rows aside. */
   countActiveConversationFacts(sourceId: string, slug: string): Promise<number>;
-  /** The value hash of the slot's latest conversation-source value at or before `validFrom`, null when there is none. */
+  /** The value hash of the slot's latest conversation-source value at or before `validFrom` (an undated row is as of its save time, #10288), null when there is none. */
   readConversationSlotValueHash(sourceId: string, entitySlug: string, dimension: string, validFrom: Date | string): Promise<{ value_hash: string } | null>;
   /** Deletes a page's audit (outcome) rows; returns the ids removed. */
   deleteConversationOutcomeRows(sourceId: string, slug: string): Promise<Array<{ id: number }>>;
@@ -758,14 +758,16 @@ export interface FactsStatementMembers {
   maxConversationRowNum(sourceId: string, slug: string): Promise<number | string | null>;
   /** The slot keys the page's facts already hold. */
   listHeldFactSlots(sourceId: string, slug: string): Promise<FactsConversationSql.HeldFactSlotRow[]>;
-  /** The page's conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
+  /** The page's active conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
   countPageConversationFacts(sourceId: string, slug: string): Promise<number>;
   /** The page's active conversation facts anchored to window `key`. */
   countConversationWindowFacts(sourceId: string, slug: string, key: string): Promise<number>;
   /** The page's active conversation facts a settled collection keeping window `keys` removes: anchored to another window, or unanchored. */
   countConversationFactsOutsideWindows(sourceId: string, slug: string, keys: readonly string[]): Promise<number>;
-  /** Clears a page's prior extractor batch before a replacement, keeping the history other records depend on: a row an open loop or another fact's `superseded_by` references is expired, never deleted, and rows `gbrain repair conversation-labels` retired stay expired. */
+  /** Clears a page's prior extractor batch before a replacement without losing history (#10443): every active extractor fact is expired and keeps its row; only the page's audit checkpoint rows are deleted. */
   clearConversationPageFacts(sourceId: string, slug: string, windows?: { keys: readonly string[]; keep: boolean; unanchored: boolean }): Promise<number>;
+  /** Narrows the page's expired extractor copies of the claims `facts` to private, matched by claim fingerprint (#10443). */
+  narrowConversationExpiredCopies(sourceId: string, slug: string, facts: string[]): Promise<void>;
   /** The oldest active fence row of the page holding the same claim and source, whatever its visibility. */
   findSameClaimFenceRow(sourceId: string, slug: string, fact: string, source: string | null): Promise<{ id: number | string; visibility: string } | null>;
   /** An ontology observation the page already holds at the same key as fact `factId` (preferring an active one). */
@@ -784,7 +786,7 @@ export interface FactsStatementMembers {
   listEntityHintPages(sourceId: string, slugs: string[]): Promise<FactsConversationSql.EntityHintPageRow[]>;
   /** Locks one page row until the transaction ends. */
   lockPageById(pageId: number): Promise<void>;
-  /** The page's expired conversation facts that a relink had linked to a still-live entity page, newest first. */
+  /** The page's expired conversation facts, newest first; `carried` marks one a relink had linked to a still-live entity page (#10443: the caller takes each claim's newest row). */
   listClearedRelinkedFacts(sourceId: string, slug: string): Promise<FactsConversationSql.ClearedRelinkedFactRow[]>;
   /** How many of the facts `ids` carry an embedding. */
   countEmbeddedFactsAmong(sourceId: string, ids: number[]): Promise<number>;
@@ -865,6 +867,8 @@ export interface FactsStatementMembers {
   listPoolEntityPairs(scope: FactsTrustSql.FactPoolScope, filters: FactsTrustSql.FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>>;
   /** The whole fact rows of these ids within these sources. */
   listFactRowsByIds(sourceIds: readonly string[], ids: readonly number[]): Promise<FactsRecallSql.FactRowSqlShape[]>;
+  /** The whole fact rows of these ids read again under the pool's read policy and filters, so a fact narrowed since the pool read is not returned (recall, #10225). */
+  listPooledFactRows(scope: FactsTrustSql.FactPoolScope, filters: FactsTrustSql.FactPoolFilters | undefined, ids: readonly number[]): Promise<FactsRecallSql.FactRowSqlShape[]>;
   /** The provenance slug of each open non-conversation stint of an entity's (normalised) dimension, each once, sorted. */
   listOntologyStreamSlugs(sourceId: string, entitySlug: string, dimension: string): Promise<string[]>;
   /** The newest open, active, non-conversation stint of the dimension other than `excludeId`, with its stored tier; null: none. */

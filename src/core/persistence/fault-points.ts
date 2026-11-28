@@ -8,6 +8,7 @@
  * no-op there; the gate's workers install one that SIGKILLs or stalls the
  * process at a chosen point.
  */
+import type { ClaimPhaseClock } from './claim-phase.ts';
 import type { EffectKind } from './effect-model.ts';
 import type { PublicationHooks } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
@@ -115,10 +116,12 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
 /**
  * `signal` (#6278, `consumer:preparing` only): the preparation's abort signal, so
  * a stalling hook can model both the reporter's cases: a preparer that honours
- * cancellation (settle on abort) and one that ignores it (hang on).
+ * cancellation (settle on abort) and one that ignores it (hang on). `clock` (same
+ * seam): the preparation's claim-phase clock, so a hook that models a parked step
+ * enters it the way a preparer does and every claim renewal keeps stamping it.
  */
 /** `writeId` is the write request row: rows of a caller-bound replay share one `requestId` (crash-robot per-request seams key on the row). */
-export interface FaultDetail { requestId?: string; writeId?: string; effectId?: string; sourceId?: string; operation?: string | null; signal?: AbortSignal; slug?: string; path?: string;
+export interface FaultDetail { requestId?: string; writeId?: string; effectId?: string; sourceId?: string; operation?: string | null; signal?: AbortSignal; clock?: ClaimPhaseClock; slug?: string; path?: string;
   /** The `*_interruption_charged` seams: what was charged and the error it was charged for, so a probe can name a charge it did not expect. */
   interruption?: { cause: string; sqlstate: string | null; error: string };
   round?: number; read?: string; level?: { statements: number; confirm: { taken: boolean; reason: string | null; rows: number; narrow?: string; across?: true } | null; reused?: number;

@@ -121,6 +121,8 @@ export const EQUALS_READERS: Readonly<Record<string, readonly string[]>> = {
   'schema set-extractable': ['--pack'],
   'schema set-expert-routing': ['--pack'],
   'schema scaffold-extractable': ['--pack'],
+  // setup.ts runSetup splits --flag=value for every setup value flag before parseFlags reads them.
+  setup: ['--members', '--members-file'],
   // skillify.ts:117 parseScaffoldFlags (:142-160); skillify check reads no = form.
   'skillify scaffold': ['--description', '--triggers', '--writes-to', '--skills-dir'],
   // skillpack.ts:312 cmdStatus, :382 cmdSync, :501 cmdMigrateFence, :547 cmdScrubLegacy, :1210 cmdHarvest, :1281-1287 cmdDiff.

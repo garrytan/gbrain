@@ -79,7 +79,7 @@ for (const backend of testBackends()) {
           'emotional_weight_recomputed_at', 'chunker_version', 'ingested_via', 'ingested_at', 'source_kind', 'embedding_signature',
           'links_attendance_blocked_revision', 'links_attendance_blocked_at', 'revision_write_request_id', 'revision_principal_kind',
           'revision_principal_id', 'trust_tier', 'write_origin', 'body_bytes', 'truth_bytes', 'body_lines', 'body_generation', 'segment_count',
-          'segmenter_version', 'body_flags', 'links_extract_failure', 'version_history_gap_at'].map(c => [c, 'regenerated'] as const),
+          'segmenter_version', 'body_flags', 'links_extract_failure', 'version_history_gap_at', 'content_author', 'content_author_hash'].map(c => [c, 'regenerated'] as const),
       ]);
       const PAGE_TABLES: Record<string, 'held' | 'regenerated'> = Object.fromEntries([
         ...['files', 'link_edge_proposals', 'link_transitions', 'links', 'page_label_guards', 'raw_data', 'tags', 'takes', 'timeline_entries',

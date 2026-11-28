@@ -125,7 +125,11 @@ export async function prepareStreamedUpload(engine: BrainEngine, row: WriteReque
     if (stat.size !== ref.bytes) throw bodyStagingGoneError(row.slug, ref.staging_id, null);
     stagedUploadWork.streamed++;
     result = await importStreamedMarkdownFile(engine, path, `${row.slug}.md`, { sourceId: row.source_id, noEmbed: true, inferFrontmatter: false,
-      content: { provenance: { source_kind: text(p.source_kind), source_uri: text(p.source_uri), ingested_via: text(p.ingested_via) },
+      // GST-4037 D: a remote replace keeps the stored page's first-ingest record, as edit_page does (#10330). GST-4056: the
+      // text's author is this write's own channel, server-set for a remote writer.
+      content_author: remote ? `mcp:${row.operation}` : text(p.ingested_via),
+      content: { provenance: remote && snapshot ? { source_kind: null, source_uri: null, ingested_via: null }
+        : { source_kind: text(p.source_kind), source_uri: text(p.source_uri), ingested_via: text(p.ingested_via) },
         ...(remote ? { writer: {
           gate: async (frontmatter: Record<string, unknown>) => {
             trust = provenanceWriteTrust(row, frontmatter, snapshot?.page.frontmatter);

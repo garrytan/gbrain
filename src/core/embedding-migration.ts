@@ -1002,6 +1002,7 @@ export interface MigrationVerify {
      *  must never silently hide them. */
     embed_skip_null_chunks: number;
     marker: 'none' | 'same_target' | 'different_target' | 'corrupt';
+    db_plane_ok: boolean;
     file_plane_ok: boolean;
   };
 }
@@ -1129,6 +1130,11 @@ export async function verifyMigrationComplete(
     // blocker for THIS target; readMigrationStatus surfaces it.
   }
 
+  // #10231: a database label other than the target (an older release stored it without its provider) is not converged; a run rewrites only the label.
+  const dbModel = await engine.getConfig('embedding_model'), dbDims = await engine.getConfig('embedding_dimensions');
+  const dbPlaneOk = dbModel === target.toModel && Number(dbDims) === target.toDims;
+  if (!dbPlaneOk) blockers.push(`database config records ${dbModel ?? '(no model)'} at ${dbDims ?? '(no dimensions)'}d, target is ${target.toModel} at ${target.toDims}d`);
+
   const fp = opts.filePlane;
   const filePlaneOk = fp
     ? fp.model === target.toModel && Number(fp.dims) === target.toDims
@@ -1152,6 +1158,7 @@ export async function verifyMigrationComplete(
       chunkless_pages: chunkless,
       embed_skip_null_chunks: embedSkipNull,
       marker: markerState,
+      db_plane_ok: dbPlaneOk,
       file_plane_ok: filePlaneOk,
     },
   };

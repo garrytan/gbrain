@@ -53,10 +53,10 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
   column became `NOT NULL`.
 - **Timeline detail.** `detail` is always a string; an entry written without one reads `''`, as the Postgres column
   default gives.
-- **Sync routing row.** `readSyncDispatchRow` has no store method of its own: the shim
-  (`src/core/rust-engine/store-members/cli-reads-import.ts`) builds it from `readSourceState` and
-  `hasCompanyBrainReceipt`, and reads `claimed` from `isSourceClaimed`: true when a writer binding names the source at
-  its current incarnation (persistence.md, "Worktree bindings"). The row answers `modes: [false]` for every source,
-  which is true to the store: it keeps one unmanaged brain, as `readManagedModeRows` answers. An unknown id
-  reads one row with null source columns, as the SQL's `LEFT JOIN` gives. PGLite and Postgres run the statement in
-  `src/core/engine-sql/sync-dispatch.ts`.
+- **Sync routing row.** The store has no combined sync routing read, and the shim
+  (`src/core/rust-engine/store-members/cli-reads-import.ts`) exports no `readSyncDispatchRow`; it exports only
+  `listSourceRecords`, `readSourceIncarnation`, `hasCompanyBrainReceipt` and `readGuestSourceRow`. A single-source CLI
+  sync reads its routing row in `src/core/sync-dispatch-read.ts` (`syncDispatchRow`, lines 46-55), which sends one SQL
+  statement through `engine.executeRaw` (line 51) and answers `undefined` when that read fails. On a Rust brain
+  `executeRaw` refuses (`raw_sql`, `src/core/rust-engine/members.ts:32`), so the combined read fails and each reader runs
+  its own query, as the file's header says (lines 10-11). Only PGLite and Postgres answer the combined statement.

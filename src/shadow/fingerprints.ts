@@ -55,9 +55,13 @@ export function differingCodePoints(rows: readonly CharRow[], ref: Pick<Fixture,
   return [...out].sort((a, b) => a - b);
 }
 
-/** Fails when a stored fact is affected; a mismatch no differing code point explains fails too. */
+/**
+ * Fails when a stored fact is affected, or a purge tombstone exists while code points differ (the tombstone keeps only the
+ * claim's hash, so a purged claim that holds a differing code point could be saved again after a swap); a mismatch no
+ * differing code point explains fails too.
+ */
 function probeState(mismatches: number, m: ProbeMeta): 'pass' | 'fail' {
-  if (m.differing_code_points_total > 0) return m.facts_with_differing_code_points > 0 ? 'fail' : 'pass';
+  if (m.differing_code_points_total > 0) return m.facts_with_differing_code_points > 0 || (m.fact_purges_unverifiable ?? 0) > 0 ? 'fail' : 'pass';
   return mismatches + m.corpus_mismatches > 0 ? 'fail' : 'pass';
 }
 
@@ -82,9 +86,11 @@ export async function probeOnPrimary(engine: BrainEngine): Promise<{ sql: Finger
        FROM jsonb_array_elements_text($1::text::jsonb) WITH ORDINALITY AS u(t, ord) ORDER BY u.ord`,
     [JSON.stringify(sample.map((r) => (r.rep ? r.rep[0].repeat(r.rep[1]) + r.rep[2] : r.text ?? '')))]);
   const wrong = sample.filter((r, i) => got[i]?.a !== r.fingerprint || got[i]?.b !== r.fingerprint_v1).map((r) => r.name);
-  // A count of stored facts holding a differing code point, never the text (translate drops the listed characters).
-  const facts = differing.length === 0 ? [] : await engine.executeRaw<{ n: number | string }>(
-    `/* shadow-follow read */ SELECT count(*)::int AS n FROM facts WHERE fact <> translate(fact, $1, '')`, [String.fromCodePoint(...differing)]);
+  // Counts only, never text: stored facts holding a differing code point (translate drops the listed characters), and purge
+  // tombstones, which keep a claim hash the primary computed while the claim itself is gone, so no code point can be checked.
+  const counts = differing.length === 0 ? [] : await engine.executeRaw<{ n: number | string; p: number | string }>(
+    `/* shadow-follow read */ SELECT (SELECT count(*)::int FROM facts WHERE fact <> translate(fact, $1, '')) AS n,
+            (SELECT count(*)::int FROM fact_purges) AS p`, [String.fromCodePoint(...differing)]);
   const meta = await engine.executeRaw<{ v: string; c: string | null; t: string | null; p: string | null; l: string | null }>(
     `SELECT current_setting('server_version') AS v, d.datcollate AS c, d.datctype AS t, to_jsonb(d) ->> 'datlocprovider' AS p,
             COALESCE(to_jsonb(d) ->> 'datlocale', to_jsonb(d) ->> 'daticulocale') AS l
@@ -93,7 +99,8 @@ export async function probeOnPrimary(engine: BrainEngine): Promise<{ sql: Finger
     sql: rows.map((r) => [r.a, r.b] as FingerprintPair), server_version: meta[0]?.v ?? null, collation: meta[0]?.c ?? null,
     ctype: meta[0]?.t ?? null, locale_provider: meta[0]?.p ?? null, locale: meta[0]?.l ?? null,
     differing_code_points: differing.slice(0, 50).map(hex), differing_code_points_total: differing.length,
-    corpus_mismatches: wrong.length, corpus_mismatch_rows: wrong.slice(0, 5), facts_with_differing_code_points: Number(facts[0]?.n ?? 0),
+    corpus_mismatches: wrong.length, corpus_mismatch_rows: wrong.slice(0, 5), facts_with_differing_code_points: Number(counts[0]?.n ?? 0),
+    fact_purges_unverifiable: Number(counts[0]?.p ?? 0),
   };
 }
 
