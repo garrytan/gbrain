@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+Shadow mode, the sampled comparison of the Rust engine against your brain, no longer marks a page's mention-link write as moved because the brain's own background bookkeeping committed while the sample was read back. The links write that follows a remote page write (for example over MCP) read back its rows while the background effect worker or the receipt check ran a transaction that only declares the write protocol, takes a counter lock or claims and completes effect rows. The shadow counted those transactions as writes by another call, so the sample was set aside as moved instead of compared. They no longer count. A real write to a page or link by another call, or any write the shadow cannot describe, still marks the sample moved. These samples now go on to the Rust replay instead of being set aside as moved. Nothing you run changes, and no count, reason or status text is added or renamed.

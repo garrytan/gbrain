@@ -214,6 +214,12 @@ export const EFFECT_LOCK_MEMBERS: ReadonlySet<string> = new Set(['setEffectTrans
 /** The closing text seal of an imported page (engine-sql/write-guards.ts sealImportedPage): the statement AFTER_PAGE_WRITE matched by text while it was raw, pinned by test/shadow-follow-producer.test.ts. */
 const SEAL_MEMBER = 'sealImportedPage';
 const BOOKKEEPING_MEMBERS: ReadonlySet<string> = new Set([...JOURNAL_MEMBER_STATEMENTS].filter(([name, sqls]) => bookkeepingStatements(sqls, EFFECT_LOCK_MEMBERS.has(name))).map(([name]) => name));
+/**
+ * True for a typed journal member above whose statements pass the bookkeeping rule. The follower reports these members as unmapped writes, and its
+ * page/link write count (follower.ts `pageLinkWrites`, this sampler's `generation`) skips a batch whose only unmapped writes are these: the effect
+ * worker's next claim or a receipt true-up committing during a sample's read-back is not another writer.
+ */
+export const bookkeepingMember = (name: string): boolean => BOOKKEEPING_MEMBERS.has(name);
 const pageKey = (name: string, args: unknown[]): string => { const r = pageRefs(name === STAMP ? 'putPage' : name, name === STAMP ? [args[0], undefined, { sourceId: args[1] }] : args)[0]; return r ? `${r.source}\0${r.slug}` : ''; };
 
 /** The target page as the transaction commits it (beforeCommit): its revision, and its compared fields as `readBackText` writes them. */
