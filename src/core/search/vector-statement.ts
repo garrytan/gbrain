@@ -177,7 +177,8 @@ export function brainChunkEstimateLoader(): (load: () => Promise<Array<{ chunks:
   return async load => {
     if (reading || performance.now() - at <= 60_000) return last;
     reading = true;
-    try { last = Number((await load())[0]?.chunks ?? -1); } catch { /* keep the last value */ } finally { at = performance.now(); reading = false; }
+    const previous = last;
+    last = await load().then(rows => Number(rows[0]?.chunks ?? -1), () => previous).finally(() => { at = performance.now(); reading = false; });
     return last;
   };
 }
