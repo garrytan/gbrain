@@ -182,6 +182,22 @@ export function rankCandidates(
  * Public entrypoint. Searches, fetches per-candidate signals,
  * applies the locked ranking spec, returns top-K.
  */
+/**
+ * The read scope the `find_experts` op resolves for a trusted local caller:
+ * the canonical source chain plus the page-read policy. Local callers
+ * (CLI, eval) spread this into findExperts so they rank what MCP callers get.
+ */
+export async function localExpertScope(engine: BrainEngine): Promise<WhoknowsScope> {
+  const [{ resolveSourceWithTier }, { readPolicyOpts }] = await Promise.all([
+    import('../core/source-resolver.ts'),
+    import('../core/ops/context.ts'),
+  ]);
+  const resolved = await resolveSourceWithTier(engine, null);
+  const ctx = { engine, config: {}, logger: console, dryRun: false, remote: false, sourceId: resolved.source_id } as unknown as import('../core/operations.ts').OperationContext;
+  return readPolicyOpts(ctx);
+}
+type WhoknowsScope = Awaited<ReturnType<typeof import('../core/ops/context.ts').readPolicyOpts>>;
+
 export async function findExperts(
   engine: BrainEngine,
   opts: WhoknowsOpts,
@@ -363,6 +379,7 @@ export async function runWhoknows(
       limit: parsed.limit,
       explain: parsed.explain,
       types,
+      ...await localExpertScope(engine),
     });
   }
 
