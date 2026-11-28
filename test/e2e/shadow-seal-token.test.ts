@@ -477,6 +477,19 @@ d('the seal change token on Postgres', () => {
     expect(await quietSince(deps(), token)).toEqual({ ok: false, reason: 'stats_reset_changed' });
   }, 60_000);
 
+  // Hole 4 (pinned, no code change): a write hidden by resetting only that table's counters still changes the
+  // database's statistics epoch, so the check and the seal both refuse it before comparing counters.
+  test('a write hidden by resetting one copied table\'s counters is refused at the check and at the seal (stats_reset_changed)', async () => {
+    const basis = await readBasisNow(deps());
+    expect(typeof basis).toBe('string');
+    const sql = connection('psql-reset-one-table');
+    await sql`INSERT INTO config (key, value) VALUES ('hidden-by-reset', '1')`;
+    await finish(sql, 'psql-reset-one-table');
+    await engine.executeRaw(`SELECT pg_stat_reset_single_table_counters('config'::regclass)`); // as superuser
+    expect(await quietSince(deps(), basis)).toEqual({ ok: false, reason: 'stats_reset_changed' });
+    expect(await sealMark(deps(), basis)).toEqual({ refused: 'stats_reset_changed' });
+  }, 60_000);
+
   test('a TRUNCATE of a copied relation is refused', async () => {
     const token = await sealed();
     await engine.executeRaw('TRUNCATE config');
