@@ -120,7 +120,12 @@ gbrain remember "<the fact>" --provenance "<source>" --entity <slug>
 Facts `gbrain extract-conversation-facts` stored without an entity belong to
 their conversation page, so plain `gbrain facts relink` never examines them.
 Link them for free, with the same rule as write-time inference (exactly one
-entity page named in full, no competing name, no model call):
+entity page named in full, no competing name, no model call). When that finds
+no one, relink also checks the pages the conversation page itself links: a
+fact that names exactly one of them, by its full title or, for a person, by
+first name, links to that page. A fact that names two of them, or another
+person who shares the first name, stays unlinked, and a project or company
+matches only by its full title:
 
 ```bash
 gbrain facts relink --conversation --dry-run          # what would link; writes nothing
@@ -138,7 +143,9 @@ so doctor `unlinked_facts` then offers a paid re-extraction of its page
 `--dry-run`, capped with `--max-cost-usd`) instead of this relink again.
 A miss the table below does not remember (`no_page`, `no_mention`,
 `withdrawn`) is tried for free again once a new page is created in the
-source, for example the missing entity page.
+source, for example the missing entity page. Any miss is tried for free again
+once its conversation page gains a link its author wrote, so linking a person
+from the page after extraction needs no paid re-extraction.
 
 Every completed extraction of a page is remembered with the page's content
 hash. While the page still has that content, doctor offers no paid
