@@ -117,8 +117,10 @@ The report is provisional and always says NOT READY.`;
 class UsageError extends Error {}
 
 interface StartOpts { plan: boolean; yes: boolean; expect: string | null; sampleRate: number; writeSampleRate: number; queueBound: number;
-  /** True when --write-sample-rate was given; otherwise the brain's default applies (writeSampleRateFor). */
+  /** `--write-sample-rate` was given. It wins on a managed brain or an unread mode; a brain that can opt in accepts only 1 (writeSampleRateFor). */
   writeSampleRateGiven?: boolean }
+
+export const OPT_IN_WRITE_RATE_REFUSAL = 'this brain can opt in to the engine swap, so its shadow compares every write';
 
 function parseStart(args: string[]): StartOpts {
   const o: StartOpts = { plan: false, yes: false, expect: null, sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, writeSampleRate: DEFAULT_SHADOW_WRITE_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND };
@@ -309,18 +311,23 @@ async function readStorage(brain: ResolvedBrain, deps: EngineShadowDeps, now: ()
 }
 
 /**
- * The write sample rate of this start: the flag's; else the default on a brain known to use managed storage (it cannot
+ * The write sample rate of this start: the flag's (below 1 it is refused on a brain known to be able to opt in); else the default on a brain known to use managed storage (it cannot
  * opt in to the swap); else every write. An unread mode counts as a brain that can opt in (D1): it fails toward more
  * checking, so an opt-in brain whose mode read failed still reaches criterion 5's bar.
  */
 function writeSampleRateFor(o: StartOpts, storage: ManagedStorageRecord | null | undefined): number {
+  // A brain known to be able to opt in compares every write: a thinner shadow there is refused, not applied.
+  if (o.writeSampleRateGiven && storage?.managed === false && o.writeSampleRate < OPT_IN_WRITE_SAMPLE_RATE) {
+    throw new UsageError(`--write-sample-rate ${o.writeSampleRate} is refused: ${OPT_IN_WRITE_RATE_REFUSAL}`);
+  }
   if (o.writeSampleRateGiven) return o.writeSampleRate;
   return storage?.managed === true ? DEFAULT_SHADOW_WRITE_SAMPLE_RATE : OPT_IN_WRITE_SAMPLE_RATE;
 }
 
-/** The plan line that says why every write is compared, or null when the flag set the rate or the brain is managed. */
+/** The plan line that says why every write is compared, or null when the brain is managed or the flag set the rate on a brain whose mode was not read. */
 function everyWriteLine(o: StartOpts, storage: ManagedStorageRecord | null | undefined): string | null {
-  if (o.writeSampleRateGiven || storage?.managed === true) return null;
+  // On a brain that can opt in, a given rate is always 1 (writeSampleRateFor refuses less), so the line still says why.
+  if (storage?.managed === true || (o.writeSampleRateGiven && storage?.managed !== false)) return null;
   if (storage?.managed === false) {
     return `write comparisons: every write (rate ${OPT_IN_WRITE_SAMPLE_RATE}), because this brain can opt in to the engine swap; each save is about 2x slower while the shadow runs`;
   }

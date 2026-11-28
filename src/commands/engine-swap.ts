@@ -30,7 +30,11 @@ import { inspectLockHolder } from '../core/pglite-lock.ts';
 import { localHostId } from '../core/persistence/identity.ts';
 import { blockerRefusal } from '../core/engine-swap/gates.ts';
 import { readSwapRecord, swapRecordPath, swapRunDir, type SwapRecord } from '../core/engine-swap/record.ts';
-import { routeOverrideRefusal, subprocessProber } from '../core/engine-swap/route.ts';
+import { routeOverrideRefusal, subprocessProber, withServedCheck, type RouteProber } from '../core/engine-swap/route.ts';
+import { storeProbeCredential } from '../core/engine-swap/probe-token.ts';
+import { plannedProbeTarget, probeServedUntil, probeUrl, SERVED_PROBE_WINDOW_MS, type ProbeWindow, type ServedProbeInput, type ServedProbeVerdict } from '../core/engine-swap/served-probe.ts';
+import { RUST_SERVER_TLS_CERT_ENV } from '../core/rust-engine/served/listener.ts';
+import { RUST_SERVER_TOKEN_ENV } from '../core/rust-engine/served/engine.ts';
 import { runSwapStates, startRecord, type RustSide, type SwapRunDeps } from '../core/engine-swap/run.ts';
 import { readConfiguredShadowStatus } from '../shadow/status-document.ts';
 import type { ShadowStatus } from '../core/engine-swap/readiness.ts';
@@ -178,7 +182,7 @@ export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatu
   err?: (text: string) => void;
   writeError?: (e: unknown, opts: { json: boolean }) => number;
   /** The run's seams (tests): the Rust side of state 3, the route probe, the addon check, the lock check. */
-  run?: Partial<Pick<SwapRunDeps, 'openRust' | 'prober' | 'fs' | 'beforeState' | 'intervalRows'>> & {
+  run?: Partial<Pick<SwapRunDeps, 'openRust' | 'prober' | 'probeCredential' | 'fs' | 'beforeState' | 'intervalRows'>> & {
     addonCheck?: () => Promise<OperationError | null>;
     brainInUse?: (databasePath: string) => boolean;
     /** A Postgres brain: other gbrain sessions on its database (default: pg_stat_activity by application_name). */
@@ -186,6 +190,8 @@ export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatu
     /** A Postgres brain: the checkpoint precheck and pg_dump/pg_restore (default: the system tools). */
     pgTools?: PgTools;
     checkpointFreeBytes?: (dir: string) => number | null;
+    /** The brain server check of a plan with a served destination (default: served-probe.ts `probeServedUntil`). */
+    servedProbe?: (input: ServedProbeInput, window: ProbeWindow) => Promise<ServedProbeVerdict>;
   };
   /** Failback's seams (`--to pglite|postgres`). */
   failback?: FailbackCliDeps;
@@ -235,6 +241,16 @@ async function defaultAddonCheck(): Promise<OperationError | null> {
   return load.ok ? null : opError(load.code, load.message, 'Install the Rust engine addon for this gbrain release, then run the plan again.', { reason: load.reason });
 }
 
+/** The Rust store as an engine (the probe token's mint and removal): its owner, or a client of the owner that serves it. */
+async function openRustStoreEngine(store: string): Promise<BrainEngine> {
+  const { createEngine } = await import('../core/engine-factory.ts');
+  // Never creates a store: the final check just read this one, so a missing store is an error.
+  const engineConfig = { engine: 'rust' as const, database_path: store, create_store: false };
+  const engine = await createEngine(engineConfig);
+  await engine.connect(engineConfig);
+  return engine;
+}
+
 /** Production Rust side of state 3: the shadow child owns the store, the read source reads the primary. */
 function defaultOpenRust(primary: BrainEngine, dir: string): () => Promise<RustSide> {
   return async () => {
@@ -251,6 +267,37 @@ function defaultOpenRust(primary: BrainEngine, dir: string): () => Promise<RustS
   };
 }
 
+/**
+ * The route prober of a run: the fresh-process probe, plus the brain server check when the plan bound a served
+ * destination (served-probe.ts `plannedProbeTarget`: config evidence with a listen address and a store brain id).
+ * The check presents the run's short-lived probe token (minted in the Rust store after the final check, removed before
+ * the run ends), else this host's owner server token read by name; neither is printed. It trusts the certificate this
+ * host serves with when one is configured, else the system store.
+ */
+export function runProber(base: RouteProber, evidence: Parameters<typeof plannedProbeTarget>[0], env: Readonly<Record<string, string | undefined>>,
+  probe: (input: ServedProbeInput, window: ProbeWindow) => Promise<ServedProbeVerdict>, progress: (line: string) => void): RouteProber {
+  const target = plannedProbeTarget(evidence);
+  if (!target) return base;
+  return withServedCheck(base, (credential) => {
+    // The run's probe token (probe-token.ts) when it minted one, else this host's owner server token by name.
+    const token = credential?.token || env[RUST_SERVER_TOKEN_ENV] || undefined;
+    const certPath = env[RUST_SERVER_TLS_CERT_ENV];
+    let ca: Buffer | undefined;
+    try { ca = certPath ? readFileSync(certPath) : undefined; } catch (e) {
+      // An unreadable trust anchor is a failed check, never a quiet fall back to the system store.
+      return Promise.resolve({ ok: false, url: probeUrl(target.listen), reason: 'tls_failed', detail: `cannot read ${RUST_SERVER_TLS_CERT_ENV} (${(e as NodeJS.ErrnoException).code ?? 'error'})` });
+    }
+    // Printed once: the run does not start the server; the user (or a service manager) brings it up on the switched config.
+    let told = false;
+    const onRetry = (v: ServedProbeVerdict) => {
+      if (told) return;
+      told = true;
+      progress(`engine swap: waiting for the brain server at ${v.url} (up to ${SERVED_PROBE_WINDOW_MS / 1000} s; writes stay paused until it answers)`);
+    };
+    return probe({ ...target, token, ca }, { onRetry });
+  });
+}
+
 function renderStatus(r: SwapRecord | null): string {
   if (!r) return 'No engine swap run is recorded for this brain.';
   const lines = [
@@ -261,6 +308,7 @@ function renderStatus(r: SwapRecord | null): string {
     r.verify ? `  verified ${r.verify.digests.length} relation digest(s), ${r.verify.allocators.length} allocator(s), probe ${r.verify.probe}` : '',
     r.switch ? `  authority switched at ${r.switch.at} (was ${r.switch.previous.engine})` : '',
     r.probe ? `  route probe: ${r.probe.effective_engine ?? 'none'} ${r.probe.ok ? 'answered' : 'failed'}` : '',
+    r.probe?.served ? `  brain server check at ${r.probe.served.url}: ${r.probe.served.ok ? 'ok' : `${r.probe.served.reason} (${r.probe.served.detail})`}` : '',
     r.error ? `  stopped at ${r.error.state}: ${r.error.code}${r.error.reason ? ` (${r.error.reason})` : ''}, diagnostic ${r.error.diagnostic_id}. Continue with --resume.` : '',
     r.failback ? `  failback to ${r.failback.target} (plan ${r.failback.plan_hash}): ${r.failback.state}${r.failback.copy ? `; ${r.failback.copy.pages} page(s) and ${r.failback.copy.facts} fact(s) copied back` : ''}` : '',
     r.failback?.error ? `  failback stopped at ${r.failback.error.state}: ${r.failback.error.code}, diagnostic ${r.failback.error.diagnostic_id}.` : '',
@@ -372,7 +420,9 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
       primary: engine, config, brainKey, shadowDir, rustStore: join(shadowDir, 'store'), hostId: localHostId(),
       ...(postgresSource && config?.database_url ? { postgres: { url: config.database_url, tools: deps.run?.pgTools } } : {}),
       openRust: deps.run?.openRust ?? defaultOpenRust(engine, shadowDir),
-      prober: deps.run?.prober ?? subprocessProber(),
+      prober: runProber(deps.run?.prober ?? subprocessProber(), evidence, env, deps.run?.servedProbe ?? probeServedUntil, line => err(line)),
+      // Only a plan with a served destination checks the brain server, so only it mints a probe token.
+      ...(plannedProbeTarget(evidence) ? { probeCredential: deps.run?.probeCredential ?? storeProbeCredential(() => openRustStoreEngine(join(shadowDir, 'store'))) } : {}),
       routeCheck: () => routeOverrideRefusal(envNames, services),
       recordPath, fs: deps.run?.fs, now: deps.now ? () => deps.now! : undefined,
       progress: line => err(line), beforeState: deps.run?.beforeState, intervalRows: deps.run?.intervalRows,

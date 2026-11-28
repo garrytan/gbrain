@@ -3,7 +3,7 @@
  * hosts on this host's configuration only (destination.ts `configDestination`), because no server can serve the shadow
  * store before the cutover. After its switch state the run calls `probeServedDestination` on the address the plan bound
  * (`GBRAIN_RUST_SERVER_LISTEN`) and keeps the Rust brain only on `ok`; any other verdict gives authority back to the old
- * engine. Wiring the probe into the swap run is a separate change; this module only reads.
+ * engine (route.ts `withServedCheck`, wired by src/commands/engine-swap.ts). This module only reads.
  *
  * The probe connects through the served client (served/client.ts `connectServed`, protocol v3, TLS verified before the
  * token is sent), then requires, in order:
@@ -124,5 +124,38 @@ export async function probeServedDestination(input: ServedProbeInput): Promise<S
     return { ok: true, url, server_id: hello.server_id, brain_id: brainId };
   } finally {
     connection.close();
+  }
+}
+
+/** How long the swap run waits for a brain server that does not answer yet after its switch (the plan adds it to the write pause). */
+export const SERVED_PROBE_WINDOW_MS = 60_000;
+
+export interface ProbeWindow {
+  /** How long a server that does not answer yet is waited for (default 60 s): it restarts on the switched config. */
+  windowMs?: number;
+  /** The pause between two probes of a server that does not answer (default 2 s). */
+  intervalMs?: number;
+  /** Test seams. */
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  /** Called before each retry with the verdict that caused it (the run prints it as progress). */
+  onRetry?: (verdict: ServedProbeVerdict) => void;
+}
+
+/**
+ * Probes until the verdict is not `unreachable` or the window ends. Only `unreachable` is retried: the brain server on
+ * the serving host comes back on the switched config after the switch, so it may not answer at once. Every other
+ * reason is final at once (a wrong brain, a refused credential, an untrusted certificate do not heal by waiting).
+ */
+export async function probeServedUntil(input: ServedProbeInput, w: ProbeWindow = {}): Promise<ServedProbeVerdict> {
+  const now = w.now ?? Date.now;
+  const sleep = w.sleep ?? ((ms: number) => new Promise<void>(r => setTimeout(r, ms)));
+  const deadline = now() + (w.windowMs ?? SERVED_PROBE_WINDOW_MS);
+  for (;;) {
+    // No attempt outlives the window by more than its own floor of 1 s, so a host that drops packets ends in time too.
+    const v = await probeServedDestination({ ...input, timeoutMs: Math.max(1_000, Math.min(input.timeoutMs ?? 5_000, deadline - now())) });
+    if (v.ok || v.reason !== 'unreachable' || now() + (w.intervalMs ?? 2_000) > deadline) return v;
+    w.onRetry?.(v);
+    await sleep(w.intervalMs ?? 2_000);
   }
 }

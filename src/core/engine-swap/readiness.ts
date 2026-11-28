@@ -278,7 +278,16 @@ function uncoveredWriteLines(byFamily: Record<string, unknown>): string[] {
  * Criterion 5: zero unexplained differences on at least the brain's own write bar of compared writes (write-bar.ts:
  * min(1000, max(100, window x W)), the window being criterion 1's shadow minimum in force).
  */
-function writeComparisons(r: Reader, now: Date, policy: ReadinessPolicy): Check {
+/** Criterion 5's extra failure on a brain that can opt in: its shadow must compare every write (D1). */
+export const SAMPLED_WRITES_DETAIL = 'the shadow compared a sample of writes; restart it so it compares every write';
+
+/** What the plan knows about the brain beyond the shadow document; every field is optional so older callers read as before. */
+export interface ReadinessOptions extends DestinationOptions {
+  /** The brain can opt in to the swap (storage read as unmanaged): criterion 5 then needs a write sample rate of 1. */
+  optInBrain?: boolean;
+}
+
+function writeComparisons(r: Reader, now: Date, policy: ReadinessPolicy, optInBrain: boolean): Check {
   const out = guarded(r, () => {
     const state = r.s('write_comparisons.state');
     const comparable = r.n('write_comparisons.comparable');
@@ -292,6 +301,9 @@ function writeComparisons(r: Reader, now: Date, policy: ReadinessPolicy): Check 
     const bar = writeBar(history, min.required ? min.days : DEFAULT_SHADOW_MIN_DAYS, now);
     const how = describeWriteBar(bar);
     const fails: string[] = [];
+    // An older or hand-written shadow state on an opt-in brain may sample writes; its comparisons then never count.
+    const rate = r.peek<number>('write_comparisons.sample_rate');
+    if (optInBrain && typeof rate === 'number' && rate < 1) fails.push(SAMPLED_WRITES_DETAIL);
     if (comparable < bar.bar) {
       fails.push(`${comparable} of ${bar.bar} compared writes`);
       fails.push(describeShortfall(history, bar, comparable, r.peek<string>('epoch_started_at'), {
@@ -408,9 +420,10 @@ export const CRITERIA: ReadonlyArray<{ n: number; name: string }> = [
 /**
  * Evaluates every criterion against the shadow status. `doc` null means no shadow runs for this brain: every gating
  * criterion is `missing` and the verdict is NOT READY (`no_shadow`). `opts` carries the destination evidence for
- * criterion 11 only; without it, or with the multi-user switch off, the result is what it was before it existed.
+ * criterion 11 only; without it, or with the multi-user switch off, the result is what it was before it existed. Its
+ * `optInBrain` makes criterion 5 fail a shadow that samples writes (SAMPLED_WRITES_DETAIL).
  */
-export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date(), policy: ReadinessPolicy = READINESS_POLICY, opts?: DestinationOptions): ReadinessVerdict {
+export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date(), policy: ReadinessPolicy = READINESS_POLICY, opts?: ReadinessOptions): ReadinessVerdict {
   const r = new Reader(doc);
   // Writers on many hosts stop refusing only for a served multi-user Rust destination with the switch on (destination.ts).
   const elig = eligibility(r, destinationAllowsManyWriters(opts), destinationNote(opts));
@@ -419,7 +432,7 @@ export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date
     readCoverage(r),
     zeroCounts(r, [['reads.rust_error_unresolved_7d', 'unresolved rust_error'], ['reads.diverged_unexplained_7d', 'unexplained diverged']]),
     searchArms(r),
-    writeComparisons(r, now, policy),
+    writeComparisons(r, now, policy, opts?.optInBrain === true),
     zeroCounts(r, [['privacy_diverged', 'privacy_diverged']]),
     fingerprintsAndAllocators(r),
     speed(r),

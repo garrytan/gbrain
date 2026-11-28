@@ -7,7 +7,7 @@
  * Writes go through `SwapFs`, whose default is the real filesystem. Tests replace it to inject a full disk; nothing
  * in production can.
  */
-import type { PreviousAuthority } from './route.ts';
+import type { PreviousAuthority, ServedRouteCheck } from './route.ts';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, writeSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { configDir } from '../config.ts';
@@ -41,7 +41,7 @@ export interface SwapRecord {
     at: string;
   };
   switch?: { previous: PreviousAuthority; at: string };
-  probe?: { effective_engine: string | null; database_path: string | null; ok: boolean; at: string };
+  probe?: { effective_engine: string | null; database_path: string | null; ok: boolean; served?: ServedRouteCheck; at: string };
   /** The last failure: the state it stopped at, its code and a diagnostic id (never a value). */
   error?: { state: SwapState; code: string; reason: string | null; diagnostic_id: string; at: string } | null;
   /** A failback of this swap (`gbrain engine swap --to <old engine>`); the swap's own state stays `succeeded`. */

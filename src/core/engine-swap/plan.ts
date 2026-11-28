@@ -16,6 +16,7 @@ import type { EngineCapabilities } from '../engine-capabilities.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { activeWorktreeRefreshes } from '../persistence/worktree-refresh.ts';
 import { usableDestination, type DestinationOptions } from './destination.ts';
+import { plannedProbeTarget, probeUrl, SERVED_PROBE_WINDOW_MS } from './served-probe.ts';
 import { servedCapabilities, storeCapabilities } from '../rust-engine/store-capabilities.ts';
 import { rustMultiuserFromEnv } from '../rust-engine/multiuser-switch.ts';
 import { evaluateReadiness, type ReadinessVerdict, type ShadowStatus } from './readiness.ts';
@@ -175,7 +176,8 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
   const now = deps.now ?? new Date();
   const inForce = policyInForce(deps.policy ?? READINESS_POLICY, await engine.readPersistenceBrainId(), now);
   const status = deps.readShadowStatus ? await deps.readShadowStatus(engine) : null;
-  const readiness = evaluateReadiness(status, now, inForce.policy, deps.destination);
+  // An unmanaged brain is the one that can opt in: its shadow must compare every write (criterion 5).
+  const readiness = evaluateReadiness(status, now, inForce.policy, { ...deps.destination, optInBrain: managed === false });
   const base: Omit<SwapPlan, 'plan_hash'> = {
     schema_version: 1,
     to: 'rust',
@@ -190,13 +192,24 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
     disk: deps.disk ?? { path: '', free_bytes: null },
     policy: { text: inForce.text, hash: inForce.hash, override: inForce.override, brain_ref: inForce.brain_ref },
     capability_report: capabilityReport(String(engine.kind)),
-    write_pause: await estimateWritePause(engine),
+    write_pause: withServedWait(await estimateWritePause(engine), deps.destination),
     blockers: await swapBlockers(engine, { remoteMcpConfigured: !!deps.remoteMcpConfigured, rustServes: deps.rustServes }),
     way_back: await wayBack(engine),
     collation: collationReport(String(engine.kind), status?.fingerprints?.probe ?? null),
     ...(managed ? { managed_known_losses: [...MANAGED_RUST_LOSSES] } : {}),
   };
   return { ...base, plan_hash: planHash(base, deps.destination) };
+}
+
+/**
+ * A plan accepted on config evidence (switch on) has a run that waits up to SERVED_PROBE_WINDOW_MS after its switch for
+ * the brain server, with the old primary still fenced: those seconds join the write pause. Every other plan is unchanged.
+ */
+function withServedWait(p: WritePauseEstimate, dest: DestinationOptions | undefined): WritePauseEstimate {
+  const target = plannedProbeTarget(usableDestination(dest));
+  if (!target) return p;
+  const s = SERVED_PROBE_WINDOW_MS / 1000;
+  return { ...p, seconds: p.seconds + s, basis: `${p.basis}, then up to ${s} s waiting for the brain server at ${probeUrl(target.listen)}` };
 }
 
 async function wayBack(engine: BrainEngine): Promise<WayBack> {

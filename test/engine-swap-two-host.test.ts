@@ -9,8 +9,9 @@
  *    listens on a loopback address or without TLS, a probe that refuses the real topology.
  * 3. Existing coverage: test/rust-served-cli.test.ts serves on loopback TCP to one reading client; nothing writes from
  *    two hosts over TLS on a non-loopback address.
- * 4. Seams: none. Real CLI, real addon, real TLS. The shadow-and-back steps are todo: the swap run and its failback reach
- *    the multi-user trunk with the main merge that takes in 2ed944aafd (rust-engine/swap-pg-run).
+ * 4. Seams: none. Real CLI, real addon, real TLS. The shadow-and-back rows (a Postgres brain both hosts write to, the
+ *    swap to this topology, a server down at the cutover, failback) need DATABASE_URL and live in
+ *    test/engine-swap-two-host-pg.serial.test.ts.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -74,10 +75,4 @@ describe.skipIf(!HAVE_TWO_HOST_ADDON || !ADDRESS)('two writer hosts on one serve
     const v = await probeServedDestination({ listen: brain.listen, expectedBrainId: brain.brainId, token: brain.token, ca: brain.tls.certPem });
     expect(v).toMatchObject({ ok: true, brain_id: brain.brainId });
   });
-
-  // Shadow and back: waits for the swap run on the multi-user trunk (the main merge that takes in 2ed944aafd).
-  test.todo('both hosts write to a Postgres brain for the observation window; the plan on the serving host reads READY on config only', () => {});
-  test.todo('engine swap --to rust --yes --expect <hash> runs shadow, switch and cutover; the probe passes and the second host keeps writing through rust_server.url', () => {});
-  test.todo('a server that is down at cutover: the probe fails and the run gives authority back to Postgres (fail-first restore row)', () => {});
-  test.todo('engine swap --to postgres fails back; every write from both hosts is on Postgres, none lost and none doubled', () => {});
 });

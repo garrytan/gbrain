@@ -16,11 +16,18 @@ import { resolveServeGbrainCommand } from '../serve-service.ts';
 import type { ServiceDefinition } from './plan.ts';
 import { swapRefusal } from './refusals.ts';
 import type { OperationError } from '../ops/contract.ts';
+import type { ServedProbeReason, ServedProbeVerdict } from './served-probe.ts';
 
-export interface RouteProbe { effective_engine: string | null; database_path: string | null; ok: boolean }
+/** The live check of the served destination a plan bound (served-probe.ts), when it bound one: no credential, ever. */
+export interface ServedRouteCheck { ok: boolean; url: string; reason: ServedProbeReason | null; detail: string | null }
 
-/** A fresh-process probe of the configured route; tests pass their own. */
-export type RouteProber = () => Promise<RouteProbe>;
+export interface RouteProbe { effective_engine: string | null; database_path: string | null; ok: boolean; served?: ServedRouteCheck }
+
+/**
+ * A fresh-process probe of the configured route; tests pass their own. `credential`: the swap run's probe token
+ * (probe-token.ts), held in memory only, for the brain server check; the route probe itself ignores it.
+ */
+export type RouteProber = (credential?: { token: string }) => Promise<RouteProbe>;
 
 /** The real probe: a new gbrain process runs `engine status --json --probe` (it opens the brain as any caller would). */
 export function subprocessProber(argv: string[] = resolveServeGbrainCommand(), env: NodeJS.ProcessEnv = process.env): RouteProber {
@@ -32,6 +39,20 @@ export function subprocessProber(argv: string[] = resolveServeGbrainCommand(), e
     } catch {
       return { effective_engine: null, database_path: null, ok: false };
     }
+  };
+}
+
+/**
+ * The route probe of a plan with a served destination (writers on many hosts): the fresh-process probe first, then, only
+ * when it passed, the brain server check at the address and store brain id the plan bound. The run keeps the Rust
+ * engine only when both pass (probePassed); any served verdict but `ok` gives authority back to the old engine.
+ */
+export function withServedCheck(base: RouteProber, served: (credential?: { token: string }) => Promise<ServedProbeVerdict>): RouteProber {
+  return async (credential) => {
+    const probe = await base();
+    if (!probe.ok) return probe;
+    const v = await served(credential);
+    return { ...probe, served: v.ok ? { ok: true, url: v.url, reason: null, detail: null } : { ok: false, url: v.url, reason: v.reason, detail: v.detail } };
   };
 }
 
@@ -93,7 +114,9 @@ export function restoreAuthority(previous: PreviousAuthority, saved?: SavedRoute
   saveConfig(next as unknown as GBrainConfig);
 }
 
-/** True when the probe shows the Rust engine at `store`, opened and answering. */
+/** True when the probe shows the Rust engine at `store`, opened and answering, and the served check (when the plan
+ * bound one) passed. */
 export function probePassed(p: RouteProbe, store: string): boolean {
-  return p.ok && p.effective_engine === 'rust' && p.database_path !== null && resolve(p.database_path) === resolve(store);
+  return p.ok && p.effective_engine === 'rust' && p.database_path !== null && resolve(p.database_path) === resolve(store)
+    && (p.served === undefined || p.served.ok);
 }

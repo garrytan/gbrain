@@ -50,7 +50,9 @@ The plan also prints:
 - **The capability report.** The capabilities the Rust engine serves, and, for each one your current engine reports
   that Rust does not, the engine members that refuse there.
 - **The expected write pause.** An estimate of how long writes are refused during a run: the drain of pending requests
-  plus two digest passes over the brain's rows, with the inputs it used. It is printed, never bound into the plan hash.
+  plus two digest passes over the brain's rows, with the inputs it used. A plan accepted for writers on many hosts adds
+  up to 60 seconds the run may wait for the brain server after its switch (below). It is printed, never bound into the
+  plan hash.
 - **Blockers.** What the Rust engine cannot serve for this brain yet. A run refuses while any is listed:
   folder rules (`folder_rules_unserved`) and remote callers (`remote_access_unserved`).
 
@@ -82,8 +84,8 @@ under `.gbrain/engine-swap/`) before the next starts:
    brain's highest ids (sequence values included), a second reconcile must find nothing left to repair, the fingerprint
    probe must pass, and every copied relation must have the same row count and digest on both engines.
 4. **Switch and probe.** The config file is switched to the Rust store, then a fresh `gbrain` process opens the brain
-   the normal way and must report the Rust engine at that store. Only then does the run report success. If the probe
-   fails, the config is put back at once.
+   the normal way and must report the Rust engine at that store. A plan accepted for writers on many hosts also checks
+   the brain server (below). Only then does the run report success. If the probe fails, the config is put back at once.
 
 A run that stops (a kill, a full disk, a failed digest, a failed probe) keeps its last state and a diagnostic id;
 `--status` shows them and `--resume` continues. Until the switch, the old engine keeps authority.
@@ -231,11 +233,14 @@ never a pass. With no shadow running, every criterion is `missing`.
    sampled-out calls included, over the window (a shorter call history is scaled to a per-day rate). The plan names
    the bar, the window, how W was computed and the compared count. Below the floor of 100 the check stays closed. A
    shadow that cannot compare writes (`capability_missing`) has no evidence. A brain that can opt in (one without
-   managed storage) shadows with every write compared by default (rate 1.0; `--write-sample-rate` overrides it), so on
+   managed storage) shadows with every write compared (rate 1.0), so on
    Postgres the bar is reachable in 5 days when its writes can be compared; each save is about 2x slower while that
    shadow runs. When start cannot read the storage mode, it also compares every write and says so in the plan; if that
    brain does use managed storage, each save is about 2x slower until `gbrain engine shadow start` runs again and reads
-   the mode. A PGLite brain samples no writes (below), so it cannot pass criterion 5 yet. A brain with fewer than 20 qualifying writes a day cannot reach the floor
+   the mode. On a brain read as unmanaged, `gbrain engine shadow start --write-sample-rate` below 1 is refused, so a
+   shadow that makes saves too slow can only be stopped, not thinned. A shadow state there that samples writes (an older
+   state, or one edited by hand) fails this criterion with "the shadow compared a sample of writes; restart it so it
+   compares every write". A PGLite brain samples no writes (below), so it cannot pass criterion 5 yet. A brain with fewer than 20 qualifying writes a day cannot reach the floor
    in a 5-day shadow.
    When the compared writes fall short of the bar, the plan says why: `write_bar_not_reached` with the share of the
    epoch's qualifying writes that were compared, the writes that cannot be (in a transaction, `uncomparable`,
@@ -285,8 +290,9 @@ never a pass. With no shadow running, every criterion is `missing`.
    child during a replay fails criterion 5 for that epoch. While any mark stands, `write_comparisons.state` reads
    `capability_missing` and this criterion is `missing` (no evidence), not a pass; `gbrain engine shadow status` says how
    many replays have no result yet. Once a comparison has a verdict (`comparable` or `unexplained_difference`) and no mark stands, the state is `measured`, and the pass rule is unchanged. The
-   sample share is the write sample rate, 0.05 unless `gbrain engine shadow start --write-sample-rate <rate>` (above 0,
-   at most 1) sets another; it is separate from the read sample rate. Above about a 0.05 sample rate, bursts of writes only add `queue_full` (uncomparable) samples, because the child replays one write at a time and holds at most 16 in all (the one replaying and those waiting). A sampled write that never reaches a verdict (the pipe refused it, its read-back was still running at disconnect, or it was still queued when the child hit its exit deadline) is counted `uncomparable` as `send_shed`, `readback_abandoned` or `child_exit_deadline`, never dropped and never comparable. The serving process records the first two in a small file beside the tally without taking the tally's lock, so a busy lock can never stall a write; the shadow child adds them to the tally, and until it has, `gbrain engine shadow status` reads them as replays with no verdict, so no evidence; a journal that cannot be read, or that ends in an unfinished line while its writer is alive, reads the same way, and an unfinished line whose writer is gone is counted once as `lost_unreadable`. Every sampled write of another family is counted
+   sample share is the write sample rate: 1.0 on a brain that can opt in (a lower `--write-sample-rate` is refused
+   there) or whose storage mode could not be read; on a managed brain 0.05; the flag sets another on those two, as `gbrain engine shadow start --write-sample-rate <rate>` (above 0, at most 1)
+   does; the shadow plan prints the rate it applies and its hash binds it; it is separate from the read sample rate. Above about a 0.05 sample rate, bursts of writes only add `queue_full` (uncomparable) samples, because the child replays one write at a time and holds at most 16 in all (the one replaying and those waiting). A sampled write that never reaches a verdict (the pipe refused it, its read-back was still running at disconnect, or it was still queued when the child hit its exit deadline) is counted `uncomparable` as `send_shed`, `readback_abandoned` or `child_exit_deadline`, never dropped and never comparable. The serving process records the first two in a small file beside the tally without taking the tally's lock, so a busy lock can never stall a write; the shadow child adds them to the tally, and until it has, `gbrain engine shadow status` reads them as replays with no verdict, so no evidence; a journal that cannot be read, or that ends in an unfinished line while its writer is alive, reads the same way, and an unfinished line whose writer is gone is counted once as `lost_unreadable`. Every sampled write of another family is counted
    `capability_missing`, by family, never compared, so `gbrain engine shadow status` and the swap plan name the families sampled so far, which stay unchecked. A sampled write outside a transaction waits (at most 2 seconds) for one small read of the rows it
    touches before it runs; if that read is slow, the write goes ahead untouched. `put_page` and the page write of an import (sync included) run inside a
    transaction, and a sampled one can now be compared too: it reads the same rows on the transaction's own connection before it sends the write, in a
@@ -391,8 +397,21 @@ swap. The host that swaps becomes the brain server, so its configuration counts 
   mode for this brain until it has created its store, then read the plan again.
 
 The row's detail says "accepted on config only" or "not accepted (config only)" with the reason, and the plan hash binds
-the listen address and the store's brain id. The swap run checks the live server at that address after its switch; when
-the server does not answer as a served multi-user Rust brain for that store, the run gives authority back to Postgres.
+the listen address and the store's brain id. The swap run checks the live server at that address after its switch and
+its route probe: the server must answer over verified TLS (the certificate in `GBRAIN_RUST_SERVER_TLS_CERT` is trusted),
+accept the run's probe token, run its brain in multi-user mode and serve the store's brain id. No owner server token can
+exist in the new store before the switch, so the run makes its own: the switch writes one short-lived probe token into
+the Rust store after the final check; it is removed before the run ends. The token is named `engine-swap-probe-<run id>`,
+expires within minutes, is never printed or written to the run record, and failback never carries it (or the store's
+owner token lists) back to the old engine. If the run cannot remove it, it prints the `gbrain auth revoke` command to
+run. If the server's certificate is signed by a private CA, the file in `GBRAIN_RUST_SERVER_TLS_CERT` must also hold that
+CA certificate, or the check fails `tls_failed`; an unreadable file fails the same way before any connection. The run
+does not start the server: it prints "engine swap: waiting for the brain server at <url>" once and waits up to 60 seconds
+for a server that does not answer yet; any other answer is final. The old primary stays fenced during the wait, so
+writes stay refused for up to 60 seconds longer (the plan's write pause includes them). A server that needs longer than
+that to open its store makes the run give authority back to Postgres; start it, then run `--resume`. When the check
+fails, the run names the reason (`unreachable`, `tls_failed`, `not_served`, `refused`, `not_multi_writer` or
+`wrong_brain`); `--status` shows it and `--resume` runs the check again.
 
 **Say to your agent:** *"Check whether my brain, written from two machines, can move to the Rust server."*
 

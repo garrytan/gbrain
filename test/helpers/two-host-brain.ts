@@ -74,7 +74,7 @@ function writeConfig(home: string, config: Record<string, unknown>): void {
   writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify(config));
 }
 
-function childEnv(home: string, extra: Record<string, string>): Record<string, string> {
+export function childEnv(home: string, extra: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) out[key] = value;
   for (const key of Object.keys(out)) {
@@ -183,6 +183,71 @@ async function readBrainId(root: string, env: Record<string, string>): Promise<s
   if (code !== 0 || !id) throw new Error(`reading the brain id failed (${code}): ${out}\n${err.slice(-1500)}`);
   return id;
 }
+
+/** A free TCP port on `address` (bound and released at once), for a listen address a plan binds before any serve. */
+export async function freePort(address: string): Promise<number> {
+  const { createServer } = await import('node:net');
+  return new Promise<number>((done, fail) => {
+    const srv = createServer();
+    srv.once('error', fail);
+    srv.listen(0, address, () => { const port = (srv.address() as { port: number }).port; srv.close(() => done(port)); });
+  });
+}
+
+export interface TwoHostPostgresBrain {
+  root: string;
+  address: string;
+  /** The port the brain server will listen on once the brain runs on Rust (nothing listens on it before). */
+  port: number;
+  /** `<address>:<port>`: what GBRAIN_RUST_SERVER_LISTEN names on the server host. */
+  listen: string;
+  url: string;
+  tls: { cert: string; key: string; certPem: Buffer };
+  serverHome: string;
+  clientHome: string;
+  /** The server host's environment for brain server settings (listen, TLS) and the addon; no token. */
+  serverEnv(extra?: Record<string, string>): Record<string, string>;
+  /** Runs the real CLI on one host. */
+  cli(host: HostName, args: string[], extra?: Record<string, string>): Promise<CliRun>;
+  /** Removes every file of both hosts (the database is the caller's). */
+  stop(): Promise<void>;
+}
+
+/**
+ * Two hosts that both write to one Postgres brain (`engine: 'postgres'`, the same `database_url`): the server host,
+ * whose brain the swap moves to its Rust store and then serves on `listen` over TLS, and a second writer host. Nothing
+ * is served yet; the caller swaps the server host's brain.
+ */
+export async function startTwoHostPostgresBrain(opts: { databaseUrl: string; address?: string }): Promise<TwoHostPostgresBrain> {
+  const address = opts.address ?? interfaceAddress();
+  if (!address) throw new Error('this machine has no non-loopback IPv4 address to serve on');
+  const root = mkdtempSync(join(tmpdir(), 'gb-two-host-pg-'));
+  const serverHome = join(root, 'server', 'home');
+  const clientHome = join(root, 'client', 'home');
+  const tlsDir = join(root, 'tls');
+  mkdirSync(tlsDir, { recursive: true });
+  const files = selfSignedCert(tlsDir, address);
+  const tls = { ...files, certPem: readFileSync(files.cert) };
+  for (const home of [serverHome, clientHome]) writeConfig(home, { engine: 'postgres', database_url: opts.databaseUrl });
+  const port = await freePort(address);
+  const listen = `${address}:${port}`;
+  const serverEnv = (extra: Record<string, string> = {}) => childEnv(serverHome, {
+    GBRAIN_RUST_ENGINE_ADDON: TWO_HOST_ADDON, GBRAIN_RUST_SERVER_LISTEN: listen, GBRAIN_RUST_SERVER_TLS_CERT: tls.cert, GBRAIN_RUST_SERVER_TLS_KEY: tls.key, ...extra,
+  });
+  const cli = async (host: HostName, args: string[], extra: Record<string, string> = {}): Promise<CliRun> => {
+    const env = host === 'server' ? serverEnv(extra) : childEnv(clientHome, extra);
+    const proc = Bun.spawn(['bun', 'run', CLI, ...args], { cwd: root, env, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+    const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+  return {
+    root, address, port, listen, url: `gbrain+tls://${address}:${port}`, tls, serverHome, clientHome, serverEnv, cli,
+    stop: async () => { rmSync(root, { recursive: true, force: true }); },
+  };
+}
+
+/** The real CLI path, for a probe that runs `gbrain` as a fresh process. */
+export const TWO_HOST_CLI = CLI;
 
 async function readPort(proc: ReturnType<typeof Bun.spawn>, onChunk: (s: string) => void, text: () => string): Promise<number> {
   const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();

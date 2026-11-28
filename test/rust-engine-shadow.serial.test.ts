@@ -403,22 +403,49 @@ process.exit(0);
 });
 
 describe('the write sample rate (shadow.write_sample, D13)', () => {
-  test('start keeps it apart from the read sample rate: every write on a brain that can opt in, --write-sample-rate to change it', async () => {
+  const managedBrain = { openPrimary: async () => ({ executeRaw: async () => [{ enabled: true }], disconnect: async () => undefined }) as never };
+  const planOf = async (config: EngineConfig, brain: object, flags: string[] = []) => {
+    const plan = capture();
+    const code = await runEngineShadow(['start', '--plan', ...flags], { ...plan.deps, config: () => config, ...brain });
+    return { code, text: plan.out.join('\n'), err: plan.err.join('\n'), hash: plan.out.find((l) => l.startsWith('plan_hash: '))?.slice('plan_hash: '.length) };
+  };
+
+  test('a brain that can opt in compares every write: the plan binds rate 1 and refuses a lower --write-sample-rate (D1)', async () => {
     await inHome(async (_home, config) => {
       const dir = shadowDirFor(shadowBrainKey(config)!);
-      await startShadow(config);
-      // An unmanaged brain can opt in to the swap, so its shadow compares every write (D26, ask D).
+      const none = await planOf(config, unmanagedBrain);
+      expect(none.code).toBe(0);
+      expect(none.text).toContain('write sample rate 1: that share of page and link writes is checked on a throwaway Rust store');
+      expect(none.text).toContain('write comparisons: every write (rate 1), because this brain can opt in to the engine swap; each save is about 2x slower while the shadow runs');
+      // An explicit 1 is accepted and is the same plan: the hash binds the applied rate, not the flag.
+      const one = await planOf(config, unmanagedBrain, ['--write-sample-rate', '1']);
+      expect(one.code).toBe(0);
+      expect(one.hash).toBe(none.hash!);
+      // The applied rate is bound: the same flags on a managed brain plan a different rate and hash.
+      expect((await planOf(config, managedBrain)).hash).not.toBe(none.hash!);
+      const low = await planOf(config, unmanagedBrain, ['--write-sample-rate', '0.2']);
+      expect(low.code).toBe(2);
+      expect(low.err).toBe('engine shadow: --write-sample-rate 0.2 is refused: this brain can opt in to the engine swap, so its shadow compares every write');
+      expect(await runEngineShadow(['start', '--yes', '--expect', none.hash!, '--write-sample-rate', '0.2'], { ...capture().deps, config: () => config, ...unmanagedBrain, loadAddon: okAddon })).toBe(2);
+      expect(existsSync(dir)).toBe(false);
+      expect(await runEngineShadow(['start', '--yes', '--expect', none.hash!], { ...capture().deps, config: () => config, ...unmanagedBrain, loadAddon: okAddon })).toBe(0);
       expect(readShadowState(dir)).toMatchObject({ sample_rate: 0.1, write_sample_rate: 1 });
-      await runEngineShadow(['stop', '--delete'], { ...capture().deps, config: () => config });
-      const plan = capture();
+    });
+  });
+
+  test('on a managed brain the read and write rates stay apart: 0.05 by default, --write-sample-rate wins', async () => {
+    await inHome(async (_home, config) => {
+      const dir = shadowDirFor(shadowBrainKey(config)!);
       const flags = ['--sample-rate', '0.5', '--write-sample-rate', '0.2'];
-      expect(await runEngineShadow(['start', '--plan', ...flags], { ...plan.deps, config: () => config, ...unmanagedBrain })).toBe(0);
-      const text = plan.out.join('\n');
-      expect(text).toContain('write sample rate 0.2: that share of page and link writes is checked on a throwaway Rust store');
-      expect(text).toContain('a write inside a transaction is not checked, and a PGLite brain samples no writes');
-      expect(text).toContain('--sample-rate 0.5 --write-sample-rate 0.2');
-      const hash = plan.out.find((l) => l.startsWith('plan_hash: '))!.slice('plan_hash: '.length);
-      expect(await runEngineShadow(['start', '--yes', '--expect', hash, ...flags], { ...capture().deps, config: () => config, ...unmanagedBrain, loadAddon: okAddon })).toBe(0);
+      const dflt = await planOf(config, managedBrain);
+      expect(dflt.text).toContain('write sample rate 0.05: that share of page and link writes is checked on a throwaway Rust store');
+      expect(dflt.text).not.toContain('write comparisons: every write');
+      const plan = await planOf(config, managedBrain, flags);
+      expect(plan.code).toBe(0);
+      expect(plan.text).toContain('write sample rate 0.2: that share of page and link writes is checked on a throwaway Rust store');
+      expect(plan.text).toContain('a write inside a transaction is not checked, and a PGLite brain samples no writes');
+      expect(plan.text).toContain('--sample-rate 0.5 --write-sample-rate 0.2');
+      expect(await runEngineShadow(['start', '--yes', '--expect', plan.hash!, ...flags], { ...capture().deps, config: () => config, ...managedBrain, loadAddon: okAddon })).toBe(0);
       expect(readShadowState(dir)).toMatchObject({ sample_rate: 0.5, write_sample_rate: 0.2 });
       const c = capture();
       for (const bad of ['0', '2', 'x']) expect(await runEngineShadow(['start', '--write-sample-rate', bad], { ...c.deps, config: () => config })).toBe(2);

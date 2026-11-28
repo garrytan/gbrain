@@ -308,8 +308,13 @@ export async function readSources(engine: BrainEngine): Promise<Map<string, Reco
   return out;
 }
 
-/** Engine-local config keys: each engine keeps its own (the same list `gbrain migrate` skips). */
-export const FAILBACK_LOCAL_CONFIG = new Set(['engine', 'version', 'embedding_columns', 'search_embedding_column']);
+/**
+ * Engine-local config keys: each engine keeps its own (the same list `gbrain migrate` skips), plus the brain server's
+ * owner token lists (served/auth.ts). Those name token rows of the Rust store, which failback never carries, so on the
+ * old engine they would name nothing; they also must never carry a swap run's probe token back (probe-token.ts).
+ */
+export const FAILBACK_LOCAL_CONFIG = new Set(['engine', 'version', 'embedding_columns', 'search_embedding_column',
+  'rust_server.owner_token_ids', 'rust_server.owner_token_expires']);
 
 export async function readConfig(engine: BrainEngine): Promise<Map<string, string>> {
   const all = await engine.getAllConfig();

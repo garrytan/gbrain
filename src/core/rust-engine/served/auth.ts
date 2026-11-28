@@ -27,6 +27,12 @@ import type { CallerAccess } from '../../search/private-visibility.ts';
 import { servedAuthRefused } from './errors.ts';
 
 export const OWNER_TOKEN_IDS_CONFIG_KEY = 'rust_server.owner_token_ids';
+/**
+ * Optional expiry times for listed owner tokens: a JSON object of token id to epoch ms. A legacy token row has no
+ * expiry of its own, so a short-lived owner token (the engine swap's probe token, engine-swap/probe-token.ts) is
+ * listed here; past its time the server refuses it `token_expired`, at hello and on every recheck.
+ */
+export const OWNER_TOKEN_EXPIRES_CONFIG_KEY = 'rust_server.owner_token_expires';
 /** How old a connection's last credential check may be when the server admits a call. */
 export const RECHECK_MS = 2_000;
 
@@ -56,6 +62,25 @@ export async function ownerTokenIds(engine: Pick<BrainEngine, 'getConfig'>): Pro
   } catch { return new Set(); } // silent-read-ok: an unreadable owner list is the empty list, so every network token refuses (fail closed)
 }
 
+/**
+ * The owner token expiry times the brain config lists. A missing key is no expiry for any token; a value that does not
+ * parse as an object of numbers is null, and every owner token then refuses (fail closed).
+ */
+export async function ownerTokenExpiries(engine: Pick<BrainEngine, 'getConfig'>): Promise<Map<string, number> | null> {
+  try {
+    const raw = await engine.getConfig(OWNER_TOKEN_EXPIRES_CONFIG_KEY);
+    if (!raw) return new Map();
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const out = new Map<string, number>();
+    for (const [id, at] of Object.entries(parsed)) {
+      if (typeof at !== 'number' || !Number.isFinite(at)) return null;
+      out.set(id, at);
+    }
+    return out;
+  } catch { return null; } // silent-read-ok: an unreadable expiry list refuses every owner token (fail closed)
+}
+
 type AuthInfo = Record<string, unknown> & { principal?: { kind?: unknown; id?: unknown }; scopes?: unknown; expiresAt?: unknown };
 
 const RESTRICTION_FIELDS = ['allowedOperations', 'allowedSources', 'boundSlugPrefixes', 'fenceProjectionDegraded',
@@ -81,6 +106,8 @@ export interface VerifyDeps {
   verify?: (engine: BrainEngine, token: string) => Promise<AuthInfo>;
   /** The owner token ids (default: the brain config key); tests that must not write the brain inject them. */
   ownerIds?: (engine: BrainEngine) => Promise<Set<string>>;
+  /** The owner token expiry times (default: the brain config key `rust_server.owner_token_expires`). */
+  ownerExpiries?: (engine: BrainEngine) => Promise<Map<string, number> | null>;
   now?: () => number;
 }
 
@@ -103,7 +130,11 @@ export async function authenticateToken(engine: BrainEngine, token: unknown, dep
   const owners = await (deps.ownerIds ?? ownerTokenIds)(engine);
   if (!owners.has(principal.id)) throw servedAuthRefused('token_not_owner', null);
   if (ownerTokenRestriction(info) !== null) throw servedAuthRefused('token_not_owner', null);
-  const expiresAt = typeof info.expiresAt === 'number' ? info.expiresAt * 1000 : undefined;
+  const expiries = await (deps.ownerExpiries ?? ownerTokenExpiries)(engine);
+  if (expiries === null) throw servedAuthRefused('token_expired', null);
+  const listed = expiries.get(principal.id);
+  const own = typeof info.expiresAt === 'number' ? info.expiresAt * 1000 : undefined;
+  const expiresAt = listed === undefined ? own : own === undefined ? listed : Math.min(own, listed);
   if (expiresAt !== undefined && expiresAt <= (deps.now ?? Date.now)()) throw servedAuthRefused('token_expired', null);
   return { kind: 'owner_token', key: `owner_token:${principal.id}`, floorRemote: false, ...(expiresAt !== undefined ? { expiresAt } : {}) };
 }

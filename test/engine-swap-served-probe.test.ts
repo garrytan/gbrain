@@ -21,7 +21,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { plannedProbeTarget, probeServedDestination, probeUrl } from '../src/core/engine-swap/served-probe.ts';
+import { plannedProbeTarget, probeServedDestination, probeServedUntil, probeUrl } from '../src/core/engine-swap/served-probe.ts';
 import { configDestination } from '../src/core/engine-swap/destination.ts';
 import { readStoreBrainId } from '../src/shadow/store-identity.ts';
 import { serveOwnerEngine, type OwnerEngineServer } from '../src/core/rust-engine/owner-ipc/server.ts';
@@ -225,3 +225,28 @@ async function freePort(address: string): Promise<number> {
   await new Promise<void>(r => s.close(() => r()));
   return port;
 }
+
+describe('probeServedUntil waits only for a server that does not answer yet', () => {
+  const ID = '00000000-0000-4000-8000-0000000000aa';
+  const fail = (code: string, reason?: string) => async () => { throw Object.assign(new Error('x'), { code, ...(reason ? { reason } : {}) }); };
+  const clock = () => { let t = 0; return { now: () => t, sleep: async (ms: number) => { t += ms; } }; };
+
+  test('unreachable is retried until the window ends, then returned', async () => {
+    const c = clock();
+    let tries = 0;
+    const v = await probeServedUntil({ listen: '127.0.0.1:1', expectedBrainId: ID, connect: async () => { tries++; return fail('unavailable')(); } },
+      { windowMs: 10_000, intervalMs: 2_000, ...c });
+    expect(v).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(tries).toBe(6); // at 0, 2, 4, 6, 8 and 10 s: the last one ends the window
+  });
+
+  test('every other reason is final at once', async () => {
+    for (const [code, reason, want] of [['permission_denied', undefined, 'refused'], ['unavailable', 'tls_untrusted', 'tls_failed']] as const) {
+      const c = clock();
+      let tries = 0;
+      const v = await probeServedUntil({ listen: '127.0.0.1:1', expectedBrainId: ID, connect: async () => { tries++; return fail(code, reason)(); } }, { windowMs: 10_000, ...c });
+      expect(v).toMatchObject({ ok: false, reason: want });
+      expect(tries).toBe(1);
+    }
+  });
+});

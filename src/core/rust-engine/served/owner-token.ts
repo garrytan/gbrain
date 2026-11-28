@@ -8,15 +8,26 @@
 import type { BrainEngine } from '../../engine.ts';
 import { generateToken, hashToken } from '../../utils.ts';
 import { insertUnifiedToken } from '../../token-mint.ts';
-import { OWNER_TOKEN_IDS_CONFIG_KEY, ownerTokenIds } from './auth.ts';
+import { OWNER_TOKEN_EXPIRES_CONFIG_KEY, OWNER_TOKEN_IDS_CONFIG_KEY, ownerTokenExpiries, ownerTokenIds } from './auth.ts';
 
-export async function mintOwnerServerToken(engine: BrainEngine, name: string): Promise<{ token: string; id: string }> {
+/**
+ * `expiresAt` (epoch ms): a short-lived owner token. Its time is written to `rust_server.owner_token_expires` before
+ * its id joins the owner list, so the token is never accepted without its expiry.
+ */
+export async function mintOwnerServerToken(engine: BrainEngine, name: string, opts: { expiresAt?: number } = {}): Promise<{ token: string; id: string }> {
   const token = generateToken('gbrain_');
   const [row] = await insertUnifiedToken(engine, {
     name, tokenHash: hashToken(token), scopes: ['read', 'write', 'admin'],
     grant: { sources: { kind: 'default' }, takesHolders: null, allowedOperations: null },
   });
   const id = String(row!.id);
+  if (opts.expiresAt !== undefined) {
+    const expiries = await ownerTokenExpiries(engine);
+    // An unreadable list refuses every owner token; overwriting it would quietly let them in again.
+    if (!expiries) throw new Error(`the brain config key ${OWNER_TOKEN_EXPIRES_CONFIG_KEY} does not parse`);
+    expiries.set(id, opts.expiresAt);
+    await engine.setConfig(OWNER_TOKEN_EXPIRES_CONFIG_KEY, JSON.stringify(Object.fromEntries([...expiries].sort(([a], [b]) => (a < b ? -1 : 1)))));
+  }
   const ids = await ownerTokenIds(engine);
   ids.add(id);
   await engine.setConfig(OWNER_TOKEN_IDS_CONFIG_KEY, JSON.stringify([...ids].sort()));

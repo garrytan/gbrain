@@ -21,7 +21,9 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { loadConfig } from '../src/core/config.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { renderCliError } from '../src/core/agent-output.ts';
-import { runEngineSwap, type EngineSwapCliDeps } from '../src/commands/engine-swap.ts';
+import { runEngineSwap, runProber, type EngineSwapCliDeps } from '../src/commands/engine-swap.ts';
+import type { ProbeWindow, ServedProbeInput, ServedProbeVerdict } from '../src/core/engine-swap/served-probe.ts';
+import type { RouteProber } from '../src/core/engine-swap/route.ts';
 import { configDestination, type SwapDestinationProbe } from '../src/core/engine-swap/destination.ts';
 import { plannedProbeTarget } from '../src/core/engine-swap/served-probe.ts';
 import { readStoreBrainId, swapStoreDir } from '../src/shadow/store-identity.ts';
@@ -379,10 +381,87 @@ describe('engine swap --plan reads the destination from this host\'s configurati
     });
   });
 
+  test('an accepted config plan adds the run\'s 60 s wait for the brain server to the write pause; others keep theirs', async () => {
+    const accepted = await run({ env: serving() });
+    const single = await run({ hosts: 1, env: { HOME: home } });
+    expect(accepted.plan.write_pause.seconds).toBe(single.plan.write_pause.seconds + 60);
+    expect(accepted.plan.write_pause.basis).toBe(`${single.plan.write_pause.basis}, then up to 60 s waiting for the brain server at gbrain+tls://${at}`);
+    expect(single.plan.write_pause.basis).not.toContain('brain server');
+    expect((await run({ env: serving(), text: true })).stdout).toContain(`Expected write pause: about ${accepted.plan.write_pause.seconds} s (`);
+  });
+
   test('config evidence that does not count leaves a single-host plan\'s JSON and hash as before', async () => {
     const off = await run({ hosts: 1, env: { HOME: home } });
     diskMoves();
     const refused = await run({ hosts: 1, env: serving({ [LISTEN]: undefined }) });
     expect(refused.stdout).toBe(off.stdout);
+  });
+});
+
+describe('criterion 5 on this brain, which can opt in (unmanaged storage)', () => {
+  test('a shadow that samples writes makes the plan NOT READY with the restart detail (D1)', async () => {
+    const sampled = await run({ hosts: 1, readShadowStatus: async () => { const d = status(1); d.write_comparisons!.sample_rate = 0.05; return d; } });
+    const c5 = sampled.plan.criteria.find((c: { n: number }) => c.n === 5);
+    expect(c5.state).toBe('fail');
+    expect(c5.detail).toStartWith('the shadow compared a sample of writes; restart it so it compares every write (');
+    expect(sampled.plan.verdict).not.toBe('READY');
+    expect((await run({ hosts: 1 })).plan.verdict).toBe('READY');
+  });
+});
+
+describe('the swap run checks the brain server the plan bound', () => {
+  const base: RouteProber = async () => ({ effective_engine: 'rust', database_path: '/store', ok: true });
+  const config = { engine: 'rust', brain_id: 'host', served: true, multiuser: true, source: 'config' as const, listen: '10.0.0.9:4141', store_brain_id: STORE_ID };
+  const recording = (verdict: ServedProbeVerdict) => {
+    const seen: ServedProbeInput[] = [];
+    const probe = async (input: ServedProbeInput, _w: ProbeWindow) => { seen.push(input); return verdict; };
+    return { seen, probe };
+  };
+
+  test('evidence that binds no served target keeps the plain route probe', async () => {
+    const { seen, probe } = recording({ ok: true, url: 'u', server_id: 's', brain_id: STORE_ID });
+    for (const evidence of [null, { ...config, store_brain_id: undefined }, { ...config, served: false }, { ...config, source: undefined }]) {
+      expect(runProber(base, evidence as never, {}, probe, () => undefined)).toBe(base);
+    }
+    expect(seen).toEqual([]);
+  });
+
+  test('config evidence probes the bound address and store id with the token named by GBRAIN_RUST_SERVER_TOKEN', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-swap-ca-'));
+    try {
+      writeFileSync(join(dir, 'cert.pem'), 'PEM');
+      const { seen, probe } = recording({ ok: false, url: 'gbrain+tls://10.0.0.9:4141', reason: 'wrong_brain', detail: 'another store', brain_id: 'x' });
+      const p = await runProber(base, config as never, { GBRAIN_RUST_SERVER_TOKEN: 'gbrain_secret', GBRAIN_RUST_SERVER_TLS_CERT: join(dir, 'cert.pem') }, probe, () => undefined)();
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({ listen: '10.0.0.9:4141', expectedBrainId: STORE_ID, token: 'gbrain_secret' });
+      expect(String(seen[0]!.ca)).toBe('PEM');
+      expect(p.served).toEqual({ ok: false, url: 'gbrain+tls://10.0.0.9:4141', reason: 'wrong_brain', detail: 'another store' });
+      expect(JSON.stringify(p)).not.toContain('gbrain_secret');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('an unreadable GBRAIN_RUST_SERVER_TLS_CERT fails the check as tls_failed without contacting the server', async () => {
+    const { seen, probe } = recording({ ok: true, url: 'u', server_id: 's', brain_id: STORE_ID });
+    const p = await runProber(base, config as never, { GBRAIN_RUST_SERVER_TLS_CERT: join(tmpdir(), 'gbrain-no-such-cert.pem') }, probe, () => undefined)();
+    expect(seen).toEqual([]);
+    expect(p.ok).toBe(true);
+    expect(p.served).toMatchObject({ ok: false, url: 'gbrain+tls://10.0.0.9:4141', reason: 'tls_failed' });
+    expect(p.served?.detail).toContain('GBRAIN_RUST_SERVER_TLS_CERT (ENOENT)');
+  });
+
+  test('the wait for a server that does not answer yet is printed once, however many retries it takes', async () => {
+    const lines: string[] = [];
+    const down: ServedProbeVerdict = { ok: false, url: 'gbrain+tls://10.0.0.9:4141', reason: 'unreachable', detail: 'd' };
+    const probe = async (_i: ServedProbeInput, w: ProbeWindow) => { for (let i = 0; i < 3; i++) w.onRetry?.(down); return { ok: true as const, url: down.url, server_id: 's', brain_id: STORE_ID }; };
+    const p = await runProber(base, config as never, {}, probe, l => lines.push(l))();
+    expect(p.served).toEqual({ ok: true, url: down.url, reason: null, detail: null });
+    expect(lines).toEqual(['engine swap: waiting for the brain server at gbrain+tls://10.0.0.9:4141 (up to 60 s; writes stay paused until it answers)']);
+  });
+
+  test('a route probe that failed is final: the brain server is not checked', async () => {
+    const { seen, probe } = recording({ ok: true, url: 'u', server_id: 's', brain_id: STORE_ID });
+    const p = await runProber(async () => ({ effective_engine: null, database_path: null, ok: false }), config as never, {}, probe, () => undefined)();
+    expect(p.served).toBeUndefined();
+    expect(seen).toEqual([]);
   });
 });

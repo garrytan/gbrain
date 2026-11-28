@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { policyInForce, READINESS_POLICY } from '../src/core/engine-swap/policy.ts';
-import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
+import { evaluateReadiness, SAMPLED_WRITES_DETAIL, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { appendWriteUsage, QUALIFYING_WRITE_OPS, readQualifyingWrites, writeBar } from '../src/shadow/write-bar.ts';
 import { wrapShadowEngine, type ShadowSink } from '../src/shadow/wrapper.ts';
 
@@ -158,5 +158,28 @@ describe('qualifying writes are counted from the brain\'s own call counts, sampl
     await wrapped.getPage('a');
     await (wrapped as unknown as { putRawData: (...a: unknown[]) => Promise<void> }).putRawData('a', 's', {});
     expect(noted).toEqual(['putPage', 'putPage', 'addLinksBatch']);
+  });
+});
+
+describe('criterion 5 on a brain that can opt in needs every write compared (D1)', () => {
+  const sampled = (rate: number) => ({ write_comparisons: { ...doc(250, history(UNDER_OVERRIDE, 50)).write_comparisons!, sample_rate: rate } });
+  const c5 = (d: ShadowStatus, optInBrain?: boolean) =>
+    evaluateReadiness(d, UNDER_OVERRIDE, policyInForce(READINESS_POLICY, null, UNDER_OVERRIDE).policy, optInBrain === undefined ? undefined : { optInBrain }).criteria.find(c => c.n === 5)!;
+
+  test('a shadow that sampled writes fails on an opt-in brain, whatever its counts', () => {
+    for (const rate of [0.05, 0.5, 0.999]) {
+      const c = c5(sampled(rate), true);
+      expect(c.state).toBe('fail');
+      expect(c.detail).toStartWith(`${SAMPLED_WRITES_DETAIL} (`);
+    }
+    expect(SAMPLED_WRITES_DETAIL).toBe('the shadow compared a sample of writes; restart it so it compares every write');
+  });
+
+  test('rate 1 passes on an opt-in brain, and any rate keeps its old verdict on a managed brain or with no brain facts', () => {
+    expect(c5(sampled(1), true).state).toBe('pass');
+    for (const rate of [0.05, 1]) {
+      expect(c5(sampled(rate), false).state).toBe('pass');
+      expect(c5(sampled(rate)).state).toBe('pass');
+    }
   });
 });

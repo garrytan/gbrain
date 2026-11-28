@@ -8,6 +8,10 @@
  *   verified -> switched     the authority switch (config), recorded before the probe;
  *   switched -> succeeded    a fresh process resolves the route and confirms the Rust engine at the store.
  *
+ * A plan with a served destination also checks the brain server after the switch. For that check the run mints one
+ * short-lived probe token in the Rust store after the final check and before the switch (probe-token.ts), keeps it in
+ * memory only, and removes it as soon as the probe ends, whether the switch stays or is undone.
+ *
  * Every step re-checks what the step before it left (the checkpoint hash, the fence) before it goes on. A failure
  * leaves the run at its last state with a sanitized diagnostic, and authority on the old engine: the switch is undone
  * at once when the probe fails, and success is reported only after the probe passes.
@@ -27,6 +31,7 @@ import {
 import { swapRefusal, type SwapRefusalReason } from './refusals.ts';
 import { probePassed, restoreAuthority, switchAuthority, type RouteProber } from './route.ts';
 import { SwapVerifyError, verifyEngines, type Rpc } from './verify.ts';
+import { probeTokenName, type ProbeCredential } from './probe-token.ts';
 import type { ReadSource } from '../../shadow/read-pool.ts';
 
 /** The Rust side of state 3: the shadow store's RPC and a read source on the primary. */
@@ -44,6 +49,8 @@ export interface SwapRunDeps {
   hostId: string;
   openRust: () => Promise<RustSide>;
   prober: RouteProber;
+  /** A plan with a served destination: the probe token the brain server check presents (probe-token.ts). */
+  probeCredential?: ProbeCredential;
   /** Re-checked right before the switch: a refusal when anything still selects the old engine. */
   routeCheck: () => OperationError | null;
   recordPath: string;
@@ -89,9 +96,32 @@ export function startRecord(deps: SwapRunDeps, planHash: string, policyHash: str
   return record;
 }
 
+/** An error's message for a diagnostic, with any probe token value cut out. */
+function scrubbed(error: unknown, token: string | undefined): string {
+  const message = (error as Error)?.message ?? String(error);
+  return token ? message.split(token).join('[token]') : message;
+}
+
 /** Runs (or resumes) `record` to `succeeded`. Throws a typed error at the first state that cannot finish. */
 export async function runSwapStates(record: SwapRecord, deps: SwapRunDeps): Promise<SwapRecord> {
   const fs = deps.fs ?? REAL_FS;
+  // The probe token lives here only, between its mint and the end of the probe.
+  let credential: { token: string } | undefined;
+  const mintProbeToken = async (): Promise<string | null> => {
+    if (!deps.probeCredential || credential) return null;
+    try { credential = await deps.probeCredential.mint(record.run_id); return null; } catch (error) {
+      await dropProbeToken();
+      return scrubbed(error, undefined);
+    }
+  };
+  const dropProbeToken = async (): Promise<void> => {
+    if (!deps.probeCredential) return;
+    const token = credential?.token;
+    credential = undefined;
+    try { await deps.probeCredential.remove(record.run_id); } catch (error) {
+      deps.progress?.(`engine swap: the probe token ${probeTokenName(record.run_id)} could not be removed (${scrubbed(error, token)}); it stops working at its expiry within minutes. Revoke it now with gbrain auth revoke "${probeTokenName(record.run_id)}".`);
+    }
+  };
   for (;;) {
     const state = record.state;
     if (state === 'succeeded') return record;
@@ -153,19 +183,46 @@ export async function runSwapStates(record: SwapRecord, deps: SwapRunDeps): Prom
     if (state === 'verified') {
       const override = deps.routeCheck();
       if (override) { fail(record, deps, state, 'route_override', 'route_override'); throw override; }
-      const previous = switchAuthority(deps.rustStore, { runDir: swapRunDir(deps.brainKey), runId: record.run_id });
+      const minted = await mintProbeToken();
+      if (minted !== null) {
+        fail(record, deps, state, 'probe_token_failed', 'verification_incomplete');
+        throw swapRefusal('verification_incomplete', `the run could not create its brain server probe token in the Rust store (${minted}).`,
+          'Nothing was switched: the old engine keeps authority and stays fenced. Fix what the message names, then run --resume.');
+      }
+      let previous: ReturnType<typeof switchAuthority>;
+      try { previous = switchAuthority(deps.rustStore, { runDir: swapRunDir(deps.brainKey), runId: record.run_id }); } catch (error) {
+        await dropProbeToken();
+        throw error;
+      }
       record.switch = { previous, at: (deps.now?.() ?? new Date()).toISOString() };
       advance(record, deps, 'switched');
       continue;
     }
     if (state === 'switched') {
-      const probe = await deps.prober();
-      record.probe = { ...probe, at: (deps.now?.() ?? new Date()).toISOString() };
-      if (!probePassed(probe, deps.rustStore)) {
+      // A resumed run has no token in memory: mint a fresh one (the mint removes any a killed attempt left).
+      const minted = await mintProbeToken();
+      if (minted !== null) {
         if (record.switch) restoreAuthority(record.switch.previous, { runDir: swapRunDir(deps.brainKey), runId: record.run_id });
         record.state = 'verified';
-        fail(record, deps, 'switched', 'route_probe_failed', 'verification_incomplete');
-        throw swapRefusal('verification_incomplete', `a fresh process did not open the Rust engine at the store (it saw ${probe.effective_engine ?? 'no engine'}${probe.ok ? '' : ', probe failed'}).`,
+        fail(record, deps, 'switched', 'probe_token_failed', 'verification_incomplete');
+        throw swapRefusal('verification_incomplete', `the run could not create its brain server probe token in the Rust store (${minted}).`,
+          'The switch was undone at once, so the old engine keeps authority. Fix what the message names, then run --resume.');
+      }
+      const presented = credential?.token;
+      let result: Awaited<ReturnType<RouteProber>>;
+      try { result = await deps.prober(credential); } finally { await dropProbeToken(); }
+      // The served detail comes from the server's answer; cut the token out in case a server echoes it back.
+      if (presented && result.served?.detail) result = { ...result, served: { ...result.served, detail: scrubbed(new Error(result.served.detail), presented) } };
+      record.probe = { ...result, at: (deps.now?.() ?? new Date()).toISOString() };
+      if (!probePassed(result, deps.rustStore)) {
+        if (record.switch) restoreAuthority(record.switch.previous, { runDir: swapRunDir(deps.brainKey), runId: record.run_id });
+        record.state = 'verified';
+        // A served check runs only after the route probe passed, so a failed one names the brain server's typed reason.
+        const served = result.served && !result.served.ok
+          ? `the brain server at ${result.served.url} failed the swap check: ${result.served.reason} (${result.served.detail})`
+          : null;
+        fail(record, deps, 'switched', served ? 'served_probe_failed' : 'route_probe_failed', 'verification_incomplete');
+        throw swapRefusal('verification_incomplete', served ? `${served}.` : `a fresh process did not open the Rust engine at the store (it saw ${result.effective_engine ?? 'no engine'}${result.ok ? '' : ', probe failed'}).`,
           'The switch was undone at once, so the old engine keeps authority. Run --resume after fixing what the probe names.');
       }
       await markPrimaryCutover(deps.primary, record.run_id);

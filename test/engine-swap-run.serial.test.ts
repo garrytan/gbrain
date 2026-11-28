@@ -27,6 +27,8 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { fillSeedFixture } from './helpers/shadow-seed-fixture.ts';
 import { openFollowRig, type FollowRig } from './helpers/follow-rig.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { PROBE_TOKEN_TTL_MS, probeTokenName, storeProbeCredential } from '../src/core/engine-swap/probe-token.ts';
+import { authenticateToken, OWNER_TOKEN_EXPIRES_CONFIG_KEY, OWNER_TOKEN_IDS_CONFIG_KEY } from '../src/core/rust-engine/served/auth.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -176,6 +178,173 @@ async function expectRefused(p: Promise<unknown>, reason: string): Promise<void>
     expect((await inHome(w, async () => runSwapStates(stopped, w.deps))).state).toBe('succeeded');
     expect(configEngine(w)).toBe('rust');
   }, 120_000);
+
+  test('a brain server that fails the served check after the switch gives authority back, with the typed reason', async () => {
+    // The route probe passes (a fresh process opens Rust at the store); the brain server check the plan bound does not.
+    let served: { ok: boolean; url: string; reason: 'unreachable' | null; detail: string | null } =
+      { ok: false, url: 'gbrain+tls://10.0.0.9:4141', reason: 'unreachable', detail: 'the server did not answer (code=unavailable)' };
+    const w = await open({ prober: async () => ({ effective_engine: 'rust', database_path: join(world!.deps.shadowDir, 'store'), ok: true, served }) });
+    const error = await inHome(w, async () => runSwapStates(startRecord(w.deps, 'planhash', 'policyhash'), w.deps).then(() => null, (e: unknown) => e));
+    expect((error as OperationError).reason).toBe('verification_incomplete');
+    expect((error as OperationError).message).toContain('the brain server at gbrain+tls://10.0.0.9:4141 failed the swap check: unreachable');
+    const stopped = readSwapRecord(w.deps.recordPath)!;
+    expect(stopped.state).toBe('verified');
+    expect(stopped.error?.code).toBe('served_probe_failed');
+    expect(stopped.probe?.served).toMatchObject({ ok: false, reason: 'unreachable' });
+    expect(configEngine(w)).toBe('pglite');
+    served = { ok: true, url: 'gbrain+tls://10.0.0.9:4141', reason: null, detail: null };
+    expect((await inHome(w, async () => runSwapStates(stopped, w.deps))).state).toBe('succeeded');
+    expect(configEngine(w)).toBe('rust');
+  }, 120_000);
+
+  test('withServedCheck on a port nothing listens on: the real probe is unreachable and the switch is undone', async () => {
+    const { withServedCheck } = await import('../src/core/engine-swap/route.ts');
+    const { probeServedUntil } = await import('../src/core/engine-swap/served-probe.ts');
+    const { createServer } = await import('node:net');
+    const port = await new Promise<number>(r => { const srv = createServer(); srv.listen(0, '127.0.0.1', () => { const p = (srv.address() as { port: number }).port; srv.close(() => r(p)); }); });
+    let calls = 0;
+    let waited = 0;
+    const w = await open();
+    w.deps.prober = withServedCheck(async () => ({ effective_engine: 'rust', database_path: join(w.deps.shadowDir, 'store'), ok: true }),
+      async () => {
+        const t0 = Date.now();
+        try {
+          return await probeServedUntil({ listen: `127.0.0.1:${port}`, expectedBrainId: '00000000-0000-4000-8000-0000000000aa', timeoutMs: 500 },
+            { windowMs: 2_000, intervalMs: 200, onRetry: () => { calls++; } });
+        } finally { waited = Date.now() - t0; }
+      });
+    await inHome(w, async () => expectRefused(runSwapStates(startRecord(w.deps, 'planhash', 'policyhash'), w.deps), 'verification_incomplete'));
+    const stopped = readSwapRecord(w.deps.recordPath)!;
+    expect(stopped.error?.code).toBe('served_probe_failed');
+    expect(stopped.probe?.served?.reason).toBe('unreachable');
+    expect(calls).toBeGreaterThan(0);
+    // It waited out the window, and no longer than the window plus one attempt's 1 s floor.
+    expect(waited).toBeGreaterThanOrEqual(1_700);
+    expect(waited).toBeLessThan(3_500);
+    expect(configEngine(w)).toBe('pglite');
+  }, 120_000);
+
+  test('a brain server that comes up inside the wait window passes, and the run succeeds on Rust', async () => {
+    const { withServedCheck } = await import('../src/core/engine-swap/route.ts');
+    const { probeServedUntil } = await import('../src/core/engine-swap/served-probe.ts');
+    const ID = '00000000-0000-4000-8000-0000000000aa';
+    let tries = 0;
+    let upAt = 0;
+    // The server answers from its third try on: until then the connection is refused, as on a host still starting it.
+    const connect = async () => {
+      if (++tries < 3) throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'unavailable' });
+      upAt = tries;
+      return { hello: { v: 3, server_id: 'srv-1', capabilities: ['multi_writer'] }, request: async () => ID, close: () => undefined } as never;
+    };
+    const w = await open();
+    w.deps.prober = withServedCheck(async () => ({ effective_engine: 'rust', database_path: join(w.deps.shadowDir, 'store'), ok: true }),
+      () => probeServedUntil({ listen: '127.0.0.1:1', expectedBrainId: ID, connect }, { windowMs: 5_000, intervalMs: 100 }));
+    const done = await inHome(w, async () => runSwapStates(startRecord(w.deps, 'planhash', 'policyhash'), w.deps));
+    expect(done.state).toBe('succeeded');
+    expect(upAt).toBe(3);
+    expect(readSwapRecord(w.deps.recordPath)!.probe?.served).toMatchObject({ ok: true, url: 'gbrain+tls://127.0.0.1:1' });
+    expect(configEngine(w)).toBe('rust');
+  }, 120_000);
+
+  /** The probe credential on the rig's store engine; the rig owns that engine, so the credential never disconnects it. */
+  const rigCredential = (w: World) => storeProbeCredential(async () => new Proxy(w.rig.rust, {
+    get: (target, key) => (key === 'disconnect' ? async () => undefined : Reflect.get(target, key, target)),
+  }));
+  const probeRows = async (w: World, runId: string) =>
+    (await w.rig.rust.listAccessTokens()).filter(r => r.name === probeTokenName(runId));
+
+  test('a served run mints its probe token after the final digest, presents it, and removes it before the run ends', async () => {
+    const w = await open();
+    let seen: { token: string } | undefined;
+    let liveAtProbe: unknown = null;
+    const lines: string[] = [];
+    w.deps.progress = line => { lines.push(line); };
+    w.deps.probeCredential = rigCredential(w);
+    w.deps.prober = async (credential) => {
+      seen = credential;
+      // While the probe runs the token is an owner server token of the Rust store, with its expiry backstop.
+      const principal = await authenticateToken(w.rig.rust, credential!.token);
+      liveAtProbe = principal;
+      return { effective_engine: 'rust', database_path: join(w.deps.shadowDir, 'store'), ok: true, served: { ok: true, url: 'gbrain+tls://127.0.0.1:1', reason: null, detail: null } };
+    };
+    const done = await inHome(w, async () => runSwapStates(startRecord(w.deps, 'planhash', 'policyhash'), w.deps));
+    expect(done.state).toBe('succeeded');
+    expect(seen?.token).toMatch(/^gbrain_/);
+    expect(liveAtProbe).toMatchObject({ kind: 'owner_token' });
+    const expiresAt = (liveAtProbe as { expiresAt?: number }).expiresAt!;
+    expect(expiresAt).toBeGreaterThan(Date.now());
+    expect(expiresAt).toBeLessThanOrEqual(Date.now() + PROBE_TOKEN_TTL_MS);
+    // Removed on the success path: the row is revoked, both owner keys are gone, and the token no longer opens a session.
+    const rows = await probeRows(w, done.run_id);
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.revoked_at).not.toBeNull();
+    expect(await w.rig.rust.getConfig(OWNER_TOKEN_IDS_CONFIG_KEY)).toBeNull();
+    expect(await w.rig.rust.getConfig(OWNER_TOKEN_EXPIRES_CONFIG_KEY)).toBeNull();
+    expect(await authenticateToken(w.rig.rust, seen!.token).then(() => 'accepted', (e: { reason?: string }) => e.reason)).toBe('token_invalid');
+    // The token write came after the final digest and is undone: every relation still digests as the run verified it.
+    for (const d of done.verify!.digests) {
+      const now = await w.rig.rpc<{ rows: number; digest: string }>('relationDigest', { relation: d.relation, lo: null, hi: null });
+      expect({ relation: d.relation, digest: now.digest }).toEqual({ relation: d.relation, digest: d.rust });
+    }
+    // Never in the record, the progress lines or the printed status.
+    expect(readFileSync(w.deps.recordPath, 'utf8')).not.toContain(seen!.token);
+    expect(lines.join('\n')).not.toContain(seen!.token);
+  }, 120_000);
+
+  test('a served check that fails removes the probe token on the restore path, and its detail never carries the token', async () => {
+    const w = await open();
+    let presented = '';
+    w.deps.probeCredential = rigCredential(w);
+    // A server that refuses the token and echoes it back in its refusal: the run must cut it out everywhere.
+    w.deps.prober = async (credential) => {
+      presented = credential!.token;
+      return { effective_engine: 'rust', database_path: join(w.deps.shadowDir, 'store'), ok: true,
+        served: { ok: false, url: 'gbrain+tls://127.0.0.1:1', reason: 'refused', detail: `the server refused the credential ${presented} (code=permission_denied)` } };
+    };
+    const error = await inHome(w, async () => runSwapStates(startRecord(w.deps, 'planhash', 'policyhash'), w.deps).then(() => null, (e: unknown) => e));
+    expect((error as OperationError).reason).toBe('verification_incomplete');
+    expect(presented).toMatch(/^gbrain_/);
+    const message = JSON.stringify({ message: (error as Error).message, ...(error as object) });
+    expect(message).toContain('refused');
+    expect(message).not.toContain(presented);
+    const stopped = readSwapRecord(w.deps.recordPath)!;
+    expect(stopped.error?.code).toBe('served_probe_failed');
+    expect(stopped.probe?.served?.detail).toContain('[token]');
+    expect(readFileSync(w.deps.recordPath, 'utf8')).not.toContain(presented);
+    expect(configEngine(w)).toBe('pglite');
+    const rows = await probeRows(w, stopped.run_id);
+    expect(rows.map(r => r.revoked_at !== null)).toEqual([true]);
+    expect(await w.rig.rust.getConfig(OWNER_TOKEN_IDS_CONFIG_KEY)).toBeNull();
+    expect(await w.rig.rust.getConfig(OWNER_TOKEN_EXPIRES_CONFIG_KEY)).toBeNull();
+    // The restore never wrote the old engine: no token row and no owner key reached it.
+    expect((await w.primary.listAccessTokens()).filter(r => r.name.startsWith('engine-swap-probe-'))).toEqual([]);
+    expect(await w.primary.getConfig(OWNER_TOKEN_IDS_CONFIG_KEY)).toBeNull();
+  }, 120_000);
+
+  test('failback never carries a probe token row or the owner token keys back to the old engine', async () => {
+    const w = await open();
+    w.deps.probeCredential = rigCredential(w);
+    w.deps.prober = async () => ({ effective_engine: 'rust', database_path: join(w.deps.shadowDir, 'store'), ok: true, served: { ok: true, url: 'gbrain+tls://127.0.0.1:1', reason: null, detail: null } });
+    const done = await inHome(w, async () => runSwapStates(startRecord(w.deps, 'planhash', 'policyhash'), w.deps));
+    expect(done.state).toBe('succeeded');
+    const rust = w.rig.rust;
+    // The worst case: a probe token the run could not remove (a kill between mint and removal) is still listed.
+    const { mintOwnerServerToken } = await import('../src/core/rust-engine/served/owner-token.ts');
+    await mintOwnerServerToken(rust, probeTokenName(done.run_id), { expiresAt: Date.now() + PROBE_TOKEN_TTL_MS });
+    await rust.putPage('notes/after-swap-example', { type: 'note', title: 'After', compiled_truth: 'Written on Rust.', timeline: '' });
+    const failback = {
+      primary: w.primary, rust, recordPath: w.deps.recordPath, brainKey: 'pglite-test', runDir: join(w.home, '.gbrain', 'engine-swap', 'pglite-test'),
+      writers: async () => null,
+      prober: async () => ({ effective_engine: 'pglite', database_path: w.dbPath, ok: true }),
+    };
+    const plan = await inHome(w, () => planFailback(failback));
+    const back = await inHome(w, () => runFailback(failback, plan.plan_hash));
+    expect(back.failback!.state).toBe('succeeded');
+    expect((await w.primary.getPage('notes/after-swap-example'))!.title).toBe('After');
+    expect(await w.primary.getConfig(OWNER_TOKEN_IDS_CONFIG_KEY)).toBeNull();
+    expect(await w.primary.getConfig(OWNER_TOKEN_EXPIRES_CONFIG_KEY)).toBeNull();
+    expect((await w.primary.listAccessTokens()).filter(r => r.name.startsWith('engine-swap-probe-'))).toEqual([]);
+  }, 180_000);
 
   test('a checkpoint changed after it was written is never trusted', async () => {
     let armed = true;
