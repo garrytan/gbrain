@@ -69,6 +69,13 @@ pub trait KvWrite: KvRead + Send {
         Ok(first)
     }
 
+    /// Takes out the id ranges this write handed out through `allocate`, oldest first, so a caller
+    /// that ends it without a commit decides what becomes of them (`Kv::give_back_ids`). The write
+    /// then gives nothing back by itself. A store that cannot give ids back keeps none.
+    fn take_id_ranges(&mut self) -> Vec<IdRange> {
+        Vec::new()
+    }
+
     /// Raises the id sequence under `key` (8-byte big-endian) to at least `value` without
     /// reading it, so it never conflicts. A transaction that rolls back writes its sequences
     /// forward with this, so no id it handed out is handed out again.
@@ -165,6 +172,14 @@ fn decode_i64(value: Option<Vec<u8>>) -> Result<i64> {
     }
 }
 
+/// Ids one `allocate` call handed out: `first..end` from the sequence under `key`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IdRange {
+    pub key: Vec<u8>,
+    pub first: u64,
+    pub end: u64,
+}
+
 pub trait Kv: Send + Sync {
     fn snapshot(&self) -> Result<Box<dyn KvRead>>;
     /// A snapshot that can move to another thread, with the commit sequence it sees. The sequence
@@ -241,6 +256,14 @@ pub trait Kv: Send + Sync {
     /// True once [`Kv::enable_commit_log`] succeeded.
     fn commit_log_enabled(&self) -> bool {
         false
+    }
+    /// Gives back ids a write took and will never commit because the store refused it with a
+    /// `write_conflict` (`occ_kv.rs`, "Id sequences"): a range goes back only while it is still the
+    /// last one its sequence handed out, newest first. Returns the keys whose every range went
+    /// back; a caller must not write those forward. A store that cannot give ids back returns none.
+    fn give_back_ids(&self, ranges: &[IdRange]) -> std::collections::BTreeSet<Vec<u8>> {
+        let _ = ranges;
+        std::collections::BTreeSet::new()
     }
     /// What a store with concurrent writers did since open; `None` for a single-writer store.
     fn occ_stats(&self) -> Option<crate::occ_kv::OccStatsSnapshot> {

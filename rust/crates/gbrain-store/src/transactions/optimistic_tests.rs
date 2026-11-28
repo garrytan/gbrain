@@ -153,37 +153,87 @@ fn a_rollback_never_overwrites_another_writers_commit() {
     );
 }
 
-/// F1: an id taken by a transaction whose commit was refused (and that never ran again) is not
-/// handed out again, also after a reopen. Same for a rollback and for a dropped transaction.
+/// F1: an id taken by a transaction that did not commit is not handed out again, also after a
+/// reopen: a rollback, a drop, a deadline, a transaction an earlier conflict doomed, a store failure,
+/// and a commit refused for a conflict after another write took a later id from the sequence.
+/// A commit the pipeline refused for a conflict, with no later id taken, gives its id back
+/// (`occ_kv.rs`, "Id sequences"): the next write takes the same id, also after a reopen.
 #[test]
 fn ids_of_a_transaction_that_did_not_commit_are_never_handed_out_again_after_a_reopen() {
-    for end in ["refused", "rollback", "drop"] {
+    let ends = [
+        "conflict",
+        "conflict_after_a_later_id",
+        "rollback",
+        "drop",
+        "deadline",
+        "doomed",
+        "store_io",
+    ];
+    for end in ends {
         let file = FlakyFile::default();
-        let handed = {
+        let (handed, later) = {
             let s = mu_store_on_file(&file);
-            let t = s.begin_bound(optimistic()).unwrap();
+            let options = if end == "deadline" {
+                with_deadline(200)
+            } else {
+                optimistic()
+            };
+            let t = s.begin_bound(options).unwrap();
             let handed = t
                 .write(|w| crate::pages::next_id(w, "next_probe_id"))
                 .unwrap();
+            let mut later = None;
             match end {
-                "refused" => {
+                "conflict" | "conflict_after_a_later_id" => {
                     assert_eq!(get(&t, b"yk"), None);
                     s.write(|w| w.put(b"yk", b"conflict")).unwrap();
+                    if end == "conflict_after_a_later_id" {
+                        later = Some(
+                            s.write(|w| crate::pages::next_id(w, "next_probe_id"))
+                                .unwrap(),
+                        );
+                    }
                     assert_eq!(t.commit_transaction().unwrap_err().code, WRITE_CONFLICT);
                 }
                 "rollback" => t.rollback_transaction().unwrap(),
+                "deadline" => {
+                    std::thread::sleep(Duration::from_millis(250));
+                    assert_eq!(t.commit_transaction().unwrap_err().code, TIMEOUT);
+                }
+                "doomed" => {
+                    let _ =
+                        t.write(|_| -> Result<()> { Err(StoreError::new(WRITE_CONFLICT, "lost")) });
+                    assert!(t.transaction_conflicted());
+                    assert_eq!(t.commit_transaction().unwrap_err().code, WRITE_CONFLICT);
+                }
+                "store_io" => {
+                    t.write(|w| w.put(b"yz", b"x")).unwrap();
+                    file.fail_sync
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    assert_eq!(
+                        t.commit_transaction().unwrap_err().code,
+                        crate::error::STORE_IO
+                    );
+                }
                 _ => drop(t),
             }
-            handed
+            (handed, later)
         };
         let s = mu_store_on_file(&file);
         let next = s
             .write(|w| crate::pages::next_id(w, "next_probe_id"))
             .unwrap();
-        assert!(
-            next > handed,
-            "{end}: id {next} was handed out again (had {handed})"
-        );
+        if end == "conflict" {
+            assert_eq!(
+                next, handed,
+                "{end}: the refused commit's id {handed} did not go back (next is {next})"
+            );
+        } else {
+            assert!(
+                next > handed && later.is_none_or(|l| next > l),
+                "{end}: id {next} was handed out again (had {handed}, later {later:?})"
+            );
+        }
     }
 }
 

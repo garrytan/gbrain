@@ -42,7 +42,10 @@ becomes visible to the brain in one commit, or not at all.
    statement, savepoint or transaction keeps the highest value it reached, and a rollback writes
    that value back in its own commit, so an id taken in a rolled-back transaction is not handed out
    again, also after the brain is reopened. After a crash this holds in multi-user mode only, which
-   reserves id ranges on disk (see the optimistic section below).
+   reserves id ranges on disk (see the optimistic section below). One exception: in multi-user mode a
+   commit refused with `write_conflict` gives its ids back in memory, while no later id was taken
+   from the sequence, so its run again takes the same ids, as a Postgres transaction that waits on
+   the row lock does (`occ_kv.rs`, "Id sequences"). No committed record ever holds a given-back id.
 8. **Journaled writes roll back with the transaction.** A write request and its receipt are
    ordinary records in the same transaction: after a rollback the request was never admitted.
 9. **Disconnect.** `disconnect()` waits up to 5 seconds for an open transaction to end. After that

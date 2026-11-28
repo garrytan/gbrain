@@ -316,3 +316,53 @@ fn a_reservation_is_no_commit_and_a_range_past_it_reserves_again() {
         second + 2000
     );
 }
+
+/// A commit refused for a conflict gives its page id back (`occ_kv.rs`, "Id sequences"), in memory only: the next page
+/// takes it, and a crash before or after that never hands out an id a committed page holds. The commit log explains
+/// every change the scenario made, the reopen included.
+#[test]
+fn a_conflict_give_back_never_hands_out_a_committed_id_after_a_crash() {
+    for (n, mode) in CRASH_MODES.into_iter().enumerate() {
+        for retake in [false, true] {
+            let disk = SimDisk::new(950 + 2 * n as u64 + retake as u64, FaultPlan::none());
+            let (store, kv) = open_mu(&disk, 1).unwrap();
+            let start = store.read_commit_log(None, usize::MAX).unwrap().newest;
+            let before = common::mu::image_of(&*kv);
+            let mut committed = vec![put(&store, "notes/hot")];
+            let txn = store.begin_with(optimistic()).unwrap();
+            let refused = put(txn.store(), "notes/in-flight");
+            put(txn.store(), "notes/hot");
+            put(&store, "notes/hot");
+            assert_eq!(
+                txn.commit().unwrap_err().code,
+                gbrain_store::error::WRITE_CONFLICT
+            );
+            if retake {
+                let again = put(&store, "notes/in-flight");
+                assert_eq!(
+                    again, refused,
+                    "{mode:?}: the refused commit's page id did not go back"
+                );
+                committed.push(again);
+            }
+            crash(&disk, mode, || {
+                drop(store);
+                drop(kv);
+            });
+            let (store, kv) = open_mu(&disk, 100).unwrap();
+            let next = put(&store, "notes/after");
+            assert!(
+                committed.iter().all(|&id| next > id),
+                "{mode:?} retake={retake}: page id {next} was handed out again (committed: {committed:?})"
+            );
+            let records = store.read_commit_log(start, usize::MAX).unwrap();
+            assert!(!records.snapshot_required, "the log asked for a snapshot");
+            common::logged::log_explains_change(
+                &before,
+                &common::mu::image_of(&*kv),
+                &records.records,
+            )
+            .unwrap_or_else(|e| panic!("{mode:?} retake={retake}: {e}"));
+        }
+    }
+}

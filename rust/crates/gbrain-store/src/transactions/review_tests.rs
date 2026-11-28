@@ -144,7 +144,9 @@ fn a_malformed_counter_read_is_validated_at_commit() {
 }
 
 /// Review 2.1: when writing the id sequences forward fails, the store failure is the answer (the
-/// engine must not run the callback again), not the conflict.
+/// engine must not run the callback again), not the conflict. Another write takes a later id first,
+/// so the conflict cannot give the id back (`occ_kv.rs`, "Id sequences") and the ids are written
+/// forward.
 #[test]
 fn a_failed_id_write_forward_is_reported_as_a_store_failure() {
     let file = FlakyFile::default();
@@ -154,6 +156,8 @@ fn a_failed_id_write_forward_is_reported_as_a_store_failure() {
         .unwrap();
     assert_eq!(get(&t, b"yk"), None);
     s.write(|w| w.put(b"yk", b"conflict")).unwrap();
+    s.write(|w| crate::pages::next_id(w, "next_probe_id"))
+        .unwrap();
     file.fail_sync
         .store(true, std::sync::atomic::Ordering::SeqCst);
     assert_eq!(t.commit_transaction().unwrap_err().code, STORE_IO);

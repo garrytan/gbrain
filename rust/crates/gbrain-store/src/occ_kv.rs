@@ -17,9 +17,9 @@
 //! stale. Writers that touch different keys never wait for each other.
 //!
 //! Three kinds of write do not read the key they change, so they never conflict:
-//! - `allocate`: an id sequence (Postgres `nextval`). Ids are handed out from memory and are
-//!   never handed out twice; an id taken by a transaction that does not commit is lost, as in
-//!   Postgres. See "Id sequences" below for a reopen.
+//! - `allocate`: an id sequence (Postgres `nextval`). Ids are handed out from memory and two
+//!   writes never hold the same id. An id taken by a transaction that does not commit is lost, as
+//!   in Postgres, with one exception: see "Id sequences" below, also for a reopen.
 //! - `add_i64`: an atomic add on a counter.
 //! - `counter_below`: an admission check (`value < cap`). It conflicts only when a later commit
 //!   makes the check come out differently.
@@ -41,7 +41,20 @@
 //! A failed record-file commit stops the pipeline: every later commit fails with `store_io` until
 //! the brain is opened again (the Postgres answer to a failed WAL flush is the same: stop).
 //!
-//! Id sequences: the first allocation of a sequence after an open starts at its committed value. In
+//! Id sequences: a write whose commit the pipeline refuses with `write_conflict` gives its ids
+//! back (`Kv::give_back_ids`), in memory only, under the sequence lock, newest range first, and
+//! each range only while the sequence's next id is still that range's end. Its run again then
+//! takes the same ids, as the Postgres transaction that waits on the row lock instead of
+//! conflicting does, so a conflict alone leaves no gap. A give-back never lowers a committed
+//! sequence record or a durable reservation, and writes no forward record. A transaction
+//! (`transactions.rs`) takes its ranges out of its base (`KvWrite::take_id_ranges`), gives them back
+//! itself when its commit is refused that way, and writes forward only what did not go back. Ids
+//! still skip, as in Postgres, when: another write took an id from the sequence after the refused
+//! one; the end is a rollback, a drop, a deadline, a store failure or a transaction doomed by an
+//! earlier conflict (its own reads), since only the commit refusal gives back; or a crash came
+//! (up to `RESERVE_AHEAD` per sequence, below).
+//!
+//! The first allocation of a sequence after an open starts at its committed value. In
 //! multi-user mode (`Kv::set_id_reservation`) a sequence also reserves its ids on disk before it
 //! hands any out: when an allocation would pass the reservation, it first raises it to the
 //! allocation's end plus `RESERVE_AHEAD` in a durable commit of its own (the record file's
@@ -60,7 +73,7 @@ use crate::commit_log::{
     AcceptHook, CommitClock, CommitMeta, CommitPosition, LogOpRef, LogSettings, LogState,
 };
 use crate::error::{Result, STORE_CLOSED, STORE_CORRUPT, StoreError, WRITE_CONFLICT};
-use crate::kv::{CounterCheck, Kv, KvRead, KvWrite};
+use crate::kv::{CounterCheck, IdRange, Kv, KvRead, KvWrite};
 use crate::redb_kv::{RedbKv, reject_reserved};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
@@ -515,6 +528,30 @@ impl Shared {
     fn register(&self, version: u64) {
         let mut open = self.open.lock().unwrap_or_else(|p| p.into_inner());
         *open.entry(version).or_insert(0) += 1;
+    }
+
+    /// `Kv::give_back_ids`: newest range first, each goes back only while its sequence's next id
+    /// is still the range's end (no later allocation), so an id held by another write is never
+    /// handed out again. Returns the keys whose every range went back.
+    fn give_back(&self, ranges: &[IdRange]) -> BTreeSet<Vec<u8>> {
+        let mut sequences = self.sequences.lock().unwrap_or_else(|p| p.into_inner());
+        let mut kept: BTreeSet<&[u8]> = BTreeSet::new();
+        for range in ranges.iter().rev() {
+            if kept.contains(range.key.as_slice()) {
+                continue;
+            }
+            match sequences.get_mut(&range.key) {
+                Some(sequence) if sequence.next == range.end => sequence.next = range.first,
+                _ => {
+                    kept.insert(&range.key);
+                }
+            }
+        }
+        ranges
+            .iter()
+            .filter(|r| !kept.contains(r.key.as_slice()))
+            .map(|r| r.key.clone())
+            .collect()
     }
 
     fn unregister(&self, version: u64) {
@@ -1096,6 +1133,7 @@ impl OccKv {
             meta: CommitMeta::default(),
             locks,
             exclusive,
+            taken: Vec::new(),
         }))
     }
 }
@@ -1149,6 +1187,10 @@ impl Kv for OccKv {
 
     fn occ_stats(&self) -> Option<OccStatsSnapshot> {
         Some(self.shared.stats.snapshot())
+    }
+
+    fn give_back_ids(&self, ranges: &[IdRange]) -> BTreeSet<Vec<u8>> {
+        self.shared.give_back(ranges)
     }
 
     fn enable_commit_log(&self, settings: LogSettings) -> Result<()> {
@@ -1215,6 +1257,9 @@ struct OccTxn {
     locks: Option<LockGuard>,
     /// Set on an exclusive write: its commit goes here, and dropping it lets the pipeline go on.
     exclusive: Option<SyncSender<Request>>,
+    /// The id ranges `allocate` handed out, oldest first: a commit refused with `write_conflict`
+    /// gives them back (`Shared::give_back`) unless `take_id_ranges` took them out first.
+    taken: Vec<IdRange>,
 }
 
 impl Drop for OccTxn {
@@ -1427,6 +1472,13 @@ impl KvWrite for OccTxn {
             next
         };
         let end = first + count;
+        if count > 0 {
+            self.taken.push(IdRange {
+                key: key.to_vec(),
+                first,
+                end,
+            });
+        }
         let op = match self.writes.get(key) {
             Some(Op::Max(m)) => Op::Max((*m).max(end)),
             Some(Op::Put(_) | Op::Delete | Op::Add(_)) => {
@@ -1438,6 +1490,10 @@ impl KvWrite for OccTxn {
         };
         self.writes.insert(key.to_vec(), op);
         Ok(first)
+    }
+
+    fn take_id_ranges(&mut self) -> Vec<IdRange> {
+        std::mem::take(&mut self.taken)
     }
 
     fn raise_counter(&mut self, key: &[u8], value: u64) -> Result<()> {
@@ -1605,6 +1661,14 @@ impl KvWrite for OccTxn {
         let result = answer
             .recv()
             .unwrap_or_else(|_| Err(StoreError::new(STORE_CLOSED, "the brain is closing")));
+        // A commit the pipeline refused for a conflict wrote nothing, so its ids can go to the run
+        // again (see "Id sequences"). An exclusive write never conflicts.
+        if let Err(error) = &result
+            && error.code == WRITE_CONFLICT
+            && !this.taken.is_empty()
+        {
+            this.shared.give_back(&std::mem::take(&mut this.taken));
+        }
         // Locks are released only after the commit is durable (or refused).
         drop(this.locks.take());
         result

@@ -622,6 +622,23 @@ fn in_range(key: &[u8], start: &[u8], end: &[u8]) -> bool {
     key >= start && key < end
 }
 
+/// The counters an end without a commit writes forward: each counter's highest value, and each
+/// sequence's highest allocation unless its ids went back (`given_back`).
+fn forward_counters(
+    mut counters: BTreeMap<Vec<u8>, u64>,
+    allocated: BTreeMap<Vec<u8>, u64>,
+    given_back: &BTreeSet<Vec<u8>>,
+) -> BTreeMap<Vec<u8>, u64> {
+    for (key, value) in allocated {
+        if given_back.contains(&key) {
+            continue;
+        }
+        let seen = counters.entry(key).or_insert(value);
+        *seen = (*seen).max(value);
+    }
+    counters
+}
+
 /// Raises every listed id sequence in a write of its own that holds only `raise_counter`
 /// operations, so it never conflicts and never overwrites another writer (optimistic mode).
 fn raise_forward(kv: &Arc<dyn Kv>, counters: BTreeMap<Vec<u8>, u64>) -> Result<()> {
@@ -939,12 +956,11 @@ impl State {
     /// The counters and sequences to write forward when the transaction ends without a commit,
     /// taken out of the state.
     fn take_counters(&mut self) -> BTreeMap<Vec<u8>, u64> {
-        let mut counters = std::mem::take(&mut self.counters);
-        for (key, value) in std::mem::take(&mut self.allocated) {
-            let seen = counters.entry(key).or_insert(value);
-            *seen = (*seen).max(value);
-        }
-        counters
+        forward_counters(
+            std::mem::take(&mut self.counters),
+            std::mem::take(&mut self.allocated),
+            &BTreeSet::new(),
+        )
     }
 
     /// Ends the transaction without keeping its writes. Serialized: with no sequence to write
@@ -1465,7 +1481,8 @@ impl Store {
     /// transaction, or one past its deadline when this runs, commits nothing; once the write is
     /// handed to the pipeline, the pipeline's answer is the result. Every end without a commit
     /// raises the transaction's id sequences (`raise_forward`) before its single-flight keys are
-    /// given back.
+    /// given back, except a sequence whose ids went back because the pipeline refused the commit
+    /// with `write_conflict` (`occ_kv.rs`, "Id sequences").
     pub fn commit_transaction(&self) -> Result<u64> {
         self.commit_transaction_at().map(|p| p.sequence)
     }
@@ -1549,12 +1566,16 @@ impl Store {
         if deadline_passed(tx.deadline) {
             return abort(&mut state, transaction_deadline());
         }
-        let base = state.base.take().ok_or_else(closed)?;
+        let mut base = state.base.take().ok_or_else(closed)?;
         state.root_locks.clear();
         state.undo.clear();
-        let counters = state.take_counters();
+        let direct = std::mem::take(&mut state.counters);
+        let allocated = std::mem::take(&mut state.allocated);
         let meta = std::mem::take(&mut state.meta);
         drop(state);
+        // Taken out so the base gives nothing back by itself: a refused commit gives them back
+        // here, before what did not go back is written forward.
+        let ranges = base.take_id_ranges();
         let outcome = if tx.opened_read_only {
             // The sequence it read at, not a later commit's.
             let seen = base.snapshot_sequence();
@@ -1562,17 +1583,24 @@ impl Store {
             seen.map_or_else(|| tx.kv.version(), Ok)
                 .map(CommitPosition::end_of)
         } else {
-            let mut base = base;
             if !meta.is_empty() {
                 base.set_commit_meta(meta);
             }
             base.commit_position()
         };
         // A definite refusal (a conflict, a record the pipeline could not apply) wrote nothing: its
-        // ids are written forward. A store failure may or may not be on disk and stops the
-        // pipeline, so nothing more is written then.
+        // ids are written forward, except those a conflict gave back. A store failure may or may
+        // not be on disk and stops the pipeline, so nothing more is written then.
         let cleanup = match &outcome {
-            Err(error) if error.code != crate::error::STORE_IO => raise_forward(&tx.kv, counters),
+            Err(error) if error.code != crate::error::STORE_IO => {
+                // Only the pipeline's conflict refusal gives ids back (`occ_kv.rs`, "Id sequences").
+                let given_back = if error.code == WRITE_CONFLICT && !ranges.is_empty() {
+                    tx.kv.give_back_ids(&ranges)
+                } else {
+                    BTreeSet::new()
+                };
+                raise_forward(&tx.kv, forward_counters(direct, allocated, &given_back))
+            }
             _ => Ok(()),
         };
         if outcome.is_err() {
@@ -1787,6 +1815,9 @@ impl KvRead for StateRead<'_> {
 
 #[cfg(test)]
 mod optimistic_tests;
+
+#[cfg(test)]
+mod id_give_back_tests;
 
 #[cfg(test)]
 mod fairness_tests;

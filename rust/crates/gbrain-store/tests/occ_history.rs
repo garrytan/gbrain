@@ -12,7 +12,9 @@
 //! Transactions of one commit batch share a commit sequence, so within a batch it looks for an
 //! order in which no transaction reads a key an earlier one writes; there must be one, and in it
 //! every read must return exactly the replayed state. The replay must end in the state the store
-//! holds. Ids must never repeat, even across transactions that did not commit.
+//! holds. Ids must never repeat, even across transactions that did not commit, except an id a
+//! commit refused with `write_conflict` gave back (`occ_kv.rs`, "Id sequences"): each id has at
+//! most one attempt that did not give it back that way.
 //!
 //! The crash runs stop the simulated machine at a random write, set_len or fsync (some runs also
 //! fail fsyncs), reboot it and reopen the store. Every acknowledged transaction must be there;
@@ -213,8 +215,9 @@ struct History {
     /// Transactions refused without reaching the record file (after the failed batch, or an
     /// I/O error before commit).
     refused: Vec<Txn>,
-    /// Every id handed out, by every attempt.
-    ids: Vec<u64>,
+    /// Every id handed out, by every attempt, and whether that attempt's commit was refused with
+    /// `write_conflict` (which gives the id back).
+    ids: Vec<(u64, bool)>,
     gave_up: usize,
     conflicts: usize,
     /// Errors other than a conflict or an I/O failure: always a failure of the run.
@@ -235,7 +238,7 @@ fn attempt(
     locked: &BTreeSet<Vec<u8>>,
     id: u64,
     plan: &Plan,
-    ids: &mut Vec<u64>,
+    ids: &mut Vec<(u64, bool)>,
 ) -> (Option<Txn>, Result<u64, StoreError>) {
     let begun = if locked.is_empty() {
         kv.begin_write()
@@ -248,7 +251,7 @@ fn attempt(
     };
     let ran = (|| -> Result<Txn, StoreError> {
         let id_allocated = tx.allocate(SEQUENCE, 1)?;
-        ids.push(id_allocated);
+        ids.push((id_allocated, false));
         let mut t = Txn {
             id,
             id_allocated,
@@ -285,7 +288,13 @@ fn attempt(
         Ok(t)
     })();
     match ran {
-        Ok(t) => (Some(t), tx.commit()),
+        Ok(t) => {
+            let outcome = tx.commit();
+            if matches!(&outcome, Err(e) if e.code == WRITE_CONFLICT) {
+                ids.last_mut().expect("the attempt took an id").1 = true;
+            }
+            (Some(t), outcome)
+        }
         Err(e) => (None, Err(e)),
     }
 }
@@ -503,9 +512,9 @@ fn check_ids(h: &History) -> Result<(), String> {
     if let Some(e) = h.unexpected.first() {
         return Err(format!("a writer got an unexpected error: {e}"));
     }
-    let mut seen = HashSet::new();
-    for id in &h.ids {
-        if !seen.insert(*id) {
+    let mut kept = HashSet::new();
+    for (id, given_back) in &h.ids {
+        if !given_back && !kept.insert(*id) {
             return Err(format!("id {id} was handed out twice"));
         }
     }
@@ -1114,12 +1123,14 @@ fn the_checker_catches_lost_updates_phantoms_and_lost_commits() {
     assert!(replay_acked(&[(1, insert(1)), (1, insert(2))]).is_err());
     // A gap in the commit sequence.
     assert!(replay_acked(&[(1, append(1, &[])), (3, append(2, &[1]))]).is_err());
-    // A repeated id.
-    let h = History {
-        ids: vec![1, 2, 2],
+    // A repeated id; an id a conflict refusal gave back may be handed out once more, not twice.
+    let ids = |ids: &[(u64, bool)]| History {
+        ids: ids.to_vec(),
         ..History::default()
     };
-    assert!(check_ids(&h).is_err());
+    assert!(check_ids(&ids(&[(1, false), (2, false), (2, false)])).is_err());
+    assert!(check_ids(&ids(&[(1, false), (2, true), (2, false)])).is_ok());
+    assert!(check_ids(&ids(&[(2, true), (2, false), (2, false)])).is_err());
 }
 
 /// Research only (the storage bake-off): the same checks on fjall, built only with the
