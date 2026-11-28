@@ -139,6 +139,14 @@ export class FollowChild {
     this.continuity = randomUUID();
     this.file.continuity = this.continuity;
     try { writeFileSync(join(o.dir, FOREIGN_FILE), ''); } catch { /* no lines to miss yet */ }
+    // The seal is still on disk until this session's first write; the truncation above could make its foreign size
+    // match again. One line keeps it untakeable if this process dies first (its own line is skipped below).
+    if (seal) {
+      this.appendForeign('seal_revoked');
+      this.foreignOffset = foreignSize(o.dir) ?? 0;
+    }
+    // Shown refused and invalid at once, with the seal removed (the blocker above covers this write failing).
+    this.write(true);
   }
 
   /**
@@ -161,9 +169,17 @@ export class FollowChild {
     const size = foreignSize(this.o.dir);
     if (size === null) return 'invalidations_unreadable';
     if (size !== seal.foreign_size) return 'invalidation_after_seal';
-    file.updated_at = new Date(this.now()).toISOString();
-    this.outcome('taken', null);
-    try { writeFollowerFile(this.o.dir, file); } catch { return 'seal_consume_failed'; }
+    // One first write removes the seal AND shows the provisional invalid watermark: a process killed right after it
+    // leaves no seal to take twice and no valid watermark the takeover has not confirmed. A failed write changes nothing
+    // on disk (never a freshened valid file); the caller then leaves a blocker for the seal it could not remove.
+    const at = new Date(this.now()).toISOString();
+    const watermark = seal.watermark?.valid === true
+      ? { valid: false, through: null, invalidated_reason: 'follower_session_start' }
+      : { ...file.watermark, valid: false, through: null };
+    const out: FollowerFile = { ...file, updated_at: at, watermark, seal_outcome: { outcome: 'taken', reason: null, at } };
+    delete out.seal;
+    try { writeFollowerFile(this.o.dir, out); } catch { return 'seal_consume_failed'; }
+    Object.assign(file, out);
     this.foreignOffset = size;
     this.continuity = seal.continuity;
     this.fullAt = typeof seal.full_at === 'number' ? seal.full_at : null;
@@ -171,8 +187,7 @@ export class FollowChild {
     this.pendingSeal = { db_at: seal.db_at ?? null, watermark: { ...seal.watermark } };
     this.provisionalAt = this.now();
     this.changes++;
-    // Shown invalid until confirmed; a seal that was already invalid keeps its own first reason.
-    file.watermark = seal.watermark?.valid === true ? { valid: false, through: null, invalidated_reason: 'follower_session_start' } : { ...file.watermark, valid: false, through: null };
+    // Shown invalid until confirmed (written above); a seal that was already invalid keeps its own first reason.
     return null;
   }
 
