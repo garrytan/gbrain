@@ -29,21 +29,35 @@ const raced = (error: unknown): null => {
  * source whose alias is not itself a live page of the source and whose canonical slug is. Two typed reads, so every
  * engine serves it: the source's alias rows (listSlugAliases), then which of the slugs they name are live pages of the
  * source (listLinkEndpointPages, whose rows for other sources are dropped). A brain without the alias table has none.
+ * The two reads are not one snapshot: a rename between them pairs an old alias row with the new live set and would
+ * link the wrong page. So the alias rows are read again after the live-page read; when they moved the pair is read
+ * once more, and when they moved again no alias is followed (the targets link as written: stale, never wrong).
  */
 async function liveSlugAliases(engine: BrainEngine, sourceId: string, targets: string[]): Promise<Map<string, string>> {
   if (!targets.length) return new Map();
   const wanted = new Set(targets);
+  const readHits = async () => (await engine.listSlugAliases(sourceId)).filter(row => wanted.has(row.alias_slug))
+    .map(row => ({ alias_slug: row.alias_slug, canonical_slug: row.canonical_slug }));
+  const same = (a: { alias_slug: string; canonical_slug: string }[], b: typeof a) =>
+    JSON.stringify(a.map(row => [row.alias_slug, row.canonical_slug]).sort()) === JSON.stringify(b.map(row => [row.alias_slug, row.canonical_slug]).sort());
   let hits: { alias_slug: string; canonical_slug: string }[];
   try {
-    hits = (await engine.listSlugAliases(sourceId)).filter(row => wanted.has(row.alias_slug));
+    hits = await readHits();
   } catch (error) {
     if (isMissingSchemaObject(error, 'table', 'slug_aliases')) return new Map();
     throw error;
   }
-  if (!hits.length) return new Map();
-  const slugs = [...new Set(hits.flatMap(row => [row.alias_slug, row.canonical_slug]))];
-  const live = new Set((await engine.listLinkEndpointPages(sourceId, slugs, [])).filter(page => page.source_id === sourceId).map(page => page.slug));
-  return new Map(hits.filter(row => !live.has(row.alias_slug) && live.has(row.canonical_slug)).map(row => [row.alias_slug, row.canonical_slug]));
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (!hits.length) return new Map();
+    const slugs = [...new Set(hits.flatMap(row => [row.alias_slug, row.canonical_slug]))];
+    const live = new Set((await engine.listLinkEndpointPages(sourceId, slugs, [])).filter(page => page.source_id === sourceId).map(page => page.slug));
+    const again = await readHits();
+    if (same(hits, again)) {
+      return new Map(hits.filter(row => !live.has(row.alias_slug) && live.has(row.canonical_slug)).map(row => [row.alias_slug, row.canonical_slug]));
+    }
+    hits = again;
+  }
+  return new Map();
 }
 
 interface SourceSlugIndex { count: number; hash: bigint; maxId: number; index: Map<string, string[]> }
