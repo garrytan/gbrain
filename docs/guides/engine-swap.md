@@ -236,8 +236,8 @@ of your own brain. The preview swaps personal brains only. Not retried; ask whet
 The shadow follower has lag, a queue, or an invalid coverage watermark. Wait, up to 3 times 60 s apart, reading the
 shadow status; then report.
 
-The plan's criterion 1 detail names why the watermark is invalid and the last seal decision, as `engine shadow status`
-does (`coverage watermark: invalid (<reason>)`, `seal: <outcome> (<reason>)`). A short serving session that wrote to
+When criterion 1's other checks pass, its detail names why the watermark is invalid and the last seal decision, as
+`engine shadow status` does (`coverage watermark: invalid (<reason>)`, `seal: <outcome> (<reason>)`). A short serving session that wrote to
 the brain after its last full reconcile pass leaves `seal: not_sealed (writes_since_verified)`, its own writes included.
 One that closed with no verified point leaves `not_sealed (no_verified_mark)`: no full pass restored the watermark, no
 carried seal was committed, and no full pass had read its starting counters (or they could not be read). Either way the
