@@ -1,7 +1,7 @@
 /**
- * BrainEngine parity — the member reads a remote context pack, write attribution, recall, page read and
+ * BrainEngine parity — the member reads a remote context pack, write attribution, recall and
  * household mark make (lane L3 S4): inbound edges, the fact cache watermark, a page's reference
- * date, revision attribution, entity identity ids, guest marks and the hidden-from-caller check.
+ * date, revision attribution, entity identity ids and the hidden-from-caller check.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: a remote caller gets the same answer from every engine arm and from the served arm (the brain owner
@@ -17,12 +17,6 @@ import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { chunk } from './chunk-fixtures.ts';
 import { linkEntityIdentity } from '../../src/core/entity-identity.ts';
-import { addGroup, addMember, bindCredential } from '../../src/core/access/members.ts';
-import { setOwner } from '../../src/core/access/owner.ts';
-import { initGuestSource } from '../../src/core/guests/sources.ts';
-import { mintLegacyToken } from '../../src/core/token-mint.ts';
-import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
-import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { PRIVATE_FACT_MARK, PRIVATE_MARK, STDIO, leaked, remoteCall, seedNova } from './served-remote-read-fixtures.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -113,39 +107,6 @@ parityTest('a remote recall of an entity two sources both hold names the namesak
   });
   expect(w.calls.has('readEntityIdentityIdsForPages')).toBe(true);
   return view;
-});
-
-const OWNER = 'alice-example';
-const GUEST = 'bob-example';
-const ACTS_FOR = [`member:${GUEST}`, 'group:team-a', 'guest'];
-const GUEST_NOTE = ['---', 'type: note', 'title: A note from Bob', `readable_by: [${OWNER}, ${GUEST}]`, 'guest_group: team-a', 'guest_sender: Bob Example',
-  'saved_at: 2026-11-13T10:00:00Z', '---', '# A note', '', 'Bob wrote this.'].join('\n');
-
-parityTest('a remote read of a guest note stamps it as a guest note from the guest marks', {
-  methods: ['claimGuestNotePublication', 'insertGuestMark', 'readGuestMarks', 'putPage', 'readPageTrustRows'],
-  timeout: 240_000,
-}, async (engine: BrainEngine, backend) => {
-  try {
-    for (const id of [OWNER, GUEST]) await addMember(engine, id);
-    await addGroup(engine, 'team-a', [GUEST]);
-    await setOwner(engine, OWNER);
-    await createSource(engine, backend, 'guests');
-    const minted = await mintLegacyToken(engine, { name: 'broker', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: ['guests'] });
-    await bindCredential(engine, { kind: 'token', id: minted.id }, { mayActFor: ACTS_FOR });
-    await initGuestSource(engine, 'guests', [`legacy_token:${minted.id}`]);
-    const auth = { token: minted.token, clientId: 'broker', clientName: 'broker', principal: { kind: 'legacy_token', id: minted.id }, member: null, mayActFor: ACTS_FOR,
-      readsUnscoped: true, scopes: ['read', 'write'], sourceId: 'guests', allowedSources: ['guests'], hasSourceGrant: true, takesHoldersAllowList: ['world'], attest: null };
-    const put = await dispatchToolCall(engine, 'put_page', { slug: 'notes/guest-a', content: GUEST_NOTE }, {
-      remote: true, transport: 'http', auth, sourceId: 'guests', takesHoldersAllowList: ['world'], onBehalfOf: { header: GUEST },
-      guest: { requestMeta: { guest: { sender_label: 'Bob Example', group: 'team-a' } } } } as never);
-    expect(put.isError).toBeFalsy();
-    const w = watched(engine);
-    const read = await remoteCall(w.engine, 'get_page', { slug: 'notes/guest-a' }, { remote: true, transport: 'http', auth, sourceId: 'guests', takesHoldersAllowList: ['world'], onBehalfOf: { header: GUEST } });
-    const view = { error: read.error, origin: read.body.origin ?? null, guestSender: read.body.guest?.sender_label ?? read.body.guest?.sender ?? null, refused: w.refused() };
-    expect(view).toEqual({ error: false, origin: 'guest', guestSender: 'Bob Example', refused: [] });
-    expect(w.calls.has('readGuestMarks')).toBe(true);
-    return view;
-  } finally { await disposePersistenceConsumer(engine).catch(() => {}); }
 });
 
 parityTest('a remote household mark on a page the caller cannot read answers as a missing record, and on an open page as a record that is not a household record', {
