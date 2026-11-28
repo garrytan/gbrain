@@ -10,14 +10,21 @@
 //!   histories it checks are asserted to hold reads, so a checker that sees no reads cannot pass.
 //! - P-A on the single-writer store, driven by the `gbrain-sim` `Scheduler`: three client tasks and a snapshot reader take
 //!   seeded steps over `RedbKv`; the history passes `check_serializable` and the batch checker, and rebuilds the store.
-//! - P-H on both stores over `GBRAIN_SIM_SEEDS` seeds (default 200; the gate is 10,000 with
-//!   `GBRAIN_SIM_SEEDS=10000 cargo test -p gbrain-store --release --test multi_writer_sim -- --include-ignored p_h`; that
-//!   filter also selects the P-H twin with multi-user mode and the commit log on, `p_h_with_the_log_…`, and
-//!   `the_crash_gate_filter_selects_every_crash_test_on_the_logged_store` fails if a crash test on that store is named so the
-//!   filter misses it): a simulated disk crashes (or fails an fsync) at a seeded point, the store reopens, and `check_recovery` plus the batch
-//!   checker judge it. Each test prints and asserts a non-zero count of executed histories, checked commits and checked
-//!   reads. The optimistic store runs on OS threads here (as `occ_history.rs` does), so its interleaving is not replayed
-//!   from the seed; its workload and crash point are.
+//! - P-H on both stores over `GBRAIN_SIM_SEEDS` seeds (default 200; the gate is 10,000, see below): a simulated disk crashes (or
+//!   fails an fsync) at a seeded point, the store reopens, and `check_recovery` plus the batch checker judge it. Each test prints
+//!   and asserts a non-zero count of executed histories, checked commits and checked reads. The optimistic store runs on OS
+//!   threads here (as `occ_history.rs` does), so its interleaving is not replayed from the seed; its workload and crash point are.
+//! - P-H with the log (`p_h_with_the_log_…`): the whole store, multi-user mode and the commit log on (asserted), on each record
+//!   store that keeps the log (`OccKv`, and `RedbKv` through `Store::open_kv`). A recording wrapper (`RecKv`) captures what the
+//!   store's own transactions read and wrote; after the crash `check_recovery` and the batch checker judge the reopened records
+//!   (no acknowledged write lost, an in-doubt batch whole or absent), the log replays from the first open to them, and every
+//!   acknowledged page, commit time and request id is checked. A committed control plants log bugs and requires those checks red.
+//!
+//! The 10,000-seed crash gate, in `rust/`:
+//! `GBRAIN_SIM_SEEDS=10000 cargo test -p gbrain-store --release --test multi_writer_sim -- --include-ignored p_h` and
+//! `GBRAIN_SIM_SEEDS=10000 cargo test -p gbrain-store --release --test sim -- --include-ignored logged multi_writer`.
+//! `the_crash_gate_filter_selects_every_crash_test_on_the_logged_store` fails if a crash test on the logged store here is named so
+//! the `p_h` filter misses it.
 //!
 //! The seeded driver of the optimistic store is `mod optimistic_driver`, compiled only with `--features sim`: it runs on the
 //! `step_pipeline()` seam of `OccKv` (`OccKv::new_stepped`, `queued_commits`, `step_pipeline`).
@@ -48,7 +55,9 @@ use gbrain_sim::check::{
 };
 use gbrain_sim::seed::seeds;
 use gbrain_sim::{CrashMode, Cx, FaultPlan, Scheduler, SimDisk, SimFile, SimRng, Step, Task};
+use gbrain_store::commit_log::{self, CommitPosition, LogOp};
 use gbrain_store::error::WRITE_CONFLICT;
+use gbrain_store::kv::CounterCheck;
 use gbrain_store::occ_kv::OccKv;
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::{Env, FileBackend, Kv, KvWrite, Store, StoreError};
@@ -756,19 +765,31 @@ fn recovery_violations(
     in_doubt: &[Committed],
     reopened: &Reopen,
 ) -> (Vec<String>, Option<bool>) {
-    let mut violations: Vec<String> = check::check_recovery(acked, in_doubt, false, reopened)
-        .violations
-        .into_iter()
-        .map(|v| v.message)
-        .collect();
+    recovery_violations_of(&entries(acked), &entries(in_doubt), reopened)
+}
+
+/// [`recovery_violations`] on entries, which may carry each transaction's index inside its batch (`check_recovery` replays them
+/// in the order given, so pass them in commit order).
+fn recovery_violations_of(
+    acked: &[Entry],
+    in_doubt: &[Entry],
+    reopened: &Reopen,
+) -> (Vec<String>, Option<bool>) {
+    let txns = |es: &[Entry]| es.iter().map(|e| e.txn.clone()).collect::<Vec<_>>();
+    let mut violations: Vec<String> =
+        check::check_recovery(&txns(acked), &txns(in_doubt), false, reopened)
+            .violations
+            .into_iter()
+            .map(|v| v.message)
+            .collect();
     let mut applied = None;
     // The recovered state must also be a whole-batch prefix of the acknowledged history plus the in-doubt batch.
     if let Reopen::Opened { state, .. } = reopened {
-        let mut all = entries(acked);
-        all.extend(entries(in_doubt));
+        let mut all = acked.to_vec();
+        all.extend_from_slice(in_doubt);
         match check_state_is_a_batch_prefix(&all, state) {
             Ok(upto) => {
-                let acked_max = acked.iter().map(|c| c.version).max().unwrap_or(0);
+                let acked_max = acked.iter().map(|e| e.sequence).max().unwrap_or(0);
                 if !in_doubt.is_empty() {
                     applied = Some(upto > acked_max);
                 }
@@ -1060,7 +1081,19 @@ fn p_h_the_recovery_checkers_fail_a_lost_commit_and_a_half_applied_batch() {
     );
 }
 
-// ---- P-H, I-4.v2 clocks: commit times after a crash -------------------------------------------------------------------
+// ---- P-H with the log: the whole store, multi-user mode and the commit log on --------------------------------------------
+//
+// The commit log is kept by two record stores (`Kv::enable_commit_log`): the single-writer `RedbKv` and the optimistic
+// `OccKv`. Every other store refuses it (the trait default: the bake-off `FjallKv` and the read-only `RedbReadOnlyKv`). A
+// brain directory opened with multi-user mode is always on `OccKv` (`Store::open_dir`); `RedbKv` keeps the log when an embedder
+// hands it to `Store::open_kv`. The tests below run both, each opened with `common::mu::logged_options` and asserted with
+// `assert_logged`, never from the environment.
+//
+// The store's own transactions run through `RecKv`, a recording wrapper that forwards every call, so the store runs its real
+// code and the checkers see what each acknowledged transaction read and wrote. Counter keys (`allocate`, `add_i64`,
+// `raise_counter`, the counter checks) resolve inside the store, so the wrapper cannot see their values: `check_recovery` and the
+// batch checker leave those keys out, and the log replay (`log_explains_change`, which applies the resolved counter ops) covers
+// them.
 
 /// A clock that moves forward by a fixed step each time it is read, and ids from a counter: the store's `Env` on the
 /// simulated disk.
@@ -1082,124 +1115,792 @@ impl Env for TickEnv {
     }
 }
 
-/// A whole store (not just its record file) on the simulated disk, on the optimistic record file.
-fn open_store(disk: &SimDisk) -> Result<Store, StoreError> {
-    let env = TickEnv {
+/// A whole store (not just its record file) on the simulated disk: the `Env` it runs on.
+fn tick_env() -> Arc<dyn Env> {
+    Arc::new(TickEnv {
         now: std::sync::atomic::AtomicI64::new(1_800_000_000_000_000),
         ids: std::sync::atomic::AtomicU64::new(1),
-    };
-    // Multi-user mode and the commit log on, in the run, never from the environment; the resolved state is asserted.
+    })
+}
+
+/// The record file on the simulated disk, as the single-writer or the optimistic store.
+fn open_raw(disk: &SimDisk, optimistic: bool) -> Result<Arc<dyn Kv>, StoreError> {
+    Ok(if optimistic {
+        Arc::new(open_optimistic(disk)?)
+    } else {
+        Arc::new(open_single(disk)?)
+    })
+}
+
+/// The store on `kv`, multi-user mode and the commit log on, in the run, never from the environment; the resolved state is asserted.
+fn open_store(kv: Arc<dyn Kv>, optimistic: bool) -> Result<Store, StoreError> {
     let store = Store::open_kv(
-        Arc::new(open_optimistic(disk)?),
-        Arc::new(env),
-        common::mu::logged_options(true, common::mu::TEST_HOST),
+        kv,
+        tick_env(),
+        common::mu::logged_options(optimistic, common::mu::TEST_HOST),
     )?;
     common::mu::assert_logged(&store);
     Ok(store)
 }
 
-/// P-H with commit times, against the commit-log lane's real code: after a crash at a seeded point and a reopen (both opens with
-/// multi-user mode and the log on, asserted), every acknowledged page reads back with the body it was acknowledged with, the
-/// commit times in the log strictly rise in position order, the newest equals `last_commit_time()`, and every acknowledged
-/// request id is in the write ids of exactly one record. Named with `p_h` so the 10,000-seed gate (`... -- --include-ignored
-/// p_h`) runs it; 50 seeds in the default `cargo test`.
-#[test]
-fn p_h_with_the_log_crash_keeps_acknowledged_pages_and_rising_commit_times() {
-    let started = std::time::Instant::now();
-    let (mut histories, mut records, mut pages, mut crashes) = (0usize, 0usize, 0usize, 0usize);
-    let mut lost: Vec<String> = Vec::new();
-    for seed in seeds(50) {
-        let disk = SimDisk::new(seed, FaultPlan::none());
-        let store = Arc::new(open_store(&disk).unwrap());
-        let setup = disk.stats().io_ops;
-        disk.set_plan(crash_plan(seed, setup));
-        // (request id, slug, body) of every page mutation the store acknowledged as committed.
-        let acked: Mutex<Vec<(String, String, String)>> = Mutex::new(Vec::new());
-        std::thread::scope(|s| {
-            for thread in 0..4usize {
-                let (store, acked) = (&store, &acked);
-                s.spawn(move || {
-                    for n in 0..12usize {
-                        let request = format!("00000000-0000-4000-8000-{:012}", thread * 100 + n);
-                        let (slug, body) = (format!("p/{thread}-{n}"), format!("{thread} {n}"));
-                        let mutation: gbrain_store::journal::PageMutation =
-                            serde_json::from_value(serde_json::json!({
-                                "principal": {"kind": "local_cli", "id": format!("w{thread}")},
-                                "requestId": request, "slug": slug,
-                                "page": {"type": "note", "title": "t", "compiled_truth": body},
-                                "options": {},
-                            }))
-                            .unwrap();
-                        match store.submit_page_mutation(&mutation, None) {
-                            Ok(r) if r["state"] == "committed" => {
-                                acked.lock().unwrap().push((request, slug, body))
-                            }
-                            _ => return,
-                        }
-                    }
+/// Keys the record file keeps for itself, never written by a transaction: the commit sequence, the commit time and the log.
+fn internal_key(key: &[u8]) -> bool {
+    key == b"M\0seq" || key == b"M\0ctime" || common::mu::is_log_key(key)
+}
+
+/// What the store's transactions did, as `RecKv` saw them.
+#[derive(Default)]
+struct Recorded {
+    acked: Vec<Entry>,
+    /// Commits that failed with anything but a conflict: the error, and what the transaction read and wrote.
+    failed: Vec<(String, Committed)>,
+    /// Keys a counter op touched: their values resolve inside the store.
+    blind: BTreeSet<Vec<u8>>,
+}
+
+type Shared = Arc<Mutex<Recorded>>;
+
+/// A record store that records every transaction of the store above it and forwards every call to `inner`.
+struct RecKv {
+    inner: Arc<dyn Kv>,
+    rec: Shared,
+}
+
+impl RecKv {
+    fn wrap(
+        &self,
+        tx: Result<Box<dyn KvWrite>, StoreError>,
+    ) -> Result<Box<dyn KvWrite>, StoreError> {
+        Ok(Box::new(RecWrite {
+            inner: tx?,
+            rec: self.rec.clone(),
+            reads: std::cell::RefCell::new(Vec::new()),
+            own: Own::new(),
+        }))
+    }
+}
+
+impl Kv for RecKv {
+    fn snapshot(&self) -> Result<Box<dyn gbrain_store::kv::KvRead>, StoreError> {
+        self.inner.snapshot()
+    }
+    fn versioned_snapshot(
+        &self,
+    ) -> Result<(Box<dyn gbrain_store::kv::KvRead + Send>, u64), StoreError> {
+        self.inner.versioned_snapshot()
+    }
+    fn begin_write(&self) -> Result<Box<dyn KvWrite>, StoreError> {
+        self.wrap(self.inner.begin_write())
+    }
+    fn begin_write_locked(&self, keys: &BTreeSet<Vec<u8>>) -> Result<Box<dyn KvWrite>, StoreError> {
+        self.wrap(self.inner.begin_write_locked(keys))
+    }
+    fn begin_write_locked_until(
+        &self,
+        keys: &BTreeSet<Vec<u8>>,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<Box<dyn KvWrite>, StoreError> {
+        self.wrap(self.inner.begin_write_locked_until(keys, deadline))
+    }
+    fn begin_write_exclusive(&self) -> Result<Box<dyn KvWrite>, StoreError> {
+        self.wrap(self.inner.begin_write_exclusive())
+    }
+    fn version(&self) -> Result<u64, StoreError> {
+        self.inner.version()
+    }
+    fn enable_commit_log(
+        &self,
+        settings: gbrain_store::commit_log::LogSettings,
+    ) -> Result<(), StoreError> {
+        self.inner.enable_commit_log(settings)
+    }
+    fn set_commit_clock(
+        &self,
+        clock: Arc<dyn Env>,
+        hook: Option<gbrain_store::commit_log::AcceptHook>,
+    ) -> Result<(), StoreError> {
+        self.inner.set_commit_clock(clock, hook)
+    }
+    fn clear_commit_clock(&self) {
+        self.inner.clear_commit_clock()
+    }
+    fn set_id_reservation(&self, on: bool) {
+        self.inner.set_id_reservation(on)
+    }
+    fn last_commit_time(&self) -> Result<Option<i64>, StoreError> {
+        self.inner.last_commit_time()
+    }
+    fn commit_log_enabled(&self) -> bool {
+        self.inner.commit_log_enabled()
+    }
+    fn occ_stats(&self) -> Option<gbrain_store::occ_kv::OccStatsSnapshot> {
+        self.inner.occ_stats()
+    }
+}
+
+/// One recorded transaction: point reads of keys it has not written, each range read as the window it observed (a scan that
+/// stopped early observed up to the row it stopped at), and its own puts and deletes.
+struct RecWrite {
+    inner: Box<dyn KvWrite>,
+    rec: Shared,
+    reads: std::cell::RefCell<Vec<ReadObs>>,
+    own: Own,
+}
+
+impl RecWrite {
+    fn blind(&self, key: &[u8]) {
+        self.rec.lock().unwrap().blind.insert(key.to_vec());
+    }
+}
+
+impl gbrain_store::kv::KvRead for RecWrite {
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let value = self.inner.get(key)?;
+        if !self.own.contains_key(key) {
+            self.reads.borrow_mut().push(ReadObs::Point {
+                key: key.to_vec(),
+                value: value.clone(),
+            });
+        }
+        Ok(value)
+    }
+    fn scan(
+        &self,
+        start: &[u8],
+        end: &[u8],
+        reverse: bool,
+        f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+    ) -> Result<(), StoreError> {
+        let (mut rows, mut stop) = (Vec::new(), None);
+        self.inner.scan(start, end, reverse, &mut |k, v| {
+            rows.push((k.to_vec(), v.to_vec()));
+            let go = f(k, v);
+            if !go {
+                stop = Some(k.to_vec());
+            }
+            go
+        })?;
+        if start >= end {
+            return Ok(());
+        }
+        if reverse {
+            rows.reverse();
+        }
+        let (start, end) = match (stop, reverse) {
+            (None, _) => (start.to_vec(), end.to_vec()),
+            (Some(k), false) => (start.to_vec(), [k.as_slice(), &[0]].concat()),
+            (Some(k), true) => (k, end.to_vec()),
+        };
+        self.reads.borrow_mut().push(ReadObs::Range {
+            start,
+            end,
+            limit: usize::MAX,
+            own: self.own.clone(),
+            rows,
+        });
+        Ok(())
+    }
+}
+
+impl KvWrite for RecWrite {
+    fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        self.inner.put(key, value)?;
+        self.own.insert(key.to_vec(), Some(value.to_vec()));
+        Ok(())
+    }
+    fn delete(&mut self, key: &[u8]) -> Result<(), StoreError> {
+        self.inner.delete(key)?;
+        self.own.insert(key.to_vec(), None);
+        Ok(())
+    }
+    fn commit(self: Box<Self>) -> Result<u64, StoreError> {
+        self.commit_position().map(|p| p.sequence)
+    }
+    fn commit_position(self: Box<Self>) -> Result<CommitPosition, StoreError> {
+        let RecWrite {
+            inner,
+            rec,
+            reads,
+            own,
+        } = *self;
+        let result = inner.commit_position();
+        let mut txn = Committed {
+            snapshot: 0,
+            version: 0,
+            reads: reads.into_inner(),
+            writes: own.into_iter().collect(),
+        };
+        let mut rec = rec.lock().unwrap();
+        match &result {
+            // A write that changed nothing reports the position it saw, not one of its own.
+            Ok(p) if p.index == u32::MAX => {}
+            Ok(p) => {
+                txn.version = p.sequence;
+                rec.acked.push(Entry {
+                    sequence: p.sequence,
+                    index: Some(p.index),
+                    txn,
                 });
             }
-        });
-        let acked = acked.into_inner().unwrap();
-        crashes += usize::from(disk.is_crashed());
-        disk.crash_now();
-        drop(store);
-        disk.reboot();
-        disk.set_plan(FaultPlan::none());
-        let store = open_store(&disk).unwrap();
-        for (request, slug, body) in &acked {
-            let page = store
-                .read_page_snapshot(slug, &gbrain_store::pages::ReadScope::default())
-                .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
-            let kept = page
-                .as_ref()
-                .and_then(|p| p["page"]["compiled_truth"].as_str())
-                .map(str::to_string);
-            if kept.as_deref() != Some(body.as_str()) {
-                lost.push(format!(
-                    "seed {seed}: acknowledged request {request} wrote {slug} = {body:?}; after the reopen it reads {kept:?}"
+            Err(e) if e.code == WRITE_CONFLICT => {}
+            Err(e) => rec.failed.push((e.message.clone(), txn)),
+        }
+        result
+    }
+    fn set_commit_meta(&mut self, meta: gbrain_store::commit_log::CommitMeta) {
+        self.inner.set_commit_meta(meta)
+    }
+    fn set_commit_time(&mut self, time: i64) {
+        self.inner.set_commit_time(time)
+    }
+    fn allocate(&mut self, key: &[u8], count: u64) -> Result<u64, StoreError> {
+        self.blind(key);
+        self.inner.allocate(key, count)
+    }
+    fn raise_counter(&mut self, key: &[u8], value: u64) -> Result<(), StoreError> {
+        self.blind(key);
+        self.inner.raise_counter(key, value)
+    }
+    fn add_i64(&mut self, key: &[u8], delta: i64) -> Result<(), StoreError> {
+        self.blind(key);
+        self.inner.add_i64(key, delta)
+    }
+    fn counter_below(&mut self, key: &[u8], cap: i64) -> Result<Option<i64>, StoreError> {
+        self.blind(key);
+        self.inner.counter_below(key, cap)
+    }
+    fn counter_check(&mut self, key: &[u8], cap: i64) -> Result<CounterCheck, StoreError> {
+        self.blind(key);
+        self.inner.counter_check(key, cap)
+    }
+    fn snapshot_sequence(&self) -> Option<u64> {
+        self.inner.snapshot_sequence()
+    }
+    fn observe_sequence(&self) -> Option<u64> {
+        self.inner.observe_sequence()
+    }
+    fn refresh_snapshot(&mut self) -> Result<bool, StoreError> {
+        let moved = self.inner.refresh_snapshot()?;
+        if moved {
+            self.reads.borrow_mut().clear();
+        }
+        Ok(moved)
+    }
+    fn add_guard(&mut self, key: &[u8], bound: i64) -> Result<(), StoreError> {
+        self.blind(key);
+        self.inner.add_guard(key, bound)
+    }
+}
+
+/// `entry` without the keys a transaction does not decide the value of (counter keys and the record file's own keys).
+fn decided(entry: &Entry, blind: &BTreeSet<Vec<u8>>) -> Entry {
+    let keep = |k: &[u8]| !internal_key(k) && !blind.contains(k);
+    let mut e = entry.clone();
+    e.txn.writes.retain(|(k, _)| keep(k));
+    e.txn.reads.retain_mut(|r| match r {
+        ReadObs::Point { key, .. } => keep(key),
+        ReadObs::Range { own, rows, .. } => {
+            own.retain(|k, _| keep(k));
+            rows.retain(|(k, _)| keep(k));
+            true
+        }
+    });
+    e
+}
+
+/// The state a reopened record file holds, without those keys.
+fn decided_state(kv: &dyn Kv, blind: &BTreeSet<Vec<u8>>) -> Model {
+    let mut state = common::mu::image_of(kv);
+    state.retain(|k, _| !internal_key(k) && !blind.contains(k));
+    state
+}
+
+/// Every order of `items` (an in-doubt batch has at most one member per writer thread).
+fn orders<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
+    if items.len() <= 1 {
+        return vec![items.to_vec()];
+    }
+    let mut out = Vec::new();
+    for i in 0..items.len() {
+        let mut rest = items.to_vec();
+        let first = rest.remove(i);
+        for mut tail in orders(&rest) {
+            tail.insert(0, first.clone());
+            out.push(tail);
+        }
+    }
+    out
+}
+
+/// One crash run of the whole store with the log on, ready to be judged.
+struct LoggedRun {
+    seed: u64,
+    optimistic: bool,
+    disk: SimDisk,
+    /// The record file's image and the newest log position right after the first open: the log replays from here.
+    base_image: common::mu::Image,
+    base_position: Option<CommitPosition>,
+    rec: Recorded,
+    /// (request id, slug, body) of every page mutation the store acknowledged as committed.
+    pages: Vec<(String, String, String)>,
+    crashed: bool,
+}
+
+/// Opens the store on a fresh simulated disk (through `RecKv`), crashes it at the seed's point while four writers submit page
+/// mutations, and reboots the disk.
+fn logged_crash_run(seed: u64, optimistic: bool) -> LoggedRun {
+    let disk = SimDisk::new(seed, FaultPlan::none());
+    let rec = Shared::default();
+    let kv: Arc<dyn Kv> = Arc::new(RecKv {
+        inner: open_raw(&disk, optimistic).unwrap(),
+        rec: rec.clone(),
+    });
+    let store = Arc::new(open_store(kv.clone(), optimistic).unwrap());
+    let base_image = common::mu::image_of(&*kv);
+    let base_position = commit_log::read_commit_log(&*kv.snapshot().unwrap(), None, usize::MAX)
+        .unwrap()
+        .newest;
+    let setup = disk.stats().io_ops;
+    disk.set_plan(crash_plan(seed, setup));
+    let pages: Mutex<Vec<(String, String, String)>> = Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for thread in 0..4usize {
+            let (store, pages) = (&store, &pages);
+            s.spawn(move || {
+                for n in 0..12usize {
+                    let request = format!("00000000-0000-4000-8000-{:012}", thread * 100 + n);
+                    let (slug, body) = (format!("p/{thread}-{n}"), format!("{thread} {n}"));
+                    let mutation: gbrain_store::journal::PageMutation =
+                        serde_json::from_value(serde_json::json!({
+                            "principal": {"kind": "local_cli", "id": format!("w{thread}")},
+                            "requestId": request, "slug": slug,
+                            "page": {"type": "note", "title": "t", "compiled_truth": body},
+                            "options": {},
+                        }))
+                        .unwrap();
+                    match store.submit_page_mutation(&mutation, None) {
+                        Ok(r) if r["state"] == "committed" => {
+                            pages.lock().unwrap().push((request, slug, body))
+                        }
+                        _ => return,
+                    }
+                }
+            });
+        }
+    });
+    let crashed = disk.is_crashed();
+    disk.crash_now();
+    drop(store);
+    drop(kv);
+    disk.reboot();
+    disk.set_plan(FaultPlan::none());
+    let rec = std::mem::take(&mut *rec.lock().unwrap());
+    LoggedRun {
+        seed,
+        optimistic,
+        disk,
+        base_image,
+        base_position,
+        rec,
+        pages: pages.into_inner().unwrap(),
+        crashed,
+    }
+}
+
+#[derive(Default, Debug)]
+struct LoggedTally {
+    histories: usize,
+    txns: usize,
+    reads: usize,
+    pages: usize,
+    records: usize,
+    crashes: usize,
+    in_doubt_applied: usize,
+    in_doubt_dropped: usize,
+}
+
+/// The acknowledged history in commit order, and the in-doubt batches that may have reached the disk. On the optimistic store a
+/// failed record-file commit fails its whole batch with the same error (later commits fail with another), so its members are one
+/// batch in some order. On the single-writer store each failed commit is a batch of its own.
+fn history_of_run(run: &LoggedRun) -> (Vec<Entry>, Vec<Vec<Entry>>) {
+    let blind = &run.rec.blind;
+    let mut acked: Vec<Entry> = run.rec.acked.iter().map(|e| decided(e, blind)).collect();
+    acked.sort_by_key(|e| (e.sequence, e.index));
+    let next = acked.iter().map(|e| e.sequence).max().unwrap_or(0) + 1;
+    let doubt = |c: &Committed, index: u32| {
+        let mut e = decided(
+            &Entry {
+                sequence: next,
+                index: Some(index),
+                txn: c.clone(),
+            },
+            blind,
+        );
+        e.txn.version = next;
+        e
+    };
+    let candidates = if run.optimistic {
+        let batch: Vec<&Committed> = run
+            .rec
+            .failed
+            .iter()
+            .filter(|(m, _)| m.starts_with("record store commit failed"))
+            .map(|(_, c)| c)
+            .collect();
+        if batch.is_empty() {
+            Vec::new()
+        } else {
+            orders(&batch)
+                .into_iter()
+                .map(|order| {
+                    order
+                        .iter()
+                        .enumerate()
+                        .map(|(i, c)| doubt(c, i as u32))
+                        .collect()
+                })
+                .collect()
+        }
+    } else {
+        run.rec
+            .failed
+            .iter()
+            .map(|(_, c)| vec![doubt(c, 0)])
+            .collect()
+    };
+    (acked, candidates)
+}
+
+/// Judges one crash run: `check_recovery` and the batch checker on the reopened record file (no acknowledged write lost, an
+/// in-doubt batch whole or absent), the log replay from the first open (`log_explains_change`), then, on the reopened store, the
+/// acknowledged pages, the commit times and the request ids. Returns the violations instead of panicking.
+fn judge_logged_run(run: &LoggedRun, tally: &mut LoggedTally) -> Vec<String> {
+    let label = format!(
+        "{} seed {}",
+        if run.optimistic {
+            "optimistic"
+        } else {
+            "single writer"
+        },
+        run.seed
+    );
+    let mut violations = Vec::new();
+    tally.histories += 1;
+    tally.crashes += usize::from(run.crashed);
+    let (acked, candidates) = history_of_run(run);
+    match check_batches(&acked) {
+        Ok((_, seen)) => {
+            tally.txns += seen.txns;
+            tally.reads += seen.reads;
+        }
+        Err(e) => violations.push(format!(
+            "{label}: the acknowledged history is not serializable: {e}"
+        )),
+    }
+    let kv = match catch_unwind(AssertUnwindSafe(|| open_raw(&run.disk, run.optimistic))) {
+        Ok(Ok(kv)) => kv,
+        Ok(Err(e)) => return vec![format!("{label}: refused to reopen after a crash: {e}")],
+        Err(_) => return vec![format!("{label}: reopen panicked")],
+    };
+    let reopened = match kv.version() {
+        Ok(version) => Reopen::Opened {
+            version,
+            state: decided_state(&*kv, &run.rec.blind),
+        },
+        Err(e) => Reopen::Refused(e.to_string()),
+    };
+    // No in-doubt batch, or one that was dropped; else the first order of a candidate batch that explains the disk.
+    let (none, _) = recovery_violations_of(&acked, &[], &reopened);
+    if none.is_empty() {
+        tally.in_doubt_dropped += usize::from(!candidates.is_empty());
+    } else if candidates
+        .iter()
+        .any(|c| recovery_violations_of(&acked, c, &reopened).0.is_empty())
+    {
+        tally.in_doubt_applied += 1;
+    } else {
+        violations.extend(none.into_iter().map(|v| format!("{label}: {v}")));
+        if !candidates.is_empty() {
+            violations.push(format!(
+                "{label}: no order of the {} in-doubt candidate(s) explains the reopened state either",
+                candidates.len()
+            ));
+        }
+    }
+    // The log, from the first open's position to the end, explains every change since the first open's image.
+    match commit_log::read_commit_log(&*kv.snapshot().unwrap(), run.base_position, usize::MAX) {
+        Ok(page) if page.snapshot_required => violations.push(format!(
+            "{label}: the log no longer reaches back to the first open"
+        )),
+        Ok(page) => {
+            if let Err(e) = common::logged::log_explains_change(
+                &run.base_image,
+                &common::mu::image_of(&*kv),
+                &page.records,
+            ) {
+                violations.push(format!(
+                    "{label}: the log does not explain the reopened records: {e}"
                 ));
             }
         }
-        let log = store
-            .read_commit_log(None, usize::MAX)
-            .unwrap_or_else(|e| panic!("{e}"));
-        let last = store.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
-        let ids: Vec<String> = acked
-            .iter()
-            .map(|(request, _, _)| request.clone())
-            .collect();
-        clock::replay_clock_checks(&log.records, last, None, &[])
-            .unwrap_or_else(|e| panic!("seed {seed}: {e}\nrepro: GBRAIN_SIM_SEED={seed}"));
-        clock::request_ids_match_records(&ids, &log.records)
-            .unwrap_or_else(|e| panic!("seed {seed}: {e}\nrepro: GBRAIN_SIM_SEED={seed}"));
-        histories += 1;
-        records += log.records.len();
-        pages += acked.len();
-        if !lost.is_empty() {
+        Err(e) => violations.push(format!("{label}: the log cannot be read: {e}")),
+    }
+    let store = match open_store(kv, run.optimistic) {
+        Ok(store) => store,
+        Err(e) => {
+            violations.push(format!("{label}: the store refused to reopen: {e}"));
+            return violations;
+        }
+    };
+    for (request, slug, body) in &run.pages {
+        let page = store
+            .read_page_snapshot(slug, &gbrain_store::pages::ReadScope::default())
+            .unwrap_or_else(|e| panic!("{label}: {e}"));
+        let kept = page
+            .as_ref()
+            .and_then(|p| p["page"]["compiled_truth"].as_str())
+            .map(str::to_string);
+        if kept.as_deref() != Some(body.as_str()) {
+            violations.push(format!(
+                "{label}: acknowledged request {request} wrote {slug} = {body:?}; after the reopen it reads {kept:?}"
+            ));
+        }
+    }
+    let log = store.read_commit_log(None, usize::MAX).unwrap();
+    let last = store.last_commit_time().unwrap();
+    let ids: Vec<String> = run
+        .pages
+        .iter()
+        .map(|(request, _, _)| request.clone())
+        .collect();
+    if let Err(e) = clock::replay_clock_checks(&log.records, last, None, &[]) {
+        violations.push(format!("{label}: {e}"));
+    }
+    if let Err(e) = clock::request_ids_match_records(&ids, &log.records) {
+        violations.push(format!("{label}: {e}"));
+    }
+    tally.records += log.records.len();
+    tally.pages += run.pages.len();
+    violations
+}
+
+fn run_p_h_logged(optimistic: bool) {
+    let label = if optimistic {
+        "optimistic"
+    } else {
+        "single writer"
+    };
+    let started = std::time::Instant::now();
+    let mut tally = LoggedTally::default();
+    let mut violations = Vec::new();
+    for seed in seeds(50) {
+        violations = judge_logged_run(&logged_crash_run(seed, optimistic), &mut tally);
+        if !violations.is_empty() {
             break;
         }
     }
     eprintln!(
-        "P-H with the log: {histories} histories executed, {pages} acknowledged pages read back, {records} log records checked, {crashes} crashes hit, {:?}",
+        "P-H with the log, {label}: {} histories executed, {} commits and {} reads checked, {} acknowledged pages read back, {} log records checked, {} crashes hit, in-doubt batch applied {} / dropped {}, {:?}",
+        tally.histories,
+        tally.txns,
+        tally.reads,
+        tally.pages,
+        tally.records,
+        tally.crashes,
+        tally.in_doubt_applied,
+        tally.in_doubt_dropped,
         started.elapsed()
     );
     assert!(
-        lost.is_empty(),
-        "P-H with the log lost acknowledged data: {lost:#?}\nrepro: GBRAIN_SIM_SEED=<seed> cargo test -p gbrain-store --test multi_writer_sim p_h_with_the_log"
+        violations.is_empty(),
+        "P-H with the log, {label}: {violations:#?}\nrepro: GBRAIN_SIM_SEED=<seed> cargo test -p gbrain-store --test multi_writer_sim p_h_with_the_log"
     );
-    assert!(records > 0, "no commit was checked");
-    assert!(pages > 0, "no acknowledged page was read back");
-    assert!(crashes > 0, "no seed crashed mid-run");
+    assert!(tally.txns > 0, "no commit was checked");
+    assert!(tally.reads > 0, "no read was checked");
+    assert!(tally.records > 0, "no log record was checked");
+    assert!(tally.pages > 0, "no acknowledged page was read back");
+    assert!(tally.crashes > 0, "no seed crashed mid-run");
 }
 
-/// The 10,000-seed crash gate selects its tests with the name filter `p_h`. Every test in this file that crashes the store
-/// opened with multi-user mode and the commit log on (`open_store`) must carry `p_h` in its name, or the gate never runs it.
+/// P-H with commit times, against the commit-log lane's real code, on the optimistic store (the store a brain directory opens
+/// with multi-user mode): after a crash at a seeded point and a reopen, `check_recovery` and the batch checker find every
+/// acknowledged commit and the in-doubt batch whole or absent, the log replays from the first open to the reopened records,
+/// every acknowledged page reads back with its body, the commit times in the log strictly rise in position order, the newest
+/// equals `last_commit_time()`, and every acknowledged request id is in the write ids of exactly one record. Named with `p_h`
+/// so the 10,000-seed gate (`... -- --include-ignored p_h`) runs it; 50 seeds in the default `cargo test`.
+#[test]
+fn p_h_with_the_log_crash_keeps_acknowledged_pages_and_rising_commit_times() {
+    run_p_h_logged(true);
+}
+
+/// The same on the single-writer store with the log on (`RedbKv` handed to `Store::open_kv`).
+#[test]
+fn p_h_with_the_log_single_writer_crash_keeps_acknowledged_pages_and_rising_commit_times() {
+    run_p_h_logged(false);
+}
+
+/// A bug planted in the record file after the crash, before the checks: the shapes a broken log write path leaves behind.
+#[derive(Clone, Copy, Debug)]
+enum LogBug {
+    /// The newest commit's record is missing (a commit that skipped the log).
+    DropNewestRecord,
+    /// A record's write is missing from the records (a record logged for a write that never landed).
+    LoseLoggedWrite,
+}
+
+/// What the log checks said about a planted bug.
+struct PlantVerdict {
+    /// The store's own log reader refused the planted log.
+    reader_refused: bool,
+    /// The log replay (`log_explains_change`) went red.
+    replay_red: bool,
+    /// The request-id check went red, when the dropped record named an acknowledged request.
+    ids_red: Option<bool>,
+}
+
+/// Plants `bug` in the crashed run's record file and reports what the log checks said. `None` when the run left no record after the first open to plant in.
+/// The plant is its own commit on the raw record file (no log), so `check_recovery` would fail it for its extra sequence too;
+/// that is why this control is about the log checks only.
+fn plant_log_bug(run: &LoggedRun, bug: LogBug) -> Option<PlantVerdict> {
+    let raw = open_single(&run.disk).unwrap();
+    let records =
+        commit_log::read_commit_log(&*raw.snapshot().unwrap(), run.base_position, usize::MAX)
+            .unwrap()
+            .records;
+    let newest = records.last()?.clone();
+    common::logged::log_explains_change(&run.base_image, &common::mu::image_of(&raw), &records)
+        .unwrap_or_else(|e| panic!("seed {}: the honest log is already red: {e}", run.seed));
+    let mut tx = raw.begin_write().unwrap();
+    match bug {
+        LogBug::DropNewestRecord => tx.delete(&commit_log::record_key(newest.position)).unwrap(),
+        LogBug::LoseLoggedWrite => {
+            let (key, _) = newest
+                .ops
+                .iter()
+                .find(|(k, op)| matches!(op, LogOp::Put(_)) && !internal_key(k))?;
+            tx.delete(key).unwrap()
+        }
+    }
+    tx.commit().unwrap();
+    // The store's log reader may refuse the planted log itself (it checks that the meta record's newest position has its
+    // record). The replay check is then fed what a reader that skipped the gap would return: the records without the dropped one.
+    let read =
+        commit_log::read_commit_log(&*raw.snapshot().unwrap(), run.base_position, usize::MAX);
+    let reader_refused = read.is_err();
+    let after = match read {
+        Ok(page) => page.records,
+        Err(_) => records
+            .iter()
+            .filter(|r| r.position != newest.position)
+            .cloned()
+            .collect(),
+    };
+    let replay_red =
+        common::logged::log_explains_change(&run.base_image, &common::mu::image_of(&raw), &after)
+            .is_err();
+    let ids: Vec<String> = run
+        .pages
+        .iter()
+        .map(|(request, _, _)| request.clone())
+        .collect();
+    let names_acked = newest.write_ids.iter().any(|id| ids.contains(id));
+    let ids_red = (matches!(bug, LogBug::DropNewestRecord) && names_acked)
+        .then(|| clock::request_ids_match_records(&ids, &after).is_err());
+    Some(PlantVerdict {
+        reader_refused,
+        replay_red,
+        ids_red,
+    })
+}
+
+/// The control of `check_recovery` on a real run: the reopened state with the newest acknowledged write taken out (in memory) must
+/// fail it. False when the run acknowledged no write that `check_recovery` sees.
+fn recovery_catches_a_lost_write(run: &LoggedRun) -> bool {
+    let (acked, _) = history_of_run(run);
+    let Some((key, _)) = acked.iter().rev().find_map(|e| e.txn.writes.last()) else {
+        return false;
+    };
+    let kv = open_raw(&run.disk, run.optimistic).unwrap();
+    let mut state = decided_state(&*kv, &run.rec.blind);
+    // Take the write out: drop the key, or (for a delete) bring back a value it never had.
+    if state.remove(key).is_none() {
+        state.insert(key.clone(), b"planted".to_vec());
+    }
+    let reopened = Reopen::Opened {
+        version: kv.version().unwrap(),
+        state,
+    };
+    let (violations, _) = recovery_violations_of(&acked, &[], &reopened);
+    assert!(
+        !violations.is_empty(),
+        "seed {}: check_recovery missed a lost write",
+        run.seed
+    );
+    true
+}
+
+/// The negative control of the log checks above, committed: on both stores, a crash run with a planted log bug must turn the log
+/// replay red on every planted seed, and the request-id check red wherever the dropped record named an acknowledged request.
+#[test]
+fn p_h_with_the_log_planted_log_bugs_turn_the_log_checks_red() {
+    for optimistic in [true, false] {
+        for bug in [LogBug::DropNewestRecord, LogBug::LoseLoggedWrite] {
+            let (mut planted, mut refused, mut replay_red, mut ids_planted, mut ids_red) =
+                (0, 0, 0, 0, 0);
+            let mut lost_caught = 0;
+            for seed in seeds(20) {
+                let run = logged_crash_run(seed, optimistic);
+                lost_caught += usize::from(recovery_catches_a_lost_write(&run));
+                let Some(verdict) = plant_log_bug(&run, bug) else {
+                    continue;
+                };
+                planted += 1;
+                refused += usize::from(verdict.reader_refused);
+                replay_red += usize::from(verdict.replay_red);
+                if let Some(ids) = verdict.ids_red {
+                    ids_planted += 1;
+                    ids_red += usize::from(ids);
+                }
+            }
+            eprintln!(
+                "planted {bug:?} (optimistic {optimistic}): {planted} seeds planted; the log reader refused {refused}, the log replay red on {replay_red}, the request-id check red on {ids_red} of {ids_planted}"
+            );
+            assert!(planted > 0, "{bug:?}: no seed had a record to plant in");
+            assert_eq!(
+                replay_red, planted,
+                "{bug:?}: the log replay missed a planted bug"
+            );
+            assert_eq!(
+                ids_red, ids_planted,
+                "{bug:?}: the request-id check missed a dropped record"
+            );
+            if matches!(bug, LogBug::DropNewestRecord) {
+                assert!(
+                    ids_planted > 0,
+                    "no dropped record named an acknowledged request"
+                );
+            }
+            eprintln!("check_recovery caught a dropped acknowledged write on {lost_caught} seeds");
+            assert!(
+                lost_caught > 0,
+                "check_recovery never judged a dropped acknowledged write"
+            );
+        }
+    }
+}
+
+/// The 10,000-seed crash gate selects its tests with the name filter `p_h`. Every test in this file that crashes the store opened
+/// with multi-user mode and the commit log on (through `run_p_h_logged` or `logged_crash_run`) must carry `p_h` in its name, or
+/// the gate never runs it.
 #[test]
 fn the_crash_gate_filter_selects_every_crash_test_on_the_logged_store() {
     let source = include_str!("multi_writer_sim.rs");
     // Built from parts so this test's own body does not match.
-    let opens = concat!("open_", "store(&disk)");
+    let crashes = [
+        concat!("run_p_h_", "logged(true"),
+        concat!("run_p_h_", "logged(false"),
+        concat!("logged_crash_", "run(seed,"),
+    ];
     let mut found = 0;
     // Each part is one test, from its name to the next `#[test]` (top level or inside a module).
     for part in source.split("#[test]").skip(1) {
@@ -1207,7 +1908,7 @@ fn the_crash_gate_filter_selects_every_crash_test_on_the_logged_store() {
             continue;
         };
         let name = rest.split('(').next().unwrap_or_default();
-        if part.contains(opens) {
+        if crashes.iter().any(|c| part.contains(c)) {
             found += 1;
             assert!(
                 name.contains("p_h"),
@@ -1215,7 +1916,10 @@ fn the_crash_gate_filter_selects_every_crash_test_on_the_logged_store() {
             );
         }
     }
-    assert!(found > 0, "no crash test on the logged store was found");
+    assert!(
+        found >= 3,
+        "the crash tests on the logged store were not all found ({found})"
+    );
 }
 
 // ---- the optimistic store under the seeded scheduler (through the `step_pipeline()` seam) ------------------------------------

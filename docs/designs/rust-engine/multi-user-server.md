@@ -40,10 +40,14 @@ The bars that still gate the default:
 
 - Switch off is byte-identical: goldens, the Rust tally pins and the full parity suite on PGLite, Postgres and Rust.
 - The 22 multi-writer conformance cases pass (section "Tests to write now").
-- At least 10,000 seeded crash-replay runs, with the commit log on, lose no data. The command is
-  `GBRAIN_SIM_SEEDS=10000 cargo test -p gbrain-store --release --test multi_writer_sim -- --include-ignored p_h`
-  (in `rust/`). Its filter selects `p_h_with_the_log_…`, which opens the store with multi-user mode and the log on
-  (asserted) and reads back every acknowledged page after the crash.
+- At least 10,000 seeded crash-replay runs, with the commit log on, lose no data. The commands are
+  `GBRAIN_SIM_SEEDS=10000 cargo test -p gbrain-store --release --test multi_writer_sim -- --include-ignored p_h` and
+  `GBRAIN_SIM_SEEDS=10000 cargo test -p gbrain-store --release --test sim -- --include-ignored logged multi_writer`
+  (in `rust/`). The first filter selects `p_h_with_the_log_…`: the whole store with multi-user mode and the log on
+  (asserted), on both record stores that keep the log (`OccKv`, and `RedbKv` through `Store::open_kv`; `FjallKv` and the
+  read-only store refuse the log). After the crash, `check_recovery` and the batch checker judge the reopened records, the
+  log replays to them, and every acknowledged page reads back; a committed control plants log bugs and requires those
+  checks to fail.
 - CLI, JSON and MCP output is byte-identical embedded, served and with the switch on.
 
 ## What "multi-user" means here
