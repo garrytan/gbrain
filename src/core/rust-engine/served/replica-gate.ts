@@ -122,7 +122,7 @@ export class ReplicaGate {
       const waiter: Waiter = {
         position,
         done: (end) => { clearTimeout(waiter.timer); this.waiters.delete(waiter); resolve(end); },
-        timer: setTimeout(() => waiter.done(refusal('timeout', this.lastAcked)), settings.timeout_ms),
+        timer: setTimeout(() => waiter.done(refusal(this.coverFailed ? 'cover_failed' : 'timeout', this.lastAcked)), settings.timeout_ms),
       };
       waiter.timer.unref?.();
       this.waiters.add(waiter);
@@ -132,6 +132,8 @@ export class ReplicaGate {
   }
 
   private lastAcked: CommitPositionWire | null = null;
+  /** The newest cover read after a wake failed: a wait that then reaches its deadline ends `cover_failed`. */
+  private coverFailed = false;
 
   /** An ack, attach or detach was recorded: reads the cover once and ends every wait it settles. */
   wake(): void {
@@ -148,9 +150,16 @@ export class ReplicaGate {
     const store = this.store();
     let newest = ORIGIN;
     for (const w of this.waiters) if (comparePositions(w.position, newest) > 0) newest = w.position;
-    let cover: ReplicaCoverWire | null = null;
-    try { cover = store ? await store.brain.replicaCover(newest) : null; } catch { cover = null; }
-    if (!cover) return; // the deadline still ends every wait
+    if (!store) return;
+    let cover: ReplicaCoverWire;
+    try {
+      cover = await store.brain.replicaCover(newest);
+    } catch {
+      // The deadline still ends every wait; its end then says the cover read failed, never success.
+      this.coverFailed = true;
+      return;
+    }
+    this.coverFailed = false;
     this.lastAcked = cover.acked_through;
     for (const w of [...this.waiters]) {
       if (cover.acked_through && comparePositions(cover.acked_through, w.position) >= 0) w.done(null);

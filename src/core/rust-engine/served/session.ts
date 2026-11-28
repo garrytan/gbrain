@@ -39,9 +39,10 @@ import { remoteWholeOperationCall } from './remote-whole-ops.ts';
 import { LOCAL_OWNER, RECHECK_MS, authenticateToken, effectiveRemote, recheckToken, type AuthenticatedPrincipal, type VerifyDeps } from './auth.ts';
 import {
   servedAdminPath, servedAuthRefused, servedPositionNotReached, servedPositionRefused, servedProtocol, servedReqConflict,
-  servedOutcomeUnknown, servedReplicationBusy, servedReplicationTimeout,
+  servedOutcomeUnknown,
 } from './errors.ts';
-import { ReplicaGate, type ReplicaGateStore, type ReplicaRefusal } from './replica-gate.ts';
+import { ReplicaGate, type ReplicaGateStore } from './replica-gate.ts';
+import { sessionReplica } from './session-replica.ts';
 import {
   SERVED_MAX_FRAME_BYTES, SERVED_PREAUTH_FRAME_BYTES, byteBudget, encodeLengthFrame, extractTail, readLengthFrames, restoreTail,
   type ByteBudget,
@@ -161,13 +162,13 @@ function stateOf(opts: ServedServerOptions, engine: BrainEngine): ServerState {
 
 /**
  * The owner is closing: every answer waiting for a replica's ack ends `replication_timeout`, and later ones refuse at
- * once (owner-ipc/server.ts close). True when answers were waiting: the caller lets their replies go out first.
+ * once (owner-ipc/server.ts close). When answers were waiting, resolves after their replies had a turn to go out.
  */
-export function endServedReplicaWaits(opts: ServedServerOptions): boolean {
+export async function endServedReplicaWaits(opts: ServedServerOptions): Promise<void> {
   const gate = states.get(opts)?.gate;
   const waiting = (gate?.pending ?? 0) > 0;
   gate?.close();
-  return waiting;
+  if (waiting) await new Promise<void>(resolve => setImmediate(resolve));
 }
 
 /** Scope objects for one session, one per schema version, each keyed to itself (ENGINE_ROOT). */
@@ -319,15 +320,7 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
   // ---- one call ----
   const replyDirect = (id: number, member: string, error: unknown) => writeFrame({ t: 'result', id, ok: false, error: encodeErr(error) }, member);
 
-  const replicationTimeout = (member: string, req: string, refusal: ReplicaRefusal) =>
-    servedReplicationTimeout(member, req, refusal.position, refusal.timeoutMs, refusal.ackedThrough, refusal.why);
-
-  /** A stored or attached outcome: a write is answered as a success only once the replica holds it (replica-gate.ts). */
-  const answerAfterReplica = async (id: number, member: string, req: string, outcome: StoredOutcome): Promise<void> => {
-    const { write, position } = state.gate.recall(outcome);
-    const refusal = write && outcome.ok ? await state.gate.admit(position) : null;
-    writeFrame(refusal ? { t: 'result', id, ok: false, error: encodeErr(replicationTimeout(member, req, refusal)) } : { t: 'result', id, ...outcome }, member);
-  };
+  const replica = sessionReplica({ gate: state.gate, positions: state.positions, writeFrame, encodeErr }); // replica acks
 
   const prepareCall = async (frame: Record<string, unknown>, tail: Buffer | null, bytes: number): Promise<void> => {
     const id = Number(frame.id);
@@ -374,10 +367,10 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
       if (entry.kind === 'conflict') { replyDirect(id, member, servedReqConflict(member, req)); return; }
       if (entry.kind === 'busy') { replyDirect(id, member, ownerBusy('queue_full', member, MAX_REQUEST_WAITERS)); return; }
       if (entry.kind === 'unknown') { replyDirect(id, member, servedOutcomeUnknown(member, req)); return; }
-      if (entry.kind === 'stored') { void answerAfterReplica(id, member, req, entry.outcome); return; }
+      if (entry.kind === 'stored') { void replica.answerStored(id, member, req, entry.outcome); return; }
       if (entry.kind === 'attach') {
         // Answered when the running call ends; later frames of this connection do not wait for it.
-        void entry.outcome.then(outcome => outcome ? answerAfterReplica(id, member, req, outcome)
+        void entry.outcome.then(outcome => outcome ? replica.answerStored(id, member, req, outcome)
           : writeFrame({ t: 'result', id, ok: false, error: encodeErr(servedOutcomeUnknown(member, req)) }, member));
         return;
       }
@@ -412,31 +405,15 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
           if (ok) {
             try { outcome = { ok: true, value: encodeValue(value) }; } catch (error) { outcome = { ok: false, error: encodeErr(error) }; }
           } else outcome = { ok: false, error: encodeErr(value) };
-          // The position is read whatever the client's capabilities: the replica gate needs it; `positions` only
-          // decides whether it crosses.
-          let position: { sequence: number; index: number } | null = null;
-          if (outcome.ok && call.write) {
-            if (state.positions) {
-              try { const p = await state.positions(); if (p?.exact) position = { sequence: p.sequence, index: p.index }; } catch { /* no position */ }
-            }
-            if (position && caps.has('positions')) outcome.position = position;
-            state.gate.remember(outcome, position);
-          }
+          const position = outcome.ok && call.write ? await replica.notePosition(outcome, caps.has('positions')) : null;
           if (!outcome.ok && !(value instanceof Error && 'code' in value)) {
             const cid = randomUUID();
             (opts.log ?? ((line: string) => console.error(line)))(`[gbrain serve] served call failed cid=${cid} member=${call.member}: ${value instanceof Error ? value.stack ?? value.message : String(value)}`);
             (outcome as StoredOutcome & { cid?: string }).cid = cid;
           }
           if (tracked) state.requests.finish(tracked, outcome);
-          if (!(outcome.ok && call.write)) { if (!call.done) call.reply({ t: 'result', id: call.id, ...outcome }); return; }
-          state.gate.committed();
-          if (call.done) return;
-          // Not awaited: the wait for the replica holds no execution permit (the permit ends with this hook).
-          void state.gate.admit(position).then(refusal => {
-            if (call.controller?.signal.aborted ?? call.done) return;
-            call.reply(refusal ? { t: 'result', id: call.id, ok: false, error: encodeErr(replicationTimeout(call.member, typeof req === 'string' ? req : '-', refusal)) }
-              : { t: 'result', id: call.id, ...outcome });
-          });
+          if (outcome.ok && call.write) replica.answerCommitted(call, req, outcome, position);
+          else if (!call.done) call.reply({ t: 'result', id: call.id, ...outcome });
         },
         wrapRun: fn => {
           const inScope = frame.scope && typeof frame.scope === 'object' ? () => withEngineScope(scopeFor((frame.scope as { sv?: unknown }).sv), fn) : fn;
@@ -446,10 +423,7 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
         rebuildFunction: (wire, call) => rebuildFunction(wire, call),
       };
       // A write that would wait for a replica past the budget is refused before it runs.
-      if (!ownerMemberOnlyReads(member) || kind === 'fn') {
-        const full = await state.gate.busy().catch(() => null);
-        if (full) { replyDirect(id, member, servedReplicationBusy(member, typeof req === 'string' ? req : '-', full.maxWaiters)); return; }
-      }
+      const busy = await replica.busy(member, req, !ownerMemberOnlyReads(member) || kind === 'fn'); if (busy) { replyDirect(id, member, busy); return; }
       if (closed || abort.signal.aborted) return;
       handed = true;
       side.admit({ ...frame, args, access }, bytes, calls, writeFrame, hooks); // resolved record, even undefined: never the frame's own
@@ -462,11 +436,7 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
   // Returning callbacks and transactions over the wire (session-calls.ts).
   const { rebuildFunction, onCallbackResult, runInTransaction, onTxnFrame, closeCalls } = sessionCalls({
     side, opts, caps: () => caps, closed: () => closed, writeFrame, encodeErr, replyDirect, staleCredential,
-    afterCommit: async position => {
-      state.gate.committed();
-      const refusal = await state.gate.admit(position);
-      return refusal ? replicationTimeout('transaction', '-', refusal) : null;
-    },
+    afterCommit: position => replica.afterCommit(position),
   });
 
   // ---- frames ----

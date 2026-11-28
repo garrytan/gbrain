@@ -385,7 +385,10 @@ async function closeOwnerServer(o: {
   server: Server; lanes: Map<unknown, PendingCall[]>; running: Set<Promise<unknown>>;
   handOff: ((call: PendingCall) => void) | null; leaveQueue: (call: PendingCall) => void; live: () => Socket[];
   farewell: (() => void) | null;
+  /** Answers waiting for a replica's ack end `replication_timeout` first, while their sockets are still open. */
+  endReplicaWaits: (() => Promise<void>) | null;
 }): Promise<void> {
+  await o.endReplicaWaits?.();
   const serverClosed = new Promise<void>(resolve => o.server.close(() => resolve()));
   if (o.handOff) await drainForHandoff(o.lanes, o.running, o.handOff, o.leaveQueue);
   for (const calls of [...o.lanes.values()]) {
@@ -750,9 +753,7 @@ export async function serveOwnerEngine(
     close: () => (closed ??= (async () => {
       closing = true;
       sealed = handOff !== null;
-      // Answers waiting for a replica's ack end `replication_timeout` while their sockets are still open.
-      if (opts.served && endServedReplicaWaits(opts.served)) await new Promise<void>(resolve => setImmediate(resolve));
-      await closeOwnerServer({ server, lanes, running, handOff, leaveQueue, live: () => [...sockets, ...refused], farewell: handOff ? () => sayBye(v2Sockets) : null });
+      await closeOwnerServer({ server, lanes, running, handOff, leaveQueue, live: () => [...sockets, ...refused], farewell: handOff ? () => sayBye(v2Sockets) : null, endReplicaWaits: opts.served ? endServedReplicaWaits.bind(null, opts.served) : null });
     })()),
   };
 }

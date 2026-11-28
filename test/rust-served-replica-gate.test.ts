@@ -92,6 +92,18 @@ describe('replica-ack gate', () => {
     expect(await new ReplicaGate(() => store).admit(at(2))).toMatchObject({ why: 'cover_failed' });
   });
 
+  test('a cover read that fails during a wait leaves it to the deadline, which then ends cover_failed', async () => {
+    const { store, state } = fakeStore({ timeoutMs: 40 });
+    const gate = new ReplicaGate(() => store);
+    const waiting = gate.admit(at(3));
+    await settle();
+    state.fail = true;
+    gate.wake();
+    await settle();
+    expect(gate.pending).toBe(1);
+    expect(await waiting).toMatchObject({ why: 'cover_failed', position: at(3) });
+  });
+
   test('a detach of the last replica ends every wait without success', async () => {
     const { store, state } = fakeStore();
     const gate = new ReplicaGate(() => store);
