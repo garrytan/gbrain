@@ -115,13 +115,15 @@ export const REASON_LOG_OPTIONS: readonly string[] = ['-z', '--first-parent', '-
 /**
  * The second `git log` gbrain runs in an untrusted checkout, the direction-evidence history read (persistence/git-gap.ts
  * `readPathHistory`): a raw listing (modes and full blob ids, no patch) of every commit, merges against their first
- * parent, with no renames, so only tree entries are compared and no filter, textconv or external diff runs. Every option
- * is required.
+ * parent, in topological order (a descendant always before its ancestors, whatever the commit clocks say), with no renames,
+ * so only tree entries are compared and no filter, textconv or external diff runs. Every option is required. With
+ * `--stdin` (its own shape) the caller writes `--` first, so every record Git reads from stdin is a pathspec, never a
+ * revision or an option.
  */
-export const HISTORY_LOG_OPTIONS: readonly string[] = ['-z', '--raw', '--no-abbrev', '--full-history', '--root', '--diff-merges=first-parent', '--no-renames', '--no-relative',
-  '--no-ext-diff', '--no-textconv', '--no-show-signature', '--format=%x1e%H%x1f%ct'];
-/** Each `log` shape allowed: its options exactly, all of them. */
-const LOG_SHAPES: ReadonlyArray<readonly string[]> = [REASON_LOG_OPTIONS, HISTORY_LOG_OPTIONS];
+export const HISTORY_LOG_OPTIONS: readonly string[] = ['-z', '--raw', '--no-abbrev', '--full-history', '--topo-order', '--root', '--diff-merges=first-parent', '--no-renames',
+  '--no-relative', '--no-ext-diff', '--no-textconv', '--no-show-signature', '--format=%x1e%H%x1f%ct'];
+/** Each `log` shape allowed: its options exactly, all of them. `--stdin` only with the full history shape. */
+const LOG_SHAPES: ReadonlyArray<readonly string[]> = [REASON_LOG_OPTIONS, HISTORY_LOG_OPTIONS, [...HISTORY_LOG_OPTIONS, '--stdin']];
 
 /**
  * The exact options each allowed plumbing subcommand may take; anything not

@@ -276,7 +276,7 @@ function connectorBindingRoot(engine: object, sourceId: string, source: Connecto
 
 /**
  * Fix wave 4: a page intent binds to the connector cursor, not to its item
- * holds or the checkpoint generation. A holds-only publication (the abort
+ * holds, the GitHub sweep ledger (#10578) or the checkpoint generation. A holds-only publication (the abort
  * path, a partial run) therefore neither invalidates accepted page writes nor
  * changes their request identity, so an ordinary rerun still replays the same
  * receipt. Checkpoint intents keep the full checkpoint.
@@ -290,7 +290,7 @@ function cursorOnly(checkpoint: unknown): unknown[] {
   return (Array.isArray(checkpoint) ? checkpoint : []).map(entry => {
     const state = (entry as { state?: unknown } | null)?.state ?? null;
     if (!state || typeof state !== 'object') return { state };
-    const { item_holds: _holds, ...cursor } = state as Record<string, unknown>;
+    const { item_holds: _holds, sweep_progress: _progress, ...cursor } = state as Record<string, unknown>;
     return { state: cursor };
   });
 }
