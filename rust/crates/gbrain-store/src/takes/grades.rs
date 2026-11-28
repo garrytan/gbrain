@@ -255,6 +255,42 @@ impl Store {
         })
     }
 
+    /// `countAppliedTakeGrades(sourceIds)`: the cached verdicts with `applied = true` (the doctor
+    /// `grade_confidence_drift` count). With `sourceIds`, only those whose take exists on a page
+    /// (in any state) of one of them, as the `take_id IN (SELECT t.id FROM takes t JOIN pages p
+    /// ...)` filter reads it; without, every applied row, whether or not its take still exists.
+    pub fn count_applied_take_grades(&self, source_ids: Option<&[String]>) -> Result<u64> {
+        let read = self.read()?;
+        let mut raw = Vec::new();
+        scan_prefix(&*read, &[keys::TAKE, GRADE], false, &mut |_, v| {
+            raw.push(v.to_vec());
+            true
+        })?;
+        let mut count = 0;
+        for bytes in raw {
+            let r: GradeRecord = serde_json::from_slice(&bytes)?;
+            if !r.applied {
+                continue;
+            }
+            if let Some(ids) = source_ids {
+                let Ok(id) = u64::try_from(r.take_id) else {
+                    continue;
+                };
+                let Some(take) = read_take(&*read, id)? else {
+                    continue;
+                };
+                let Some(page) = read_page_by_id(&*read, take.page_id)? else {
+                    continue;
+                };
+                if !ids.contains(&page.source_id) {
+                    continue;
+                }
+            }
+            count += 1;
+        }
+        Ok(count)
+    }
+
     /// `listLatestTakeGrades(filter)`: the newest row of each take whose take and page exist and
     /// whose page is not soft-deleted (`DISTINCT ON (take_id) ... ORDER BY graded_at DESC`), then
     /// the filters, newest first (`graded_at DESC, take_id DESC`), at most `limit` rows. Each row

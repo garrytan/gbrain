@@ -1,7 +1,7 @@
 /**
- * BrainEngine parity: the doctor checks that still read through `executeRaw` (the timeline dedup index shape in
- * src/core/timeline-dedup-repair.ts and the three counts in src/commands/doctor/checks/calibration.ts), and the
- * multi_source_drift and schema_pack_source_drift rows, which every arm answers.
+ * BrainEngine parity: the doctor check that still reads through `executeRaw` (the timeline dedup index shape in
+ * src/core/timeline-dedup-repair.ts), and the multi_source_drift, schema_pack_source_drift and three calibration rows
+ * (src/commands/doctor/checks/calibration.ts), which every arm answers.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the focused doctor report run_doctor returns (doctorReportRemote, brain-wide, as an unscoped caller gets it)
@@ -10,6 +10,8 @@
  *    check (a `Could not check ...` row, or a `Not verified` row), never ok or a zero count, because the Rust engine
  *    refuses `executeRaw` and the check catches that refusal. The idx_timeline_dedup shape is a named permanent loss: it
  *    is a Postgres index, and the Rust store keeps no SQL index.
+ *  - Contract: contextual_retrieval_coverage, abandoned_threads and grade_confidence_drift give the same status and
+ *    message on every arm: their counts are typed members, and before they were the Rust arm said "Could not check".
  *  - Regression: lane L3 found that run_doctor on a Rust brain catches raw-SQL refusals in these four files, and no
  *    stop pin on rust-engine/main named them, so a swapped brain's doctor could have turned one into a healthy row with
  *    nothing to catch it.
@@ -47,18 +49,19 @@ const { parityTest } = parityArms(testBackends());
 /** The rows the raw-SQL doctor files feed, with the file each row reads through. */
 const RAW_ROWS: Record<string, string> = {
   timeline_dedup_index: 'src/core/timeline-dedup-repair.ts',
-  abandoned_threads: 'src/commands/doctor/checks/calibration.ts',
-  grade_confidence_drift: 'src/commands/doctor/checks/calibration.ts',
-  contextual_retrieval_coverage: 'src/commands/doctor/checks/calibration.ts',
 };
+/** The calibration rows, which typed members serve (countContextualCoverage, countAbandonedTakes, countAppliedTakeGrades). */
+const CALIBRATION_ROWS = ['contextual_retrieval_coverage', 'abandoned_threads', 'grade_confidence_drift'] as const;
 const NOT_CHECKED = /^(Could not check |Not verified: )/;
 
 type Check = { name?: unknown; status?: unknown; message?: unknown };
 
 parityTest('the doctor report answers each raw-SQL check on SQL engines and says it could not check it on Rust', {
-  methods: ['putPage'], timeout: 240_000,
+  methods: ['putPage', 'addTakesBatch'], timeout: 240_000,
 }, async (engine: BrainEngine, backend) => {
-  await engine.putPage('notes/doctor-raw', { type: 'note' as never, title: 'Doctor raw', compiled_truth: 'A note.', timeline: '', frontmatter: {} });
+  const page = await engine.putPage('notes/doctor-raw', { type: 'note' as never, title: 'Doctor raw', compiled_truth: 'A note.', timeline: '', frontmatter: {} });
+  // One abandoned conviction (weight 0.9, dated 2019), so abandoned_threads has a take to count.
+  await engine.addTakesBatch([{ page_id: page.id, row_num: 1, claim: 'An old conviction.', kind: 'take', holder: 'self', weight: 0.9, since_date: '2019-01' }]);
   const dir = mkdtempSync(join(tmpdir(), 'doctor-raw-source-'));
   let report: Awaited<ReturnType<typeof doctorReportRemote>>;
   try {
@@ -91,7 +94,20 @@ parityTest('the doctor report answers each raw-SQL check on SQL engines and says
   const packDrift = checks.find((c) => c.name === 'schema_pack_source_drift');
   const packDriftRow = { status: packDrift?.status, message: packDrift?.message };
   expect(packDriftRow).toEqual({ status: 'warn', message: 'Per-source pack divergence detected: 2 distinct packs across 2 sources. Run `gbrain sources list` then `gbrain schema active --source <id>` per source to audit.' });
-  return { rows: rows.map((r) => r.name), drift: driftRow, packDrift: packDriftRow };
+  const calibration = Object.fromEntries(CALIBRATION_ROWS.map((name) => {
+    const row = checks.find((c) => c.name === name);
+    return [name, { status: row?.status, message: row?.message }];
+  }));
+  // The calibration counts are typed members: every arm reads the same three rows from the one page and its take.
+  expect(calibration).toEqual({
+    contextual_retrieval_coverage: {
+      status: 'warn',
+      message: '1 page(s) at older chunker_version; 1 page(s) below the safe-chunk index version — withheld from remote/MCP chunk retrieval until re-sealed; 1 page(s) never evaluated against CR ladder. Preview the re-seal: gbrain repair safe-chunks — apply: gbrain repair safe-chunks --apply. Preview the mode stamp (#5621): gbrain repair contextual-mode — apply: gbrain repair contextual-mode --apply. Run `gbrain reindex --markdown` to align.',
+    },
+    abandoned_threads: { status: 'ok', message: '1 high-conviction take(s) older than 12 months and never revisited — see `gbrain calibration` for details' },
+    grade_confidence_drift: { status: 'ok', message: 'Only 0 auto-applied verdicts — need 30+ for drift detection' },
+  });
+  return { rows: rows.map((r) => r.name), drift: driftRow, packDrift: packDriftRow, calibration };
 });
 
 parityTest('the timeline dedup index check reads the shape of a Postgres index', {

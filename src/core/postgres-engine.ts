@@ -1597,6 +1597,9 @@ export class PostgresEngine implements BrainEngine {
   listSlugPathCandidates(sourceIds: string[] | null) { return doctorPagesImpl.listSlugPathCandidates(this.executeRaw.bind(this), sourceIds); }
   probeSlugSources(slugs: readonly string[], sourceId: string) { return doctorPagesImpl.probeSlugSources(this.executeRaw.bind(this), slugs, sourceId); }
   listSchemaPackSourceOverrides(sourceIds: readonly string[] | null) { return doctorReadsImpl.listSchemaPackSourceOverrides(this.executeRaw.bind(this), sourceIds); }
+  countContextualCoverage(chunkerVersion: number, sourceIds: readonly string[] | null) { return doctorReadsImpl.countContextualCoverage(this.executeRaw.bind(this), chunkerVersion, sourceIds); }
+  countAbandonedTakes(sourceIds: readonly string[] | null) { return doctorReadsImpl.countAbandonedTakes(this.executeRaw.bind(this), sourceIds); }
+  countAppliedTakeGrades(sourceIds: readonly string[] | null) { return doctorReadsImpl.countAppliedTakeGrades(this.executeRaw.bind(this), sourceIds); }
   countAtomExtractionBacklog(query: AtomBacklogQuery, opts?: { signal?: AbortSignal }) {
     return atomBacklogImpl.countAtomExtractionBacklog((sql, params) => this.executeRaw(sql, params, opts?.signal ? { signal: opts.signal } : undefined), query);
   }

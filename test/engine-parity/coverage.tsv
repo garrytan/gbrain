@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2524/2556
+# covered: 2527/2559
 # lifecycle: 21/22
 # pages: 141/142
 # search: 8/8
@@ -101,7 +101,7 @@
 # owner_only: 1/1
 # embed_stale_work: 10/10
 # doctor_tallies: 3/3
-# doctor_reads: 1/1
+# doctor_reads: 4/4
 # engine_migration: 5/5
 # access_grants: 7/7
 # access_members: 21/21
@@ -149,10 +149,10 @@ getPage	pages	yes	294	yes	yes	yes	serves
 readPageSnapshot	pages	yes	121	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1429	yes	yes	yes	serves
+putPage	pages	yes	1432	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	45	yes	yes	yes	serves
+deletePage	pages	yes	47	yes	yes	yes	serves
 deletePages	pages	yes	10	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
 softDeletePage	pages	yes	357	yes	yes	yes	serves
@@ -523,9 +523,9 @@ listReadableFilePaths	raw_files	yes	3	no	yes	yes	serves
 hasTakeClaim	takes	yes	1	no	yes	yes	serves
 listTakeRowNums	takes	yes	1	no	yes	yes	serves
 readTakeRowTierByClaim	takes	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	137	yes	yes	yes	serves
+addTakesBatch	takes	yes	140	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	10	no	yes	yes	serves
-listTakes	takes	yes	71	no	yes	yes	serves
+listTakes	takes	yes	72	no	yes	yes	serves
 searchTakes	takes	yes	7	no	yes	yes	serves
 searchTakesVector	takes	yes	7	no	yes	yes	serves
 getTakeEmbeddings	takes	yes	1	no	yes	yes	serves
@@ -549,7 +549,7 @@ listTakeRowsForPage	takes	yes	1	no	yes	yes	serves
 readTakePreimages	takes	yes	1	no	yes	yes	serves
 listLatestTakeGrades	takes	yes	2	no	yes	yes	serves
 readTakeGrade	takes	yes	1	no	yes	yes	serves
-insertTakeGrade	takes	yes	2	no	yes	yes	serves
+insertTakeGrade	takes	yes	3	no	yes	yes	serves
 deleteTakeGrade	takes	yes	1	no	yes	yes	serves
 readLiveTakePage	takes	yes	1	no	yes	yes	serves
 readTakeClaim	takes	yes	2	no	yes	yes	serves
@@ -2425,6 +2425,9 @@ countLiveSegmentedPages	doctor_tallies	yes	2	no	yes	yes	serves
 countValidityLapsedFacts	doctor_tallies	yes	1	no	yes	yes	serves
 countOrphanEventProjections	doctor_tallies	yes	1	no	yes	yes	serves
 listSchemaPackSourceOverrides	doctor_reads	yes	1	no	yes	yes	serves
+countContextualCoverage	doctor_reads	yes	1	no	yes	yes	serves
+countAbandonedTakes	doctor_reads	yes	1	no	yes	yes	serves
+countAppliedTakeGrades	doctor_reads	yes	1	no	yes	yes	serves
 readEngineMigrationHistory	engine_migration	yes	2	no	yes	yes	serves
 readMigrationRows	engine_migration	yes	5	no	yes	yes	serves
 readMigrationPageColumns	engine_migration	yes	2	no	yes	yes	serves

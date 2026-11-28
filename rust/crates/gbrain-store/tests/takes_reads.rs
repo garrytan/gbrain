@@ -840,6 +840,11 @@ fn abandoned_takes_are_the_oldest_unresolved_convictions_past_a_year() {
     );
     resolve(&b, p, 5, None);
     let rows = b.list_abandoned_takes().unwrap();
+    assert_eq!(
+        b.count_abandoned_takes(None).unwrap(),
+        2,
+        "the count is the listing's length"
+    );
     let claims: Vec<&str> = rows.iter().map(|r| r["claim"].as_str().unwrap()).collect();
     assert_eq!(
         claims,
@@ -885,6 +890,105 @@ fn abandoned_takes_are_the_oldest_unresolved_convictions_past_a_year() {
     let err = b.list_abandoned_takes().unwrap_err();
     assert_eq!(err.code, gbrain_store::error::INVALID_ARGUMENT);
     assert!(err.message.contains("2020-13-01"), "{}", err.message);
+    let err = b.count_abandoned_takes(None).unwrap_err();
+    assert_eq!(err.code, gbrain_store::error::INVALID_ARGUMENT);
+}
+
+#[test]
+fn abandoned_takes_are_counted_on_the_named_sources_pages_and_an_other_sources_bad_date_is_not_read()
+ {
+    let b = brain("abandoned-count");
+    b.clock.set(1_795_132_800_000_000);
+    source(&b, "s1");
+    source(&b, "s2");
+    let p1 = page(&b, "s1", "one");
+    let p2 = page(&b, "s2", "two");
+    add(
+        &b,
+        &[
+            take(
+                p1,
+                1,
+                "old one",
+                json!({"weight": 0.8, "since_date": "2020-01"}),
+            ),
+            take(
+                p1,
+                2,
+                "older one",
+                json!({"weight": 0.9, "since_date": "2019-03-04"}),
+            ),
+            take(
+                p2,
+                1,
+                "old two",
+                json!({"weight": 0.8, "since_date": "2021-06"}),
+            ),
+        ],
+    );
+    let ids = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(b.count_abandoned_takes(None).unwrap(), 3);
+    assert_eq!(b.count_abandoned_takes(Some(&ids(&["s1"]))).unwrap(), 2);
+    assert_eq!(
+        b.count_abandoned_takes(Some(&ids(&["s2", "s9"]))).unwrap(),
+        1
+    );
+    assert_eq!(
+        b.count_abandoned_takes(Some(&[])).unwrap(),
+        0,
+        "[] names no source"
+    );
+    add(
+        &b,
+        &[take(
+            p2,
+            2,
+            "bad",
+            json!({"weight": 0.9, "since_date": "2020-13"}),
+        )],
+    );
+    assert_eq!(b.count_abandoned_takes(Some(&ids(&["s1"]))).unwrap(), 2);
+    assert!(b.count_abandoned_takes(Some(&ids(&["s2"]))).is_err());
+}
+
+#[test]
+fn applied_take_grades_are_counted_whatever_their_take_and_on_the_named_sources_takes_when_scoped()
+{
+    let b = brain("applied-grades");
+    source(&b, "s1");
+    source(&b, "s2");
+    let p1 = page(&b, "s1", "one");
+    let p2 = page(&b, "s2", "two");
+    add(
+        &b,
+        &[take(p1, 1, "a", json!({})), take(p2, 1, "b", json!({}))],
+    );
+    let (t1, t2) = (take_id(&b, p1, 1), take_id(&b, p2, 1));
+    let grade = |take: i64, model: &str, applied: bool| {
+        b.insert_take_grade(&de(json!({
+            "takeId": take, "promptVersion": "v1", "judgeModelId": model, "evidenceSignature": "sig",
+            "verdict": "correct", "confidence": 0.9, "applied": applied,
+        })))
+        .unwrap();
+    };
+    grade(t1 as i64, "m1", true);
+    grade(t1 as i64, "m2", true);
+    grade(t1 as i64, "m3", false);
+    grade(t2 as i64, "m1", true);
+    grade(999_999, "m1", true);
+    let ids = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        b.count_applied_take_grades(None).unwrap(),
+        4,
+        "a verdict whose take is gone still counts unscoped"
+    );
+    assert_eq!(b.count_applied_take_grades(Some(&ids(&["s1"]))).unwrap(), 2);
+    assert_eq!(
+        b.count_applied_take_grades(Some(&ids(&["s1", "s2"])))
+            .unwrap(),
+        3
+    );
+    assert_eq!(b.count_applied_take_grades(Some(&[])).unwrap(), 0);
 }
 
 #[test]

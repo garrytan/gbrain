@@ -1859,6 +1859,9 @@ export class PGLiteEngine implements BrainEngine {
   listSlugPathCandidates(sourceIds: string[] | null) { return doctorPagesImpl.listSlugPathCandidates(this.rawRead, sourceIds); }
   probeSlugSources(slugs: readonly string[], sourceId: string) { return doctorPagesImpl.probeSlugSources(this.rawRead, slugs, sourceId); }
   listSchemaPackSourceOverrides(sourceIds: readonly string[] | null) { return doctorReadsImpl.listSchemaPackSourceOverrides(this.rawRead, sourceIds); }
+  countContextualCoverage(chunkerVersion: number, sourceIds: readonly string[] | null) { return doctorReadsImpl.countContextualCoverage(this.rawRead, chunkerVersion, sourceIds); }
+  countAbandonedTakes(sourceIds: readonly string[] | null) { return doctorReadsImpl.countAbandonedTakes(this.rawRead, sourceIds); }
+  countAppliedTakeGrades(sourceIds: readonly string[] | null) { return doctorReadsImpl.countAppliedTakeGrades(this.rawRead, sourceIds); }
   countAtomExtractionBacklog(query: AtomBacklogQuery, opts?: { signal?: AbortSignal }) {
     return atomBacklogImpl.countAtomExtractionBacklog((sql, params) => this.executeRaw(sql, params, opts?.signal ? { signal: opts.signal } : undefined), query);
   }

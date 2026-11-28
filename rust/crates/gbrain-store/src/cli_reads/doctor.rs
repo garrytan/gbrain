@@ -3,10 +3,12 @@
 //! Each read takes one snapshot and has no keys of its own.
 
 use crate::Store;
+use crate::chunks::SAFE_FENCE_CHUNKER_VERSION;
 use crate::error::{Result, StoreError};
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
-use crate::pages::read_page_by_id;
+use crate::pages::{all_pages, read_page_by_id};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 /// Where a page-child relation keeps the page id in its keys: the key prefix and the byte offset
@@ -59,5 +61,53 @@ impl Store {
             }
         }
         Ok(orphans)
+    }
+
+    /// `countContextualCoverage(chunkerVersion, sourceIds)`: over live pages (of `sourceIds` when
+    /// named), `{ chunker_drift, unsealed, unsealed_code, mode_null }`: markdown pages chunked
+    /// below `chunkerVersion`; pages of any kind below the safe-chunk fence; code pages below it;
+    /// markdown pages with no contextual retrieval mode that are not `extract_receipt` pages. A
+    /// page with no stored chunker version (a record from before the store kept one) is below the
+    /// fence, as every fence read takes it, and not drifted, as the walk reads take it.
+    pub fn count_contextual_coverage(
+        &self,
+        chunker_version: i64,
+        source_ids: Option<&[String]>,
+    ) -> Result<Value> {
+        let read = self.read()?;
+        let (mut drift, mut unsealed, mut unsealed_code, mut mode_null) = (0u64, 0u64, 0u64, 0u64);
+        for page in all_pages(&*read)? {
+            if page.deleted_at_us.is_some()
+                || source_ids.is_some_and(|ids| !ids.contains(&page.source_id))
+            {
+                continue;
+            }
+            let markdown = page.page_kind == "markdown";
+            if markdown
+                && page
+                    .chunker_version
+                    .is_some_and(|v| i64::from(v) < chunker_version)
+            {
+                drift += 1;
+            }
+            if page.chunker_version.unwrap_or(0) < SAFE_FENCE_CHUNKER_VERSION {
+                unsealed += 1;
+                if page.page_kind == "code" {
+                    unsealed_code += 1;
+                }
+            }
+            if markdown
+                && page.page_type != "extract_receipt"
+                && crate::aliases::contextual_retrieval_mode(&*read, page.id)?.is_none()
+            {
+                mode_null += 1;
+            }
+        }
+        Ok(json!({
+            "chunker_drift": drift,
+            "unsealed": unsealed,
+            "unsealed_code": unsealed_code,
+            "mode_null": mode_null,
+        }))
     }
 }

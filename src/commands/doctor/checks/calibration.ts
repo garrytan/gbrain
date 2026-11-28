@@ -19,7 +19,6 @@ import {
 // drift from what search actually filters.
 import { resolveHardExcludes, DEFAULT_HARD_EXCLUDES } from '../../../core/search/source-boost.ts';
 import { escapeLikePattern } from '../../../core/search/sql-ranking.ts';
-import { safeChunksFilter } from '../../../core/search/safe-chunks.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify, withSkippedSegmented } from '../check-fix.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
@@ -63,27 +62,11 @@ export async function checkContextualRetrievalCoverage(
 ): Promise<Check> {
   try {
     const { MARKDOWN_CHUNKER_VERSION } = await import('../../../core/chunkers/recursive.ts');
-    const rows = await engine.executeRaw<{ chunker_drift: number; unsealed: number; unsealed_code: number; mode_null: number }>(
-      `SELECT
-         COUNT(*) FILTER (WHERE page_kind = 'markdown' AND chunker_version < $1)::int AS chunker_drift,
-         -- #5004/#5247: pages of every kind the safe-chunk fence withholds from
-         -- every remote read. Counted separately from drift: the chunker version
-         -- may move past the fence floor, and only the fence has this consequence.
-         COUNT(*) FILTER (WHERE NOT (${safeChunksFilter('pages')}))::int AS unsealed,
-         COUNT(*) FILTER (WHERE page_kind = 'code' AND NOT (${safeChunksFilter('pages')}))::int AS unsealed_code,
-         -- #4009 belt+braces: extract receipts are audit artifacts stamped
-         -- mode 'none' at write time, but a reindex DB fallback can clear
-         -- the stamp — never count them as "never evaluated".
-         COUNT(*) FILTER (WHERE page_kind = 'markdown' AND contextual_retrieval_mode IS NULL AND type <> 'extract_receipt')::int AS mode_null
-       FROM pages
-       WHERE deleted_at IS NULL
-         ${opts.sourceIds ? 'AND source_id = ANY($2::text[])' : ''}`,
-      opts.sourceIds ? [MARKDOWN_CHUNKER_VERSION, opts.sourceIds] : [MARKDOWN_CHUNKER_VERSION],
-    );
-    const chunkerDrift = rows[0]?.chunker_drift ?? 0;
-    const unsealed = rows[0]?.unsealed ?? 0;
-    const unsealedCode = rows[0]?.unsealed_code ?? 0;
-    const modeNull = rows[0]?.mode_null ?? 0;
+    const counts = await engine.countContextualCoverage(MARKDOWN_CHUNKER_VERSION, opts.sourceIds ?? null);
+    const chunkerDrift = counts.chunker_drift;
+    const unsealed = counts.unsealed;
+    const unsealedCode = counts.unsealed_code;
+    const modeNull = counts.mode_null;
 
     // Synopsis-failures audit summary (best-effort; missing audit file = 0).
     let failureSummaryLine = '';
@@ -345,24 +328,9 @@ export async function checkLinkResolutionOpportunity(
 export async function checkAbandonedThreads(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   try {
     // A remote caller's grant counts only takes on its own sources' pages.
-    const rows = await engine.executeRaw<{ count: number }>(
-      // since_date is TEXT and may be month-precision ('YYYY-MM'); 'YYYY-MM'::date
-      // throws "invalid input syntax for type date", so normalize to the 1st
-      // before casting — same guarded cast as the detail query in serve-http.ts
-      // (`gbrain calibration` abandoned-threads), which must stay in lockstep so
-      // the doctor count matches the listing it points users at.
-      `SELECT COUNT(*)::int AS count FROM takes
-         WHERE active = true
-           AND resolved_at IS NULL
-           AND superseded_by IS NULL
-           AND weight >= 0.7
-           AND since_date IS NOT NULL
-           AND (since_date || CASE WHEN length(since_date) = 7 THEN '-01' ELSE '' END)::date
-               < (now() - INTERVAL '12 months')` +
-        (opts.sourceIds ? `\n           AND page_id IN (SELECT id FROM pages WHERE source_id = ANY($1::text[]))` : ''),
-      opts.sourceIds ? [opts.sourceIds] : undefined,
-    );
-    const count = rows[0]?.count ?? 0;
+    // since_date is TEXT and may be month-precision ('YYYY-MM'); the count normalizes it to the 1st, in lockstep with
+    // the detail query in serve-http.ts (`gbrain calibration` abandoned-threads) so the doctor count matches its listing.
+    const count = await engine.countAbandonedTakes(opts.sourceIds ?? null);
     if (count === 0) {
       return {
         name: 'abandoned_threads',
@@ -437,14 +405,7 @@ export async function checkCalibrationFreshness(engine: BrainEngine, opts: { sou
 export async function checkGradeConfidenceDrift(engine: BrainEngine, opts: { sourceIds?: string[] } = {}): Promise<Check> {
   try {
     // A remote caller's grant counts only verdicts on takes of its own sources' pages.
-    const rows = await engine.executeRaw<{ applied_count: number }>(
-      `SELECT COUNT(*)::int AS applied_count FROM take_grade_cache WHERE applied = true` +
-        (opts.sourceIds
-          ? ' AND take_id IN (SELECT t.id FROM takes t JOIN pages p ON p.id = t.page_id WHERE p.source_id = ANY($1::text[]))'
-          : ''),
-      opts.sourceIds ? [opts.sourceIds] : undefined,
-    );
-    const applied = rows[0]?.applied_count ?? 0;
+    const applied = await engine.countAppliedTakeGrades(opts.sourceIds ?? null);
     if (applied < 30) {
       return {
         name: 'grade_confidence_drift',

@@ -147,3 +147,53 @@ fn page_child_orphans_refuse_an_unknown_target() {
         .unwrap_err();
     assert!(err.to_string().contains("not a page child target"), "{err}");
 }
+
+/// One page of `kind` and `type` in `source`, stamped with `mode` when given; `index: false` keeps the
+/// stored chunker version at what `putPage` writes for a new page (`LEAST(chunker_version ?? 0, fence - 1)`).
+fn coverage_page(
+    s: &Store,
+    source: &str,
+    slug: &str,
+    page_type: &str,
+    version: f64,
+    mode: Option<&str>,
+) {
+    let input: PageInput = args(json!({
+        "type": page_type, "title": slug, "compiled_truth": "body", "chunker_version": version,
+    }));
+    let mut opts = json!({ "sourceId": source, "index": false });
+    if let Some(m) = mode {
+        opts["contextualRetrieval"] = json!({ "mode": m, "corpusGeneration": "gen-1" });
+    }
+    s.put_page(slug, &input, &args(opts)).unwrap();
+}
+
+#[test]
+fn contextual_coverage_counts_live_pages_by_chunker_version_and_mode_in_scope() {
+    let (s, _kv) = brain("coverage");
+    for id in ["s1", "s2"] {
+        s.upsert_source(&args(json!({ "id": id, "name": id })))
+            .unwrap();
+    }
+    coverage_page(&s, "s1", "notes/old", "note", 1.0, None);
+    coverage_page(&s, "s1", "notes/three", "note", 3.0, Some("title"));
+    coverage_page(&s, "s1", "notes/receipt", "extract_receipt", 3.0, None);
+    coverage_page(&s, "s2", "notes/other", "note", 2.0, None);
+    coverage_page(&s, "s2", "notes/gone", "note", 0.0, None);
+    s.delete_page("notes/gone", Some("s2")).unwrap();
+    let all = s.count_contextual_coverage(3, None).unwrap();
+    assert_eq!(
+        all,
+        json!({ "chunker_drift": 2, "unsealed": 4, "unsealed_code": 0, "mode_null": 2 }),
+        "below the fence (4) every live page; drifted below 3 the two older notes; no mode on the untitled notes, receipt aside"
+    );
+    let ids = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        s.count_contextual_coverage(3, Some(&ids(&["s1"]))).unwrap(),
+        json!({ "chunker_drift": 1, "unsealed": 3, "unsealed_code": 0, "mode_null": 1 })
+    );
+    assert_eq!(
+        s.count_contextual_coverage(3, Some(&[])).unwrap(),
+        json!({ "chunker_drift": 0, "unsealed": 0, "unsealed_code": 0, "mode_null": 0 })
+    );
+}

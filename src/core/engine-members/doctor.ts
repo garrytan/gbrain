@@ -50,6 +50,12 @@ export interface DoctorMembers {
   // Doctor reads (engine-sql/doctor-reads.ts): the statements doctor checks ran through executeRaw.
   /** The `schema_pack.source.<id>` config rows: of `sourceIds` when named (`[]` names none), else every source's; unordered. */
   listSchemaPackSourceOverrides(sourceIds: readonly string[] | null): Promise<DoctorReadsSql.SchemaPackSourceOverrideRow[]>;
+  /** Live pages (of `sourceIds` when named): markdown chunked below `chunkerVersion`, below the safe-chunk fence (and the code ones), markdown with no contextual mode. */
+  countContextualCoverage(chunkerVersion: number, sourceIds: readonly string[] | null): Promise<DoctorReadsSql.ContextualCoverageCounts>;
+  /** Active, unresolved, unsuperseded takes of weight 0.7 or more dated over 12 months ago, on `sourceIds` pages when named. */
+  countAbandonedTakes(sourceIds: readonly string[] | null): Promise<number>;
+  /** Cached take verdicts with applied = true, on takes of `sourceIds` pages when named. */
+  countAppliedTakeGrades(sourceIds: readonly string[] | null): Promise<number>;
 
   // Doctor reads, second set (engine-sql/doctor-derived.ts): the statements more doctor checks and their repairs ran through executeRaw.
   /** The ignored-privacy-label values of live pages by key (at most 50 keys, 100001 pages scanned); `sourceIds` narrows it. */

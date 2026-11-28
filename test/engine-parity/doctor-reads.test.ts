@@ -8,6 +8,9 @@
  *  - Regression: an engine whose read drifts (or does not serve it) gives a different doctor status, message or
  *    health score per backend.
  *  - Why existing coverage misses it: the doctor check tests run these reads on PGLite only and never compare arms.
+ *  - Contract: the calibration counts (contextual coverage, abandoned takes, applied grades) agree on every arm for
+ *    unscoped, `['default']`, an unknown source and `[]` (which names none), including the 0.7 weight floor a stored
+ *    REAL 0.7 misses, a month-precision since_date and a soft-deleted page.
  *  - Seam: none. Typed methods only (no executeRaw).
  */
 import { describe, expect } from 'bun:test';
@@ -86,6 +89,85 @@ describe('doctor reads', () => {
         none: [],
       });
       return { all, scoped, none };
+    },
+  );
+
+  const SCOPES: ReadonlyArray<readonly string[] | null> = [null, ['default'], ['nowhere'], []];
+
+  parityTest(
+    'countContextualCoverage counts live pages by chunker version, safe-chunk fence and contextual mode in scope',
+    { methods: ['putPage', 'deletePage', 'countContextualCoverage'] },
+    async (engine) => {
+      const put = (slug: string, extra: Record<string, unknown>, opts?: Record<string, unknown>) =>
+        engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '', ...extra } as never, opts as never);
+      const empty = await engine.countContextualCoverage(4, null);
+      await put('notes/one', { chunker_version: 1 });
+      await put('notes/three', { chunker_version: 3 }, { contextualRetrieval: { mode: 'title', corpusGeneration: 'gen-1' } });
+      await put('notes/receipt', { type: 'extract_receipt', chunker_version: 2 });
+      await put('code/thing', { page_kind: 'code', chunker_version: 1 });
+      await put('notes/gone', { chunker_version: 1 });
+      await engine.deletePage('notes/gone');
+      const counts: Record<string, unknown> = { empty };
+      for (const version of [2, 4]) {
+        for (const scope of SCOPES) counts[`${version}:${JSON.stringify(scope)}`] = await engine.countContextualCoverage(version, scope);
+      }
+      expect(counts['4:[]']).toEqual({ chunker_drift: 0, unsealed: 0, unsealed_code: 0, mode_null: 0 });
+      expect(counts['4:null']).toEqual(counts['4:["default"]']);
+      // Below 4: the three live markdown pages; below the fence: every live page, one of them code; no mode: notes/one only.
+      expect(counts['4:null']).toEqual({ chunker_drift: 3, unsealed: 4, unsealed_code: 1, mode_null: 1 });
+      expect((counts['2:null'] as { chunker_drift: number }).chunker_drift).toBe(1);
+      return counts;
+    },
+  );
+
+  parityTest(
+    'countAbandonedTakes counts active unresolved unsuperseded convictions dated over a year ago, on the scoped pages',
+    { methods: ['putPage', 'deletePage', 'addTakesBatch', 'countAbandonedTakes'] },
+    async (engine) => {
+      const empty = await engine.countAbandonedTakes(null);
+      const live = await note(engine, 'notes/threads');
+      const gone = await note(engine, 'notes/threads-gone');
+      const take = (page_id: number, row_num: number, extra: Record<string, unknown>) =>
+        ({ page_id, row_num, claim: `claim ${row_num}`, kind: 'take', holder: 'self', weight: 0.9, ...extra }) as never;
+      await engine.addTakesBatch([
+        take(live, 1, { since_date: '2019-01' }),
+        take(live, 2, { since_date: '2020-05-05', weight: 0.8 }),
+        take(live, 3, { since_date: '2019-01-01', weight: 0.7 }),
+        take(live, 4, { since_date: '2999-01-01' }),
+        take(live, 5, {}),
+        take(live, 6, { since_date: '2019-01-01', active: false }),
+        take(live, 7, { since_date: '2019-01-01', superseded_by: 1 }),
+        take(gone, 1, { since_date: '2019-02' }),
+      ]);
+      await engine.deletePage('notes/threads-gone');
+      const counts: Record<string, number> = { empty };
+      for (const scope of SCOPES) counts[JSON.stringify(scope)] = await engine.countAbandonedTakes(scope);
+      // Rows 1 and 2 only: a stored REAL 0.7 is below the 0.7 floor, and the deleted page's take is not counted.
+      expect(counts).toEqual({ empty: 0, null: 2, '["default"]': 2, '["nowhere"]': 0, '[]': 0 });
+      return counts;
+    },
+  );
+
+  parityTest(
+    'countAppliedTakeGrades counts applied verdicts, on takes of the scoped pages',
+    { methods: ['putPage', 'addTakesBatch', 'listTakes', 'insertTakeGrade', 'countAppliedTakeGrades'] },
+    async (engine) => {
+      const empty = await engine.countAppliedTakeGrades(null);
+      const page = await note(engine, 'notes/graded');
+      await engine.addTakesBatch([1, 2].map((row_num) => ({ page_id: page, row_num, claim: `claim ${row_num}`, kind: 'take', holder: 'self' }) as never));
+      const ids = (await engine.listTakes({ page_id: page })).map((t) => t.id).sort((a, b) => a - b);
+      expect(ids.length).toBe(2);
+      const grade = (takeId: number, judgeModelId: string, applied: boolean) => engine.insertTakeGrade({
+        takeId, promptVersion: 'v1', judgeModelId, evidenceSignature: 'sig', verdict: 'correct', confidence: 0.9, applied,
+      });
+      await grade(ids[0]!, 'm1', true);
+      await grade(ids[0]!, 'm2', true);
+      await grade(ids[0]!, 'm3', false);
+      await grade(ids[1]!, 'm1', true);
+      const counts: Record<string, number> = { empty };
+      for (const scope of SCOPES) counts[JSON.stringify(scope)] = await engine.countAppliedTakeGrades(scope);
+      expect(counts).toEqual({ empty: 0, null: 3, '["default"]': 3, '["nowhere"]': 0, '[]': 0 });
+      return counts;
     },
   );
 });

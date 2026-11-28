@@ -11,7 +11,9 @@ export type { EngineRawRead } from './cli-reads-ops.ts';
  * The members of this file. Each replaced a statement doctor ran through its deadline-bound executeRaw, so
  * src/core/statement-deadline.ts keeps that bound on them (BOUNDED_TYPED_READS).
  */
-export const DOCTOR_READ_MEMBERS: readonly string[] = ['countPageChildOrphans', 'listSchemaPackSourceOverrides'];
+export const DOCTOR_READ_MEMBERS: readonly string[] = [
+  'countPageChildOrphans', 'listSchemaPackSourceOverrides', 'countContextualCoverage', 'countAbandonedTakes', 'countAppliedTakeGrades',
+];
 
 /**
  * A page-child relation as `<table>.<column>`: every `PAGE_CHILD_FK_TARGETS` entry of src/core/repair/orphan-children.ts
@@ -68,4 +70,77 @@ export async function listSchemaPackSourceOverrides(raw: EngineRawRead, sourceId
   return sourceIds
     ? raw<SchemaPackSourceOverrideRow>(SCHEMA_PACK_SOURCE_OVERRIDE_SQL.scoped, [sourceIds.map((id) => `schema_pack.source.${id}`)])
     : raw<SchemaPackSourceOverrideRow>(SCHEMA_PACK_SOURCE_OVERRIDE_SQL.unscoped);
+}
+
+/** The doctor `contextual_retrieval_coverage` counts over live pages (of the caller's sources when scoped). */
+export interface ContextualCoverageCounts { chunker_drift: number; unsealed: number; unsealed_code: number; mode_null: number }
+
+/**
+ * The three counts of src/commands/doctor/checks/calibration.ts, each the text it ran at 3852ea1505 (pinned by
+ * test/doctor-reads-sql.test.ts), the scoped form adding the caller's source filter.
+ */
+/**
+ * `safeChunksFilter('pages')` (src/core/search/safe-chunks.ts) as rendered: importing it here would close an import cycle
+ * through src/core/statement-deadline.ts, which reads DOCTOR_READ_MEMBERS at load. test/doctor-reads-sql.test.ts fails
+ * when the two drift.
+ */
+export const PAGES_SAFE_CHUNKS_FILTER = 'pages.chunker_version >= 4';
+
+export function contextualCoverageSql(scoped: boolean): string {
+  return `SELECT
+         COUNT(*) FILTER (WHERE page_kind = 'markdown' AND chunker_version < $1)::int AS chunker_drift,
+         -- #5004/#5247: pages of every kind the safe-chunk fence withholds from
+         -- every remote read. Counted separately from drift: the chunker version
+         -- may move past the fence floor, and only the fence has this consequence.
+         COUNT(*) FILTER (WHERE NOT (${PAGES_SAFE_CHUNKS_FILTER}))::int AS unsealed,
+         COUNT(*) FILTER (WHERE page_kind = 'code' AND NOT (${PAGES_SAFE_CHUNKS_FILTER}))::int AS unsealed_code,
+         -- #4009 belt+braces: extract receipts are audit artifacts stamped
+         -- mode 'none' at write time, but a reindex DB fallback can clear
+         -- the stamp — never count them as "never evaluated".
+         COUNT(*) FILTER (WHERE page_kind = 'markdown' AND contextual_retrieval_mode IS NULL AND type <> 'extract_receipt')::int AS mode_null
+       FROM pages
+       WHERE deleted_at IS NULL
+         ${scoped ? 'AND source_id = ANY($2::text[])' : ''}`;
+}
+
+/**
+ * since_date is TEXT and may be month-precision ('YYYY-MM'); 'YYYY-MM'::date throws "invalid input syntax for type
+ * date", so the statement normalizes to the 1st before casting, the same guarded cast as listAbandonedTakes (the
+ * `gbrain calibration` abandoned-threads listing), which must stay in lockstep so the doctor count matches it.
+ */
+export function abandonedTakesCountSql(scoped: boolean): string {
+  return `SELECT COUNT(*)::int AS count FROM takes
+         WHERE active = true
+           AND resolved_at IS NULL
+           AND superseded_by IS NULL
+           AND weight >= 0.7
+           AND since_date IS NOT NULL
+           AND (since_date || CASE WHEN length(since_date) = 7 THEN '-01' ELSE '' END)::date
+               < (now() - INTERVAL '12 months')` +
+        (scoped ? `\n           AND page_id IN (SELECT id FROM pages WHERE source_id = ANY($1::text[]))` : '');
+}
+
+export function appliedTakeGradesCountSql(scoped: boolean): string {
+  return `SELECT COUNT(*)::int AS applied_count FROM take_grade_cache WHERE applied = true` +
+        (scoped
+          ? ' AND take_id IN (SELECT t.id FROM takes t JOIN pages p ON p.id = t.page_id WHERE p.source_id = ANY($1::text[]))'
+          : '');
+}
+
+/** Live markdown pages chunked below `chunkerVersion`, pages below the safe-chunk fence (and the code ones), and markdown pages with no contextual mode. */
+export async function countContextualCoverage(raw: EngineRawRead, chunkerVersion: number, sourceIds: readonly string[] | null): Promise<ContextualCoverageCounts> {
+  const [row] = await raw<ContextualCoverageCounts>(contextualCoverageSql(!!sourceIds), sourceIds ? [chunkerVersion, sourceIds] : [chunkerVersion]);
+  return { chunker_drift: row?.chunker_drift ?? 0, unsealed: row?.unsealed ?? 0, unsealed_code: row?.unsealed_code ?? 0, mode_null: row?.mode_null ?? 0 };
+}
+
+/** Active, unresolved, unsuperseded takes of weight 0.7 or more whose since_date is over 12 months ago, on the named sources' pages when given. */
+export async function countAbandonedTakes(raw: EngineRawRead, sourceIds: readonly string[] | null): Promise<number> {
+  const [row] = await raw<{ count: number }>(abandonedTakesCountSql(!!sourceIds), sourceIds ? [sourceIds] : undefined);
+  return row?.count ?? 0;
+}
+
+/** Cached take verdicts with applied = true, on takes of the named sources' pages when given. */
+export async function countAppliedTakeGrades(raw: EngineRawRead, sourceIds: readonly string[] | null): Promise<number> {
+  const [row] = await raw<{ applied_count: number }>(appliedTakeGradesCountSql(!!sourceIds), sourceIds ? [sourceIds] : undefined);
+  return row?.applied_count ?? 0;
 }

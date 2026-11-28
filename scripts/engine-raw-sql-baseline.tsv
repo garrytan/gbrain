@@ -24,7 +24,6 @@ src/commands/decide/claims-sweep.ts	execute_raw	1
 src/commands/decide/proposals.ts	execute_raw	2
 src/commands/diag.ts	execute_raw	4
 src/commands/doctor/checks/access-reach.ts	execute_raw	6	reads sources, access_member_sources, pages, access_members, access_tokens and oauth_clients for the read-only doctor reach checks (access_shared_source_unread, access_disabled_member_credentials; GST-2994, #9586, open before this ratchet landed); no typed engine method exists yet
-src/commands/doctor/checks/calibration.ts	execute_raw	3
 src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	1
 src/commands/doctor/checks/core-health.ts	execute_raw	3
 src/commands/doctor/checks/database-encoding.ts	execute_raw	1

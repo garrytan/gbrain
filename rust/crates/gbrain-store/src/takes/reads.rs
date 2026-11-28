@@ -56,6 +56,30 @@ fn one_year_back(now_us: i64) -> i64 {
     days_from_civil(y - 1, m, d) * DAY_US + time
 }
 
+/// An active, unresolved, unsuperseded take of `weight >= 0.7` (the `real` widened to double)
+/// with a `since_date`: the abandoned-thread filters before the date is read.
+fn abandoned_candidate(take: &TakeRecord) -> bool {
+    take.active
+        && take.resolved_at_us.is_none()
+        && take.superseded_by.is_none()
+        && f64::from(take.weight) >= ABANDONED_MIN_WEIGHT
+        && take.since_date.is_some()
+}
+
+/// Whether the take's `since_date` (a `YYYY-MM` date read as its 1st) is before `cutoff`; a
+/// `since_date` that is not a date fails as the `::date` cast fails, a null one is not before it.
+fn since_before(take: &TakeRecord, cutoff: i64) -> Result<bool> {
+    let Some(since) = &take.since_date else {
+        return Ok(false);
+    };
+    let text = if since.chars().count() == 7 {
+        format!("{since}-01")
+    } else {
+        since.clone()
+    };
+    Ok(date_start_us(&parse_date(&text)?) < cutoff)
+}
+
 /// Midnight UTC of a `YYYY-MM-DD` date that `parse_date` gave back.
 fn date_start_us(date: &str) -> i64 {
     let part = |r: std::ops::Range<usize>| date[r].parse::<i64>().unwrap_or(0);
@@ -487,22 +511,7 @@ impl Store {
         let read = self.read()?;
         let mut takes = Vec::new();
         for take in all_takes(&*read)? {
-            if !take.active
-                || take.resolved_at_us.is_some()
-                || take.superseded_by.is_some()
-                || f64::from(take.weight) < ABANDONED_MIN_WEIGHT
-            {
-                continue;
-            }
-            let Some(since) = &take.since_date else {
-                continue;
-            };
-            let text = if since.chars().count() == 7 {
-                format!("{since}-01")
-            } else {
-                since.clone()
-            };
-            if date_start_us(&parse_date(&text)?) < cutoff {
+            if abandoned_candidate(&take) && since_before(&take, cutoff)? {
                 takes.push(take);
             }
         }
@@ -525,6 +534,35 @@ impl Store {
             }));
         }
         Ok(out)
+    }
+
+    /// `countAbandonedTakes(sourceIds)`: how many takes `listAbandonedTakes` would list with no
+    /// limit (the doctor `abandoned_threads` count), on pages of `sourceIds` when named (a page in
+    /// any state, as `page_id IN (SELECT id FROM pages ...)` reads it), else on any page. A
+    /// candidate whose `since_date` is not a date fails the read as the list does; with
+    /// `sourceIds`, a candidate on another source's page is left out before its date is read.
+    pub fn count_abandoned_takes(&self, source_ids: Option<&[String]>) -> Result<u64> {
+        let cutoff = one_year_back(self.env.now_micros());
+        let read = self.read()?;
+        let mut pages = PageCache::new(&*read);
+        let mut count = 0;
+        for take in all_takes(&*read)? {
+            if !abandoned_candidate(&take) {
+                continue;
+            }
+            if let Some(ids) = source_ids {
+                let Some(page) = pages.get(take.page_id)? else {
+                    continue;
+                };
+                if !ids.contains(&page.source_id) {
+                    continue;
+                }
+            }
+            if since_before(&take, cutoff)? {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 
     /// `listTakeSupersessionCandidates(sourceIds)`: `[{ id, source_id, slug }]` by page id, the live

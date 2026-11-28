@@ -267,7 +267,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'listSlugPathCandidates',
   'probeSlugSources',
   // Doctor reads (engine-sql/doctor-reads.ts; covered by test/engine-parity/doctor-reads.test.ts)
-  'listSchemaPackSourceOverrides',
+  'listSchemaPackSourceOverrides', 'countContextualCoverage', 'countAbandonedTakes', 'countAppliedTakeGrades',
   // Doctor search reads (engine-sql/doctor-search.ts; covered by test/engine-parity/doctor-search.test.ts)
   'listOrphanedAliasCounts',
   'readSoftDeletedAliasCounts',
