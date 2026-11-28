@@ -502,8 +502,8 @@ export interface SameInstantCluster {
 const SAME_INSTANT_SAMPLES = 20;
 
 function clusterTie(cluster: FactRow[], claims: Map<number, ClaimShape>): SameInstantTie | undefined {
-  return sameInstantTies(cluster.map(f => ({ id: f.id, at: eventTime(f).getTime(), metric: claims.get(f.id)?.metric ?? null,
-    unit: claims.get(f.id)?.unit ?? null, period: claims.get(f.id)?.period ?? null })))[0];
+  return sameInstantTies(cluster.flatMap(f => f.valid_from ? [{ id: f.id, at: f.valid_from.getTime(), metric: claims.get(f.id)?.metric ?? null,
+    unit: claims.get(f.id)?.unit ?? null, period: claims.get(f.id)?.period ?? null }] : []))[0];
 }
 
 /**

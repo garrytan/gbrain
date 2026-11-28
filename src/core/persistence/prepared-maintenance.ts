@@ -402,15 +402,16 @@ export interface FactSnapshot { id: number; value: Record<string, unknown>; }
  *
  * GST-4049: a member's effective time is its valid_from, or its save time when it has no event date (`at`). An undated
  * member takes its place in the chain at its save time, but it never ends a dated one: a fact extracted today from an
- * old document carries today's save time, which says nothing about when the dated value stopped holding. Members at one
- * instant keep row-id order, as dated ones always have; typed ones at one instant are held as a tie before this runs.
+ * old document carries today's save time, which says nothing about when the dated value stopped holding. Dated members at
+ * one instant keep row-id order, as they always have; an undated member is ended only by one strictly after it, since one
+ * batch of facts shares a single save time and a close at that instant would expire the fact as it is saved.
  */
 export function consolidationCloses<T>(members: readonly T[],
   claim: (member: T) => { text: string; value: unknown; at: number; dated: boolean }): Array<{ member: T; next: T }> {
   const read = (member: T) => { const c = claim(member); return { ...c, key: JSON.stringify([normalizeClaimWhitespace(c.text), c.value == null ? null : Number(c.value)]) }; };
   const chronological = members.map((member, index) => ({ member, index, ...read(member) })).sort((a, b) => a.at - b.at || a.index - b.index);
   return chronological.flatMap((own, i) => {
-    const next = chronological.slice(i + 1).find(later => later.key !== own.key && (later.dated || !own.dated));
+    const next = chronological.slice(i + 1).find(later => later.key !== own.key && (later.dated || !own.dated) && ((own.dated && later.dated) || later.at > own.at));
     return next ? [{ member: own.member, next: next.member }] : [];
   });
 }
@@ -795,10 +796,11 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   const p = row.intent;
   const facts = p.facts as FactSnapshot[];
   const pages = p.pages as EvidencePage[];
-  // GST-4049: an undated fact takes its place at its save time, which never changes; ties are read on the same time.
+  // GST-4049: an undated fact takes its place in the chain at its save time, which never changes. Ties stay dated-only: a
+  // batch shares one save time, and consolidationCloses never ends an undated fact at its own instant.
   const savedAt = await factSaveTimes(engine, row.source_id, facts.map(f => f.id));
   const eventAt = (f: FactSnapshot) => (f.value.valid_from != null ? String(f.value.valid_from) : savedAt.get(f.id));
-  if (sameInstantTies(facts.filter(f => eventAt(f) !== undefined).map(f => ({ id: f.id, at: Date.parse(eventAt(f)!), metric: (f.value.claim_metric as string | null) ?? null,
+  if (sameInstantTies(facts.filter(f => f.value.valid_from != null).map(f => ({ id: f.id, at: Date.parse(String(f.value.valid_from)), metric: (f.value.claim_metric as string | null) ?? null,
     unit: (f.value.claim_unit as string | null) ?? null, period: (f.value.claim_period as string | null) ?? null }))).length) {
     return { observedRevision: p.expected_revision as string, noop: true, apply: async () => ({ status: 'skipped', reason: 'same_instant_typed_claims', noop: true,
       facts_consolidated: 0, takes_written: 0 }) };

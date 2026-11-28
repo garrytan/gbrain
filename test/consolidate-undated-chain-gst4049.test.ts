@@ -3,14 +3,16 @@
  * at its save time, under three constraints designed together:
  *  1. an undated fact (say, extracted today from an old document) never ends a dated one at its save time;
  *  2. a close never moves an expiry a fact already carries (remember --ttl) later: LEAST(valid_until, successor);
- *  3. closes keep the successor's full precision, ids are read as bigint, and same-instant ties key on
- *     valid_from ?? created_at, so two typed undated claims saved at one instant are held, not tie-broken.
+ *  3. closes keep the successor's full precision and ids are read as bigint;
+ *  4. one batch of facts shares a single save time, so an undated fact is ended only by a member strictly after it,
+ *     and undated facts never form a same-instant tie that holds their cluster.
  * Unmanaged writer and managed preparer; synthetic data only.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
+import { consolidationCloses } from '../src/core/persistence/prepared-maintenance.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../src/core/facts-fence.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
@@ -43,6 +45,13 @@ const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOS
 
 beforeAll(() => configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} }));
 afterAll(() => resetGateway());
+
+test('constraint 4 on the shared close rule: members at one save time end each other only when both are dated', () => {
+  const claim = (m: { text: string; dated: boolean }) => ({ text: m.text, value: null, at: 1_000, dated: m.dated });
+  expect(consolidationCloses([{ text: 'a', dated: false }, { text: 'b', dated: false }], claim)).toEqual([]);
+  expect(consolidationCloses([{ text: 'a', dated: false }, { text: 'b', dated: true }], claim)).toEqual([]);
+  expect(consolidationCloses([{ text: 'a', dated: true }, { text: 'b', dated: true }], claim).map(c => c.member.text)).toEqual(['a']);
+});
 
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
@@ -89,14 +98,27 @@ for (const backend of testBackends()) {
       expect(Date.parse((await state(engine, expiring)).valid_until!)).toBe(Date.parse(ttl));
     });
 
-    test('constraint 3: two typed undated claims saved at one instant are held as a tie', async () => {
+    test('constraint 4: two typed undated claims saved in one batch both stay current, and the cluster is not held', async () => {
       const at = '2026-01-01T00:00:00.5Z';
       const a = await seed(engine, { fact: 'The deposit amount is $100,000.', value: 100000, validFrom: null, createdAt: at });
       const b = await seed(engine, { fact: 'The deposit amount is $82,000.', value: 82000, validFrom: null, createdAt: at });
       await seed(engine, { fact: 'The team has 12 people.', value: 12, claim: HEADCOUNT });
       const result = await runPhaseConsolidate(engine, { sourceId: 'default' });
-      expect(result.details.clusters_held_same_instant).toBe(1);
-      for (const id of [a, b]) expect(await state(engine, id)).toMatchObject({ valid_until: null, consolidated: false });
+      expect(result.details.clusters_held_same_instant).toBe(0);
+      for (const id of [a, b]) expect(await state(engine, id)).toMatchObject({ valid_until: null, consolidated: true });
+    });
+
+    test('constraint 4: untyped undated facts saved in one transaction are never expired at their own save time', async () => {
+      const ids = await engine.transaction(async tx => {
+        const insert = (fact: string) => tx.executeRaw<{ id: number }>(
+          `INSERT INTO facts(source_id,entity_slug,fact,kind,source,visibility,valid_from,confidence,embedding,embedded_at,embedding_model,embedded_text_hash)
+           VALUES('default',$1,$2,'fact','synthetic fixture','world',NULL,1,$3::vector,now(),'openai:text-embedding-3-large',md5($2)) RETURNING id`, [SLUG, fact, VECTOR]);
+        return [Number((await insert('Chain Example ships from a warehouse in Ohio.'))[0]!.id), Number((await insert('Chain Example ships orders from Ohio.'))[0]!.id)];
+      });
+      expect((await state(engine, ids[0]!)).created_at).toBe((await state(engine, ids[1]!)).created_at);
+      const result = await runPhaseConsolidate(engine, { sourceId: 'default', minOldestAgeMs: 0, minFactsPerBucket: 2 });
+      expect(result.details.facts_consolidated).toBe(2);
+      for (const id of ids) expect(await state(engine, id)).toMatchObject({ valid_until: null, consolidated: true });
     });
   });
 
