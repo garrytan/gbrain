@@ -152,6 +152,40 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // version body sizes (page-id guarded, remote-member-policy.ts); search reads the regions of a page with more than two
   // hits; search_exact scans a batch of pages for a phrase.
   'readSegmentedPageHead', 'readSegmentedVersionBodyBytes', 'readSegmentRegions', 'scanExactBatch',
+  // served-remote-g1-search-probes (lane L3 S4, group 1): a remote search or query probes the page types of its `types` filter
+  // and the target of its explain_target before it ranks, under the caller's read scope.
+  'probePageTypes', 'probeTargetRows',
+  // served-remote-g1-exact-scan: a remote search_exact steps a timed-out batch one page at a time; remote-member-policy.ts wraps
+  // this member in the output-aware guard (served/remote-scan-guard.ts), so a remote caller is handed only a readable page.
+  'nextLivePageAfter',
+  // served-remote-g1-facts-recall: the slot-history arm of a remote query names its entity from the pool's unbacked name keys or
+  // from its readable page; both read under the caller's pool policy, as a recall's listSlotRows does.
+  'listPoolUnbackedKeys', 'listReadablePageSlugs',
+  // served-remote-g1-facts-recall: a remote search stems the name heads of its saved facts (a pure function of its arguments).
+  'matchHeadStems',
+  // ... and a remote recall naming an entity checks the pool's entity pairs for namesakes before it ranks.
+  'listPoolEntityPairs',
+  // ... and a remote query that matches facts dates their evidence under its read policy (readAdmittedPageDateFields).
+  'readAdmittedPageDateFields',
+  // ... and stamps the claims its matched facts supersede by reading the typed claim facts held on its result pages.
+  'listTypedClaimFactsAtPages',
+  // served-remote-g1-brief: a remote context_pack pull on a counterparty reads its entity page, its newest timeline entry or the
+  // lines its newest revision added (readBriefPageVersions answers only a page id the caller may read).
+  'readBriefEntityPages', 'readBriefEditPage', 'readBriefTimelineEntry', 'readBriefPageVersions',
+  // served-remote-g1-body: a remote search over a segmented page reads its body manifest for evidence windows (the page-id guarded members
+  // answer only a page the caller may read), and a segmented lead under a withdrawal is struck through the pure fence-line normalization.
+  'readBodyManifestRows', 'readBodyManifestMeta', 'normalizeFenceLines',
+  // served-remote-g1-belief-links: a remote delta with beliefs pages the ledger's history (the remote filter runs in readBeliefHistoryPage,
+  // after the raw rows return), keeps a link only when its page lifetimes are visible, and places the window in the coverage events.
+  'readBeliefHistoryRows', 'listVisibleBeliefLifetimes', 'readBeliefCoverageEvents',
+  // served-remote-g1-link-notes: a remote entity card notes the relationships a page ended (a private target or origin is left out under
+  // excludePrivate), and a record continuation of get_backlinks reads its referrers' amends and supersedes links and page status.
+  // Both operations also need members no group serves yet (readReferrerGroupRows, readReferrerTypes), so the proof calls the loaders.
+  'listRelationshipNoteRows', 'listRecordMetadataRows',
+  // served-remote-g1-household-members: a remote household_due reads the member each stored reader names (readAccessMembers by id only;
+  // served/remote-member-policy.ts refuses the list and email forms). The operation also needs listActiveAccessMembers (brainServes),
+  // which no group serves yet.
+  'readAccessMembers',
 ];
 
 /**
@@ -182,6 +216,7 @@ export const OWNER_IPC_REMOTE_DENY: Readonly<Record<string, string>> = {
   ...Object.fromEntries(['readDecideState', 'dailyDecideSpend', 'listDecideSpendBySlot', 'listDecideReceiptStats', 'getDecideProposal',
     'listDecideProposals', 'getDecideReviewProposal', 'listDecideCalibrations', 'getDecideCalibration'].map(m => [m, DECIDE])),
   readSharedSourceRows: 'every live source\'s config, guest flag and owner list across all callers; the remote grant and personal-source checks need a server-side scoped form',
+  listSourceRecords: 'every source\'s local_path and config across all callers, with no caller filter; sources_list filters its listing in the client after the whole registry crossed, and the remote rank_entities coverage read takes every source id; a caller-scoped listing must exist before this is served',
 };
 
 /**

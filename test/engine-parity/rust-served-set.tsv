@@ -192,6 +192,14 @@ test/engine-parity/segmented-rewrite.test.ts	served
 test/engine-parity/served-remote-doctor.test.ts	served	
 test/engine-parity/served-remote-entity-context.test.ts	served	
 test/engine-parity/served-remote-feedback-record.test.ts	served	
+test/engine-parity/served-remote-g1-belief-links.test.ts	served	
+test/engine-parity/served-remote-g1-body.test.ts	served	
+test/engine-parity/served-remote-g1-brief.test.ts	served	
+test/engine-parity/served-remote-g1-exact-scan.test.ts	served	
+test/engine-parity/served-remote-g1-facts-recall.test.ts	served	
+test/engine-parity/served-remote-g1-household-members.test.ts	served	
+test/engine-parity/served-remote-g1-link-notes.test.ts	served	
+test/engine-parity/served-remote-g1-search-probes.test.ts	served	
 test/engine-parity/served-remote-resolve.test.ts	served	
 test/engine-parity/served-remote-segmented.test.ts	served	
 test/engine-parity/served-remote-think.test.ts	served	
