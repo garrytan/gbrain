@@ -41,6 +41,19 @@ const ENTRY_PAGE = 5000;
 const INVALID_RETRY_MS = 3_600_000;
 const DEBOUNCE_MS = 2_000;
 const TICK_MS = 15 * 60_000;
+
+/**
+ * True when `ms` has passed since `at`. A time that cannot be read, or one in the future (the clock was set back, or the
+ * file was written by a host whose clock ran ahead), counts as passed: a doubt about age runs the pass, never skips it.
+ */
+export function elapsed(at: string | undefined, ms: number, now = Date.now()): boolean {
+  if (at === undefined) return true;
+  const age = now - Date.parse(at);
+  return !Number.isFinite(age) || age < 0 || age >= ms;
+}
+
+/** The one rule for "a full pass is due by age", shared by the first check and the 15-minute tick. */
+export const fullPassDue = (lastFull: PassRecord | undefined, now = Date.now()): boolean => elapsed(lastFull?.finished_at, NIGHTLY_MS, now);
 /**
  * A process that has run this long after it started checks whether its watermark needs a full pass. Short: an MCP
  * client keeps a stdio serve session for seconds, and a pass that cannot finish in one resumes in the next.
@@ -167,7 +180,7 @@ export class Reconciler {
       if (this.stopped) return;
       const w = await this.o.rpc<StateReply>('state', {}, 10_000);
       const lastFull = readPasses(this.o.dir).filter((p) => p.kind === 'full').at(-1);
-      const due = !w.valid || readProgress(this.o.dir) !== null || !lastFull || Date.now() - Date.parse(lastFull.finished_at) >= NIGHTLY_MS;
+      const due = !w.valid || readProgress(this.o.dir) !== null || fullPassDue(lastFull);
       if (due && !this.stopped) await this.run('full', undefined, { resume: true });
     } catch { /* the nightly tick tries again */ } // silent-read-ok: no pass runs, so the watermark stays as it was (invalid until a full pass) and the nightly tick retries
   }
@@ -187,8 +200,8 @@ export class Reconciler {
       const passes = readPasses(this.o.dir);
       const lastFull = passes.filter((p) => p.kind === 'full').at(-1);
       const last = passes.at(-1);
-      let due = !lastFull || Date.now() - Date.parse(lastFull.finished_at) >= NIGHTLY_MS;
-      if (!due && last && Date.now() - Date.parse(last.finished_at) >= INVALID_RETRY_MS) due = !(await this.o.rpc<Watermark>('state', {}, 10_000)).valid;
+      let due = fullPassDue(lastFull);
+      if (!due && last && elapsed(last.finished_at, INVALID_RETRY_MS)) due = !(await this.o.rpc<Watermark>('state', {}, 10_000)).valid;
       if (due) await this.run('full');
     } catch { /* the next tick tries again */ }
   }
