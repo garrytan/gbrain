@@ -1,4 +1,5 @@
-/** Budgets follow physical postgres.js pools, including inherited/shared pools. */
+/** Budgets follow physical postgres.js pools, including inherited/shared pools and the own-write counting pool over one. */
+import { physicalPool } from './postgres-engine/own-writes.ts';
 export interface BudgetPool { options?: { max?: number } }
 interface Budget { held: number }
 const budgets = new WeakMap<object, Budget>();
@@ -18,8 +19,9 @@ export function poolLongHoldCapacity(pool: BudgetPool, fallback?: number, opts?:
   return max > 1 ? max - 1 : opts?.selfContained ? 1 : 0;
 }
 export function tryAcquirePoolLongHold(pool: BudgetPool, fallback?: number, opts?: LongHoldOptions): (() => void) | null {
-  let budget = budgets.get(pool);
-  if (!budget) { budget = { held: 0 }; budgets.set(pool, budget); }
+  const physical = physicalPool(pool);
+  let budget = budgets.get(physical);
+  if (!budget) { budget = { held: 0 }; budgets.set(physical, budget); }
   if (budget.held >= poolLongHoldCapacity(pool, fallback, opts)) return null;
   budget.held++;
   let released = false;

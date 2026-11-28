@@ -1,4 +1,5 @@
 import { tryAcquirePoolLongHold, PoolCapacityError } from './pool-budget.ts';
+import { ownWriteCounter, type OwnWriteCounter, type OwnWriteLedger } from './postgres-engine/own-writes.ts';
 import { capabilitiesForEngineKind, type EngineCapabilities } from './engine-capabilities.ts';
 import { assertReservedConfigWrite, noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
@@ -336,6 +337,8 @@ export class PostgresEngine implements BrainEngine {
   }
 
   private _sql: ReturnType<typeof postgres> | null = null;
+  /** The own-write count (postgres-engine/own-writes.ts), on only after `countOwnWrites`; null leaves every pool as it is. */
+  private _ownWrites: OwnWriteCounter | null = null;
   /** Saved config for reconnection. */
   private _savedConfig: (EngineConfig & { poolSize?: number; parentConnectionManager?: ConnectionManager }) | null = null;
   /** Whether a reconnect is in progress (prevents concurrent reconnects). */
@@ -392,6 +395,26 @@ export class PostgresEngine implements BrainEngine {
   /** The database URL this engine connected with; the warm CLI socket binds its identity to it (src/core/cli-socket/server.ts). */
   get connectedDatabaseUrl(): string | undefined { return this._savedConfig?.database_url; }
   get sql(): ReturnType<typeof postgres> {
+    const pool = this.physicalSql;
+    return this._ownWrites ? this._ownWrites.pool(pool) : pool;
+  }
+
+  /** A pool as this engine writes through it: the counting pool while the own-write count is on. */
+  private counted(pool: ReturnType<typeof postgres>): ReturnType<typeof postgres> {
+    return this._ownWrites ? this._ownWrites.pool(pool) : pool;
+  }
+
+  /**
+   * Turns on the exact count of this engine's own committed row changes to the named relations (the shadow seal's
+   * relations) and returns its ledger, or null where the count cannot be exact (before Postgres 15, or a role that may
+   * not force a stats flush). Writes this engine sent before the call are not in it.
+   */
+  async countOwnWrites(names: readonly string[]): Promise<OwnWriteLedger | null> {
+    if (!this._ownWrites) this._ownWrites = await ownWriteCounter(this.physicalSql, names);
+    return this._ownWrites?.ledger ?? null;
+  }
+
+  private get physicalSql(): ReturnType<typeof postgres> {
     if (this._sql) return this._sql;
     // issue #1678: an instance-pool engine whose _sql went null (a mid-process
     // disconnect/reconnect, or a reaped socket) must NOT fall through to the
@@ -853,7 +876,7 @@ export class PostgresEngine implements BrainEngine {
 
   async transactionDirect<T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions): Promise<T> {
     const conn = !this._pageTransaction && this.connectionManager?.isDualPoolActive()
-      ? await this.connectionManager.ddl() : this.sql;
+      ? this.counted(await this.connectionManager.ddl()) : this.sql;
     return this.transactionOn(conn, fn, opts);
   }
 
@@ -921,6 +944,7 @@ export class PostgresEngine implements BrainEngine {
     }
     this.checkoutGauge.checkedOut();
     try {
+      const counted = this._ownWrites?.reserved(reserved as unknown as ReturnType<typeof postgres>, pool) ?? null;
       const conn: ReservedConnection = {
         async executeRaw<R = Record<string, unknown>>(
           query: string,
@@ -932,13 +956,14 @@ export class PostgresEngine implements BrainEngine {
           // statement (bounded read sessions); postgres.js ANDs it with the connection option, as runUnsafe does.
           // Without it the statement stays unnamed, as before.
           void opts;
+          if (counted) return await counted(query, params, opts?.prepare) as R[];
           const rows = params === undefined
             ? await reserved.unsafe(query)
             : await reserved.unsafe(query, params as Parameters<typeof reserved.unsafe>[1], { prepare: opts?.prepare === true });
           return rows as unknown as R[];
         },
       };
-      return await fn(Object.assign(conn, { transaction: <R>(run: (engine: BrainEngine) => Promise<R>, opts?: TransactionOptions) => this.transactionOn(reservedTransactions(reserved), run, opts) } satisfies ReservedTransactions));
+      return await fn(Object.assign(conn, { transaction: <R>(run: (engine: BrainEngine) => Promise<R>, opts?: TransactionOptions) => this.transactionOn(this.counted(reservedTransactions(reserved)), run, opts) } satisfies ReservedTransactions));
     } finally {
       // Counter/gauge decrements run regardless of release() throwing
       // (double-release or socket error must not permanently leak a permit
@@ -3520,6 +3545,7 @@ export class PostgresEngine implements BrainEngine {
       signal?.addEventListener('abort', onAbort, { once: true });
       try {
         reserved = signal && typeof conn.reserve === 'function' ? await reserveWithCancellation(opts => conn.reserve(opts), signal) : undefined;
+        const pool = conn;
         if (reserved) { conn = reserved; this.checkoutGauge.checkedOut(); }
         owner = reserved ?? conn as unknown as postgres.TransactionSql;
         if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
@@ -3530,6 +3556,7 @@ export class PostgresEngine implements BrainEngine {
         // describe round trip plus an execute round trip.
         const driverOpts = { cancelFence: !!signal, prepare: opts?.prepare ?? true, ...(opts?.simple === undefined ? {} : { simple: opts.simple }) };
         pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1], driverOpts);
+        if (reserved && this._ownWrites) pending = this._ownWrites.reservedStatement(reserved as unknown as typeof pool, pool, pending); // own-write count: a write alone on its reserved connection
         try { return await pending as unknown as T[]; } finally { settled = true; }
       } finally {
         signal?.removeEventListener('abort', onAbort);
@@ -3616,7 +3643,7 @@ export class PostgresEngine implements BrainEngine {
     // defineProperty in transaction()); never reroute off it.
     const inTransaction = this._sql !== null && this.connectionManager?.peekReadPool() !== this._sql;
     const conn = (!inTransaction && this.connectionManager?.isDualPoolActive())
-      ? await this.connectionManager.ddl()
+      ? this.counted(await this.connectionManager.ddl())
       : this.sql;
     // try/finally, not .finally — see executeRaw (sync throw on pre-aborted signal).
     this.checkoutGauge.acquire('direct');

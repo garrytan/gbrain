@@ -36,6 +36,7 @@ import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts'
 import { resetPgliteState, truncateCascade } from '../helpers/reset-pglite.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import type { TestBackend } from '../helpers/test-backends.ts';
+import { openOwnWriteCensus, ownWriteCensusRequested, type OwnWriteCensus } from './own-write-census.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import {
   archiveRustSource, createRustSource, newRustBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow,
@@ -55,6 +56,8 @@ export interface ParityArm {
   close: () => Promise<void>;
   /** Build a second, not yet connected engine of this arm and the config `connect` takes. */
   unconnected: () => { engine: BrainEngine; config: EngineConfig };
+  /** Postgres: every committed row change must be in a transaction the own-write count booked (own-write-census.ts). */
+  census?: OwnWriteCensus | null;
 }
 
 /** Per-case facilities beyond the arm's engine. */
@@ -128,7 +131,9 @@ async function openArm(backend: ParityBackend): Promise<ParityArm> {
     }
     case 'postgres': {
       const { engine, databaseUrl, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
-      return { backend, engine, close,
+      let census: OwnWriteCensus | null = null;
+      try { census = ownWriteCensusRequested() ? await openOwnWriteCensus(engine) : null; } catch (error) { await close(); throw error; }
+      return { backend, engine, close, census,
         unconnected: () => ({ engine: new PostgresEngine(), // An instance pool, never the module-level singleton other code shares.
         config: { engine: 'postgres', database_url: databaseUrl, poolSize: 2 } as EngineConfig }) };
     }
@@ -325,6 +330,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
       const results: Array<{ backend: ParityBackend; value: T }> = [];
       for (const arm of arms) {
         await resetArm(arm);
+        await arm.census?.clear();
         const calls = new Set<string>();
         const refusals: unknown[] = [];
         const extra: BrainEngine[] = [];
@@ -366,6 +372,9 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
         }
         const missing = opts.methods.filter((m) => !calls.has(m));
         expect({ backend: arm.backend, declaredButNotCalled: missing }).toEqual({ backend: arm.backend, declaredButNotCalled: [] });
+        if (arm.census && extra.length === 0) {
+          expect({ backend: arm.backend, uncountedWrites: await arm.census.uncounted() }).toEqual({ backend: arm.backend, uncountedWrites: [] });
+        }
         results.push({ backend: arm.backend, value });
       }
       const [first, ...rest] = results;
