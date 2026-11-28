@@ -112,7 +112,7 @@ listHeldFenceCells	cli_reads_ops	no	0	no	-	-	-
 readFenceOverlayRows	cli_reads_ops	no	0	no	-	-	-
 readLinkContextMatches	link_reads	no	0	no	-	-	-
 readLinkContextOriginPages	link_reads	no	0	no	-	-	-
-listLinkEndpointPages	link_reads	yes	1	no	yes	yes	serves
+listLinkEndpointPages	link_reads	yes	2	no	yes	yes	serves
 getLatestCalibrationProfile	calibration_profiles	no	0	no	-	-	-
 insertCalibrationProfile	calibration_profiles	no	0	no	-	-	-
 purgeCalibrationProfilesByWave	calibration_profiles	no	0	no	-	-	-
@@ -407,7 +407,7 @@ replaceDerivedLinks	links	yes	3	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	3	no	yes	yes	serves
 removeLink	links	yes	2	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	13	yes	yes	yes	serves
+getLinks	links	yes	14	yes	yes	yes	serves
 getBacklinks	links	yes	3	yes	yes	yes	serves
 listLinkSources	links	yes	1	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	5	no	yes	yes	serves
@@ -528,7 +528,7 @@ getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	25	no	yes	yes	serves
+updateSlug	sync_aliases	yes	26	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
@@ -629,7 +629,7 @@ resolveCaseSensitiveAliases	alias_fanout_reads	yes	3	no	yes	yes	refuses:raw_sql
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	refuses:raw_sql
 readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	refuses:raw_sql
 readEntityAliasRows	alias_fanout_reads	yes	1	no	yes	yes	refuses:raw_sql
-listSlugAliases	alias_fanout_reads	yes	1	no	yes	yes	serves
+listSlugAliases	alias_fanout_reads	yes	2	no	yes	yes	serves
 listExportPageKeys	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
 readExportWithdrawalLedgerBytes	cli_reads_export	no	0	no	-	-	-
 listExportWithdrawals	cli_reads_export	no	0	no	-	-	-
