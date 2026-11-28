@@ -75,7 +75,7 @@ fn evidence_fact(read: &dyn KvRead, f: &FactRecord, now: i64) -> Result<bool> {
 impl Store {
     /// `listQuestionEvidenceFacts(sourceId, entitySlugs)`: `{ id, fact, entity_slug, valid_from, hash }` of the
     /// evidence facts about these entities (see [`evidence_fact`]), newest first by `valid_from` (`created_at` for a
-    /// fact dated after now), then id, at most 30. `valid_from` is ISO 8601 UTC.
+    /// fact dated after now or undated), then id, at most 30. `valid_from` is ISO 8601 UTC, or null for an undated fact.
     pub fn list_question_evidence_facts(
         &self,
         source_id: &str,
@@ -101,7 +101,7 @@ impl Store {
                         "id": f.id,
                         "fact": f.fact,
                         "entity_slug": f.entity_slug,
-                        "valid_from": iso(f.valid_from_us),
+                        "valid_from": f.valid_from().map(iso),
                         "hash": fact_hash(f),
                     })
                 })

@@ -68,6 +68,26 @@ describe('pinned-question reads on every engine', () => {
     return rows.map(r => ({ fact: r.fact, entity_slug: r.entity_slug, valid_from: r.valid_from, hash: r.hash }));
   });
 
+  parityTest('an undated evidence fact reads back with no date and ranks by when it was saved, ahead of older dated facts', {
+    methods: ['listQuestionEvidenceFacts'],
+  }, async (engine) => {
+    await engine.putPage('people/alice-example', page('alice'));
+    const day = (d: number) => new Date(Date.UTC(2026, 0, d));
+    await engine.insertFacts([
+      fact(1, 'alice joined acme-example', { valid_from: day(1) }),
+      fact(2, 'alice likes tea'),
+      fact(3, 'alice leads acme-example', { valid_from: day(3) }),
+    ] as never, { source_id: 'default' });
+    const rows = (await engine.listQuestionEvidenceFacts('default', ['people/alice-example']))
+      .map(r => ({ fact: r.fact, valid_from: r.valid_from }));
+    expect(rows).toEqual([
+      { fact: 'alice likes tea', valid_from: null },
+      { fact: 'alice leads acme-example', valid_from: day(3) },
+      { fact: 'alice joined acme-example', valid_from: day(1) },
+    ]);
+    return rows;
+  });
+
   parityTest('a slug prefix anchors the newest live pages under it, without question, synthesis or pinned-question pages', {
     methods: ['readPrefixAnchoredPages'],
   }, async (engine) => {
