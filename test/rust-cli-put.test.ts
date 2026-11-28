@@ -154,3 +154,37 @@ describe('gbrain put on a brain with no managed persistence', () => {
     expect(putThenGet('rust', token)).toEqual(pglite);
   }, 240_000);
 });
+
+/**
+ * `gbrain delete` then `gbrain restore` of a page `gbrain put` wrote. restore_page reads through raw SQL the Rust store
+ * does not serve, so on Rust the delete must refuse before it lands (a page deleted there could not be restored): the
+ * delete exits non-zero with engine_capability_missing and `gbrain get` still reads the page.
+ */
+function deleteThenRestore(arm: Arm, token: string): { del: { status: number; code: unknown }; restore: number | null; get: number } {
+  const at = brain(arm);
+  const slug = `notes/delete-parity-${token}`;
+  const put = run(at, ['put', slug, '--content', '---\ntype: note\ntitle: Delete parity\n---\nBody.\n', '--json']);
+  if (put.status !== 0) throw new Error(`${arm} put exited ${put.status}: ${put.stdout.trim() || put.stderr.trim().slice(-2000)}`);
+  const revision = String((JSON.parse(put.stdout) as { revision: string }).revision);
+  const del = run(at, ['delete', slug, '--expected-revision', revision, '--json']);
+  const code = del.status === 0 ? null : (JSON.parse(del.stdout || del.stderr) as { error?: { code?: unknown }; code?: unknown }).error?.code
+    ?? (JSON.parse(del.stdout || del.stderr) as { code?: unknown }).code;
+  let restore: number | null = null;
+  if (del.status === 0) {
+    const deleted = JSON.parse(run(at, ['get', slug, '--include-deleted', '--json']).stdout) as { revision?: string };
+    restore = run(at, ['restore', slug, ...(deleted.revision ? ['--expected-revision', deleted.revision] : []), '--json']).status;
+  }
+  return { del: { status: del.status, code }, restore, get: run(at, ['get', slug, '--json']).status };
+}
+
+describe('gbrain delete then gbrain restore on a brain with no managed persistence', () => {
+  const token = randomUUID().slice(0, 8);
+
+  test('PGLite: the delete lands and the restore brings the page back', () => {
+    expect(deleteThenRestore('pglite', token)).toEqual({ del: { status: 0, code: null }, restore: 0, get: 0 });
+  }, 240_000);
+
+  test.skipIf(!HAVE_ADDON)('Rust: the delete refuses before it lands, and the page still reads', () => {
+    expect(deleteThenRestore('rust', token)).toEqual({ del: { status: 1, code: 'engine_capability_missing' }, restore: null, get: 0 });
+  }, 240_000);
+});

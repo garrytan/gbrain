@@ -15,6 +15,7 @@
  * private origin and parks the ones it could not (persistence/derived-origin-hold.ts), so no purge removes them.
  */
 import { normalizeSlug } from '../utils.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { assertPurgeAge } from '../engine-errors.ts';
@@ -147,14 +148,17 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
   const batch = `derived-origin-carry:${String(p.request_id)}`;
   const slug = typeof p.slug === 'string' ? normalizeSlug(p.slug) : null;
   if (p.purge !== true) {
-    const origin = slug ? await originOf(ctx.engine, sourceId, slug).catch(() => null) : null;
+    // A capability refusal (the Rust engine serves no raw SQL) stops the delete before it lands: a soft delete the engine
+    // could not carry or restore (restore_page needs the same raw SQL) must not be written.
+    const origin = slug ? await originOf(ctx.engine, sourceId, slug).catch((e: unknown) => { rethrowCapabilityMissing(e); return null; }) : null;
     const result = await submitPageMutation(ctx, { operation: 'delete_page', params: p });
     if (origin && (await originOf(ctx.engine, sourceId, origin.slug).catch(() => null))?.deleted) await carryPrivate(ctx.engine, [origin], batch).catch(() => undefined);
     return finishPagePurge(ctx, result);
   }
   let origin: (Origin & { deleted: boolean }) | null;
   try { origin = slug ? await originOf(ctx.engine, sourceId, slug) : null; }
-  catch {
+  catch (e) {
+    rethrowCapabilityMissing(e);
     const held = await submitPageMutation(ctx, { operation: 'delete_page', params: { ...p, purge: false, request_id: derivedRequestId(String(p.request_id)) } });
     return { ...held, purge_held: originUncheckedHold(sourceId, slug ?? String(p.slug), String(p.request_id)) };
   }

@@ -23,15 +23,17 @@
  *    rows by renaming them, which needs raw SQL; and the Rust store lowercases every slug it stores or reads, so it can hold
  *    neither capitalised spelling. Rust must keep a stored slug's capitals and read a slug exactly as sent for the refusal
  *    (built in TS from `executeRaw` over pages) to be reachable.
- *  - delete_page by the stored spelling: the soft delete lands and answers as on PGLite, then the origin-carry read
- *    (originOf, src/core/repair/origin-carry.ts) is raw SQL the store does not serve (member `executeRaw`, capability
- *    `raw_sql`); delete_page catches it, so the case ends on that typed refusal.
- *  - restore_page and append_page by the stored spelling: preparation meets raw SQL the store does not serve
- *    (clearOwedPurges, src/core/persistence/derived-origin-hold.ts; inlineRegions, src/core/page-body/tail-digest.ts), so
- *    the write ends failed with engine_capability_missing and nothing publishes. add_tag, remove_tag, add_timeline_entry
- *    and edit_page land first.
- *  - writes by a capital-stored spelling: member `putPage` (Rust pages area): the store keeps the lowercased slug, so a
- *    capital-stored page cannot be set up; an exact read of the capital spelling answers nothing, as on PGLite.
+ *  - delete_page (and so restore_page after it) by the stored spelling: member `executeRaw`, capability `raw_sql`: the
+ *    origin-carry read before the delete (originOf, src/core/repair/origin-carry.ts) is raw SQL the store does not serve,
+ *    and delete_page refuses on it before anything is written, since restore_page meets raw SQL too (clearOwedPurges,
+ *    src/core/persistence/derived-origin-hold.ts) and a soft delete that landed could not be undone.
+ *  - append_page by the stored spelling: preparation meets raw SQL the store does not serve (inlineRegions,
+ *    src/core/page-body/tail-digest.ts), so the write ends failed with engine_capability_missing and nothing publishes.
+ *    add_tag, remove_tag, add_timeline_entry and edit_page land first.
+ *  - writes by a capital-stored spelling: member `putPage` (Rust pages area): a put lowercases the slug, so only a seed
+ *    can store a capital spelling; an exact read of a capital spelling the store does not hold answers nothing, as on
+ *    PGLite, and one it holds (seeded) refuses (member `readPageSnapshot`, capability `pages`), so a put by it stops
+ *    before it writes a lowercase twin.
  *  - NFC storage: member `putPage` (Rust pages area, gbrain-store pages.rs `validate_slug`): the Rust store
  *    lowercases a slug but does not compose it to NFC, so an NFD slug is stored as NFD and the NFC read
  *    misses it. Rust must compose to NFC in `validate_slug` and in its lowercased read lookups.
@@ -77,6 +79,17 @@ const RUST_RAW_SQL_STOP =
 function ctx(engine: BrainEngine): OperationContext {
   return { engine, config: { engine: engine.kind, embedding_disabled: true } as never, remote: false, sourceId: 'default',
     dryRun: false, logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+}
+
+/**
+ * On Rust, delete_page refuses before it writes: restore_page meets raw SQL the store does not serve (clearOwedPurges,
+ * src/core/persistence/derived-origin-hold.ts), so a soft delete it let land could not be undone. The page stays live at
+ * the revision read before the delete.
+ */
+async function expectRustDeleteRefusedBeforeWrite(engine: BrainEngine, slug: string, revision: string, e: unknown): Promise<void> {
+  const page = await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true });
+  expect({ code: (e as { code?: unknown }).code, message: (e as Error).message, live: page?.page.deleted_at == null, revision: page?.revision })
+    .toEqual({ code: 'engine_capability_missing', message: RUST_RAW_SQL_STOP, live: true, revision });
 }
 
 describe('engine parity: slug normal form', () => {
@@ -179,14 +192,17 @@ describe('engine parity: slug normal form', () => {
       await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, composed]);
     }
     const before = await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true });
-    const out = await operationsByName.delete_page!.handler(ctx(engine), { slug: stored, expected_revision: before!.revision, request_id: randomUUID() }) as { slug: string; status: string; noop: boolean };
+    let out: { slug: string; status: string; noop: boolean };
+    try {
+      out = await operationsByName.delete_page!.handler(ctx(engine), { slug: stored, expected_revision: before!.revision, request_id: randomUUID() }) as typeof out;
+    } catch (e) {
+      if (backend === 'rust') await expectRustDeleteRefusedBeforeWrite(engine, stored, before!.revision, e);
+      throw e;
+    }
     const after = await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true });
     const twin = await engine.readPageSnapshot(composed, { sourceId: 'default', includeDeleted: true });
     const result = { slug: out.slug, status: out.status, noop: out.noop, deletedInPlace: after?.page.deleted_at != null, twin: twin?.page.slug ?? null };
     expect(result).toEqual({ slug: stored, status: 'soft_deleted', noop: false, deletedInPlace: true, twin: null });
-    // On Rust the soft delete lands, but the origin-carry read after it (originOf, src/core/repair/origin-carry.ts) is
-    // raw SQL the store does not serve; delete_page catches that refusal, so the case ends on it here.
-    if (backend === 'rust') throw capabilityMissing('raw_sql', 'executeRaw', 'partial');
     return result;
   });
   parityTest('restore_page by the stored decomposed spelling restores the row delete_page soft-deleted by it, with no composed twin', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
@@ -198,23 +214,70 @@ describe('engine parity: slug normal form', () => {
       await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, composed]);
     }
     const revision = async () => (await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true }))!.revision;
-    let out: { slug: string };
+    const live = await revision();
     try {
-      await operationsByName.delete_page!.handler(ctx(engine), { slug: stored, expected_revision: await revision(), request_id: randomUUID() });
-      out = await operationsByName.restore_page!.handler(ctx(engine), { slug: stored, expected_revision: await revision(), request_id: randomUUID() }) as typeof out;
+      await operationsByName.delete_page!.handler(ctx(engine), { slug: stored, expected_revision: live, request_id: randomUUID() });
     } catch (e) {
-      // On Rust the restore stops in preparation at clearOwedPurges (src/core/persistence/derived-origin-hold.ts), raw SQL
-      // the store does not serve; the write ends failed with engine_capability_missing and nothing publishes.
-      if (backend === 'rust') {
-        expect({ code: (e as { code?: unknown }).code, message: (e as Error).message }).toEqual({ code: 'engine_capability_missing', message: RUST_JOURNAL_STOP });
-        throw capabilityMissing('raw_sql', 'executeRaw');
-      }
+      if (backend === 'rust') await expectRustDeleteRefusedBeforeWrite(engine, stored, live, e);
       throw e;
     }
+    const out = await operationsByName.restore_page!.handler(ctx(engine), { slug: stored, expected_revision: await revision(), request_id: randomUUID() }) as { slug: string };
     const after = await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true });
     const twin = await engine.readPageSnapshot(composed, { sourceId: 'default', includeDeleted: true });
     const result = { slug: out.slug, restoredInPlace: after !== null && after.page.deleted_at == null, twin: twin?.page.slug ?? null };
     expect(result).toEqual({ slug: stored, restoredInPlace: true, twin: null });
+    return result;
+  });
+  parityTest('delete_page then restore_page by an ordinary slug bring the page back as it was, and Rust refuses the delete before it lands', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
+    const slug = 'notes/del-restore-plain';
+    await engine.putPage(slug, { type: 'note', title: 'Plain', compiled_truth: 'Body.', timeline: '' });
+    const revision = async () => (await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true }))!.revision;
+    const live = await revision();
+    let deleted: { slug: string; status: string; noop: boolean };
+    try {
+      deleted = await operationsByName.delete_page!.handler(ctx(engine), { slug, expected_revision: live, request_id: randomUUID() }) as typeof deleted;
+    } catch (e) {
+      if (backend === 'rust') await expectRustDeleteRefusedBeforeWrite(engine, slug, live, e);
+      throw e;
+    }
+    const restored = await operationsByName.restore_page!.handler(ctx(engine), { slug, expected_revision: await revision(), request_id: randomUUID() }) as { slug: string; status: string };
+    const page = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+    const result = { deleted: { slug: deleted.slug, status: deleted.status, noop: deleted.noop }, restored: { slug: restored.slug, status: restored.status },
+      live: page !== null && page.page.deleted_at == null, body: page?.page.compiled_truth ?? null };
+    expect(result).toEqual({ deleted: { slug, status: 'soft_deleted', noop: false }, restored: { slug, status: 'restored' }, live: true, body: 'Body.' });
+    return result;
+  });
+  parityTest('a put by the exact spelling of a page stored with capitals is refused, and no lowercase twin is written', { methods: ['readPageSnapshot', 'listPages'] }, async (engine, backend) => {
+    const stored = 'Notes/Seed-Cap';
+    const lower = 'notes/seed-cap';
+    if (backend === 'rust') {
+      // A Rust put stores the slug lowercased; a shadow seed keeps a primary's stored spelling (seed/core.rs), so the case
+      // stores the capital row the way a seed does.
+      const store = await (engine as unknown as { storeFor(member: string): Promise<{ brain: { importRelation(...args: unknown[]): Promise<unknown> } }> }).storeFor('getPage');
+      const now = new Date().toISOString();
+      await store.brain.importRelation('seed-slug-normalize', 'pages', [{ id: '90001', source_id: 'default', slug: stored, type: 'note', title: 'Cap', compiled_truth: 'Old.',
+        timeline: '', frontmatter: '{}', knowledge_revision: randomUUID(), created_at: now, updated_at: now }], null);
+    } else {
+      await engine.putPage(lower, { type: 'note', title: 'Cap', compiled_truth: 'Old.', timeline: '' });
+      await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, lower]);
+    }
+    const pages = async () => (await engine.listPages({ includeDeleted: true })).map(p => ({ slug: p.slug, body: p.compiled_truth })).sort((a, b) => a.slug.localeCompare(b.slug));
+    const before = await pages();
+    let answer: { code: unknown; detail: unknown };
+    try {
+      await operationsByName.put_page!.handler(ctx(engine), { slug: stored, content: '---\ntype: note\ntitle: Cap\n---\nNew.\n', request_id: randomUUID() });
+      answer = { code: null, detail: null };
+    } catch (e) {
+      if (backend === 'rust') {
+        // The store cannot open the capital row by its exact spelling, so the admission read refuses before any write.
+        expect({ code: (e as { code?: unknown }).code, message: (e as Error).message, pages: await pages() }).toEqual({ code: 'engine_capability_missing',
+          message: "This brain's engine does not support readPageSnapshot (a page stored under a spelling with capitals) yet (it needs the pages capability), so nothing ran.", pages: before });
+        throw e;
+      }
+      answer = { code: (e as { code?: unknown }).code, detail: (e as { detail?: unknown }).detail };
+    }
+    const result = { answer, before, after: await pages() };
+    expect(result).toEqual({ answer: { code: 'invalid_params', detail: 'legacy_slug_spelling' }, before: [{ slug: stored, body: 'Old.' }], after: [{ slug: stored, body: 'Old.' }] });
     return result;
   });
   parityTest('ontology_propose and takes horizon set by a stored decomposed spelling act on that page, not on its composed look-alike', { methods: ['putPage', 'addTakesBatch'] }, async (engine, backend) => {
