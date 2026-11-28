@@ -555,4 +555,19 @@ describe('the follower\'s two write counts', () => {
     expect([f.published, f.pageLinkWrites]).toEqual([7, 5]);
     await f.settle();
   });
+
+  test('a batch whose only unmapped writes are journal members that write nothing a comparison reads (the protocol declaration, the counter lock, an effect\'s locks and completion) does not move `pageLinkWrites`; any other unmapped write, or a page or link row beside them, still does', async () => {
+    const f = follower();
+    const unmapped = (member: string): Invalidation => ({ kind: 'invalid', reason: `unmapped_write:${member}` });
+    f.publish(batch(1, [unmapped('declarePersistence')])); // the effect worker looking for its next effect and finding none
+    f.publish(batch(2, [unmapped('declarePersistence'), unmapped('lockPersistenceCounters'), { kind: 'relation', relation: 'persistence_requests', reason: 'raw_sql' }, { kind: 'relation', relation: 'persistence_counters', reason: 'raw_sql' }])); // a receipt true-up
+    f.publish(batch(3, [unmapped('setEffectTransactionLimits'), unmapped('lockEffectGuard'), unmapped('lockEffectClaimRow'), unmapped('completeEffectRow'), rows('persistence_effects')])); // an effect that skipped
+    expect([f.published, f.pageLinkWrites]).toEqual([3, 0]); // master: 3, so a link write sampled across any of them was marked moved
+    f.publish(batch(4, [unmapped('declarePersistence'), unmapped('lockEffectGuard'), rows('links'), unmapped('completeEffectRow')])); // the links effect's own transaction
+    f.publish(batch(5, [unmapped('declarePersistence'), unmapped('upsertWriteGateReceipt')])); // an unmapped write the sampler does not judge bookkeeping rides along
+    f.publish(batch(6, [unmapped('takePageEmbeddingLease')]));
+    f.publish(batch(7, [unmapped('declarePersistence'), { kind: 'invalid', reason: 'unparsable:error' }]));
+    expect([f.published, f.pageLinkWrites]).toEqual([7, 4]);
+    await f.settle();
+  });
 });

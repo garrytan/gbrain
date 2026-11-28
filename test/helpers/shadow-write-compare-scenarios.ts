@@ -42,6 +42,10 @@ import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/wr
 import { ensureEpoch, readEpoch } from '../../src/shadow/evidence-epoch.ts';
 import { withEnv } from './with-env.ts';
 import { withStoredSlug } from '../../src/core/utils.ts';
+import { randomUUID } from 'node:crypto';
+import { claimPersistenceEffect } from '../../src/core/persistence/effect-journal.ts';
+import { declarePersistenceProtocol } from '../../src/core/persistence/protocol.ts';
+import { lockCounters } from '../../src/core/persistence/journal.ts';
 import { fillSeedFixture, seedInto } from './shadow-seed-fixture.ts';
 
 export interface WriteCompareContext {
@@ -2002,5 +2006,54 @@ export function defineFenceNegatives(ctx: WriteCompareContext): void {
       });
       await other; expect(waited).toBe(true);
     }, 60_000);
+  });
+
+  describe('the links effect\'s addLinksBatch after a remote put_page, wired as production wires it', () => {
+    const kit = fenceKit(ctx);
+    const linkSamples = (inbox: WriteEvent[]) => sampled(inbox, 'addLinksBatch');
+    /** Runs `act` once inside the read-back of the effect's link write (its read of the mentioned page's links on the primary): after the effect committed, before the write counter is read again. */
+    function inLinkReadBack(act: () => Promise<unknown>): { fired: () => boolean; restore: () => void } {
+      const realGetLinks = primary().getLinks as (...a: Parameters<BrainEngine['getLinks']>) => ReturnType<BrainEngine['getLinks']>; let once = true;
+      const hook = spyOn(primary(), 'getLinks').mockImplementation((async function (this: unknown, ...args: Parameters<BrainEngine['getLinks']>) { if (once && this === primary() && args[0] === 'people/alice-example') { once = false; await act(); } return realGetLinks.apply(this, args); }) as never);
+      return { fired: () => !once, restore: () => hook.mockRestore() };
+    }
+    const mention = (wrapped: BrainEngine, slug = 'notes/mentions-alice') => operationsByName.put_page.handler(opCtx(wrapped), { slug, content: '---\ntitle: Mentions Alice\ntype: note\n---\nThis note mentions [[people/alice-example]].\n' });
+
+    test('the effect worker\'s own bookkeeping transactions between the commit and the read-back (its next claim, a receipt true-up) do not mark the link write moved, and it is comparable', async () => {
+      await fresh();
+      const { follower, inbox, wrapped } = prod();
+      let claimed: unknown = 'not run';
+      const hook = inLinkReadBack(async () => {
+        claimed = await claimPersistenceEffect(wrapped, randomUUID()); // the worker looking for its next effect: the protocol declaration and a locking select that finds none
+        await wrapped.transaction(async (tx) => { await declarePersistenceProtocol(tx); await lockCounters(tx, ['brain']); }); // a receipt true-up's declaration and counter lock (trueUpRequests)
+      });
+      try { await mention(wrapped); await until(() => linkSamples(inbox).length >= 1); } finally { hook.restore(); await disposePersistenceConsumer(wrapped); }
+      expect(hook.fired()).toBe(true);
+      expect(claimed).toBeNull();
+      expect((linkSamples(inbox)[0]!.args![0] as Array<{ to_slug: string }>).map((l) => l.to_slug)).toEqual(['people/alice-example']);
+      expect(Boolean(linkSamples(inbox)[0]!.moved)).toBe(false); // master: moved, so the pilot counted every such sample uncomparable
+      await follower.settle();
+      if (ctx.addon) {
+        // The replay is comparable once the Rust member stores the effect's link_kind and resolution_type (a separate fix); until then the Rust write refuses it
+        // (rust_write_failed). Either way it is never moved and never a difference.
+        const counts = await kit.replay(linkSamples(inbox));
+        expect([counts.comparable + (counts.uncomparable_by_reason.rust_write_failed ?? 0), counts.unexplained_difference, counts.uncomparable_by_reason.moved ?? 0]).toEqual([1, 0, 0]);
+      }
+    }, 120_000);
+
+    test('a write by another call in this process to the effect\'s own link in that window still marks it moved, alone or inside a transaction that also declares the protocol (the fence exempts the write\'s own rows, so the counter decides)', async () => {
+      await fresh();
+      for (const declared of [false, true]) {
+        const slug = declared ? 'notes/mentions-alice-declared' : 'notes/mentions-alice';
+        const edit = `UPDATE links SET context = 'edited by another call' WHERE from_page_id = (SELECT id FROM pages WHERE slug = '${slug}')`;
+        const { inbox, wrapped } = prod();
+        const hook = inLinkReadBack(() => declared ? wrapped.transaction(async (tx) => { await declarePersistenceProtocol(tx); await tx.executeRaw(edit); }) : wrapped.executeRaw(edit));
+        try { await mention(wrapped, slug); await until(() => linkSamples(inbox).length >= 1); } finally { hook.restore(); await disposePersistenceConsumer(wrapped); }
+        expect(hook.fired()).toBe(true);
+        const [edited] = await primary().executeRaw<{ context: string }>(`SELECT l.context FROM links l JOIN pages p ON p.id = l.from_page_id WHERE p.slug = '${slug}'`);
+        expect(edited!.context).toBe('edited by another call'); // the other call really changed the effect's link
+        expect(Boolean(linkSamples(inbox)[0]!.moved)).toBe(true);
+      }
+    }, 120_000);
   });
 }
