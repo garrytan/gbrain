@@ -1284,7 +1284,6 @@ readPageDateFieldsByIds	ruling A default
 readPageEmbeddingBudget	ruling A default
 readPageExtractionReceipt	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
 readPageExtractionWatermark	owner process only: a gbrain command, a job worker or cycle phase, or the serve process reads it as the owner; no remote-callable operation reaches it
-readPageFeedbackWeights	ruling A default
 readPageFileOrigin	run_doctor, think save and take paths and write path only: run_doctor crosses whole and the brain server runs it as the owner (admin scope); a remote think forces save and take off; a remote caller's write crosses whole and runs on the server, or is refused
 readPageFolderRulesAllowed	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readPageHiddenFromCaller	ruling A default

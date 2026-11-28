@@ -134,6 +134,10 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   'readEntityCardRows', 'rankEntities', 'listNameVariantCardCandidates', 'readVisibleVariantPages',
   'listVisibleNameVariantCandidates', 'readRetirementHop', 'readEntityAliasRows', 'readRankCoverage', 'readReferrerTargetCounts',
   'listVersionReasonWriters',
+  // served-remote-feedback-record (served, both routes): a remote search, query, recall and think read each result page's
+  // learned feedback weight (search/feedback-boost.ts) when feedback is on. The server serves it only when every id names a
+  // page the caller may read (served/remote-member-policy.ts PAGE_ID_GUARDS).
+  'readPageFeedbackWeights',
 ];
 
 /**

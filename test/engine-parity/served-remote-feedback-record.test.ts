@@ -7,7 +7,8 @@
  *    search and a remote recall, with `feedback.enabled` turned on and a caller whose grant names the client id
  *    `feedback-remote-caller`, answer without an error, return an `answer_id`, drain their feedback queue with nothing
  *    unfinished, and store one retrieval event for that client id and that op whose pages are the open page only (an
- *    owner-private page that carries the query's marker too is seeded and never named).
+ *    owner-private page and a page only a named member may read, each carrying the query's marker too, are seeded and
+ *    never named).
  *  - Regression: on the served arm (a client of a multi-user brain server) the feedback weights read was refused for a
  *    remote caller, so a remote search and recall failed, and the event write was refused inside the write-behind queue,
  *    which dropped it without a word: the caller held an answer id for an event that was never stored.
@@ -32,6 +33,7 @@ const { parityTest } = parityArms(testBackends());
 const CALLER = 'feedback-remote-caller';
 const OPEN = 'fbrecmarkopenpage3b7d';
 const PRIVATE = 'fbrecmarkprivatepage8e14';
+const READERS = 'fbrecmarkreaderspage5c92';
 const CTX = {
   remote: true, admissionOrigin: 'interactive', transport: 'stdio', sourceId: 'default',
   auth: { token: 'feedback-caller-token', clientId: CALLER, scopes: ['read', 'write'], sourceId: 'default' },
@@ -43,6 +45,7 @@ async function seed(engine: BrainEngine): Promise<void> {
   const pages: Array<[string, string, Record<string, unknown>]> = [
     [OPEN, `${OPEN} is an open note.`, {}],
     [PRIVATE, `${PRIVATE} ${OPEN} private body.`, { visibility: 'private' }],
+    [READERS, `${READERS} ${OPEN} readers body.`, { readable_by: ['alice-example'] }],
   ];
   for (const [slug, body, frontmatter] of pages) {
     await engine.putPage(`notes/${slug}`, { type: 'note' as never, title: slug, compiled_truth: body, timeline: '', frontmatter });
