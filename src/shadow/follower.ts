@@ -52,6 +52,11 @@ export interface FollowerOptions {
   onDirty?: (relation: string) => void;
   /** The first batch of this process: time to run the fingerprint probe. */
   onFirstBatch?: () => void;
+  /**
+   * A write was lost on its way to the child (a line not accepted), or published after `close()`. Called at once, in the
+   * publishing call for the latter, so the record exists before the process can exit (attach.ts leaves a line for the owner).
+   */
+  onLost?: (reason: string) => void;
 }
 
 type RowsItem = Extract<Invalidation, { kind: 'rows' }>;
@@ -77,13 +82,28 @@ export class ShadowFollower implements InvalidationSink {
   private planCache: Promise<Map<string, SeedRelationPlan>> | null = null;
   private readonly reads = new Map<string, Promise<DigestPlan>>();
   private hasFingerprints: boolean | null = null;
+  private closed = false;
+  /** The seed plan once read: after `close()`, which writes the store would have followed. */
+  private planNow: Map<string, SeedRelationPlan> | null = null;
 
   constructor(private readonly o: FollowerOptions) {}
+
+  /** The serving process is closing: a write published after this is never read or sent, only recorded as lost. */
+  close(): void { this.closed = true; }
+
+  private lost(reason: string): void {
+    try { this.o.onLost?.(reason); } catch { /* best effort */ }
+  }
 
   publish(batch: InvalidationBatch): void {
     try {
       this.published++;
       if (batch.items.some(movesComparedRows)) this.pageLinkWrites++;
+      if (this.closed) {
+        // Only a write the store follows is lost: a relation outside the seed plan (a lease, a queue) never reaches it.
+        if (!this.planNow || batch.items.some((item) => item.kind === 'invalid' || this.planNow!.has(item.relation))) { this.lastInvalidatedAt = Date.now(); this.lost('published_after_close'); }
+        return;
+      }
       if (this.queue.length >= FOLLOW_QUEUE_BOUND) { this.invalidate('queue_overflow'); return; }
       this.queue.push(batch);
       this.draining ??= new Promise<void>((resolve) => setImmediate(() => { void this.drain().finally(resolve); }));
@@ -110,7 +130,7 @@ export class ShadowFollower implements InvalidationSink {
     const sent = this.send({ t: 'watermark', valid: false, reason, ...(relation ? { relation } : {}) });
     if (sent && relation) return;
     this.lastInvalidatedAt = Date.now();
-    if (!sent) this.pendingInvalid ??= relation ? 'relation_dirty_shed' : reason;
+    if (!sent) { this.pendingInvalid ??= relation ? 'relation_dirty_shed' : reason; this.lost(relation ? 'relation_dirty_shed' : reason); }
   }
 
   private send(message: Record<string, unknown>): boolean {
@@ -128,7 +148,7 @@ export class ShadowFollower implements InvalidationSink {
   }
 
   private plan(): Promise<Map<string, SeedRelationPlan>> {
-    this.planCache ??= this.o.rpc<SeedPlan>('seedPlan', {}, 30_000).then((p) => new Map(p.relations.map((r) => [r.relation, r])), (error) => { this.planCache = null; throw error; });
+    this.planCache ??= this.o.rpc<SeedPlan>('seedPlan', {}, 30_000).then((p) => (this.planNow = new Map(p.relations.map((r) => [r.relation, r]))), (error) => { this.planCache = null; throw error; });
     return this.planCache;
   }
 
@@ -207,6 +227,7 @@ export class ShadowFollower implements InvalidationSink {
       if (this.send(message)) { this.sentQueued = this.queue.length; return true; }
       this.lastInvalidatedAt = Date.now();
       this.pendingInvalid ??= 'apply_shed';
+      this.lost('apply_shed');
       return false;
     };
     for (const entry of entries) {

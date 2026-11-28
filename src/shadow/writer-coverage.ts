@@ -18,7 +18,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { faultsPath } from './ledger.ts';
-import { passesPath, type PassRecord } from './follow-status.ts';
+import { passesPath, unrecordedStoppedPass, type PassRecord } from './follow-status.ts';
 
 export interface WriterCoverageSource {
   /** The source's name, for the report. */
@@ -70,6 +70,8 @@ export function planAsWrittenSource(dir: string): WriterCoverageSource {
         if (!after(p.finished_at, t)) continue;
         if ((p.follower_misses ?? 0) > 0 || (p.repaired_rows ?? 0) > (p.follower_misses ?? 0)) n++;
       }
+      // A stopped pass's repair that only its resume point holds counts whatever `since` is: once on record, it is stamped then.
+      if (unrecordedStoppedPass(dir, passes.rows)) n++;
       for (const f of faults.rows) if (f.kind === 'writer_observation_failed' && after(f.ts, t)) n++;
       return n;
     },

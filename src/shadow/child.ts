@@ -564,7 +564,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     if (!line) continue;
     let event: { t?: string; counters?: MirrorCounters; pid?: number; dropped?: number };
     try { event = JSON.parse(line); } catch { const w = sampleWeight(`${line}\n`); if (w > 0) { const q = sampleQualifyingWeight(`${line}\n`); received += w; receivedQualifying += q; writes.unreadable(w, q); } continue; } // a write line that cannot be read still stands for the samples its text states: settled once, as `uncomparable`
-    if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
+    if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc' || event.t === 'seal') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'answer') { ask.answer(event as never); continue; }
     if (event.t === 'write') { const q = sampleQualifyingWeight(`${line}\n`); received += 1 + droppedWeight(event.dropped); receivedQualifying += q; writes.handle(event as never, line.length, q); continue; } // the weight the serving process counted when it sent the line (write-compare.ts sampleWeight)
     if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }

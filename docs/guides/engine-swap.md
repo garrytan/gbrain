@@ -53,7 +53,9 @@ The plan reads the shadow status (`gbrain engine shadow status --json`). A missi
 never a pass. With no shadow running, every criterion is `missing`.
 
 1. At least 14 days of shadowing in the epoch, follower lag p99 under 60 s, three consecutive clean reconcile passes,
-   no unseeded gap rows, and a follower that is caught up. "Caught up" needs the follower's current lag, queue depth
+   the newest of which finished under 24 hours ago (`reconcile.last_clean_full_pass_at`; only a finished clean full
+   pass counts, never a carried seal or a half-done pass, and a status without the field is `missing`), no unseeded gap
+   rows, and a follower that is caught up. "Caught up" needs the follower's current lag, queue depth
    and coverage watermark in the status; a status that leaves any of them out is `missing`, never a pass, and a
    follower with lag, a queue or an invalid watermark fails.
 2. Every operation class used meets its minimum of successful read comparisons, at least 10,000 reads in total, with
@@ -233,6 +235,17 @@ of your own brain. The preview swaps personal brains only. Not retried; ask whet
 
 The shadow follower has lag, a queue, or an invalid coverage watermark. Wait, up to 3 times 60 s apart, reading the
 shadow status; then report.
+
+When criterion 1's other checks pass, its detail names why the watermark is invalid and the last seal decision, as
+`engine shadow status` does (`coverage watermark: invalid (<reason>)`, `seal: <outcome> (<reason>)`). A short serving session that wrote to
+the brain after its last full reconcile pass leaves `seal: not_sealed (writes_since_verified)`, its own writes included.
+One that closed with no verified point leaves `not_sealed (no_verified_mark)`: no full pass restored the watermark, no
+carried seal was committed, and no full pass had read its starting counters (or they could not be read). Either way the
+next session starts invalid and needs a full pass of its own. A session that closes during a full pass whose starting
+counters were read can still seal, but that seal carries the invalid watermark and the pass's obligation: the next
+session takes it over, still starts invalid, and continues the pass. A brain served only by short writing sessions
+therefore reaches valid only after a session completes a full pass, so waiting does not help. Keep one serving session open until a full pass finishes (status shows the
+watermark valid), or stop the serving processes and run `gbrain engine shadow reconcile`, then plan again.
 
 <a id="digest_mismatch"></a>
 ### `digest_mismatch`

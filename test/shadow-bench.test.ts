@@ -696,7 +696,7 @@ function readyDoc(): ShadowStatus {
   return {
     epoch_id: 'e1', epoch_started_at: '2026-11-10T00:00:00Z',
     follower: { state: 'following', lag_ms: 0, lag_ms_p99_24h: 900, lag_ms_p99_epoch: 1200, queue_depth: 0, applied_rows: 5000, coverage_watermark: { valid: true, through: 'x', invalidated_reason: null } },
-    reconcile: { state: 'idle', consecutive_clean_full_passes: 3 },
+    reconcile: { state: 'idle', consecutive_clean_full_passes: 3, last_clean_full_pass_at: '2026-11-30T12:00:00Z' },
     write_comparisons: { state: 'on', sample_rate: 1, comparable: 1500, unexplained_difference: 0, uncomparable: 2, capability_missing: 0 },
     fingerprints: { checked_rows: 900, mismatches: 0, probe: { state: 'pass', checked_at: '2026-11-30T00:00:00Z', server_version: '16', collation: 'C' } },
     allocators: { verified: true, checked_at: '2026-11-30T00:00:00Z' },

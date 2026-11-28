@@ -92,6 +92,17 @@ function Postgres(a, b) {
     }
   })
 
+  // GBrain: the server backend pids of this pool's connections that have a live session (any queue but `closed`, and not
+  // while `connecting`, when the pid may still be the previous session's). Each is the pid the server sent over this
+  // connection's own socket, so a caller can tell its own backends in pg_stat_activity from another client's that copies
+  // its application_name. Read-only; a getter, so every read is current.
+  Object.defineProperty(sql, 'backend_pids', {
+    enumerable: false,
+    get() {
+      return connections.filter(c => c.queue !== closed && c.queue !== connecting && Number.isInteger(c.backend_pid)).map(c => c.backend_pid)
+    }
+  })
+
   Object.assign(sql, {
     get parameters() { return options.parameters },
     largeObject: largeObject.bind(null, sql),

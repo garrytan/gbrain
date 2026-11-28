@@ -8,6 +8,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
+import { policyHash, READINESS_POLICY } from '../src/core/engine-swap/policy.ts';
 
 const NOW = new Date('2026-12-01T00:00:00Z');
 
@@ -15,7 +16,7 @@ function ready(): ShadowStatus {
   return {
     epoch_id: 'e1', epoch_started_at: '2026-11-10T00:00:00Z',
     follower: { state: 'following', lag_ms: 0, lag_ms_p99_24h: 900, lag_ms_p99_epoch: 1200, queue_depth: 0, applied_rows: 5000, coverage_watermark: { valid: true, through: 'x', invalidated_reason: null } },
-    reconcile: { state: 'idle', consecutive_clean_full_passes: 3 },
+    reconcile: { state: 'idle', consecutive_clean_full_passes: 3, last_clean_full_pass_at: '2026-11-30T12:00:00Z' },
     write_comparisons: { state: 'on', sample_rate: 1, comparable: 1500, unexplained_difference: 0, uncomparable: 2, capability_missing: 0 },
     fingerprints: { checked_rows: 900, mismatches: 0, probe: { state: 'pass', checked_at: '2026-11-30T00:00:00Z', server_version: '16', collation: 'C' } },
     allocators: { verified: true, checked_at: '2026-11-30T00:00:00Z' },
@@ -179,8 +180,56 @@ describe('swap readiness', () => {
     expect(row(v, 11).state).not.toBe('pass');
   });
 
+  test('an invalid watermark names its reason and the last seal\'s in the criterion 1 detail (follower_behind)', () => {
+    const v = evaluateReadiness(edit((d) => {
+      d.follower!.coverage_watermark = { valid: false, through: null, invalidated_reason: 'seal_confirm_pending' };
+      (d.follower as Record<string, unknown>).seal = { outcome: 'not_sealed', reason: 'writes_since_verified', at: '2026-11-30T00:00:00Z' };
+    }), NOW);
+    expect(v.reason as string | null).toBe('follower_behind');
+    expect(row(v, 1).detail).toBe('the follower is behind: lag 0 ms, queue 0, coverage watermark invalid (seal_confirm_pending); last seal not_sealed (writes_since_verified)');
+    // A reason that is not a short code is left out, never echoed.
+    const odd = evaluateReadiness(edit((d) => { d.follower!.coverage_watermark = { valid: false, through: null, invalidated_reason: 'a b\nc' }; }), NOW);
+    expect(row(odd, 1).detail).toBe('the follower is behind: lag 0 ms, queue 0, coverage watermark invalid');
+  });
+
   test('a topology reason outranks every other failure', () => {
     const v = evaluateReadiness(edit(d => { d.eligibility!.writer_hosts_7d = 3; d.fingerprints!.probe!.state = 'fail'; d.follower!.lag_ms = 50; }), NOW);
     expect(v.reason).toBe('multiple_writer_hosts');
+  });
+  describe('criterion 1 needs a clean full pass that finished in the last 24 h (an evaluator rule, not a policy value)', () => {
+    const at = (iso: unknown) => (d: ShadowStatus) => { (d.reconcile as Record<string, unknown>).last_clean_full_pass_at = iso; };
+    test('a clean full pass that finished 23 h ago passes, and the detail says how long ago', () => {
+      const v = evaluateReadiness(edit(at('2026-11-30T01:00:00Z')), NOW);
+      expect(v.verdict).toBe('READY');
+      expect(row(v, 1).detail).toContain('last clean full pass 23.0 h ago');
+    });
+    test.each([
+      ['finished exactly 24 h ago', '2026-11-30T00:00:00Z', /last clean full pass finished 24\.0 h ago \(needs under 24 h\)/],
+      ['finished 3 days ago', '2026-11-28T00:00:00Z', /last clean full pass finished 72\.0 h ago/],
+      ['no clean full pass (null)', null, /no clean full pass has finished/],
+      ['a finish time in the future', '2026-12-01T00:00:01Z', /finish time is not before now/],
+      ['a finish time that is not a time', 'last night', /not a time: last night/],
+    ] as Array<[string, unknown, RegExp]>)('the last clean full pass %s fails criterion 1 and the verdict', (_name, value, detail) => {
+      const v = evaluateReadiness(edit(at(value)), NOW);
+      expect(v.verdict).toBe('NOT READY');
+      expect(v.reason).toBe('not_ready');
+      expect(row(v, 1).state).toBe('fail');
+      expect(row(v, 1).detail).toMatch(detail);
+      expect(v.criteria.filter(c => c.n !== 1 && c.gating).every(c => c.state === 'pass')).toBe(true);
+    });
+    test('three clean passes are not enough when the newest is stale, even with every other part of criterion 1 passing', () => {
+      const v = evaluateReadiness(edit(d => { d.reconcile!.consecutive_clean_full_passes = 30; at('2026-11-29T23:00:00Z')(d); }), NOW);
+      expect(row(v, 1).state).toBe('fail');
+    });
+    test('a status without the field (an older build) is missing evidence, never a pass', () => {
+      const v = evaluateReadiness(edit(d => { delete (d.reconcile as Record<string, unknown>).last_clean_full_pass_at; }), NOW);
+      expect(v.verdict).toBe('NOT READY');
+      expect(row(v, 1).state).toBe('missing');
+      expect(v.missing_fields).toContain('reconcile.last_clean_full_pass_at');
+    });
+    test('the rule changes no policy: READINESS_POLICY has no freshness field and policyHash is the frozen value', () => {
+      expect(Object.keys(READINESS_POLICY).sort()).toEqual(['approved_by', 'overrides', 'shadow_min', 'version']);
+      expect(policyHash(READINESS_POLICY)).toBe('69c02b309b037f6b');
+    });
   });
 });

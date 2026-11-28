@@ -241,6 +241,9 @@ export class ConnectionManager {
    */
   peekReadPool(): Sql | null { return this._readPool; }
 
+  /** The direct pool when it is already open, else null; never opens it (the shadow seal reads its connections' pids). */
+  peekDirectPool(): Sql | null { return this._directPool; }
+
   /**
    * Set the read pool. Used by db.ts:connect or PostgresEngine.connect when
    * they own the pool externally (and connection-manager is just routing).

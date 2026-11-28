@@ -259,27 +259,93 @@ describe('follow child', () => {
 });
 
 describe('reconciler schedule', () => {
-  test('a process that stays up checks the watermark a minute after start and runs a full pass only if it is invalid', async () => {
+  // A full pass starts with 'state' again (its barrier) and stops at seedPlan here.
+  async function firstCheck(o: { valid: boolean; lastFullAgoMs?: number; lastFullAt?: string; progress?: boolean; ready?: () => Promise<void> }) {
+    const dir = tmp();
+    if (o.lastFullAgoMs !== undefined || o.lastFullAt !== undefined) {
+      const at = o.lastFullAt ?? new Date(Date.now() - o.lastFullAgoMs!).toISOString();
+      appendPass(dir, { id: 'p', kind: 'full', started_at: at, finished_at: at, repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0 });
+    }
+    if (o.progress) { mkdirSync(join(dir, 'reconcile'), { recursive: true }); writeFileSync(join(dir, 'reconcile', 'progress.json'), JSON.stringify({ version: 1 })); }
+    const calls: string[] = [];
+    const rpc = (async (method: string) => {
+      calls.push(method);
+      if (method === 'state') return { valid: o.valid, through: null, invalidated_reason: null };
+      throw Object.assign(new Error('stop here'), { code: 'stopped' });
+    }) as never;
+    const reconciler = new Reconciler({ dir, rpc, ready: o.ready, reads: { pauseMs: 0, read: async () => { throw new Error('no reads'); }, close: async () => undefined } });
+    reconciler.startNightly();
+    return { calls, reconciler };
+  }
+  const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+
+  test('a process that stays up checks the watermark five seconds after start (a short serve session lasts 10-20 s) and runs a full pass if it is invalid', async () => {
     jest.useFakeTimers();
     try {
       for (const valid of [false, true]) {
-        const calls: string[] = [];
-        const rpc = (async (method: string) => {
-          calls.push(method);
-          if (method === 'state') return { valid, through: null, invalidated_reason: null };
-          throw Object.assign(new Error('stop here'), { code: 'stopped' });
-        }) as never;
-        const reconciler = new Reconciler({ dir: tmp(), rpc, reads: { pauseMs: 0, read: async () => { throw new Error('no reads'); }, close: async () => undefined } });
-        reconciler.startNightly();
-        jest.advanceTimersByTime(59_000);
-        await Promise.resolve();
+        const { calls, reconciler } = await firstCheck({ valid, lastFullAgoMs: 60_000 });
+        jest.advanceTimersByTime(4_000);
+        await flush();
         expect(calls).toEqual([]);
         jest.advanceTimersByTime(2_000);
-        for (let i = 0; i < 20; i++) await Promise.resolve();
-        // 'state' answers the check; a full pass then starts with 'state' again (its barrier) and stops at seedPlan.
+        await flush();
         expect(calls.includes('seedPlan')).toBe(!valid);
         reconciler.stop();
       }
+    } finally { jest.useRealTimers(); }
+  });
+
+  test('a valid watermark still gets a full pass at the first check when none ran, the last is 24 h old, or one was left half done', async () => {
+    jest.useFakeTimers();
+    try {
+      for (const o of [{ valid: true }, { valid: true, lastFullAgoMs: 25 * 3_600_000 }, { valid: true, lastFullAgoMs: 60_000, progress: true }]) {
+        const { calls, reconciler } = await firstCheck(o);
+        jest.advanceTimersByTime(6_000);
+        await flush();
+        expect(calls.includes('seedPlan')).toBe(true);
+        reconciler.stop();
+      }
+    } finally { jest.useRealTimers(); }
+  });
+
+  test('a last full pass that finished in the future (a clock set back) or at an unreadable time makes a full pass due, at the first check and at the 15-minute tick', async () => {
+    jest.useFakeTimers();
+    try {
+      const times = [new Date(Date.now() + 3_600_000).toISOString(), new Date(Date.now() + 30 * 86_400_000).toISOString(), 'not-a-time'];
+      for (const lastFullAt of times) {
+        const first = await firstCheck({ valid: true, lastFullAt });
+        jest.advanceTimersByTime(6_000);
+        await flush();
+        expect({ lastFullAt, at: 'first check', ran: first.calls.includes('seedPlan') }).toEqual({ lastFullAt, at: 'first check', ran: true });
+        first.reconciler.stop();
+        // The tick on its own: the first check never gets past its wait.
+        const tick = await firstCheck({ valid: true, lastFullAt, ready: () => new Promise<void>(() => undefined) });
+        jest.advanceTimersByTime(15 * 60_000 + 1_000);
+        await flush();
+        expect({ lastFullAt, at: 'tick', ran: tick.calls.includes('seedPlan') }).toEqual({ lastFullAt, at: 'tick', ran: true });
+        tick.reconciler.stop();
+      }
+    } finally { jest.useRealTimers(); }
+  });
+
+  test('the first check waits for the seal confirmation, and a process stopped before it runs nothing', async () => {
+    jest.useFakeTimers();
+    try {
+      let release!: () => void;
+      const ready = new Promise<void>((resolve) => { release = resolve; });
+      const { calls, reconciler } = await firstCheck({ valid: false, ready: () => ready });
+      jest.advanceTimersByTime(6_000);
+      await flush();
+      expect(calls).toEqual([]);
+      release();
+      await flush();
+      expect(calls.includes('seedPlan')).toBe(true);
+      reconciler.stop();
+      const second = await firstCheck({ valid: false, ready: () => ready });
+      second.reconciler.stop();
+      jest.advanceTimersByTime(6_000);
+      await flush();
+      expect(second.calls).toEqual([]);
     } finally { jest.useRealTimers(); }
   });
 });
@@ -379,10 +445,22 @@ describe('follow status', () => {
     expect(buildFollowStatus(dir, STATE, NOW).follower.applied_rows).toBe(0);
   });
 
-  test('reconcile fields: state, trailing clean full passes, next full pass due', () => {
+  test('a pass is recorded once: a second record with the same pass id is not appended, so it cannot count as another clean pass', () => {
     const dir = tmp();
     withFile(dir, {});
-    expect(buildFollowStatus(dir, STATE, NOW).reconcile).toEqual({ state: 'never_run', last_pass: null, consecutive_clean_full_passes: 0, next_full_pass_due: null });
+    const at = '2026-01-01T01:00:00.000Z';
+    const rec = { id: 'pass-once', kind: 'full' as const, started_at: at, finished_at: at, repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0 };
+    appendPass(dir, rec);
+    appendPass(dir, { ...rec, finished_at: '2026-01-01T02:00:00.000Z' });
+    appendPass(dir, rec);
+    expect(readFileSync(join(dir, 'reconcile', 'passes.jsonl'), 'utf8').trim().split('\n')).toHaveLength(1);
+    expect(buildFollowStatus(dir, STATE, NOW).reconcile).toMatchObject({ consecutive_clean_full_passes: 1, last_clean_full_pass_at: at });
+  });
+
+  test('reconcile fields: state, trailing clean full passes, the newest clean full pass, next full pass due', () => {
+    const dir = tmp();
+    withFile(dir, {});
+    expect(buildFollowStatus(dir, STATE, NOW).reconcile).toEqual({ state: 'never_run', last_pass: null, consecutive_clean_full_passes: 0, last_clean_full_pass_at: null, next_full_pass_due: null });
     const pass = (kind: 'full' | 'dirty', repaired: number, at: string, error?: string) => appendPass(dir, {
       id: `p-${at}`, kind, started_at: at, finished_at: at, repaired_rows: repaired, repaired_by_relation: repaired ? { pages: repaired } : {}, follower_misses: repaired, ...(error ? { error } : {}),
     });
@@ -392,9 +470,16 @@ describe('follow status', () => {
     pass('full', 0, '2026-01-01T04:00:00.000Z');
     const s = buildFollowStatus(dir, STATE, NOW).reconcile;
     expect(s).toMatchObject({ state: 'ok', consecutive_clean_full_passes: 2, next_full_pass_due: '2026-01-02T04:00:00.000Z' });
+    // The finish time of the newest full pass, because it is clean; the dirty pass after a full one does not change it.
+    expect(s.last_clean_full_pass_at).toBe('2026-01-01T04:00:00.000Z');
+    pass('dirty', 0, '2026-01-01T04:30:00.000Z');
+    expect(buildFollowStatus(dir, STATE, NOW).reconcile.last_clean_full_pass_at).toBe('2026-01-01T04:00:00.000Z');
     expect(s.last_pass).toMatchObject({ kind: 'full', repaired_rows: 0 });
     pass('full', 0, '2026-01-01T05:00:00.000Z', 'allocator_check:x');
-    expect(buildFollowStatus(dir, STATE, NOW).reconcile).toMatchObject({ state: 'error', consecutive_clean_full_passes: 0 });
+    // A newest full pass that errored (or repaired rows) is not clean: no clean time, even though an older one was clean.
+    expect(buildFollowStatus(dir, STATE, NOW).reconcile).toMatchObject({ state: 'error', consecutive_clean_full_passes: 0, last_clean_full_pass_at: null });
+    pass('full', 2, '2026-01-01T06:00:00.000Z');
+    expect(buildFollowStatus(dir, STATE, NOW).reconcile).toMatchObject({ state: 'repaired', consecutive_clean_full_passes: 0, last_clean_full_pass_at: null });
   });
 });
 
@@ -455,7 +540,7 @@ describe('shadowReadiness (the S5a reading rules)', () => {
   const good = (): FollowStatus => ({
     epoch_id: 'e', epoch_started_at: 't',
     follower: { state: 'following', action: null, lag_ms: 0, lag_ms_p99_24h: 4, lag_ms_p99_epoch: 4, queue_depth: 0, applied_rows: 1, coverage_watermark: { valid: true, through: 't', invalidated_reason: null } },
-    reconcile: { state: 'ok', last_pass: null, consecutive_clean_full_passes: 1, next_full_pass_due: null },
+    reconcile: { state: 'ok', last_pass: null, consecutive_clean_full_passes: 1, last_clean_full_pass_at: 't', next_full_pass_due: null },
     write_comparisons: { state: 'capability_missing', sample_rate: 1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
     fingerprints: { checked_rows: 1, mismatches: 0, probe: { ...NOT_RUN_PROBE, state: 'pass', checked_at: 't', server_version: '17', collation: 'C' } },
     seed: { seed_id: 'e', finished_at: 't', unseeded_gap_rows_total: 0 }, allocators: { verified: true, checked_at: 't' },
@@ -569,5 +654,17 @@ describe('the follower\'s two write counts', () => {
     f.publish(batch(7, [unmapped('declarePersistence'), { kind: 'invalid', reason: 'unparsable:error' }]));
     expect([f.published, f.pageLinkWrites]).toEqual([7, 4]);
     await f.settle();
+  });
+
+  test('after `close()` both publish rules hold: a bookkeeping-only batch does not move `pageLinkWrites` but is still booked lost (no seed plan read, so every write counts), and a page row moves both', async () => {
+    const lost: string[] = [];
+    const f = new ShadowFollower({ reads: { pauseMs: 0, read: async () => { throw new Error('no reads'); }, close: async () => {} } as never, send: () => true, rpc: async () => { throw new Error('no child'); }, onLost: (reason: string) => lost.push(reason) } as never);
+    f.close();
+    f.publish(batch(1, [{ kind: 'invalid', reason: 'unmapped_write:declarePersistence' }]));
+    expect([f.published, f.pageLinkWrites]).toEqual([1, 0]);
+    expect(lost).toEqual(['published_after_close']); // no plan read yet, so the closed follower cannot tell it is not followed
+    f.publish(batch(2, [rows('pages')]));
+    expect([f.published, f.pageLinkWrites]).toEqual([2, 1]);
+    expect(lost).toEqual(['published_after_close', 'published_after_close']);
   });
 });

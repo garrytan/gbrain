@@ -11,7 +11,7 @@ import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { withoutCallerAccess } from '../../src/core/search/private-visibility.ts';
-import { attachShadowParts, type AttachedShadow } from '../../src/shadow/attach.ts';
+import { attachShadowParts, type AttachedShadow, type AttachShadowDeps } from '../../src/shadow/attach.ts';
 import { runShadowChild, type ShadowChildDeps } from '../../src/shadow/child.ts';
 import type { FollowStore } from '../../src/shadow/follow-child.ts';
 import { writeSeedRecord, type SeedRecord } from '../../src/shadow/seed.ts';
@@ -59,11 +59,17 @@ export interface RigOptions {
   supervisor?: Record<string, unknown>;
   /** Keep the brain unseeded: no follower, no epoch. */
   unseeded?: boolean;
+  /** A brain dir to reuse (a restart of the serving process on the same brain); default a new one. */
+  dir?: string;
+  /** More attach deps (the seal-check seam). */
+  attach?: Partial<AttachShadowDeps>;
+  /** Shadow state the rig attaches with (default: a PGLite primary, started_at 'x'). */
+  state?: Record<string, unknown>;
 }
 
 export async function startRig(opts: RigOptions): Promise<Rig> {
   const o: RigOptions = { ...opts, child: { sleep: async () => {}, ...opts.child } }; // no wait before a rerun unless a test asks for one
-  const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-rig-'));
+  const dir = o.dir ?? mkdtempSync(join(tmpdir(), 'gbrain-shadow-rig-'));
   if (!o.unseeded) writeSeedRecord(dir, SEED);
   const rust: Rig['rust'] = {};
   const applied: Rig['applied'] = [];
@@ -95,8 +101,8 @@ export async function startRig(opts: RigOptions): Promise<Rig> {
     })); // a real child is another process: it inherits no caller record from the writer's async context
     return proc as unknown as ChildProcess;
   }) as never;
-  const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' };
-  const attached = attachShadowParts(o.primary, dir, state as never, { gbrainArgv: ['never'], supervisor: { spawn: spawn as never, stillEnabled: () => true, minBackoffMs: 0, maxBackoffMs: 0, ...o.supervisor } });
+  const state = o.state ?? { version: 1, enabled: true, started_at: 'x', sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' };
+  const attached = attachShadowParts(o.primary, dir, state as never, { gbrainArgv: ['never'], ...o.attach, supervisor: { spawn: spawn as never, stillEnabled: () => true, minBackoffMs: 0, maxBackoffMs: 0, ...o.supervisor } });
   await attached.lsnWatch.ready(); // a sample captured from here on carries the freshness token it is held to
   const seen: Array<Record<string, unknown>> = [];
   const waiting: Array<Record<string, unknown>> = [];

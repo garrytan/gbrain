@@ -57,6 +57,47 @@ export interface FollowerFile {
   fingerprints: { checked_rows: number; mismatches: number };
   probe: ProbeRecord;
   allocators: { verified: boolean; checked_at: string | null };
+  /**
+   * Names the unbroken run of owner sessions this file belongs to: a new one is drawn whenever an owner session cannot
+   * prove it continues the one before it (follow-child.ts). A reconcile pass left half done resumes only under the same one.
+   */
+  continuity?: string;
+  /** What a clean close left for the next owner session (follow-child.ts); trusted only while `seal.at` equals `updated_at`. */
+  seal?: FollowerSeal;
+  /** The last seal decision and its reason code (status `follower.seal`): every refusal is named, none is silent. */
+  seal_outcome?: SealOutcome;
+}
+
+/** The reason PGLite never takes a seal over: it has no proof of database continuity between sessions (seal.ts). */
+export const PGLITE_NO_DB_CONTINUITY = 'pglite_no_db_continuity';
+
+/**
+ * The last seal decision: `sealed` / `not_sealed` at a close, `taken` / `refused` at the next owner's start, `confirmed`
+ * / `refused` once its serving process checked the primary. `reason` is null for sealed, taken and confirmed.
+ */
+export interface SealOutcome { outcome: 'sealed' | 'not_sealed' | 'taken' | 'confirmed' | 'refused'; reason: string | null; at: string }
+
+/**
+ * Written by an owner child when its serving process closed cleanly: every write it was handed is applied or held as an
+ * obligation below, and nothing was left unread in follower-invalidations.jsonl. The next owner session takes the
+ * obligations over instead of starting from a full one, after the checks in follow-child.ts `takeSeal` and seal.ts.
+ */
+export interface FollowerSeal {
+  version: 1;
+  /** Equal to the file's `updated_at` when written: any later write of the file by anything else breaks the seal. */
+  at: string;
+  continuity: string;
+  /** Size of follower-invalidations.jsonl at the seal: a line appended after it means a write this seal never saw. */
+  foreign_size: number;
+  /** The obligations (follow-child.ts `fullAt` and `dirty`) and the watermark at the seal. */
+  full_at: number | null;
+  dirty: Record<string, number>;
+  watermark: Watermark;
+  /** state.json `started_at` at the seal: a stop and start in between breaks it. */
+  state_started_at: string | null;
+  evidence_epoch: string | null;
+  /** The primary's clock at the seal (Postgres with writer hooks; null on PGLite): seal.ts checks for writers after it. */
+  db_at: string | null;
 }
 
 export interface PassRecord {
@@ -109,8 +150,10 @@ export function writeFollowerFile(dir: string, file: FollowerFile): void {
   renameSync(tmp, followerPath(dir));
 }
 
+/** Appends a pass record once: a record whose pass id is already in the log is not appended again (one scan, one count). */
 export function appendPass(dir: string, pass: PassRecord): void {
   mkdirSync(join(dir, 'reconcile'), { recursive: true, mode: 0o700 });
+  if (readPasses(dir).some((p) => p.id === pass.id)) return;
   const epoch_id = pass.epoch_id ?? readEpoch(dir)?.epoch_id;
   appendFileSync(passesPath(dir), JSON.stringify(epoch_id ? { ...pass, epoch_id } : pass) + '\n', { mode: 0o600 });
 }
@@ -121,17 +164,45 @@ export function readPasses(dir: string): PassRecord[] {
   return readFileSync(passesPath(dir), 'utf8').split('\n').flatMap((line) => { try { return line ? [JSON.parse(line) as PassRecord] : []; } catch { return []; } });
 }
 
+/** A full pass's resume point (reconcile.ts `PassProgress`), written by rename after each interval. */
+export const progressPath = (dir: string): string => join(dir, 'reconcile', 'progress.json');
+
+/**
+ * The record a full pass still owes the pass log: its resume point holds repairs or follower misses, and no record with
+ * its id is in `logged` (its stopped record could not be appended). Those repairs are evidence the store drifted, and
+ * the store now holds them, so no later scan finds them again: until a pass puts the record on the log
+ * (reconcile.ts), the status and writer coverage count it as a stopped full pass. A missing or torn resume point owes
+ * nothing. The pass log is read only when the resume point holds a repair or miss.
+ */
+export function unrecordedStoppedPass(dir: string, logged?: PassRecord[]): PassRecord | null {
+  let p: Record<string, unknown> | null;
+  try { p = JSON.parse(readFileSync(progressPath(dir), 'utf8')) as Record<string, unknown> | null; } catch { return null; } // silent-read-ok: no resume point (missing, or torn though it is only written by rename) holds no counts to owe
+  if (!p || typeof p !== 'object' || p.version !== 1 || typeof p.id !== 'string' || typeof p.started_at !== 'string') return null;
+  const repaired = typeof p.repaired_rows === 'number' ? p.repaired_rows : 0;
+  const misses = typeof p.follower_misses === 'number' ? p.follower_misses : 0;
+  if (repaired <= 0 && misses <= 0) return null;
+  const id = p.id;
+  if ((logged ?? readPasses(dir)).some((r) => r.id === id)) return null;
+  const byRelation = p.repaired_by_relation && typeof p.repaired_by_relation === 'object' ? p.repaired_by_relation as Record<string, number> : {};
+  const epoch_id = typeof p.epoch_id === 'string' ? p.epoch_id : readEpoch(dir)?.epoch_id;
+  return { id, kind: 'full', started_at: p.started_at, finished_at: p.started_at, repaired_rows: repaired, repaired_by_relation: { ...byRelation }, follower_misses: misses, error: 'stopped', ...(epoch_id ? { epoch_id } : {}) };
+}
+
 export interface FollowStatus {
   epoch_id: string | null;
   epoch_started_at: string | null;
   follower: {
     state: 'not_seeded' | 'needs_reseed' | 'stopped' | 'invalid' | 'behind' | 'following'; action: string | null; lag_ms: number | null; lag_ms_p99_24h: number | null;
     lag_ms_p99_epoch: number | null; queue_depth: number; applied_rows: number; coverage_watermark: Watermark;
+    /** The last seal decision (follower.json `seal_outcome`), when one was made. */
+    seal?: SealOutcome;
   };
   reconcile: {
     state: 'never_run' | 'ok' | 'repaired' | 'error';
     last_pass: Omit<PassRecord, 'error'> | null;
     consecutive_clean_full_passes: number;
+    /** When the newest full pass of the epoch finished, if it was clean; null otherwise. Criterion 1 needs it under 24 h old. */
+    last_clean_full_pass_at: string | null;
     next_full_pass_due: string | null;
   };
   /**
@@ -181,7 +252,9 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
   const windowsLost = Math.max(writes?.uncomparable_by_reason?.write_window_lost ?? 0, snapshot.windowFiles); // windows a crash lost, of unknown size: no evidence for the rest of this epoch (not in `unresolved`: nothing will ever settle them, so the swap's wait must not wait for them)
   const pendingMarkers = snapshot.outstanding.filter((n) => /^write-pending\.[A-Za-z0-9_-]+\.json$/.test(n)).map((n) => join(dir, n)); // by path: the operator step names the file
   const unresolved = (writes?.in_flight.length ?? 0) + snapshot.unfolded + receipts.length + unrecorded + snapshot.outstanding.length + (snapshot.unstable ? 1 : 0) + legacy; // a lost sample no tally has taken yet reads as no evidence, like a replay with no verdict
-  const everyPass = readPasses(dir);
+  const logged = readPasses(dir);
+  const owed = unrecordedStoppedPass(dir, logged); // a stopped repair only the resume point holds counts as the stopped pass it was
+  const everyPass = owed ? [...logged, owed] : logged;
   const passes = epoch ? everyPass.filter((p) => p.epoch_id === epoch.epoch_id && Date.parse(p.started_at) >= Date.parse(epoch.started_at)) : everyPass;
   const last = passes.at(-1) ?? null;
   const fulls = passes.filter((p) => p.kind === 'full');
@@ -208,12 +281,15 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
     follower: {
       state: followerState, action: followerState === 'needs_reseed' ? RESEED_STEPS : null, lag_ms: live ? live.lag_ms : null, lag_ms_p99_24h: lagP99(last24), lag_ms_p99_epoch: lagP99(counted?.lag.epoch ?? []),
       queue_depth: queue, applied_rows: live?.applied_rows ?? 0, coverage_watermark: watermark,
+      ...(live?.seal_outcome ? { seal: live.seal_outcome } : {}),
     },
     reconcile: {
       state: !last ? 'never_run' : error ? 'error' : last.repaired_rows > 0 ? 'repaired' : 'ok',
       last_pass: last ? lastPass : null,
       consecutive_clean_full_passes: clean,
-      next_full_pass_due: lastFull ? new Date(Date.parse(lastFull.finished_at) + NIGHTLY_MS).toISOString() : null,
+      last_clean_full_pass_at: clean > 0 ? lastFull!.finished_at : null,
+      // A stopped full pass did not finish, so the next one is due at once (reconcile.ts `fullPassDue`).
+      next_full_pass_due: !lastFull ? null : lastFull.error === 'stopped' ? lastFull.finished_at : new Date(Date.parse(lastFull.finished_at) + NIGHTLY_MS).toISOString(),
     },
     write_comparisons: {
       state: writes && !unresolved && !windowsLost && writes.comparable + writes.unexplained_difference > 0 ? 'measured' : 'capability_missing', sample_rate: state ? writeSampleRate(state) : null,
@@ -240,8 +316,9 @@ export function renderFollowStatus(s: FollowStatus): string[] {
   const w = f.coverage_watermark;
   const lines = [f.action ? `  follower: this brain needs a reseed (its seed was written before follow existed, so nothing is followed): ${f.action}` : `  follower: ${f.state}; applied rows ${f.applied_rows}; queue ${f.queue_depth}; lag ${f.lag_ms ?? 'unknown'} ms (p99 24h ${f.lag_ms_p99_24h ?? '-'}, epoch ${f.lag_ms_p99_epoch ?? '-'})`];
   lines.push(`  coverage watermark: ${w.valid ? `valid through ${w.through ?? '-'}` : `invalid (${w.invalidated_reason ?? 'unknown'})`}`);
+  if (f.seal) lines.push(`  seal: ${f.seal.outcome}${f.seal.reason ? ` (${f.seal.reason})` : ''} at ${f.seal.at}`);
   const r = s.reconcile;
-  lines.push(`  reconcile: ${r.state}; clean full passes in a row ${r.consecutive_clean_full_passes}; next full pass ${r.next_full_pass_due ?? 'when one runs'}`);
+  lines.push(`  reconcile: ${r.state}; clean full passes in a row ${r.consecutive_clean_full_passes}; last clean full pass ${r.last_clean_full_pass_at ?? 'none'}; next full pass ${r.next_full_pass_due ?? 'when one runs'}`);
   if (r.last_pass) lines.push(`    last pass ${r.last_pass.kind} ${r.last_pass.finished_at}: repaired ${r.last_pass.repaired_rows}, follower misses ${r.last_pass.follower_misses}`);
   lines.push(`  fingerprints (epoch): checked ${s.fingerprints.checked_rows}, mismatches ${s.fingerprints.mismatches}; probe ${s.fingerprints.probe.state}`);
   const wc = s.write_comparisons;

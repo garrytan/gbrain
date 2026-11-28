@@ -69,6 +69,8 @@ export interface ShadowSupervisorOptions {
   onDirty?: (relation: string) => void;
   /** The child asks the serving process a question (privacy check, stable rerun, vector reference; checks.ts); the value goes back as an `answer` line. */
   onAsk?: (ask: { id: number; kind: string; [key: string]: unknown }) => Promise<unknown>;
+  /** A child was spawned (each restart too): attach.ts asks it whether the last session's seal holds (seal.ts). */
+  onStart?: () => void;
 }
 
 /** The longest one question of the child may hold the serving process (past the 30 s a stable rerun is allowed): its own signal cancels its reads then. */
@@ -146,7 +148,7 @@ export class ShadowSupervisor implements MirrorTransport {
   private closedRecord = false; // a closed record was made durable for this session: later records stay closed
   private stdinRef: (NodeJS.WritableStream & { writableFinished?: boolean }) | null = null;
   private readonly drainWaiters = new Set<() => void>();
-  private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk'>;
+  private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk' | 'onStart'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty' | 'onAsk' | 'onStart'>;
 
   constructor(opts: ShadowSupervisorOptions) {
     this.o = {
@@ -532,6 +534,7 @@ export class ShadowSupervisor implements MirrorTransport {
       child.on('error', (error) => { this.fault('spawn_failed', error instanceof Error ? error.name : 'unknown'); this.onExit(child, null, 'error'); });
       child.on('exit', (code, signal) => this.onExit(child, code, signal));
       this.armWatchdog();
+      try { this.o.onStart?.(); } catch { /* best effort */ }
     } catch (error) {
       this.child = null;
       this.fault('spawn_failed', error instanceof Error ? error.name : 'unknown');

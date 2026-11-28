@@ -1,0 +1,975 @@
+/**
+ * Shadow follow, carrying a clean follower from one serving process to the next (follow-child.ts "Sealing", seal.ts),
+ * without the Rust addon: the follow child against a fake store, and seal.ts against a fake read source.
+ *
+ * Protects: a short serve session that closed cleanly hands its obligations to the next one, and that next session is
+ * valid only once its serving process confirms nobody else wrote. Every doubt leaves the watermark invalid until a full
+ * pass: no seal, a seal rewritten or used twice, another seed, evidence epoch or state.json start, a seal without a
+ * continuity, an invalidation line left after the seal (a lost write), a seal written while a line was unread, a
+ * writer or coverage gap recorded after the mark, an unreadable mark or follower.json, a broken hook, a failed read.
+ * Regression it catches: a restart trusted on its own word. The real-database path: test/e2e/shadow-serve-short-sessions.test.ts.
+ */
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { FollowChild, lostWriteRecorder, noteLostWrite, type FollowStore } from '../src/shadow/follow-child.ts';
+import * as followChild from '../src/shadow/follow-child.ts';
+import * as followStatus from '../src/shadow/follow-status.ts';
+import { appendPass, buildFollowStatus, readFollowerFile, readPasses } from '../src/shadow/follow-status.ts';
+import type { ReadSource } from '../src/shadow/read-pool.ts';
+import { ShadowFollower } from '../src/shadow/follower.ts';
+import { Reconciler } from '../src/shadow/reconcile.ts';
+import { confirmSeal, quietSince, readBasis, sealMark } from '../src/shadow/seal.ts';
+import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
+import { SHADOW_STATE_VERSION, writeShadowState, type ShadowState } from '../src/shadow/state.ts';
+import { WRITER_HOOK_TRIGGER, writerHooksManifestPath } from '../src/shadow/writer-hooks.ts';
+
+const dirs: string[] = [];
+afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+const FOREIGN = 'follower-invalidations.jsonl';
+const tmp = (): string => { const d = mkdtempSync(join(tmpdir(), 'gbrain-follow-seal-')); dirs.push(d); return d; };
+
+const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as unknown as SeedRecord;
+const STATE = { version: SHADOW_STATE_VERSION, enabled: true, started_at: 'state-start-1', sample_rate: 0.1, queue_bound: 1, plan_hash: 'h', brain: 'b', primary_engine: 'postgres' } as ShadowState;
+const RESULT = { upserted: 1, deleted: 0, skipped_older: 0, displaced: 0, dropped: 0, unmapped_columns: [], losses: {} };
+const store = (): FollowStore => ({
+  replaceRelationRows: async () => RESULT, replaceInterval: async () => RESULT, relationDigest: async () => ({ rows: 0, digest: '' }),
+  relationEntries: async () => [], allocatorCheck: async () => [], factFingerprints: async (texts) => texts.map(() => ({ fingerprint: 'a', fingerprint_v1: 'b' })),
+  seedPlan: async () => ({ relations: [], carried: [], not_copied: [], gap_columns: [] }) as never,
+});
+const rpc = (id: number, method: string, args: Record<string, unknown> = {}) => ({ t: 'rpc' as const, id, method, args });
+const apply = (committed_at: number) => ({ t: 'apply' as const, seq: 1, committed_at, relation: 'pages', generation: 1, keys: [], rows: [{ fact: 'x' }], digests: [] });
+
+interface Session { child: FollowChild; lines: Array<Record<string, unknown>>; ask: <T = Record<string, unknown>>(method: string, args?: Record<string, unknown>) => Promise<T> }
+function session(dir: string, o: { clock?: () => number; epoch?: string | null } = {}): Session {
+  const lines: Array<Record<string, unknown>> = [];
+  const child = new FollowChild({ dir, store: async () => store(), owner: () => true, writeControl: (l) => lines.push(JSON.parse(l)), now: o.clock ?? (() => 1_000), ...(o.epoch !== undefined ? { epochId: () => o.epoch! } : {}) });
+  let id = 0;
+  const ask = async <T,>(method: string, args: Record<string, unknown> = {}): Promise<T> => {
+    const n = ++id;
+    child.handle(rpc(n, method, args));
+    await child.close();
+    const line = lines.find((l) => l.id === n) as { value: T };
+    return line.value;
+  };
+  return { child, lines, ask };
+}
+
+/** A brain dir whose last owner session became valid and closed with a seal (`db_at` is the mark it was given). */
+async function sealed(o: { epoch?: string | null; dbAt?: string | null; refused?: string; beforeSeal?: (s: Session, dir: string) => void | Promise<void> } = {}): Promise<{ dir: string; continuity: string }> {
+  const dir = tmp();
+  writeSeedRecord(dir, SEED);
+  writeShadowState(dir, STATE);
+  const s = session(dir, { clock: () => 1_000, epoch: o.epoch });
+  expect(await s.ask('watermark', { valid: true, since: 1_500 })).toMatchObject({ valid: true });
+  const continuity = (await s.ask<{ continuity: string }>('state')).continuity;
+  expect(typeof continuity).toBe('string');
+  await o.beforeSeal?.(s, dir);
+  s.child.handle(o.refused ? { t: 'seal', db_at: null, refused: o.refused } as never : { t: 'seal', db_at: o.dbAt === undefined ? 'mark-1' : o.dbAt });
+  await s.child.close();
+  return { dir, continuity };
+}
+
+/** What status shows about the last seal decision (follower.json `seal_outcome`, status `follower.seal`). */
+const sealShown = (dir: string) => buildFollowStatus(dir, STATE, new Date(5_000)).follower.seal ?? null;
+
+type State = { valid: boolean; invalidated_reason: string | null; continuity: string | null; pending_seal: { db_at: string | null } | null };
+const next = (dir: string, epoch?: string | null): Session => session(dir, { clock: () => 5_000, epoch });
+
+/** Asserts the session took no seal: invalid for its own start, nothing to confirm, a continuity of its own. */
+async function refused(s: Session, continuity: string, reason = 'follower_session_start'): Promise<void> {
+  const st = await s.ask<State>('state');
+  expect(st).toMatchObject({ valid: false, invalidated_reason: reason, pending_seal: null });
+  expect(st.continuity).not.toBe(continuity);
+  // Confirming anyway changes nothing.
+  expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, confirmed: false });
+}
+
+describe('a sealed close', () => {
+  test('the next session takes it over, stays invalid until its serving process confirms the mark, then is valid under the same continuity', async () => {
+    const { dir, continuity } = await sealed();
+    expect(readFollowerFile(dir)!.seal).toMatchObject({ version: 1, continuity, db_at: 'mark-1', state_started_at: 'state-start-1' });
+    const s = next(dir);
+    expect(await s.ask<State>('state')).toMatchObject({ valid: false, invalidated_reason: 'follower_session_start', continuity: null, pending_seal: { db_at: 'mark-1' } });
+    expect(readFollowerFile(dir)!.seal).toBeUndefined(); // consumed at the start
+    expect(sealShown(dir)).toMatchObject({ outcome: 'taken', reason: null });
+    expect(await s.ask('confirmSeal', { db_at: 'other-mark', ok: true })).toMatchObject({ valid: false, confirmed: false }); // not this seal's mark
+    // Two phases: the confirmation is held invalid until the commit the serving process sends after its second read.
+    expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, invalidated_reason: 'seal_confirm_pending', confirmed: true });
+    expect(await s.ask<State>('state')).toMatchObject({ valid: false, continuity: null, pending_seal: { db_at: 'mark-1' } });
+    expect(await s.ask('commitSeal', { db_at: 'mark-1' })).toMatchObject({ valid: true, confirmed: true });
+    expect(await s.ask<State>('state')).toMatchObject({ valid: true, continuity, pending_seal: null });
+    expect(sealShown(dir)).toMatchObject({ outcome: 'confirmed', reason: null });
+  });
+
+  test('a seal carries the watermark, never a reconcile pass: no pass is appended and the newest clean full pass stays the one before', async () => {
+    const finished = '2026-01-01T00:02:00.000Z';
+    const { dir } = await sealed({ beforeSeal: (_s, d) => { appendPass(d, { id: 'p-1', kind: 'full', started_at: '2026-01-01T00:01:30.000Z', finished_at: finished, repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0 }); } });
+    const s = next(dir);
+    expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, confirmed: true });
+    expect(await s.ask('commitSeal', { db_at: 'mark-1' })).toMatchObject({ valid: true, confirmed: true });
+    expect(readPasses(dir).map((p) => p.id)).toEqual(['p-1']);
+    // Criterion 1's 24 h rule reads this time: carrying a seal over does not make the last pass any newer.
+    expect(buildFollowStatus(dir, STATE, new Date('2026-01-03T00:00:00.000Z')).reconcile).toMatchObject({ consecutive_clean_full_passes: 1, last_clean_full_pass_at: finished });
+  });
+
+  test('an obligation the sealing session still held is carried over: confirmed, the next session is still invalid until a pass', async () => {
+    const { dir } = await sealed({ beforeSeal: (s) => { s.child.handle({ t: 'watermark', valid: false, reason: 'relation_dirty', relation: 'tags' }); } });
+    const s = next(dir);
+    expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, confirmed: true });
+    expect(await s.ask('commitSeal', { db_at: 'mark-1' })).toMatchObject({ valid: false, invalidated_reason: 'relation_dirty', confirmed: true });
+    expect(await s.ask('watermark', { valid: true, since: 6_000, relations: ['tags'] })).toMatchObject({ valid: true });
+  });
+
+  test('taking a seal over writes the provisional invalid watermark in the same first write that consumes the seal: on disk before any call or close', async () => {
+    const { dir } = await sealed();
+    expect(readFollowerFile(dir)!.watermark.valid).toBe(true);
+    next(dir); // constructed only: no call, no close (a process killed here leaves exactly this on disk)
+    const disk = readFollowerFile(dir)!;
+    expect(disk.seal).toBeUndefined();
+    expect(disk.watermark).toMatchObject({ valid: false, invalidated_reason: 'follower_session_start' });
+    expect(disk.seal_outcome).toMatchObject({ outcome: 'taken', reason: null });
+    expect(buildFollowStatus(dir, STATE, new Date(5_500)).follower.coverage_watermark.valid).toBe(false);
+  });
+
+  test('a failed first write never freshens the valid file, and leaves a blocker so a later session cannot take the seal it could not remove', async () => {
+    const { dir, continuity } = await sealed();
+    const before = readFollowerFile(dir)!;
+    let failed = 0;
+    // Every write of the taking session fails (a full disk), then it dies before any other write.
+    const spy = spyOn(followStatus, 'writeFollowerFile').mockImplementation(() => { failed++; throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); });
+    try { next(dir); } finally { spy.mockRestore(); }
+    expect(failed).toBe(2); // the injected failure fired: the consuming write, then the refusal's write
+    const disk = readFollowerFile(dir)!;
+    expect(disk.updated_at).toBe(before.updated_at); // not freshened
+    expect(disk.seal).toBeDefined(); // the seal could not be removed
+    // The session that failed died without another write; the next one must not take the seal over.
+    const later = next(dir);
+    expect(readFollowerFile(dir)!.seal_outcome).toMatchObject({ outcome: 'refused' });
+    await refused(later, continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+  });
+
+  for (const [what, event] of [['a watermark invalidation', { t: 'watermark', valid: false, reason: 'relation_dirty', relation: 'pages' }], ['an apply', apply(900)]] as const) {
+    test(`${what} right after the seal, at the same clock, removes the seal from disk before the next event: a process killed then leaves nothing to take`, async () => {
+      const dir = tmp();
+      writeSeedRecord(dir, SEED);
+      writeShadowState(dir, STATE);
+      const s = session(dir, { clock: () => 1_000 });
+      expect(await s.ask('watermark', { valid: true, since: 1_500 })).toMatchObject({ valid: true });
+      s.child.handle({ t: 'seal', db_at: 'mark-1' });
+      await s.child.pending();
+      expect(readFollowerFile(dir)!.seal).toBeDefined();
+      s.child.handle(event as never);
+      await s.child.pending(); // no close and no tick: the process dies here
+      expect(readFollowerFile(dir)!.seal).toBeUndefined();
+      const later = next(dir);
+      expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'seal_revoked' });
+      await refused(later, (await s.ask<{ continuity: string }>('state')).continuity);
+    });
+  }
+
+  test('when removing the seal fails, a line in the invalidation file makes the seal stale: the next owner refuses it', async () => {
+    const dir = tmp();
+    writeSeedRecord(dir, SEED);
+    writeShadowState(dir, STATE);
+    const s = session(dir, { clock: () => 1_000 });
+    expect(await s.ask('watermark', { valid: true, since: 1_500 })).toMatchObject({ valid: true });
+    s.child.handle({ t: 'seal', db_at: 'mark-1' });
+    await s.child.pending();
+    let failed = 0;
+    const spy = spyOn(followStatus, 'writeFollowerFile').mockImplementation(() => { failed++; throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); });
+    try {
+      s.child.handle({ t: 'watermark', valid: false, reason: 'relation_dirty', relation: 'pages' });
+      await s.child.pending(); // the process dies here, its writes failing
+    } finally { spy.mockRestore(); }
+    expect(failed).toBeGreaterThanOrEqual(1); // the injected failure fired
+    expect(readFollowerFile(dir)!.seal).toBeDefined(); // still on disk
+    const later = next(dir);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+    await refused(later, (await s.ask<{ continuity: string }>('state')).continuity);
+  });
+
+  test('unconfirmed, the session\'s own full obligation is settled only by a full pass that started after the session', async () => {
+    const { dir } = await sealed();
+    const s = next(dir);
+    expect(await s.ask('watermark', { valid: true, since: 4_000 })).toMatchObject({ valid: false });
+    expect(await s.ask('watermark', { valid: true, since: 6_000, relations: ['pages'] })).toMatchObject({ valid: false });
+    expect(await s.ask('watermark', { valid: true, since: 6_000 })).toMatchObject({ valid: true });
+  });
+
+  /**
+   * A seal written over an invalidation file that already holds one `seal_revoked` line (a blocker another start left,
+   * which the sealing session read): its foreign size is that line's length. A later refusing or failed-take start whose
+   * own blocker line has the same length (same clock, same pid) must not bring the file back to exactly that size when
+   * its follower.json write fails, or the next owner takes the seal it refused.
+   */
+  async function sealedOverBlocker(): Promise<{ dir: string; continuity: string; foreign: number }> {
+    const line = `${JSON.stringify({ at: 5_000, pid: process.pid, reason: 'seal_revoked' })}\n`;
+    const { dir, continuity } = await sealed({
+      beforeSeal: async (s, d) => {
+        appendFileSync(join(d, FOREIGN), line);
+        await s.ask('state'); // the session reads the line, then a full pass after its lease makes it valid again
+        expect(await s.ask('watermark', { valid: true, since: 7_000 })).toMatchObject({ valid: true });
+      },
+    });
+    const seal = readFollowerFile(dir)!.seal!;
+    expect(seal.watermark.valid).toBe(true); // valid coverage, sealed
+    const foreign = seal.foreign_size;
+    expect(foreign).toBe(Buffer.byteLength(line)); // sealed over the earlier blocker line, read before the seal
+    return { dir, continuity, foreign };
+  }
+  const failingWrites = (): { restore: () => void; count: () => number } => {
+    let failed = 0;
+    const spy = spyOn(followStatus, 'writeFollowerFile').mockImplementation(() => { failed++; throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); });
+    return { restore: () => spy.mockRestore(), count: () => failed };
+  };
+
+  test('a refusal whose write fails keeps the seal untakeable even when the file already held a same-length blocker line', async () => {
+    const { dir, continuity, foreign } = await sealedOverBlocker();
+    appendFileSync(join(dir, FOREIGN), `${JSON.stringify({ at: 5_500, pid: 1, reason: 'other' })}\n`); // a write after the seal
+    const writes = failingWrites();
+    try { next(dir); } finally { writes.restore(); } // refuses, its write fails, it dies before any other write
+    expect(writes.count()).toBe(1); // the injected failure fired on the refusal's write
+    expect(readFollowerFile(dir)!.seal).toBeDefined(); // the seal could not be removed
+    const size = statSync(join(dir, FOREIGN)).size;
+    const later = next(dir);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+    await refused(later, continuity);
+    expect(size).not.toBe(foreign); // the cause: the blocker brought the file back to the sealed size
+  });
+
+  test('a failed take keeps the seal untakeable even when the file already held a same-length blocker line', async () => {
+    const { dir, continuity, foreign } = await sealedOverBlocker();
+    const writes = failingWrites();
+    try { next(dir); } finally { writes.restore(); } // the consuming write fails, then the refusal's write
+    expect(writes.count()).toBe(2);
+    expect(readFollowerFile(dir)!.seal).toBeDefined();
+    const size = statSync(join(dir, FOREIGN)).size;
+    const later = next(dir);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+    await refused(later, continuity);
+    expect(size).not.toBe(foreign); // the cause: the blocker brought the file back to the sealed size
+  });
+
+  test('a refusal whose write succeeds still clears the old invalidation lines', async () => {
+    const { dir } = await sealedOverBlocker();
+    appendFileSync(join(dir, FOREIGN), `${JSON.stringify({ at: 5_500, pid: 1, reason: 'other' })}\n`);
+    const s = next(dir);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+    expect(readFollowerFile(dir)!.seal).toBeUndefined();
+    const left = readFileSync(join(dir, FOREIGN), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as { reason: string });
+    expect(left.filter((l) => l.reason !== 'seal_revoked')).toEqual([]); // the lines before this session are gone
+    // Its own blocker line is not read back as a foreign write: a full pass after the earlier line's lease makes it valid.
+    expect(await s.ask('watermark', { valid: true, since: 7_000 })).toMatchObject({ valid: true });
+  });
+
+  test('a seal is used once: the session after the one that took it starts invalid', async () => {
+    const { dir, continuity } = await sealed();
+    const s = next(dir);
+    await s.ask('state');
+    await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'no_seal' });
+  });
+
+  test('anything after the seal voids it (an apply, an invalidation, a reconcile call)', async () => {
+    for (const after of [apply(1_200), { t: 'watermark' as const, valid: false as const, reason: 'x' }, rpc(99, 'state')]) {
+      const dir = tmp();
+      writeSeedRecord(dir, SEED);
+      writeShadowState(dir, STATE);
+      const s = session(dir);
+      await s.ask('watermark', { valid: true, since: 1_500 });
+      const continuity = (await s.ask<{ continuity: string }>('state')).continuity;
+      s.child.handle({ t: 'seal', db_at: 'mark-1' });
+      s.child.handle(after);
+      await s.child.close();
+      expect(readFollowerFile(dir)!.seal).toBeUndefined();
+      await refused(next(dir), continuity, after.t === 'watermark' ? 'x' : 'follower_session_start'); // the first reason stays
+    }
+  });
+});
+
+describe('every doubt about a seal leaves the watermark invalid', () => {
+  test('PGLite: a seal with no database mark (what a PGLite close wrote) is never taken over, with the reason shown', async () => {
+    const { dir, continuity } = await sealed({ dbAt: null });
+    await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'pglite_no_db_continuity' });
+  });
+
+  test('a close the serving process would not seal records why, and the next session shows that reason', async () => {
+    const { dir, continuity } = await sealed({ refused: 'other_writer_open' });
+    expect(readFollowerFile(dir)!.seal).toBeUndefined();
+    expect(sealShown(dir)).toMatchObject({ outcome: 'not_sealed', reason: 'other_writer_open' });
+    await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'other_writer_open' });
+  });
+
+  test('missing seal', async () => {
+    const { dir, continuity } = await sealed();
+    const file = readFollowerFile(dir)!;
+    delete file.seal;
+    writeFileSync(join(dir, 'follower.json'), JSON.stringify(file));
+    await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'no_seal' });
+  });
+
+  test('follower.json written again after the seal (seal.at is not updated_at)', async () => {
+    const { dir, continuity } = await sealed();
+    const file = readFollowerFile(dir)!;
+    file.updated_at = new Date(9_000).toISOString();
+    writeFileSync(join(dir, 'follower.json'), JSON.stringify(file));
+    await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'seal_rewritten' });
+  });
+
+  test('wrong evidence epoch', async () => {
+    const { dir, continuity } = await sealed({ epoch: 'epoch-1' });
+    await refused(next(dir, 'epoch-2'), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'evidence_epoch_changed' });
+  });
+
+  test('wrong seed: another seed is not this follower at all', async () => {
+    const { dir, continuity } = await sealed();
+    writeSeedRecord(dir, { ...SEED, seed_id: 'seed-2' } as SeedRecord);
+    await refused(next(dir), continuity, 'not_reconciled');
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'follower_state_reset' });
+  });
+
+  test('state.json restarted since the seal', async () => {
+    const { dir, continuity } = await sealed();
+    writeShadowState(dir, { ...STATE, started_at: 'state-start-2' });
+    await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'shadow_restarted' });
+  });
+
+  test('shadow disabled since the seal', async () => {
+    const { dir, continuity } = await sealed();
+    writeShadowState(dir, { ...STATE, enabled: false });
+    await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'shadow_disabled' });
+  });
+
+  test('wrong continuity: a seal that names none', async () => {
+    const { dir, continuity } = await sealed();
+    const file = readFollowerFile(dir)!;
+    file.seal!.continuity = '';
+    writeFileSync(join(dir, 'follower.json'), JSON.stringify(file));
+    await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'seal_no_continuity' });
+  });
+
+  test('dropped write: a line left in follower-invalidations.jsonl after the seal', async () => {
+    const { dir, continuity } = await sealed();
+    noteLostWrite(dir, 'published_after_close', 2_000);
+    await refused(next(dir), continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+  });
+
+  test('dropped write: a line left before the seal is carried as a full obligation, and no seal is written when the file cannot be read', async () => {
+    const { dir } = await sealed({ beforeSeal: (_s, d) => { noteLostWrite(d, 'apply_shed', 1_100); } });
+    const s = next(dir);
+    expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, confirmed: true });
+    const { dir: dir2 } = await sealed({ beforeSeal: (_s, d) => { rmSync(join(d, 'follower-invalidations.jsonl'), { force: true }); mkdirSync(join(d, 'follower-invalidations.jsonl')); } });
+    expect(readFollowerFile(dir2)!.seal).toBeUndefined();
+    expect(sealShown(dir2)).toMatchObject({ outcome: 'not_sealed', reason: 'invalidation_unread' });
+  });
+
+  test('unknown writer: the serving process refuses the mark; the obligation stays and the continuity changes', async () => {
+    const { dir, continuity } = await sealed();
+    const s = next(dir);
+    expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: false, reason: 'writer_evidence_changed' })).toMatchObject({ valid: false, confirmed: false });
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'writer_evidence_changed' });
+    const st = await s.ask<State>('state');
+    expect(st).toMatchObject({ valid: false, pending_seal: null });
+    expect(st.continuity).not.toBe(continuity);
+    expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, confirmed: false }); // no second try
+  });
+
+  test('parse error: an unreadable follower.json starts over', async () => {
+    const { dir, continuity } = await sealed();
+    writeFileSync(join(dir, 'follower.json'), readFileSync(join(dir, 'follower.json'), 'utf8').slice(0, 40));
+    await refused(next(dir), continuity, 'not_reconciled');
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'follower_state_reset' });
+  });
+});
+
+type Rows = Record<string, unknown>;
+interface FakeOptions { facts?: Rows | null; act?: Rows | null; rels?: Rows[]; uncovered?: number; tables?: string[]; hooked?: string[]; fail?: boolean; failFrom?: number; hang?: boolean; named?: number[] }
+/**
+ * A fake Postgres read source: answers the seal's queries by what they ask (server facts, activity, relations), the
+ * writer evidence read (five parameters) with `uncovered` roles, and the hook catalog with `hooked` of `tables`.
+ * `failFrom` makes every read from that many reads on fail (the second read of a confirmation).
+ */
+function fakeReads(o: FakeOptions = {}): ReadSource & { sql: string[]; activityParams: unknown[][] } {
+  const sql: string[] = [];
+  const activityParams: unknown[][] = [];
+  let reads = 0;
+  const tables = o.tables ?? ['pages', 'tags'];
+  const tx = {
+    executeRaw: async (_q: string, params: unknown[]) => params?.length === 5
+      ? [{ hosts: 0, unresolved: 0, gaps: 0, unhooked: 0, uncovered_roles: o.uncovered ?? 0, legacy_write_writers: 0 }]
+      : (params?.[0] === WRITER_HOOK_TRIGGER ? (o.hooked ?? tables) : tables).map((name) => ({ name })),
+  };
+  const answer = (q: string, p: unknown[] = []): Rows[] => {
+    if (q.startsWith('SET') || q.includes('pg_stat_clear_snapshot')) return [];
+    // The activity read also names server_version_num (the SET ROLE reach is version dependent), so it is matched first.
+    if (q.includes('pg_prepared_xacts')) activityParams.push(p);
+    if (q.includes('pg_prepared_xacts')) return o.act === null ? [] : [{ ...ACTIVITY, ...o.act }];
+    if (q.includes('server_version_num')) return o.facts === null ? [] : [{ ...FACTS, ...o.facts }];
+    if (q.includes('pg_stat_user_tables')) return o.rels ?? RELS;
+    if (q.includes('/* own backends */')) return (o.named ?? []).map((pid) => ({ pid }));
+    if (q.includes('engine_writer_coverage_gaps')) return o.act === null ? [] : [{ gaps: ACTIVITY.gaps, gaps_max: ACTIVITY.gaps_max, ...(o.act ? { gaps: o.act.gaps ?? ACTIVITY.gaps, gaps_max: o.act.gaps_max ?? ACTIVITY.gaps_max } : {}) }]; // the basis's gap read
+    throw new Error(`unexpected query: ${q.slice(0, 40)}`);
+  };
+  return {
+    sql, activityParams, pauseMs: 0, close: async () => undefined,
+    read: async <T,>(fn: (tx: never, query: (q: string, p?: unknown[]) => Promise<Rows[]>) => Promise<T>): Promise<T> => {
+      const n = reads++;
+      if (o.fail || (o.failFrom !== undefined && n >= o.failFrom)) throw new Error('connection refused');
+      if (o.hang) return new Promise<T>(() => undefined);
+      return fn(tx as never, async (q, p) => { sql.push(q); return answer(q, p); });
+    },
+  } as never;
+}
+const FACTS = { version: 160016, track_counts: 'on', counts_role_off: false, app: 'gbrain-1-abc', stats_reset: '1700000000.5', postmaster: '1700000000.25' };
+const ACTIVITY = { writing: 0, prepared: 0, live: 0, recent: 0, unseen: 0, gaps: 0, gaps_max: '' };
+const rel = (name: string, o: Rows = {}): Rows => ({ name, oid: '16400', relfilenode: '16400', ins: '5', upd: '1', del: '0', ...o });
+const RELS = [rel('pages'), rel('page_projection_jobs', { oid: '16500', relfilenode: '16500', ins: '0', upd: '0' })];
+const MARK = { v: 3, app: 'gbrain-1-abc', stats_reset: '1700000000.5', postmaster: '1700000000.25', rels: { pages: { oid: '16400', relfilenode: '16400', ins: '5', upd: '1', del: '0' }, old_table: null, page_projection_jobs: { oid: '16500', relfilenode: '16500', ins: '0', upd: '0', del: '0' } }, gaps: 0, gaps_max: '' };
+const mark = JSON.stringify(MARK);
+const withRels = (rels: Record<string, unknown>): string => JSON.stringify({ ...MARK, rels: { ...MARK.rels, ...rels } });
+/** A brain dir with the writer hooks installed and a seed that copied `pages` (and knew `old_table` as absent). */
+function hooked(): string {
+  const dir = tmp();
+  writeFileSync(writerHooksManifestPath(dir), JSON.stringify({ version: 1, state: 'installed', at: 'x', tables: ['pages', 'tags'] }));
+  const relation = { rows_read: 0, imported: 0, skipped: 0, dropped: 0, unmapped_columns: [] };
+  writeSeedRecord(dir, { ...SEED, relations: { pages: relation, old_table: { ...relation, absent: true } } } as unknown as SeedRecord);
+  return dir;
+}
+
+describe('seal.ts: the primary\'s change token', () => {
+  test('PGLite never takes a seal over: no mark is written and nothing is quiet, named pglite_no_db_continuity (no proof the database was untouched between sessions)', async () => {
+    const dir = tmp();
+    expect(await sealMark({ dir, reads: fakeReads(), postgres: false }, mark)).toEqual({ refused: 'pglite_no_db_continuity' });
+    expect(await readBasis({ dir, reads: fakeReads(), postgres: false })).toBeNull();
+    expect(await quietSince({ dir, reads: fakeReads(), postgres: false }, null)).toEqual({ ok: false, reason: 'pglite_no_db_continuity' });
+  });
+
+  test('a mark is the versioned token of the statistics epoch and the copied relations (seed.json and page_projection_jobs), read with row security off as the basis; the seal writes that basis itself, and the same token later is quiet', async () => {
+    const dir = hooked();
+    const basisReads = fakeReads();
+    const basis = await readBasis({ dir, reads: basisReads, postgres: true });
+    expect(JSON.parse(basis!)).toEqual(MARK);
+    expect(basisReads.sql[0]).toBe('SET LOCAL row_security = off');
+    const reads = fakeReads();
+    const sealedMark = await sealMark({ dir, reads, postgres: true }, basis);
+    expect(sealedMark).toEqual({ token: basis! }); // the basis as it was read, never a fresh reading
+    expect(reads.sql[0]).toBe('SET LOCAL row_security = off');
+    const since = fakeReads();
+    expect(await quietSince({ dir, reads: since, postgres: true }, (sealedMark as { token: string }).token)).toEqual({ ok: true });
+    expect(since.sql[0]).toBe('SET LOCAL row_security = off');
+  });
+
+  test('no mark for any doubt, each with its reason: the server or its counters, who is writing or connected, a copied relation gone, a role that cannot record, the hooks, the seed, the read', async () => {
+    const dir = hooked();
+    const refusedFor = (o: FakeOptions) => sealMark({ dir, reads: fakeReads(o), postgres: true }, mark);
+    expect(await refusedFor({ facts: { version: 140012 } })).toEqual({ refused: 'postgres_version_old' });
+    expect(await refusedFor({ facts: { track_counts: 'off' } })).toEqual({ refused: 'track_counts_off' });
+    expect(await refusedFor({ facts: { counts_role_off: true } })).toEqual({ refused: 'track_counts_off' });
+    expect(await refusedFor({ act: { writing: 1 } })).toEqual({ refused: 'other_writer_open' });
+    expect(await refusedFor({ act: { prepared: 1 } })).toEqual({ refused: 'prepared_transaction' });
+    expect(await refusedFor({ act: { live: 1 } })).toEqual({ refused: 'other_writer_live' });
+    expect(await refusedFor({ act: { recent: 1 } })).toEqual({ refused: 'other_backend_recent' });
+    expect(await refusedFor({ act: { unseen: 1 } })).toEqual({ refused: 'other_backend_unseen' });
+    expect(await refusedFor({ rels: [] })).toEqual({ refused: 'relation_missing' }); // pages was copied
+    expect(await refusedFor({ uncovered: 1 })).toEqual({ refused: 'uncovered_writer_role' });
+    expect(await refusedFor({ facts: null })).toEqual({ refused: 'mark_unreadable' });
+    expect(await refusedFor({ act: { gaps: 'x' } })).toEqual({ refused: 'mark_unreadable' });
+    expect(await sealMark({ dir: tmp(), reads: fakeReads(), postgres: true }, mark)).toEqual({ refused: 'hooks_not_installed' });
+    const noSeed = tmp();
+    writeFileSync(writerHooksManifestPath(noSeed), JSON.stringify({ version: 1, state: 'installed', at: 'x', tables: ['pages'] }));
+    expect(await sealMark({ dir: noSeed, reads: fakeReads(), postgres: true }, mark)).toEqual({ refused: 'seed_unreadable' });
+    expect(await refusedFor({ fail: true })).toEqual({ refused: 'read_failed' });
+    expect(await refusedFor({ hang: true })).toEqual({ refused: 'read_timeout' });
+    // The strict basis: no verified point, a basis of another shape (the previous version's too), or any counter moved
+    // since it, refuses; a fresh reading is never sealed in its place.
+    expect(await sealMark({ dir, reads: fakeReads(), postgres: true }, null)).toEqual({ refused: 'no_verified_mark' });
+    expect(await sealMark({ dir, reads: fakeReads(), postgres: true }, JSON.stringify({ ...MARK, v: 2 }))).toEqual({ refused: 'mark_unreadable' });
+    expect(await sealMark({ dir, reads: fakeReads(), postgres: true }, 'not json')).toEqual({ refused: 'mark_unreadable' });
+    for (const moved of [{ ins: '6' }, { upd: '2' }, { del: '1' }]) expect(await refusedFor({ rels: [rel('pages', moved), RELS[1]!] })).toEqual({ refused: 'writes_since_verified' });
+    expect(await refusedFor({ act: { gaps: 1 } })).toEqual({ refused: 'coverage_gap' });
+    // The basis is not read where a seal could not be: hooks not installed, no seed, counters not kept, a read that fails or hangs.
+    expect(await readBasis({ dir: tmp(), reads: fakeReads(), postgres: true })).toBeNull();
+    expect(await readBasis({ dir: noSeed, reads: fakeReads(), postgres: true })).toBeNull();
+    expect(await readBasis({ dir, reads: fakeReads({ facts: { track_counts: 'off' } }), postgres: true })).toBeNull();
+    expect(await readBasis({ dir, reads: fakeReads({ rels: [] }), postgres: true })).toBeNull(); // a copied relation gone
+    expect(await readBasis({ dir, reads: fakeReads({ fail: true }), postgres: true })).toBeNull();
+    expect(await readBasis({ dir, reads: fakeReads({ hang: true }), postgres: true })).toBeNull();
+  });
+
+  /**
+   * A primary whose pool driver reports these backend pids (the vendored driver's `backend_pids`): one list for every
+   * read, or one list per read in order (the last repeats). `missing`: a driver without the accessor. Counts the reads.
+   */
+  const fakePrimary = (pids: number[] | number[][], o: { missing?: boolean } = {}) => {
+    const state = { reads: 0 };
+    const lists = Array.isArray(pids[0]) ? (pids as number[][]) : [pids as number[]];
+    const sql = o.missing ? {} : { get backend_pids() { const at = Math.min(state.reads++, lists.length - 1); return [...lists[at]!]; } };
+    return { primary: { sql } as never, state };
+  };
+
+  test('no connection is left out by its name: only pool connections proven the sealing process\'s own (their pid held by its driver, before and after the read) are, the open-write check only at the seal', async () => {
+    const dir = hooked();
+    // No primary to prove anything with: nothing is left out, whatever the connections are called.
+    const atSeal = fakeReads({ named: [41, 42] });
+    await sealMark({ dir, reads: atSeal, postgres: true }, mark);
+    expect(atSeal.activityParams.map((p) => p.slice(0, 2))).toEqual([[[], []]]);
+    expect(atSeal.activityParams[0]![2]).toContain('page_projection_jobs'); // the relations whose writers are waited on
+    const atCheck = fakeReads({ facts: { app: 'gbrain-2-def' }, named: [41] });
+    await quietSince({ dir, reads: atCheck, postgres: true }, mark);
+    expect(atCheck.activityParams.map((p) => p.slice(0, 2))).toEqual([[[], []]]); // the previous sealing process's name leaves nothing out either
+    // A primary whose pool connections are 41, 42 and 43 (43 does not carry the name the read sees): 41 and 42 are proven,
+    // whatever they are doing (idle, busy or held reserved elsewhere), and the pool is read again after the activity read.
+    const own = fakePrimary([42, 41, 43]);
+    const proven = fakeReads({ named: [41, 42] });
+    expect(await sealMark({ dir, reads: proven, postgres: true, primary: own.primary }, mark)).toHaveProperty('token');
+    expect(proven.activityParams.map((p) => p.slice(0, 2))).toEqual([[[41, 42], [41, 42]]]);
+    expect(own.state.reads).toBe(2);
+    const checked = fakePrimary([41]);
+    const atCheck2 = fakeReads({ named: [41] });
+    expect(await quietSince({ dir, reads: atCheck2, postgres: true, primary: checked.primary }, mark)).toEqual({ ok: true });
+    expect(atCheck2.activityParams.map((p) => p.slice(0, 2))).toEqual([[[], [41]]]); // at the check an open write is never left out
+    // A named connection that is not ours (another client set the name): its pid is not the pool's, so it is judged on
+    // its state like anyone else.
+    const stranger = fakePrimary([41, 77]);
+    const judged = fakeReads({ named: [41, 99] });
+    await sealMark({ dir, reads: judged, postgres: true, primary: stranger.primary }, mark);
+    expect(judged.activityParams.map((p) => p.slice(0, 2))).toEqual([[[41], [41]]]);
+    // No connection carries the name: the pool is not read at all.
+    const unnamed = fakePrimary([41]);
+    expect(await sealMark({ dir, reads: fakeReads({ named: [] }), postgres: true, primary: unnamed.primary }, mark)).toHaveProperty('token');
+    expect(unnamed.state.reads).toBe(0);
+    // Proving fails: a driver that reports no pids, or a proven connection gone from the pool by the end of the read (its
+    // pid may be a new backend's now). Refused, never read as quiet.
+    expect(await sealMark({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([], { missing: true }).primary }, mark)).toEqual({ refused: 'own_backends_unproven' });
+    expect(await quietSince({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([], { missing: true }).primary }, mark)).toEqual({ ok: false, reason: 'own_backends_unproven' });
+    expect(await sealMark({ dir, reads: fakeReads({ named: [41, 42] }), postgres: true, primary: fakePrimary([[41, 42], [42]]).primary }, mark)).toEqual({ refused: 'own_backends_unproven' });
+    expect(await quietSince({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([[41], []]).primary }, mark)).toEqual({ ok: false, reason: 'own_backends_unproven' });
+    // A stranger that leaves during the read changes nothing: only proven pids must still be the pool's.
+    expect(await sealMark({ dir, reads: fakeReads({ named: [41, 99] }), postgres: true, primary: fakePrimary([[41, 77], [41]]).primary }, mark)).toHaveProperty('token');
+  });
+
+  test('not quiet when the database shows a write, an epoch change or a changed relation, each with its reason', async () => {
+    const dir = hooked();
+    const quiet = (o: FakeOptions, token = mark) => quietSince({ dir, reads: fakeReads(o), postgres: true }, token);
+    expect(await quiet({ facts: { stats_reset: '1700000099.5' } })).toEqual({ ok: false, reason: 'stats_reset_changed' });
+    expect(await quiet({ facts: { postmaster: '1700000099.25' } })).toEqual({ ok: false, reason: 'postmaster_restarted' });
+    expect(await quiet({ rels: [RELS[1]!] })).toEqual({ ok: false, reason: 'relation_missing' });
+    expect(await quiet({ rels: [...RELS, rel('old_table')] })).toEqual({ ok: false, reason: 'relation_added' });
+    expect(await quiet({ rels: [rel('pages', { oid: '16401' }), RELS[1]!] })).toEqual({ ok: false, reason: 'relation_oid_changed' });
+    expect(await quiet({ rels: [rel('pages', { relfilenode: '16401' }), RELS[1]!] })).toEqual({ ok: false, reason: 'relfilenode_changed' });
+    expect(await quiet({ rels: [rel('pages', { ins: '4' }), RELS[1]!] })).toEqual({ ok: false, reason: 'counter_decreased' });
+    for (const moved of [{ ins: '6' }, { upd: '2' }, { del: '1' }]) expect(await quiet({ rels: [rel('pages', moved), RELS[1]!] })).toEqual({ ok: false, reason: 'writes_since_seal' });
+    expect(await quiet({ rels: [RELS[0]!, rel('page_projection_jobs', { oid: '16500', relfilenode: '16500', ins: '1', upd: '0' })] })).toEqual({ ok: false, reason: 'writes_since_seal' }); // the carried table counts
+  });
+
+  test('not quiet when anyone could still be writing, a gap appeared, a role cannot record, or a hook is gone; the activity is decided before the counters', async () => {
+    const dir = hooked();
+    const quiet = (o: FakeOptions) => quietSince({ dir, reads: fakeReads(o), postgres: true }, mark);
+    expect(await quiet({ facts: { version: 140012 } })).toEqual({ ok: false, reason: 'postgres_version_old' });
+    expect(await quiet({ facts: { track_counts: 'off' } })).toEqual({ ok: false, reason: 'track_counts_off' });
+    expect(await quiet({ act: { writing: 1 } })).toEqual({ ok: false, reason: 'other_writer_open' });
+    expect(await quiet({ act: { prepared: 1 } })).toEqual({ ok: false, reason: 'prepared_transaction' });
+    expect(await quiet({ act: { live: 1 } })).toEqual({ ok: false, reason: 'other_writer_live' });
+    expect(await quiet({ act: { recent: 1 } })).toEqual({ ok: false, reason: 'other_backend_recent' });
+    expect(await quiet({ act: { unseen: 1 } })).toEqual({ ok: false, reason: 'other_backend_unseen' });
+    expect(await quiet({ act: { writing: 1 }, facts: { stats_reset: 'other' } })).toEqual({ ok: false, reason: 'other_writer_open' });
+    expect(await quiet({ act: { gaps: 1, gaps_max: '2026-11-28 10:00:02+00' } })).toEqual({ ok: false, reason: 'coverage_gap' });
+    expect(await quiet({ uncovered: 1 })).toEqual({ ok: false, reason: 'uncovered_writer_role' });
+    expect(await quiet({ hooked: ['pages'] })).toEqual({ ok: false, reason: 'hook_missing' });
+  });
+
+  test('parse error: no mark, an unreadable mark, the writer fingerprint of an older build, or one of the wrong shape is not quiet', async () => {
+    const dir = hooked();
+    const old = JSON.stringify({ app: 'gbrain-1-abc', writers: 2, writers_max: '2026-11-28 10:00:00+00', gaps: 0, gaps_max: '' });
+    for (const token of [null, '', 'not json', '{"app":"x"}', old, JSON.stringify({ ...MARK, v: 1 }), JSON.stringify({ ...MARK, v: 2 }), JSON.stringify({ ...MARK, v: 4 }), JSON.stringify({ ...MARK, gaps: '0' }), withRels({ pages: { oid: 16400, relfilenode: '1', ins: '0', upd: '0', del: '0' } }), withRels({ pages: { oid: '1', relfilenode: '1', ins: '-1', upd: '0', del: '0' } }), JSON.stringify({ ...MARK, rels: [] })]) {
+      expect(await quietSince({ dir, reads: fakeReads(), postgres: true }, token)).toEqual({ ok: false, reason: 'mark_unreadable' });
+    }
+  });
+
+  test('hooks not installed, a failed read or one that hangs is not quiet', async () => {
+    expect(await quietSince({ dir: tmp(), reads: fakeReads(), postgres: true }, mark)).toEqual({ ok: false, reason: 'hooks_not_installed' });
+    expect(await quietSince({ dir: hooked(), reads: fakeReads({ fail: true }), postgres: true }, mark)).toEqual({ ok: false, reason: 'read_failed' });
+    expect(await quietSince({ dir: hooked(), reads: fakeReads({ hang: true }), postgres: true }, mark)).toEqual({ ok: false, reason: 'read_timeout' });
+  });
+
+  test('confirmSeal asks only when a seal is pending, passes the verdict and its reason for that seal\'s mark, and revokes it when the check read again is no longer quiet', async () => {
+    const calls: Array<[string, unknown]> = [];
+    const rpcFor = (pending: unknown) => (async (method: string, args?: unknown) => { calls.push([method, args]); return method === 'state' ? { pending_seal: pending } : {}; }) as never;
+    await confirmSeal({ dir: hooked(), reads: fakeReads(), postgres: true, rpc: rpcFor(null) });
+    expect(calls.map(([m]) => m)).toEqual(['state']);
+    calls.length = 0;
+    await confirmSeal({ dir: hooked(), reads: fakeReads(), postgres: true, rpc: rpcFor({ db_at: mark }) });
+    expect(calls).toEqual([['state', {}], ['confirmSeal', { db_at: mark, ok: true, reason: null }], ['commitSeal', { db_at: mark }]]); // read twice, quiet twice: committed, no revoke
+    calls.length = 0;
+    await confirmSeal({ dir: hooked(), reads: fakeReads({ rels: [rel('pages', { ins: '6' }), RELS[1]!] }), postgres: true, rpc: rpcFor({ db_at: mark }) });
+    expect(calls.map(([m]) => m)).toEqual(['state', 'confirmSeal']);
+    expect(calls[1]).toEqual(['confirmSeal', { db_at: mark, ok: false, reason: 'writes_since_seal' }]); // refused: nothing to revoke
+    calls.length = 0;
+    await confirmSeal({ dir: hooked(), reads: fakeReads({ failFrom: 1 }), postgres: true, rpc: rpcFor({ db_at: mark }) });
+    expect(calls.map(([m]) => m)).toEqual(['state', 'confirmSeal', 'revokeSeal']); // the second read failed: revoked, never committed
+    expect(calls[2]).toEqual(['revokeSeal', { reason: 'read_failed' }]);
+    await confirmSeal({ dir: hooked(), reads: fakeReads(), postgres: true, rpc: (async () => { throw new Error('child gone'); }) as never }); // never rejects
+  });
+});
+
+describe('the serving side records a write it will never hand over', () => {
+  test('dropped write: a batch published after close, or a line the child would not take, is reported lost', async () => {
+    const lost: string[] = [];
+    let accept = true;
+    const f = new ShadowFollower({ reads: { pauseMs: 0, read: async () => { throw new Error('no reads'); }, close: async () => {} } as never, send: () => accept, rpc: async () => { throw new Error('no child'); }, onLost: (reason) => lost.push(reason) });
+    accept = false;
+    f.publish({ seq: 1, committed_at: 0, items: [{ kind: 'invalid', reason: 'unmapped_write:x' }] });
+    await f.settle();
+    expect(lost.length).toBeGreaterThanOrEqual(1);
+    lost.length = 0;
+    accept = true;
+    f.close();
+    f.publish({ seq: 2, committed_at: 0, items: [{ kind: 'rows', relation: 'pages', selector: { id: '1' }, before_keys: null }] });
+    expect(lost).toEqual(['published_after_close']); // at once, inside the publishing call
+  });
+});
+
+describe('revokeSeal: the serving process saw a writer after it confirmed the seal', () => {
+  test('a confirmed seal is withdrawn: the watermark is invalid with a full obligation, a new continuity is drawn, and status names the reason', async () => {
+    const { dir, continuity } = await sealed();
+    const s = next(dir);
+    expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, confirmed: true });
+    expect(await s.ask('commitSeal', { db_at: 'mark-1' })).toMatchObject({ valid: true, confirmed: true });
+    expect(await s.ask('revokeSeal', { reason: 'other_writer_open' })).toMatchObject({ valid: false });
+    const st = await s.ask<State>('state');
+    expect(st).toMatchObject({ valid: false, pending_seal: null });
+    expect(st.continuity).not.toBe(continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'other_writer_open' });
+    // The obligation is full: only a full pass that started after the revoke clears it.
+    expect(await s.ask('watermark', { valid: true, since: 6_000, relations: ['pages'] })).toMatchObject({ valid: false });
+    expect(await s.ask('watermark', { valid: true, since: 6_000 })).toMatchObject({ valid: true });
+  });
+
+  test('a reason that is not a short code is recorded as plain refused', async () => {
+    const { dir } = await sealed();
+    const s = next(dir);
+    await s.ask('confirmSeal', { db_at: 'mark-1', ok: true });
+    await s.ask('revokeSeal', { reason: 'not a code!' });
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'refused' });
+  });
+});
+
+/**
+ * confirmSeal against the real child. A failed RPC does not prove the child did not apply it (a timeout is not a
+ * cancellation, an acknowledgement can be lost), and a refused revoke send must not drop the revocation.
+ */
+describe('confirmSeal over the real child: an unacknowledged confirmation or revoke never leaves coverage valid', () => {
+  type Rpc = (method: string, args?: Record<string, unknown>) => Promise<unknown>;
+  async function takenOver(): Promise<{ dir: string; s: Session }> {
+    const { dir } = await sealed({ dbAt: mark });
+    writeFileSync(writerHooksManifestPath(dir), JSON.stringify({ version: 1, state: 'installed', at: 'x', tables: ['pages', 'tags'] }));
+    return { dir, s: next(dir) };
+  }
+  /** Reads that show the mark until `move()`, then a write to pages (a writer that committed in the meantime). */
+  const switchable = (): { move: () => void; reads: ReadSource } => {
+    let moved = false;
+    const quiet = fakeReads();
+    const after = fakeReads({ rels: [rel('pages', { ins: '6' }), RELS[1]!] });
+    return { move: () => { moved = true; }, reads: { pauseMs: 0, read: ((fn: never) => (moved ? after : quiet).read(fn)) as ReadSource['read'], close: async () => {} } };
+  };
+
+  test('the child applied ok:true but its acknowledgement was lost while a writer committed: the child does not stay valid, and status names why', async () => {
+    const { dir, s } = await takenOver();
+    const db = switchable();
+    const calls: string[] = [];
+    const rpc: Rpc = async (method, args) => {
+      calls.push(method);
+      const value = await s.ask(method, args ?? {});
+      if (method === 'confirmSeal') { db.move(); throw new Error('timeout'); } // applied in the child; the answer never came back
+      return value;
+    };
+    const result = await confirmSeal({ dir, reads: db.reads, postgres: true, rpc: rpc as never, revokeRetryMs: [0] } as never);
+    expect((await s.ask<State>('state')).valid).toBe(false);
+    expect(calls).toEqual(['state', 'confirmSeal', 'revokeSeal']);
+    expect(result).toEqual({ doubt: null }); // the revoke was acknowledged: nothing left in doubt
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'seal_confirm_unacknowledged' });
+    // Only a full pass that starts after the veto settles it.
+    expect(await s.ask('watermark', { valid: true, since: 6_000, relations: ['pages'] })).toMatchObject({ valid: false });
+    expect(await s.ask('watermark', { valid: true, since: Date.now() + 5_000 })).toMatchObject({ valid: true });
+  });
+
+  test('the second read fails and the first revoke send is refused: the revoke is retried once the transport is back, and validity stays blocked in between', async () => {
+    const { dir, s } = await takenOver();
+    const calls: string[] = [];
+    let refuse = 1;
+    let between: State | null = null;
+    const rpc: Rpc = async (method, args) => {
+      calls.push(method);
+      if (method === 'revokeSeal' && refuse-- > 0) throw new Error('child_unavailable'); // the send was refused: it never reached the child
+      if (method === 'revokeSeal') between = await s.ask<State>('state'); // what the child shows before the retry reaches it
+      return s.ask(method, args ?? {});
+    };
+    const result = await confirmSeal({ dir, reads: fakeReads({ failFrom: 1 }), postgres: true, rpc: rpc as never, revokeRetryMs: [0] } as never);
+    expect(calls).toEqual(['state', 'confirmSeal', 'revokeSeal', 'revokeSeal']);
+    expect(between).toMatchObject({ valid: false });
+    expect(result).toEqual({ doubt: null });
+    expect((await s.ask<State>('state')).valid).toBe(false);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'read_failed' });
+  });
+
+  test('when neither the veto line nor any revoke gets through, confirmSeal returns the doubt instead of resolving as settled', async () => {
+    const { dir, s } = await takenOver();
+    const spy = spyOn(followChild, 'noteLostWrite').mockImplementation(() => false);
+    const calls: string[] = [];
+    const rpc: Rpc = async (method, args) => {
+      calls.push(method);
+      if (method === 'revokeSeal') throw new Error('child_unavailable');
+      const value = await s.ask(method, args ?? {});
+      if (method === 'confirmSeal') throw new Error('timeout');
+      return value;
+    };
+    let result: unknown;
+    try { result = await confirmSeal({ dir, reads: fakeReads(), postgres: true, rpc: rpc as never, revokeRetryMs: [0, 0] } as never); } finally { spy.mockRestore(); }
+    expect(calls).toEqual(['state', 'confirmSeal', 'revokeSeal', 'revokeSeal', 'revokeSeal']);
+    expect(result).toEqual({ doubt: 'seal_confirm_unacknowledged' });
+  });
+
+  // The veto line got through but no revoke did, and the serving process closes before the child's next heartbeat or any
+  // `state` call: the child's last writes (a refused seal, then its close) must read the veto first. Without that the
+  // child exits with a freshly written valid file, and status reads that file, not the invalidation lines.
+  for (const close of ['a refused seal, then the close', 'a close without a seal'] as const) test(`a veto line the child has not read yet is read before its last write (${close}): the file and status are invalid, named for the revocation`, async () => {
+    const { dir, s } = await takenOver();
+    const calls: string[] = [];
+    const rpc: Rpc = async (method, args) => {
+      calls.push(method);
+      if (method === 'revokeSeal') throw new Error('child_unavailable'); // every revoke send is refused
+      const value = await s.ask(method, args ?? {});
+      if (method === 'confirmSeal') throw new Error('timeout'); // applied in the child; the answer never came back
+      return value;
+    };
+    await confirmSeal({ dir, reads: fakeReads(), postgres: true, rpc: rpc as never, revokeRetryMs: [0] } as never);
+    expect(calls).toEqual(['state', 'confirmSeal', 'revokeSeal', 'revokeSeal']);
+    expect(readFileSync(join(dir, FOREIGN), 'utf8')).toContain('seal_revoked:seal_confirm_unacknowledged'); // the veto line is on disk
+    expect(readFollowerFile(dir)?.watermark).toMatchObject({ valid: false, invalidated_reason: 'seal_confirm_pending' }); // what the child last wrote: a confirmation never committed
+    // What attach.ts sends at close while a revoke is unacknowledged, then the end of stdin; nothing else reaches the child.
+    if (close === 'a refused seal, then the close') s.child.handle({ t: 'seal', db_at: null, refused: 'seal_confirm_unacknowledged' } as never);
+    await s.child.close();
+    const reason = 'foreign_write:seal_revoked:seal_confirm_unacknowledged';
+    expect(readFollowerFile(dir)?.watermark).toMatchObject({ valid: false, invalidated_reason: reason });
+    expect(buildFollowStatus(dir, STATE, new Date(5_000)).follower.coverage_watermark).toMatchObject({ valid: false, invalidated_reason: reason });
+  });
+
+  test('when the veto line got through but every revoke failed, confirmSeal still returns the doubt: an appended line is not proof that a live child read it', async () => {
+    const { dir, s } = await takenOver();
+    const rpc: Rpc = async (method, args) => {
+      if (method === 'revokeSeal') throw new Error('child_unavailable');
+      const value = await s.ask(method, args ?? {});
+      if (method === 'confirmSeal') throw new Error('timeout');
+      return value;
+    };
+    const revoking: Array<string | null> = [];
+    const result = await confirmSeal({ dir, reads: fakeReads(), postgres: true, rpc: rpc as never, revokeRetryMs: [0], revoking: (r: string | null) => revoking.push(r) } as never);
+    expect(readFileSync(join(dir, FOREIGN), 'utf8')).toContain('seal_revoked:seal_confirm_unacknowledged');
+    expect(result).toEqual({ doubt: 'seal_confirm_unacknowledged' });
+    expect(revoking).toEqual(['seal_confirm_unacknowledged']); // still revoking: a close does not seal
+  });
+
+  test('the first check runs a full pass when the confirmation is left in doubt, though the child says valid and the last full pass is recent', async () => {
+    for (const doubt of [null, 'seal_confirm_unacknowledged']) {
+      const dir = tmp();
+      const now = new Date().toISOString();
+      appendPass(dir, { id: 'p-recent', kind: 'full', started_at: now, finished_at: now, repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0 });
+      const r = new Reconciler({ dir, reads: fakeReads(), rpc: (async (m: string) => (m === 'state' ? { valid: true, through: now, invalidated_reason: null, continuity: 'c' } : {})) as never, ready: (async () => ({ doubt })) as never });
+      const run = spyOn(r, 'run').mockImplementation(async () => ({}) as never);
+      await (r as unknown as { firstRun: () => Promise<void> }).firstRun();
+      expect(run.mock.calls.length).toBe(doubt ? 1 : 0);
+    }
+  });
+});
+
+/**
+ * Two phases: a confirmation the child took is held invalid until the serving process read the primary a second time and
+ * sent `commitSeal`. A heartbeat, a forced write or status in between never shows coverage.
+ */
+describe('commitSeal: the child is valid only after the commit that follows the second read', () => {
+  test('a confirmation is held invalid until the commit: no heartbeat, forced write, state call or status shows it valid; the commit then makes it valid under the same continuity', async () => {
+    const { dir, continuity } = await sealed();
+    const s = next(dir);
+    expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, invalidated_reason: 'seal_confirm_pending', confirmed: true });
+    const held = async (): Promise<void> => {
+      expect(await s.ask<State>('state')).toMatchObject({ valid: false, invalidated_reason: 'seal_confirm_pending', continuity: null, pending_seal: { db_at: 'mark-1' } });
+      expect(readFollowerFile(dir)!.watermark).toMatchObject({ valid: false, invalidated_reason: 'seal_confirm_pending' });
+      expect(buildFollowStatus(dir, STATE, new Date(5_000)).follower.coverage_watermark).toMatchObject({ valid: false, invalidated_reason: 'seal_confirm_pending' });
+      expect(sealShown(dir)).toMatchObject({ outcome: 'taken', reason: null });
+    };
+    await held();
+    s.child.tick(); // the heartbeat: a forced write
+    await held();
+    expect(await s.ask('commitSeal', { db_at: 'mark-1' })).toMatchObject({ valid: true, confirmed: true });
+    expect(readFollowerFile(dir)!.watermark.valid).toBe(true); // written at once
+    expect(await s.ask<State>('state')).toMatchObject({ valid: true, continuity, pending_seal: null });
+    expect(sealShown(dir)).toMatchObject({ outcome: 'confirmed', reason: null });
+  });
+
+  test('a commit with no confirmation before it, or for another mark, is refused (seal_commit_mismatch): the seal is dropped and the session stays invalid with its full obligation', async () => {
+    for (const how of ['no confirmation', 'another mark'] as const) {
+      const { dir, continuity } = await sealed();
+      const s = next(dir);
+      if (how === 'another mark') expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ confirmed: true });
+      expect(await s.ask('commitSeal', { db_at: how === 'another mark' ? 'other-mark' : 'mark-1' })).toMatchObject({ valid: false, confirmed: false });
+      expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'seal_commit_mismatch' });
+      const st = await s.ask<State>('state');
+      expect(st).toMatchObject({ valid: false, pending_seal: null });
+      expect(st.continuity).not.toBe(continuity);
+      expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, confirmed: false }); // no second try
+      expect(await s.ask('commitSeal', { db_at: 'mark-1' })).toMatchObject({ valid: false, confirmed: false });
+      expect(await s.ask('watermark', { valid: true, since: 6_000, relations: ['pages'] })).toMatchObject({ valid: false });
+      expect(await s.ask('watermark', { valid: true, since: 6_000 })).toMatchObject({ valid: true });
+    }
+  });
+
+  test('a session that took no seal refuses a commit too', async () => {
+    const dir = tmp();
+    writeSeedRecord(dir, SEED);
+    writeShadowState(dir, STATE);
+    const s = next(dir);
+    expect(await s.ask('commitSeal', { db_at: 'mark-1' })).toMatchObject({ valid: false, confirmed: false });
+  });
+
+  test('a revoke while the confirmation waits for its commit leaves it invalid with a full obligation and a new continuity; a later commit is refused', async () => {
+    const { dir, continuity } = await sealed();
+    const s = next(dir);
+    expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ confirmed: true });
+    expect(await s.ask('revokeSeal', { reason: 'other_writer_open' })).toMatchObject({ valid: false });
+    expect(await s.ask('commitSeal', { db_at: 'mark-1' })).toMatchObject({ valid: false, confirmed: false });
+    const st = await s.ask<State>('state');
+    expect(st).toMatchObject({ valid: false, pending_seal: null });
+    expect(st.continuity).not.toBe(continuity);
+    expect(await s.ask('watermark', { valid: true, since: 6_000, relations: ['pages'] })).toMatchObject({ valid: false });
+    expect(await s.ask('watermark', { valid: true, since: 6_000 })).toMatchObject({ valid: true });
+  });
+
+  type Rpc = (method: string, args?: Record<string, unknown>) => Promise<unknown>;
+  async function takenOver(): Promise<{ dir: string; s: Session }> {
+    const { dir } = await sealed({ dbAt: mark });
+    writeFileSync(writerHooksManifestPath(dir), JSON.stringify({ version: 1, state: 'installed', at: 'x', tables: ['pages', 'tags'] }));
+    return { dir, s: next(dir) };
+  }
+
+  test('over the real child: a writer that committed between the two reads is revoked, no commit is sent, and the child was never valid in between', async () => {
+    const { dir, s } = await takenOver();
+    let moved = false;
+    const quiet = fakeReads();
+    const after = fakeReads({ rels: [rel('pages', { ins: '6' }), RELS[1]!] });
+    const reads = { pauseMs: 0, read: ((fn: never) => (moved ? after : quiet).read(fn)) as ReadSource['read'], close: async () => {} };
+    const calls: string[] = [];
+    const between: Array<{ valid: boolean } | undefined> = [];
+    const rpc: Rpc = async (method, args) => {
+      calls.push(method);
+      const value = await s.ask(method, args ?? {});
+      if (method === 'confirmSeal') { moved = true; between.push(await s.ask<State>('state'), readFollowerFile(dir)?.watermark); }
+      return value;
+    };
+    expect(await confirmSeal({ dir, reads, postgres: true, rpc: rpc as never, revokeRetryMs: [0] } as never)).toEqual({ doubt: null });
+    expect(calls).toEqual(['state', 'confirmSeal', 'revokeSeal']);
+    expect(between).toMatchObject([{ valid: false }, { valid: false }]);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'writes_since_seal' });
+    expect((await s.ask<State>('state')).valid).toBe(false);
+  });
+
+  test('over the real child: a commit the child applied but whose answer was lost is revoked (seal_commit_unacknowledged), and the child does not stay valid', async () => {
+    const { dir, s } = await takenOver();
+    const calls: string[] = [];
+    const rpc: Rpc = async (method, args) => {
+      calls.push(method);
+      const value = await s.ask(method, args ?? {});
+      if (method === 'commitSeal') throw new Error('timeout'); // applied in the child; the answer never came back
+      return value;
+    };
+    expect(await confirmSeal({ dir, reads: fakeReads(), postgres: true, rpc: rpc as never, revokeRetryMs: [0] } as never)).toEqual({ doubt: null });
+    expect(calls).toEqual(['state', 'confirmSeal', 'commitSeal', 'revokeSeal']);
+    expect((await s.ask<State>('state')).valid).toBe(false);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'seal_commit_unacknowledged' });
+    expect(readFileSync(join(dir, FOREIGN), 'utf8')).toContain('seal_revoked:seal_commit_unacknowledged');
+  });
+
+  test('over the real child: both reads quiet and the commit acknowledged leaves it valid, with nothing in doubt', async () => {
+    const { dir, s } = await takenOver();
+    const calls: string[] = [];
+    const rpc: Rpc = async (method, args) => { calls.push(method); return s.ask(method, args ?? {}); };
+    // Committed: the carried token is handed back as the session's verified point (what its close may seal with).
+    expect(await confirmSeal({ dir, reads: fakeReads(), postgres: true, rpc: rpc as never } as never)).toEqual({ doubt: null, basis: mark });
+    expect(calls).toEqual(['state', 'confirmSeal', 'commitSeal']);
+    expect((await s.ask<State>('state')).valid).toBe(true);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'confirmed', reason: null });
+  });
+});
+
+describe('lostWriteRecorder: a lost write the serving process could not record at once', () => {
+  const foreign = (dir: string): string => join(dir, 'follower-invalidations.jsonl');
+  const size = (dir: string): number => statSync(foreign(dir)).size;
+
+  test('a post-close write whose line failed is recorded once storage recovers, before the clean shutdown: the next session refuses the seal', async () => {
+    const { dir, continuity } = await sealed();
+    const before = size(dir);
+    const invalidated: string[] = [];
+    const rec = lostWriteRecorder({ dir, now: () => 6_000, retryMs: 60_000, invalidate: (reason: string) => invalidated.push(reason) } as never);
+    chmodSync(foreign(dir), 0o400);
+    try { rec.note('published_after_close'); } finally { chmodSync(foreign(dir), 0o600); }
+    expect(size(dir)).toBe(before); // the injected failure fired: no line
+    expect(rec.pending()).toBe('published_after_close');
+    expect(invalidated).toEqual(['lost_write_unrecorded']); // a live child hears of it at once
+    expect(rec.flush()).toBe(true); // the shutdown, storage back
+    rec.stop();
+    expect(size(dir)).toBeGreaterThan(before);
+    const later = next(dir);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+    await refused(later, continuity);
+  });
+
+  test('a shutdown while the line still cannot be written does not seal (lost_write_unrecorded)', async () => {
+    const { dir } = await sealed();
+    const rec = lostWriteRecorder({ dir, now: () => 6_000, retryMs: 60_000 } as never);
+    chmodSync(foreign(dir), 0o400);
+    try {
+      rec.note('readback_abandoned');
+      expect(rec.flush()).toBe(false);
+    } finally { chmodSync(foreign(dir), 0o600); rec.stop(); }
+    expect(rec.pending()).toBe('readback_abandoned');
+  });
+
+  test('a second loss inside the one-second throttle is written when the first line failed', () => {
+    const dir = tmp();
+    writeFileSync(foreign(dir), '');
+    let clock = 6_000;
+    const rec = lostWriteRecorder({ dir, now: () => clock, retryMs: 60_000 } as never);
+    chmodSync(foreign(dir), 0o400);
+    try { rec.note('apply_shed'); } finally { chmodSync(foreign(dir), 0o600); }
+    expect(size(dir)).toBe(0); // the injected failure fired
+    clock = 6_200;
+    rec.note('apply_shed');
+    rec.stop();
+    expect(size(dir)).toBeGreaterThan(0);
+    expect(rec.pending()).toBeNull();
+  });
+
+  test('a failed line is retried on its own timer', async () => {
+    const dir = tmp();
+    writeFileSync(foreign(dir), '');
+    const rec = lostWriteRecorder({ dir, retryMs: 20 } as never);
+    chmodSync(foreign(dir), 0o400);
+    try { rec.note('apply_shed'); expect(size(dir)).toBe(0); } finally { chmodSync(foreign(dir), 0o600); }
+    const end = Date.now() + 2_000;
+    while (size(dir) === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 10));
+    rec.stop();
+    expect(size(dir)).toBeGreaterThan(0);
+    expect(rec.pending()).toBeNull();
+  });
+});

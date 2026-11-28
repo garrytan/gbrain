@@ -4,17 +4,20 @@
  * and reconciler (test/helpers/follow-rig.ts) and the real Rust addon.
  */
 import { describe, expect, spyOn, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustAddon } from '../../src/core/rust-engine/addon-loader.ts';
-import { buildFollowStatus, readPasses } from '../../src/shadow/follow-status.ts';
+import { FollowChild } from '../../src/shadow/follow-child.ts';
+import * as followStatus from '../../src/shadow/follow-status.ts';
+import { buildFollowStatus, readFollowerFile, readPasses } from '../../src/shadow/follow-status.ts';
 import { rowDigest, sortKey } from '../../src/shadow/follow-digest.ts';
 import { nextGeneration } from '../../src/shadow/follower.ts';
-import type { ShadowState } from '../../src/shadow/state.ts';
+import { SHADOW_STATE_VERSION, writeShadowState, type ShadowState } from '../../src/shadow/state.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
-import { Reconciler } from '../../src/shadow/reconcile.ts';
+import { fullPassDue, Reconciler } from '../../src/shadow/reconcile.ts';
+import { planAsWrittenSource } from '../../src/shadow/writer-coverage.ts';
 import { openFollowRig, type FollowRig } from './follow-rig.ts';
 import { snapshotPersistence, snapshotTree } from './primary-snapshot.ts';
 import { linkEntityIdentity } from '../../src/core/entity-identity.ts';
@@ -265,6 +268,498 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect(pass.error).toMatch(/stopped/);
         expect(readsAfterStop).toBe(0);
         await expect(base.read(async () => 1)).rejects.toThrow(/closed/);
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
+    test('a process that closes mid-pass records no failed pass and keeps the clean count; the next process finishes the same pass', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      try {
+        const before = status(r).reconcile.consecutive_clean_full_passes;
+        const passes = readPasses(r.dir).length;
+        const beforeAt = status(r).reconcile.last_clean_full_pass_at;
+        expect(typeof beforeAt).toBe('string');
+        expect(before).toBeGreaterThanOrEqual(1);
+        let digests = 0;
+        let small: Reconciler;
+        const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+          const out = await r.rpc<T>(method, args);
+          if (method === 'relationDigest' && ++digests === 3) small.stop();
+          return out;
+        };
+        small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: 2 });
+        const stopped = await small.run('full', undefined, { resume: true });
+        // Closing is not a failed pass: nothing is recorded, so the trailing clean passes still count.
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBe(before);
+        expect(readPasses(r.dir)).toHaveLength(passes);
+        expect(stopped.error).toBe('stopped');
+        // The half done is no pass: the newest clean full pass is still the one before it (criterion 1's 24 h rule reads this).
+        expect(status(r).reconcile.last_clean_full_pass_at).toBe(beforeAt);
+        const progress = JSON.parse(readFileSync(join(r.dir, 'reconcile', 'progress.json'), 'utf8')) as { id: string; done: string[] };
+        expect(progress.id).toBe(stopped.id);
+        let resumedDigests = 0;
+        const counting = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => { if (method === 'relationDigest') resumedDigests++; return r.rpc<T>(method, args); };
+        const resumed = await new Reconciler({ dir: r.dir, reads: base, rpc: counting, follower: r.follower, intervalRows: 2 }).run('full', undefined, { resume: true });
+        expect(resumed.error).toBeUndefined();
+        expect(resumed.id).toBe(stopped.id);
+        expect(resumed.started_at).toBe(stopped.started_at);
+        expect(resumed.repaired_rows).toBe(0);
+        expect(existsSync(join(r.dir, 'reconcile', 'progress.json'))).toBe(false);
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBe(before + 1);
+        // Only the finished pass counts, at the time it finished.
+        expect(status(r).reconcile.last_clean_full_pass_at).toBe(resumed.finished_at);
+        // The resumed pass walked only what was left: a fresh pass reads every interval again.
+        let freshDigests = 0;
+        const fresh = await new Reconciler({ dir: r.dir, reads: base, rpc: async <T>(method: string, args?: Record<string, unknown>): Promise<T> => { if (method === 'relationDigest') freshDigests++; return r.rpc<T>(method, args); }, follower: r.follower, intervalRows: 2 }).run('full', undefined, { resume: true });
+        expect(fresh.id).not.toBe(stopped.id);
+        expect(resumedDigests).toBeLessThan(freshDigests);
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
+    // Hole 1 (strict basis): a full pass reads the basis (the counters the follower's state will be proven from) before it
+    // starts, keeps it in its resume point, and hands it to the serving process only once its watermark is restored. The
+    // options are passed untyped, so a build without them fails on the assertions.
+    for (const variant of ['resumed with its basis', 'resumed from a point an older build wrote'] as const) test(`a fresh full pass reads its basis before it starts and keeps it in its resume point; it is handed over only after the watermark restore (${variant})`, async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      try {
+        let asked = 0;
+        const askedAt: number[] = [];
+        const basis = async (): Promise<string | null> => { askedAt.push(Date.now()); return `basis-${++asked}`; };
+        const handed: Array<{ token: string; at: number }> = [];
+        let restoredAt = 0;
+        const onBasis = (token: string): void => { handed.push({ token, at: Date.now() }); };
+        let digests = 0;
+        let small: Reconciler;
+        const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+          const out = await r.rpc<T>(method, args);
+          if (method === 'relationDigest' && ++digests === 3) small.stop();
+          return out;
+        };
+        small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: 2, basis, onBasis } as never);
+        const stopped = await small.run('full', undefined, { resume: true });
+        expect(stopped.error).toBe('stopped');
+        const file = join(r.dir, 'reconcile', 'progress.json');
+        const progress = JSON.parse(readFileSync(file, 'utf8')) as { id: string; pass_start: number; db_at?: string | null };
+        expect(progress.db_at).toBe('basis-1');
+        expect(askedAt).toHaveLength(1);
+        expect(askedAt[0]!).toBeLessThanOrEqual(progress.pass_start); // read before the pass started
+        expect(handed).toEqual([]); // a stopped pass restores nothing and hands nothing over
+        expect((small as unknown as { inProgressBasis?: () => string | null }).inProgressBasis?.()).toBe('basis-1'); // what a close seals with
+        if (variant === 'resumed from a point an older build wrote') {
+          const { db_at: _dropped, ...older } = progress;
+          writeFileSync(file, JSON.stringify(older));
+        }
+        const watching = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+          const out = await r.rpc<T>(method, args);
+          if (method === 'watermark') restoredAt = Date.now();
+          return out;
+        };
+        const next = new Reconciler({ dir: r.dir, reads: base, rpc: watching, follower: r.follower, intervalRows: 2, basis, onBasis } as never);
+        const resumed = await next.run('full', undefined, { resume: true });
+        expect(resumed.error).toBeUndefined();
+        expect(resumed.id).toBe(stopped.id);
+        expect(restoredAt).toBeGreaterThan(0);
+        if (variant === 'resumed with its basis') {
+          // The basis of the pass it continued, not a new reading: the state is proven from that pass's start.
+          expect(handed.map((h) => h.token)).toEqual(['basis-1']);
+          expect(handed[0]!.at).toBeGreaterThanOrEqual(restoredAt);
+        } else {
+          expect(handed).toEqual([]); // no basis on record: this session cannot seal
+        }
+        expect((next as unknown as { inProgressBasis?: () => string | null }).inProgressBasis?.()).toBeNull(); // finished: nothing in progress
+        // A fresh pass reads a new basis and hands it over after its own restore.
+        const fresh = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: 2, basis, onBasis } as never).run('full');
+        expect(fresh.error).toBeUndefined();
+        expect(handed.at(-1)?.token).toBe(`basis-${asked}`);
+        expect(asked).toBeGreaterThanOrEqual(2);
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
+    // A full pass that repaired a row in the last interval of a relation (no interval checkpoint follows it) and is
+    // stopped right after the store took the repair, before the reconciler reads again. The store now holds the repaired
+    // row, so any later scan finds nothing: the repair must be on record at once, outside the resume point.
+    const stopAfterTailRepair = async (r: FollowRig, base: ReturnType<typeof openReadSource>) => {
+      const [{ n }] = await ctx.primary().executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages`);
+      const size = Number(n) + 1; // one interval larger than the page count: all of pages is one short last interval
+      await ctx.primary().executeRaw(`UPDATE pages SET title = 'Changed In The Last Interval' WHERE id = (SELECT max(id) FROM pages)`);
+      let small: Reconciler;
+      let cutAt: number | null = null;
+      const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+        const out = await r.rpc<T>(method, args);
+        if (method === 'replaceInterval' && args?.relation === 'pages' && args?.hi === null && cutAt === null) { cutAt = Date.now(); small.stop(); }
+        return out;
+      };
+      small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: size });
+      const stopped = await small.run('full', undefined, { resume: true });
+      expect(cutAt).not.toBeNull();
+      expect(stopped.error).toBe('stopped');
+      expect(stopped.repaired_by_relation).toEqual({ pages: 1 });
+      return { stopped, size };
+    };
+    // The repair is on record: the clean streak ends, criterion 1 has no clean pass, and writer coverage counts the
+    // path the plan as written did not account for.
+    const expectRepairOnRecord = (r: FollowRig, stoppedId: string, since: Date, unknownBefore: number) => {
+      const rows = readPasses(r.dir).filter((p) => p.id === stoppedId);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.repaired_rows).toBeGreaterThanOrEqual(1);
+      expect(rows[0]!.error).toBe('stopped');
+      expect(planAsWrittenSource(r.dir).unknownPaths(since)).toBe(unknownBefore + 1);
+    };
+
+    test('a process stopped right after the last interval of a relation repaired a row puts that repair on record at once, and a fresh full pass afterwards does not erase it', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      try {
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBeGreaterThanOrEqual(1);
+        const since = new Date(Date.now() - 1_000);
+        const unknownBefore = planAsWrittenSource(r.dir).unknownPaths(since);
+        const { stopped, size } = await stopAfterTailRepair(r, base);
+        // Right after the stop, before any other pass runs.
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBe(0);
+        expect(status(r).reconcile.last_clean_full_pass_at).toBeNull();
+        expectRepairOnRecord(r, stopped.id, since, unknownBefore);
+        // A stopped full pass did not finish, so a full pass is due at the next check whatever its age, and the status
+        // says so: due since the stop, not a day later.
+        expect(fullPassDue(readPasses(r.dir).filter((p) => p.kind === 'full').at(-1))).toBe(true);
+        expect(status(r).reconcile.next_full_pass_due).toBe(stopped.finished_at);
+        // A fresh full pass (what `engine shadow reconcile` and the nightly tick run) reads the healed rows clean. It is
+        // a new pass, it counts as one clean pass, and the stopped pass's repair stays on record.
+        const fresh = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full');
+        expect(fresh.error).toBeUndefined();
+        expect(fresh.id).not.toBe(stopped.id);
+        expect(fresh.repaired_rows).toBe(0);
+        expectRepairOnRecord(r, stopped.id, since, unknownBefore);
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBe(1);
+        expect(status(r).reconcile.last_clean_full_pass_at).toBe(fresh.finished_at);
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
+    test('a repair put on record by a stopped pass survives the next owner drawing another continuity', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      try {
+        const since = new Date(Date.now() - 1_000);
+        const unknownBefore = planAsWrittenSource(r.dir).unknownPaths(since);
+        const { stopped, size } = await stopAfterTailRepair(r, base);
+        // The next owner took no seal, so its child answers under another continuity: no resume point is admitted.
+        const otherOwner = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+          const out = await r.rpc<T>(method, args);
+          return (method === 'state' ? { ...(out as Record<string, unknown>), continuity: 'another-owner-continuity' } : out) as T;
+        };
+        const next = await new Reconciler({ dir: r.dir, reads: base, rpc: otherOwner, follower: r.follower, intervalRows: size }).run('full', undefined, { resume: true });
+        expect(next.error).toBeUndefined();
+        expect(next.id).not.toBe(stopped.id);
+        expectRepairOnRecord(r, stopped.id, since, unknownBefore);
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBe(1);
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
+    // The stopped pass's record could not be appended once (the pass log was briefly not writable), so its repair is held
+    // only in the resume point. Append access is back before anything else runs. The repair is not lost: until it is
+    // published, status and writer coverage count it, and a fresh pass or another owner's continuity publishes it before
+    // dropping that resume point.
+    for (const recovery of ['a fresh full pass', 'the next owner under another continuity'] as const) {
+      test(`a repair whose stopped record could not be appended is counted at once and put on record by ${recovery}, never dropped with the resume point`, async () => {
+        const r = await rig();
+        const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+        try {
+          expect(status(r).reconcile.consecutive_clean_full_passes).toBeGreaterThanOrEqual(1);
+          const since = new Date(Date.now() - 1_000);
+          const unknownBefore = planAsWrittenSource(r.dir).unknownPaths(since);
+          const original = followStatus.appendPass;
+          let failed = false;
+          const failing = spyOn(followStatus, 'appendPass').mockImplementation((d, p) => {
+            if (p.error === 'stopped' && !failed) { failed = true; throw Object.assign(new Error('EROFS: read-only file system'), { code: 'EROFS' }); }
+            return original(d, p);
+          });
+          let out: Awaited<ReturnType<typeof stopAfterTailRepair>>;
+          try { out = await stopAfterTailRepair(r, base); } finally { failing.mockRestore(); }
+          const { stopped, size } = out;
+          // The injection fired: no record, and the repair is in the resume point.
+          expect(failed).toBe(true);
+          expect(readPasses(r.dir).filter((p) => p.id === stopped.id)).toHaveLength(0);
+          const progress = JSON.parse(readFileSync(join(r.dir, 'reconcile', 'progress.json'), 'utf8')) as { id: string; repaired_rows: number };
+          expect(progress.id).toBe(stopped.id);
+          expect(progress.repaired_rows).toBeGreaterThanOrEqual(1);
+          // Right away, before any other pass runs: the repair already ends the clean streak and counts for writer coverage.
+          expect(status(r).reconcile.consecutive_clean_full_passes).toBe(0);
+          expect(status(r).reconcile.last_clean_full_pass_at).toBeNull();
+          expect(planAsWrittenSource(r.dir).unknownPaths(since)).toBe(unknownBefore + 1);
+          const otherOwner = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+            const out = await r.rpc<T>(method, args);
+            return (method === 'state' ? { ...(out as Record<string, unknown>), continuity: 'another-owner-continuity' } : out) as T;
+          };
+          const next = recovery === 'a fresh full pass'
+            ? await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full')
+            : await new Reconciler({ dir: r.dir, reads: base, rpc: otherOwner, follower: r.follower, intervalRows: size }).run('full', undefined, { resume: true });
+          expect(next.error).toBeUndefined();
+          expect(next.id).not.toBe(stopped.id);
+          expect(next.repaired_rows).toBe(0);
+          expectRepairOnRecord(r, stopped.id, since, unknownBefore);
+          expect(status(r).reconcile.consecutive_clean_full_passes).toBe(1);
+          expect(status(r).reconcile.last_clean_full_pass_at).toBe(next.finished_at);
+        } finally { await base.close(); await r.close(); }
+      }, 90_000);
+    }
+
+    // F5. The stopped pass's record could not be appended once, so its repair is held only in the resume point. The next
+    // full pass then fails in its setup, before it took that resume point over (its state or seed plan request, or its
+    // first read of the primary). A pass that never took the resume point over must not remove it: it is the repair's
+    // only record. A later pass that does take it over puts it on record exactly once.
+    for (const point of ['state request', 'seed plan request', 'first primary read'] as const) {
+      test(`a full pass that fails in its setup (${point}) keeps a stopped repair's only record, and a later pass puts it on record once`, async () => {
+        const r = await rig();
+        const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+        try {
+          const since = new Date(Date.now() - 1_000);
+          const unknownBefore = planAsWrittenSource(r.dir).unknownPaths(since);
+          const original = followStatus.appendPass;
+          let failed = false;
+          const failing = spyOn(followStatus, 'appendPass').mockImplementation((d, p) => {
+            if (p.error === 'stopped' && !failed) { failed = true; throw Object.assign(new Error('EROFS: read-only file system'), { code: 'EROFS' }); }
+            return original(d, p);
+          });
+          let out: Awaited<ReturnType<typeof stopAfterTailRepair>>;
+          try { out = await stopAfterTailRepair(r, base); } finally { failing.mockRestore(); }
+          const { stopped, size } = out;
+          expect(failed).toBe(true);
+          const held = (): { id: string; repaired_rows: number } | null => {
+            try { return JSON.parse(readFileSync(join(r.dir, 'reconcile', 'progress.json'), 'utf8')) as { id: string; repaired_rows: number }; } catch { return null; }
+          };
+          expect(held()?.id).toBe(stopped.id);
+          // The next pass fails before it took the resume point over.
+          let thrown = false;
+          const boom = () => { thrown = true; return Object.assign(new Error('setup failed'), { code: 'test_setup_failed' }); };
+          const rpc = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+            if (!thrown && ((point === 'state request' && method === 'state') || (point === 'seed plan request' && method === 'seedPlan'))) throw boom();
+            return r.rpc<T>(method, args);
+          };
+          const reads = point === 'first primary read'
+            ? { pauseMs: 0, read: <T>(fn: Parameters<typeof base.read<T>>[0]): Promise<T> => (thrown ? base.read(fn) : Promise.reject(boom())), close: async () => undefined }
+            : base;
+          const failedPass = await new Reconciler({ dir: r.dir, reads, rpc, follower: r.follower, intervalRows: size }).run('full', undefined, { resume: true });
+          expect(thrown).toBe(true);
+          expect(failedPass.error).toContain('test_setup_failed');
+          // The repair is still held, and still counted, though the failed pass is on record with no repair.
+          const kept = held();
+          expect(kept?.id).toBe(stopped.id);
+          expect(kept?.repaired_rows).toBeGreaterThanOrEqual(1);
+          expect(status(r).reconcile.consecutive_clean_full_passes).toBe(0);
+          expect(planAsWrittenSource(r.dir).unknownPaths(since)).toBe(unknownBefore + 1);
+          // A later pass takes it over and puts it on record exactly once.
+          const next = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full');
+          expect(next.error).toBeUndefined();
+          expectRepairOnRecord(r, stopped.id, since, unknownBefore);
+        } finally { await base.close(); await r.close(); }
+      }, 90_000);
+    }
+
+    // F5. A pass whose own record cannot be appended at its end (a full disk for a moment) holds repairs: its own, or a
+    // stopped pass's it took over and continued. Its resume point is the only other place those counts are, so it is
+    // never removed before the record landed; the counts stay there and are counted until a later pass records them.
+    for (const holder of ['a fresh pass that repaired rows itself', 'a resumed pass that took over a stopped repair'] as const) {
+      test(`${holder} whose own record cannot be appended keeps the repair counts in the resume point until a later pass records them once`, async () => {
+        const r = await rig();
+        const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+        try {
+          const since = new Date(Date.now() - 1_000);
+          const unknownBefore = planAsWrittenSource(r.dir).unknownPaths(since);
+          const original = followStatus.appendPass;
+          let size: number;
+          let held: string;
+          let failing: ReturnType<typeof spyOn>;
+          if (holder === 'a fresh pass that repaired rows itself') {
+            const [{ n }] = await ctx.primary().executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages`);
+            size = Number(n) + 1;
+            await ctx.primary().executeRaw(`UPDATE pages SET title = 'Changed Before A Fresh Pass' WHERE id = (SELECT max(id) FROM pages)`);
+            let failed = false;
+            failing = spyOn(followStatus, 'appendPass').mockImplementation((d, p) => {
+              if (!failed && (p.repaired_rows ?? 0) > 0) { failed = true; throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }); }
+              return original(d, p);
+            });
+            let pass: Awaited<ReturnType<Reconciler['run']>>;
+            try { pass = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full'); } finally { failing.mockRestore(); }
+            expect(failed).toBe(true);
+            expect(pass.repaired_rows).toBeGreaterThanOrEqual(1);
+            held = pass.id;
+          } else {
+            let failedStop = false;
+            failing = spyOn(followStatus, 'appendPass').mockImplementation((d, p) => {
+              if (p.error === 'stopped' && !failedStop) { failedStop = true; throw Object.assign(new Error('EROFS: read-only file system'), { code: 'EROFS' }); }
+              return original(d, p);
+            });
+            let out: Awaited<ReturnType<typeof stopAfterTailRepair>>;
+            try { out = await stopAfterTailRepair(r, base); } finally { failing.mockRestore(); }
+            expect(failedStop).toBe(true);
+            size = out.size;
+            held = out.stopped.id;
+            let failedEnd = false;
+            failing = spyOn(followStatus, 'appendPass').mockImplementation((d, p) => {
+              if (!failedEnd && p.id === held) { failedEnd = true; throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }); }
+              return original(d, p);
+            });
+            let resumed: Awaited<ReturnType<Reconciler['run']>>;
+            try { resumed = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full', undefined, { resume: true }); } finally { failing.mockRestore(); }
+            expect(failedEnd).toBe(true);
+            expect(resumed.id).toBe(held);
+            expect(resumed.repaired_rows).toBeGreaterThanOrEqual(1);
+          }
+          expect(readPasses(r.dir).filter((p) => p.id === held)).toHaveLength(0);
+          const progress = JSON.parse(readFileSync(join(r.dir, 'reconcile', 'progress.json'), 'utf8')) as { id: string; repaired_rows: number };
+          expect(progress.id).toBe(held);
+          expect(progress.repaired_rows).toBeGreaterThanOrEqual(1);
+          expect(status(r).reconcile.consecutive_clean_full_passes).toBe(0);
+          expect(planAsWrittenSource(r.dir).unknownPaths(since)).toBe(unknownBefore + 1);
+          const next = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full');
+          expect(next.error).toBeUndefined();
+          const rows = readPasses(r.dir).filter((p) => p.id === held);
+          expect(rows).toHaveLength(1);
+          expect(rows[0]!.repaired_rows).toBeGreaterThanOrEqual(1);
+          expect(planAsWrittenSource(r.dir).unknownPaths(since)).toBe(unknownBefore + 1);
+          expect(existsSync(join(r.dir, 'reconcile', 'progress.json'))).toBe(false);
+        } finally { await base.close(); await r.close(); }
+      }, 90_000);
+    }
+
+    // The next owner took the seal over and its serving process sent ok:true, which the child applied, but the answer
+    // was lost, and neither the veto line nor any revoke reached the child (seal.ts returns the doubt). The child still
+    // says valid, under the sealed continuity, so a resume point written under that continuity would be admitted. A
+    // foreign write then changes a row in a relation that resume point already walked. The first check must not resume
+    // it: it withdraws the confirmation and scans fresh, so the changed row is found.
+    test('after a seal confirmation left in doubt, the first check scans fresh: the resume point under the sealed continuity is not reused, and a row changed in a relation it already walked is repaired', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      try {
+        // A clean pass stopped once pages was walked: its resume point holds pages as done.
+        let sawPages = false;
+        let small: Reconciler;
+        const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+          const out = await r.rpc<T>(method, args);
+          if (method === 'relationDigest') { if (args?.relation === 'pages') sawPages = true; else if (sawPages) small.stop(); }
+          return out;
+        };
+        small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: 2 });
+        const stopped = await small.run('full', undefined, { resume: true });
+        expect(stopped.error).toBe('stopped');
+        expect(stopped.repaired_rows).toBe(0);
+        const progress = JSON.parse(readFileSync(join(r.dir, 'reconcile', 'progress.json'), 'utf8')) as { id: string; done: string[]; continuity: string };
+        expect(progress.id).toBe(stopped.id);
+        expect(progress.done).toContain('pages');
+        // The owner closes with a seal, and the next owner's child takes it over.
+        writeShadowState(r.dir, { version: SHADOW_STATE_VERSION, enabled: true, started_at: 'state-start-1', sample_rate: 0.1, queue_bound: 1, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind } as ShadowState);
+        await r.settle();
+        r.child.handle({ t: 'seal', db_at: 'mark-1' });
+        await r.child.close();
+        expect(readFollowerFile(r.dir)?.seal?.continuity).toBe(progress.continuity);
+        const waiters = new Map<number, (m: { ok: boolean; value?: unknown; error?: { code: string; message: string } }) => void>();
+        const next = new FollowChild({ dir: r.dir, store: async () => r.store, owner: () => true, writeControl: (line) => { const m = JSON.parse(line); waiters.get(m.id)?.(m); } });
+        let id = 0;
+        const nextRpc = <T,>(method: string, args: Record<string, unknown> = {}): Promise<T> => new Promise<T>((resolve, reject) => {
+          const n = ++id;
+          waiters.set(n, (m) => { waiters.delete(n); if (m.ok) resolve(m.value as T); else reject(Object.assign(new Error(m.error?.message), { code: m.error?.code })); });
+          next.handle({ t: 'rpc', id: n, method, args });
+        });
+        expect(await nextRpc('state')).toMatchObject({ valid: false, pending_seal: { db_at: 'mark-1' } });
+        // Both phases applied in the child (the confirmation is held invalid until the commit); the commit's answer is what was lost.
+        expect(await nextRpc('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, invalidated_reason: 'seal_confirm_pending', confirmed: true });
+        expect(await nextRpc('state')).toMatchObject({ valid: false, continuity: null });
+        expect(await nextRpc('commitSeal', { db_at: 'mark-1' })).toMatchObject({ valid: true, confirmed: true });
+        expect(await nextRpc('state')).toMatchObject({ valid: true, continuity: progress.continuity });
+        await ctx.primary().executeRaw(`UPDATE pages SET title = 'Changed While The Confirmation Was In Doubt' WHERE id = (SELECT min(id) FROM pages)`);
+        const before = readPasses(r.dir).length;
+        const checked = new Reconciler({ dir: r.dir, reads: base, rpc: nextRpc, intervalRows: 2, ready: async () => ({ doubt: 'seal_commit_unacknowledged' }) });
+        // The real first check (startNightly runs it FIRST_CHECK_MS after the start) with the real pass.
+        await (checked as unknown as { firstRun(): Promise<void> }).firstRun();
+        const added = readPasses(r.dir).slice(before);
+        expect(added).toHaveLength(1);
+        expect(added[0]!.id).not.toBe(stopped.id);
+        expect(added[0]!.started_at).not.toBe(stopped.started_at);
+        expect(added[0]!.error).toBeUndefined();
+        expect(added[0]!.repaired_by_relation.pages ?? 0).toBeGreaterThanOrEqual(1);
+        // No clean result came from the old resume point, and the child is valid again only through the fresh pass.
+        expect(readPasses(r.dir).some((p) => p.id === stopped.id)).toBe(false);
+        expect(existsSync(join(r.dir, 'reconcile', 'progress.json'))).toBe(false);
+        expect(await nextRpc('state')).toMatchObject({ valid: true });
+        await next.close();
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
+    test('a finished pass whose resume point could not be removed is never resumed again: one record per pass, and no clean pass without its own scan', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      const reconcileDir = join(r.dir, 'reconcile');
+      const file = join(reconcileDir, 'progress.json');
+      const counting = () => {
+        const c = { digests: 0, rpc: <T>(method: string, args?: Record<string, unknown>): Promise<T> => { if (method === 'relationDigest') c.digests++; return r.rpc<T>(method, args); } };
+        return c;
+      };
+      try {
+        // How many interval digests one whole scan reads.
+        const whole = counting();
+        expect((await new Reconciler({ dir: r.dir, reads: base, rpc: whole.rpc, follower: r.follower, intervalRows: 2 }).run('full')).error).toBeUndefined();
+        expect(whole.digests).toBeGreaterThan(3);
+        let small: Reconciler;
+        let digests = 0;
+        const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+          const out = await r.rpc<T>(method, args);
+          if (method === 'relationDigest' && ++digests === 3) small.stop();
+          return out;
+        };
+        small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: 2 });
+        const stopped = await small.run('full', undefined, { resume: true });
+        expect(stopped.error).toBe('stopped');
+        expect(existsSync(file)).toBe(true);
+        const cleanBefore = status(r).reconcile.consecutive_clean_full_passes;
+        // The pass log stays writable; the directory does not, so removing the finished pass's resume point fails.
+        chmodSync(reconcileDir, 0o500);
+        const runs: { id: string; digests: number }[] = [];
+        try {
+          for (let i = 0; i < 3; i++) {
+            const c = counting();
+            const pass = await new Reconciler({ dir: r.dir, reads: base, rpc: c.rpc, follower: r.follower, intervalRows: 2 }).run('full', undefined, { resume: true });
+            expect(pass.error).toBeUndefined();
+            expect(existsSync(file)).toBe(true); // the injected failure fired: the resume point is still there
+            runs.push({ id: pass.id, digests: c.digests });
+          }
+        } finally { chmodSync(reconcileDir, 0o700); }
+        // The first run continues the stopped pass; it then is finished, so each later run is a new pass that scans everything.
+        expect(runs[0]!.id).toBe(stopped.id);
+        expect(runs[0]!.digests).toBeLessThan(whole.digests);
+        for (const run of runs.slice(1)) {
+          expect(run.id).not.toBe(stopped.id);
+          expect(run.digests).toBe(whole.digests);
+        }
+        const ids = readPasses(r.dir).map((p) => p.id);
+        expect(ids.length).toBe(new Set(ids).size);
+        expect(ids.filter((id) => id === stopped.id)).toHaveLength(1);
+        // Three clean passes, each from its own scan (the first finished the stopped one's remaining intervals).
+        expect(status(r).reconcile.consecutive_clean_full_passes).toBe(cleanBefore + 3);
+      } finally { await base.close(); await r.close(); }
+    }, 120_000);
+
+    test('a half-done pass is not resumed under another continuity, seed or evidence epoch, or without asking', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      try {
+        const file = join(r.dir, 'reconcile', 'progress.json');
+        for (const change of [{ continuity: 'another-session-run' }, { seed_id: 'another-seed' }, { epoch_id: 'another-epoch' }, null]) {
+          let small: Reconciler;
+          let digests = 0;
+          const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+            const out = await r.rpc<T>(method, args);
+            if (method === 'relationDigest' && ++digests === 3) small.stop();
+            return out;
+          };
+          small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: 2 });
+          const stopped = await small.run('full', undefined, { resume: true });
+          expect(stopped.error).toBe('stopped');
+          if (change) writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), ...change }));
+          const next = await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: 2 }).run('full', undefined, change ? { resume: true } : {});
+          expect(next.error).toBeUndefined();
+          expect(next.id).not.toBe(stopped.id);
+          expect(existsSync(file)).toBe(false);
+        }
       } finally { await base.close(); await r.close(); }
     }, 90_000);
 
