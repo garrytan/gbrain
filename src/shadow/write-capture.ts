@@ -431,7 +431,8 @@ export function createWriteSampler(o: WriteSamplerOptions, unsaid: string[] = []
                 try {
                   s.pin = await inSavepoint(tx, async (inner) => {
                     await digestQuery(inner)(`SET LOCAL statement_timeout = ${PREIMAGE_TIMEOUT_MS}`); // bounds the read; the savepoint's rollback takes it away
-                    const page = await inner.getPage(slug!, { sourceId: source!, includeDeleted: true }) as { knowledge_revision?: unknown } | null; // the typed read the read-back makes, on the transaction's own connection
+                    // The typed read the read-back makes, with the same three state columns, on the transaction's own connection (no links: the pin is the page alone).
+                    const [page] = (await readBack(inner, [{ source: source!, slug: slug! }], [], readStateColumns(inner))).pages as Array<{ knowledge_revision?: unknown } | null>;
                     if (!page || typeof page.knowledge_revision !== 'string') throw new Error('pin_missing');
                     return { revision: page.knowledge_revision, text: readBackText(encodeValue({ pages: [page], links: [] })) };
                   });
