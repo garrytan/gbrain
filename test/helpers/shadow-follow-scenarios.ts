@@ -9,10 +9,11 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustAddon } from '../../src/core/rust-engine/addon-loader.ts';
-import { buildFollowStatus, readPasses } from '../../src/shadow/follow-status.ts';
+import { FollowChild } from '../../src/shadow/follow-child.ts';
+import { buildFollowStatus, readFollowerFile, readPasses } from '../../src/shadow/follow-status.ts';
 import { rowDigest, sortKey } from '../../src/shadow/follow-digest.ts';
 import { nextGeneration } from '../../src/shadow/follower.ts';
-import type { ShadowState } from '../../src/shadow/state.ts';
+import { SHADOW_STATE_VERSION, writeShadowState, type ShadowState } from '../../src/shadow/state.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
 import { fullPassDue, Reconciler } from '../../src/shadow/reconcile.ts';
 import { planAsWrittenSource } from '../../src/shadow/writer-coverage.ts';
@@ -388,6 +389,67 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect(next.id).not.toBe(stopped.id);
         expectRepairOnRecord(r, stopped.id, since, unknownBefore);
         expect(status(r).reconcile.consecutive_clean_full_passes).toBe(1);
+      } finally { await base.close(); await r.close(); }
+    }, 90_000);
+
+    // The next owner took the seal over and its serving process sent ok:true, which the child applied, but the answer
+    // was lost, and neither the veto line nor any revoke reached the child (seal.ts returns the doubt). The child still
+    // says valid, under the sealed continuity, so a resume point written under that continuity would be admitted. A
+    // foreign write then changes a row in a relation that resume point already walked. The first check must not resume
+    // it: it withdraws the confirmation and scans fresh, so the changed row is found.
+    test('after a seal confirmation left in doubt, the first check scans fresh: the resume point under the sealed continuity is not reused, and a row changed in a relation it already walked is repaired', async () => {
+      const r = await rig();
+      const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+      try {
+        // A clean pass stopped once pages was walked: its resume point holds pages as done.
+        let sawPages = false;
+        let small: Reconciler;
+        const stopping = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+          const out = await r.rpc<T>(method, args);
+          if (method === 'relationDigest') { if (args?.relation === 'pages') sawPages = true; else if (sawPages) small.stop(); }
+          return out;
+        };
+        small = new Reconciler({ dir: r.dir, reads: base, rpc: stopping, follower: r.follower, intervalRows: 2 });
+        const stopped = await small.run('full', undefined, { resume: true });
+        expect(stopped.error).toBe('stopped');
+        expect(stopped.repaired_rows).toBe(0);
+        const progress = JSON.parse(readFileSync(join(r.dir, 'reconcile', 'progress.json'), 'utf8')) as { id: string; done: string[]; continuity: string };
+        expect(progress.id).toBe(stopped.id);
+        expect(progress.done).toContain('pages');
+        // The owner closes with a seal, and the next owner's child takes it over.
+        writeShadowState(r.dir, { version: SHADOW_STATE_VERSION, enabled: true, started_at: 'state-start-1', sample_rate: 0.1, queue_bound: 1, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind } as ShadowState);
+        await r.settle();
+        r.child.handle({ t: 'seal', db_at: 'mark-1' });
+        await r.child.close();
+        expect(readFollowerFile(r.dir)?.seal?.continuity).toBe(progress.continuity);
+        const waiters = new Map<number, (m: { ok: boolean; value?: unknown; error?: { code: string; message: string } }) => void>();
+        const next = new FollowChild({ dir: r.dir, store: async () => r.store, owner: () => true, writeControl: (line) => { const m = JSON.parse(line); waiters.get(m.id)?.(m); } });
+        let id = 0;
+        const nextRpc = <T,>(method: string, args: Record<string, unknown> = {}): Promise<T> => new Promise<T>((resolve, reject) => {
+          const n = ++id;
+          waiters.set(n, (m) => { waiters.delete(n); if (m.ok) resolve(m.value as T); else reject(Object.assign(new Error(m.error?.message), { code: m.error?.code })); });
+          next.handle({ t: 'rpc', id: n, method, args });
+        });
+        expect(await nextRpc('state')).toMatchObject({ valid: false, pending_seal: { db_at: 'mark-1' } });
+        // Applied in the child; the answer is what was lost.
+        expect(await nextRpc('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: true, confirmed: true });
+        expect(await nextRpc('state')).toMatchObject({ valid: true, continuity: progress.continuity });
+        await ctx.primary().executeRaw(`UPDATE pages SET title = 'Changed While The Confirmation Was In Doubt' WHERE id = (SELECT min(id) FROM pages)`);
+        const before = readPasses(r.dir).length;
+        const checked = new Reconciler({ dir: r.dir, reads: base, rpc: nextRpc, intervalRows: 2, ready: async () => ({ doubt: 'seal_confirm_unacknowledged' }) });
+        // The real first check (startNightly runs it FIRST_CHECK_MS after the start) with the real pass.
+        await (checked as unknown as { firstRun(): Promise<void> }).firstRun();
+        const added = readPasses(r.dir).slice(before);
+        expect(added).toHaveLength(1);
+        expect(added[0]!.id).not.toBe(stopped.id);
+        expect(added[0]!.started_at).not.toBe(stopped.started_at);
+        expect(added[0]!.error).toBeUndefined();
+        expect(added[0]!.repaired_by_relation.pages ?? 0).toBeGreaterThanOrEqual(1);
+        // No clean result came from the old resume point, and the child is valid again only through the fresh pass.
+        expect(readPasses(r.dir).some((p) => p.id === stopped.id)).toBe(false);
+        expect(existsSync(join(r.dir, 'reconcile', 'progress.json'))).toBe(false);
+        expect(await nextRpc('state')).toMatchObject({ valid: true });
+        await next.close();
       } finally { await base.close(); await r.close(); }
     }, 90_000);
 
