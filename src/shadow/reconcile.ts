@@ -91,13 +91,14 @@ function readProgress(dir: string): PassProgress | null {
   try { const p = JSON.parse(readFileSync(progressPath(dir), 'utf8')) as PassProgress; return p?.version === 1 ? p : null; } catch { return null; }
 }
 
-function writeProgress(dir: string, p: PassProgress): void {
+function writeProgress(dir: string, p: PassProgress): boolean {
   try {
     mkdirSync(join(dir, 'reconcile'), { recursive: true, mode: 0o700 });
     const tmp = `${progressPath(dir)}.${process.pid}.tmp`;
     writeFileSync(tmp, JSON.stringify(p) + '\n', { mode: 0o600 });
     renameSync(tmp, progressPath(dir));
-  } catch { /* a full disk loses the resume point, never the pass */ }
+    return true;
+  } catch { return false; } // silent-read-ok: false tells the caller the resume point is not saved; a pass that repaired rows then records them another way
 }
 
 function clearProgress(dir: string): void {
@@ -202,6 +203,9 @@ export class Reconciler {
     const settled: string[] = [];
     const resumable = kind === 'full' && !only;
     let progress: PassProgress | null = null;
+    let lastCursor: PassProgress['cursor'] = null;
+    let countsSaved = true;
+    let saveCounts: () => boolean = () => false;
     try {
       await this.o.follower?.settle();
       const barrier = await this.o.rpc<StateReply>('state', {}, 30_000);
@@ -224,6 +228,7 @@ export class Reconciler {
           settled.push(...prior.settled); Object.assign(maxima, prior.maxima);
           for (const relation of prior.done) done.add(relation);
           cursor = prior.cursor;
+          lastCursor = prior.cursor;
         } else clearProgress(this.o.dir);
         if (continuity) {
           progress = {
@@ -232,10 +237,16 @@ export class Reconciler {
           };
         }
       }
-      const save = (at: PassProgress['cursor']): void => {
-        if (!progress) return;
-        writeProgress(this.o.dir, { ...progress, verified, settled: [...settled], maxima: { ...maxima }, repaired_rows: rec.repaired_rows, repaired_by_relation: { ...rec.repaired_by_relation }, follower_misses: rec.follower_misses, done: [...done], cursor: at });
+      // `at` is where a resumed pass continues; it is always at or before the interval being walked, so a resume reads
+      // that interval again. `countsSaved` is false from a repair until a save that holds it lands.
+      const save = (at: PassProgress['cursor']): boolean => {
+        lastCursor = at;
+        if (!progress) return false;
+        const ok = writeProgress(this.o.dir, { ...progress, verified, settled: [...settled], maxima: { ...maxima }, repaired_rows: rec.repaired_rows, repaired_by_relation: { ...rec.repaired_by_relation }, follower_misses: rec.follower_misses, done: [...done], cursor: at });
+        if (ok) countsSaved = true;
+        return ok;
       };
+      saveCounts = () => save(lastCursor);
       for (const rp of plan.relations) {
         if (only && !only.includes(rp.relation)) continue;
         if (done.has(rp.relation)) continue;
@@ -244,7 +255,7 @@ export class Reconciler {
         if (sortKeyUnsupported(read.key)) { verified = false; done.add(rp.relation); save(null); continue; }
         const from = cursor?.relation === rp.relation ? cursor : null;
         cursor = null;
-        const displaced = await this.relation(rp, read, validAtStart, rec, from, (lo, after, displaced) => save({ relation: rp.relation, lo, after, displaced }));
+        const displaced = await this.relation(rp, read, validAtStart, rec, from, (lo, after, displaced) => save({ relation: rp.relation, lo, after, displaced }), () => { countsSaved = false; save(lastCursor); });
         if (displaced > 0) { verified = false; this.markDirty(rp.relation); } else settled.push(rp.relation);
         const [k] = read.key;
         if (kind === 'full' && read.key.length === 1 && k!.name === 'id' && ['smallint', 'integer', 'bigint'].includes(k!.type)) {
@@ -274,9 +285,20 @@ export class Reconciler {
       // Stopped during the closing checks: the walked relations are saved as done, and the next process runs only these.
       if (this.stopped) throw new Error('reconciler stopped');
     } catch (error) {
-      // The process is closing (its reads were stopped): that is no failed pass. Nothing is recorded or restored, and the
-      // progress stays for the next process to resume.
-      if (this.stopped) { rec.error = 'stopped'; rec.finished_at = new Date().toISOString(); return rec; }
+      // The process is closing (its reads were stopped): that is no failed pass. Nothing is restored, and the progress
+      // (with the counts up to here) stays for the next process to resume.
+      if (this.stopped) {
+        rec.error = 'stopped'; rec.finished_at = new Date().toISOString();
+        // Rows this pass repaired are evidence the store had drifted, and the store now holds the repair: a pass that
+        // reads them again finds nothing. They must reach disk, in the resume point or, failing that, as a stopped pass
+        // (not clean, so the clean streak ends) with no resume point left to continue it as if clean.
+        if (resumable && saveCounts()) return rec;
+        if (!countsSaved || (!progress && (rec.repaired_rows > 0 || rec.follower_misses > 0))) {
+          clearProgress(this.o.dir);
+          try { appendPass(this.o.dir, rec); } catch { /* a full disk loses the record */ } // silent-read-ok: nothing else can hold it; the next full pass is due anyway (the watermark was not restored)
+        }
+        return rec;
+      }
       repairFailed = true;
       // The child still holds what it was told is dirty; a later pass for these relations repairs it.
       for (const relation of only ?? []) this.dirty.add(relation);
@@ -309,6 +331,7 @@ export class Reconciler {
   private async relation(
     rp: SeedRelationPlan, read: DigestPlan, validAtStart: boolean, rec: PassRecord,
     from: { lo: string; after: string[]; displaced: number } | null = null, onInterval?: (lo: string, after: string[], displaced: number) => void,
+    onRepaired?: () => void,
   ): Promise<number> {
     const size = this.o.intervalRows ?? RECONCILE_INTERVAL_ROWS;
     let lo: string | null = from?.lo ?? null;
@@ -326,6 +349,7 @@ export class Reconciler {
         rec.repaired_rows += result.repaired;
         rec.repaired_by_relation[rp.relation] = (rec.repaired_by_relation[rp.relation] ?? 0) + result.repaired;
         if (validAtStart) rec.follower_misses += result.repaired;
+        onRepaired?.(); // saved before anything else is read: the interval's own checkpoint below does not come after the last one
       }
       if (hi === null) return displaced;
       lo = hi;
