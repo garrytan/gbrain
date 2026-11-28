@@ -178,7 +178,7 @@
       "out-of-scope:writer-versions (born in engine-sql/writer-versions.ts; pinned by test/engine-parity/writer-versions.test.ts)": 4,
       "pages": 41,
       "salience": 5,
-      "sources": 42,
+      "sources": 43,
       "tags": 3,
       "takes": 20,
       "timeline": 8
@@ -919,6 +919,7 @@
       "listActiveFactsForEntity": "out-of-scope:facts-cycle (born in engine-sql/facts-cycle.ts; pinned by test/engine-parity/facts-cycle.test.ts)",
       "listActiveOauthClientRows": "out-of-scope:doctor-acc (born in engine-sql/doctor-acc.ts; pinned by test/engine-parity/doctor-acc.test.ts and test/doctor-acc-sql.test.ts)",
       "listActivePositionedFactIds": "out-of-scope:facts-repair (born in engine-sql/facts-repair.ts; pinned by test/engine-parity/facts-repair.test.ts)",
+      "listActiveSourceConfigs": "sources",
       "listActiveSourceIds": "out-of-scope:facts-repair-sites (repair command statements, born in engine-sql/facts-repair.ts; pinned byte-identical by test/facts-repair-sites-sql-pin.test.ts and test/engine-parity/facts-repair-sites.test.ts)",
       "listActiveTakesForPages": "takes",
       "listActiveWorktreeRefreshRows": "out-of-scope:writer-status (born in engine-sql/writer-status.ts; pinned by test/engine-parity/writer-status.test.ts)",

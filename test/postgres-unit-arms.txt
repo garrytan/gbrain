@@ -360,6 +360,8 @@ test/engine-parity/hot-memory-meta.test.ts
 test/engine-parity/hot-memory-watermark.test.ts
 test/engine-parity/identity-auto-sweeps.test.ts
 test/engine-parity/identity-finder.test.ts
+test/engine-parity/ignored-privacy-label-reads.test.ts
+test/engine-parity/import-command.test.ts
 test/engine-parity/import-folder-stamp.test.ts
 test/engine-parity/import-members.test.ts
 test/engine-parity/import-path.test.ts
@@ -569,6 +571,7 @@ test/engine-parity/source-last-commit.test.ts
 test/engine-parity/source-order-callers.test.ts
 test/engine-parity/source-resolver-reads.test.ts
 test/engine-parity/source-scope-reads.test.ts
+test/engine-parity/source-suggestion.test.ts
 test/engine-parity/source-verify-reads.test.ts
 test/engine-parity/sources-add-json.test.ts
 test/engine-parity/spend-log.test.ts

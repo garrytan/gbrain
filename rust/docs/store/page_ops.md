@@ -11,15 +11,17 @@ There are no secondary indexes yet: each method scans the pages of its scope.
 A read scope (`PageReadScope`) is `{ sourceId?, sourceIds?, live?, excludePrivate?, minTrust?, suppressFlagged? }`. A non-empty `sourceIds`
 wins over a non-empty `sourceId`; with neither, every source. `live: true` also hides deleted pages,
 pages whose frontmatter has a `quarantine` key and pages of a missing or archived source. The
-TypeScript members send `live: true` whenever the caller passes a scope object. `excludePrivate` applies the page
+TypeScript members send `live: true` whenever the caller passes a scope object. The native `excludePrivate` applies the page
 policy of `facts/privacy.rs`, a caller's reader identity and private-readable grant included (`storePagePolicy`
-with `callerReaders`; it refuses a caller whose policy the store does not model): the policy is
+with `callerReaders`; it refuses a caller whose policy the store does not model). The TypeScript members pass it on only
+for the three marker reads named next; every other member refuses a truthy `excludePrivate`
+(`src/core/rust-engine/store-members/page-ops.ts:44-46`). The policy is
 `{ honorAliases, entityPrivacy, ownerOnly }`, as `resolveAliases` takes it, and a page it hides is not read, an
 owner-only page (a page of an owner-only source, or under the closed form any page of a brain that holds one) included.
 The TypeScript members `getContentFlagsByPageIds`, `getUnverifiedExtractionPageIds` and `getEffectiveDates` also accept
 and ignore the other keys of hybrid search's option bag (its settings, callbacks and `takesHoldersAllowList`), because
 hybrid search hands them that whole bag as their policy; any other key still refuses.
-`minTrust` (the page's stamped tier at or above the floor) and `suppressFlagged` (no instruction-family write-gate receipt on an agent-written-or-lower page) apply `pageEligibleSql` through `trust::TrustPolicy` (`trust/eligibility.rs`); an unknown tier name is `invalid_argument`. `requireSafeChunks` and `takesHoldersAllowList` are ignored, as these statements never read them. Hybrid search passes its whole option object as the scope; the members take only the `PageReadPolicy` keys from it, so a paging or ranking key (`limit`, `offset`, `detail`, `type`) only turns on the live filter, as on PGLite.
+The native `minTrust` (the page's stamped tier at or above the floor) and `suppressFlagged` (no instruction-family write-gate receipt on an agent-written-or-lower page) apply `pageEligibleSql` through `trust::TrustPolicy` (`trust/eligibility.rs`); an unknown tier name is `invalid_argument`. The TypeScript members of `store-members/page-ops.ts` refuse a truthy `minTrust` or `suppressFlagged` (`page-ops.ts:44-46`). `requireSafeChunks` and `takesHoldersAllowList` are ignored, as these statements never read them. Hybrid search passes its whole option object as the scope; the members take only the `PageReadPolicy` keys from it, so a paging or ranking key (`limit`, `offset`, `detail`, `type`) only turns on the live filter, as on PGLite.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -37,7 +39,7 @@ hybrid search hands them that whole bag as their policy; any other key still ref
 | `brain.listMarkdownPageSlugs(sourceId)` | the slugs of the source's markdown pages, deleted pages included, in byte order | `listMarkdownPageSlugs` |
 | `brain.listPrefixSampledPages({ prefixes, excludeSlugs?, staleBias?, staleThresholdDays?, sourceId?, sourceIds? })` | one domain-bank row per prefix: the live inline page under it (segmented pages are left out) with the most inbound links, then the lowest slug. With `staleBias`, a page never retrieved ranks first, then one last retrieved before `staleThresholdDays` (default 90) ago, then the rest; links and slug break ties | `listPrefixSampledPages` |
 | `brain.listCorpusSample({ n, excludeSlugs?, seed?, sourceId?, sourceIds? })` | up to `n` domain-bank rows of live inline pages (segmented pages are left out), in a shuffle fixed by `seed` | `listCorpusSample` |
-| `brain.bumpPageRetrievals(ids)` | the number of records written. Records now as the last retrieval of each listed page that exists, once per id; it skips an id that is not a page, and a page whose record is less than 5 minutes old | `bumpPageRetrievals` (the throttled `page_retrievals` upsert of `src/core/engine-sql/pages.ts`) |
+| `brain.bumpPageRetrievals(ids)` | the number of records written. Records now as the last retrieval of each listed page that exists, once per id; it skips an id that is not a page, and a page whose record is less than 5 minutes old | no TypeScript member: `bumpPageRetrievals` is named in no file under `src/`; the CLI bump `bumpLastRetrievedAt` (`src/core/last-retrieved.ts:206`) runs `BUMP_LAST_RETRIEVED_SQL` through `executeRaw` (`last-retrieved.ts:224`), which a Rust brain refuses |
 | `brain.readAdmittedPageRefs(refs, scope)` | `[{ source_id, slug }]` for each ref whose live, unquarantined page of an unarchived source the read scope admits (the live filter always applies), in ref order | `readAdmittedPageRefs` |
 | `brain.readPageSynopses(refs, scope)` | `[{ page_id, slug, source_id, title, type, synopsis }]` for each ref whose page the read scope admits and the search visibility clause shows (live, served text projection, unarchived source, unquarantined, no `pinned_question`); `synopsis` is the first 65536 code points of the body, in ref order | `readPageSynopses` |
 | `brain.readSeedTitleSlugs(sourceId, types, title)` | at most two slugs of live pages of the source whose type is listed, whose lowered title equals the lowered `title`, and which are not retired (`retiredPageSql`), in page-key order (the SQL sets none) | `readSeedTitleSlugs` |
@@ -70,8 +72,8 @@ A domain-bank row is `{ slug, prefix, connection_count, representative_chunk_id,
 last_retrieved_at }`. `last_retrieved_at` is the page's retrieval record, else `null`. `representative_chunk_id` is the
 page's embedded chunk with the lowest `chunk_index`, or `null` when no chunk of the page has an embedding, as
 `src/core/engine-sql/pages.ts` picks it.
-The entity card rows (`readEntityCardRows`, `cli_reads/entities.rs`) read the same record as
-`last_retrieved_at`, so `gbrain entity` shows `last_touched.last_retrieved_at` after a search.
+The native entity card rows (`readEntityCardRows`, `cli_reads/entities.rs:510`) read the same record as
+`last_retrieved_at`. Nothing on this tree writes that record for a Rust brain (see "Retrieval records").
 
 The proactive brief (`src/core/context/proactive-brief.ts`) reads only through the typed
 members above, `listAllSources`, `readEntityAliasRows` and `readLivePageFrontmatter`. Its
@@ -89,8 +91,9 @@ outer catch of the retrieval reflex in `src/core/context/reflex.ts`.
 | --- | --- | --- |
 | `p 0x01 page_id` (u64 big-endian) | microseconds since the epoch (JSON integer) | `page_retrievals.last_retrieved_at` |
 
-`gbrain search`, `query`, `get` and `fetch` call `bumpPageRetrievals` after they answer
-(`src/core/last-retrieved.ts`). A hard delete drops the page's record in the same transaction, as the
+`gbrain search`, `query`, `get` and `fetch` bump the retrieval time after they answer with `bumpLastRetrievedAt`
+(`src/core/last-retrieved.ts:206`), which sends SQL through `executeRaw`; a Rust brain refuses that, so on this tree no
+TypeScript caller writes the record that `brain.bumpPageRetrievals` keeps. A hard delete drops the page's record in the same transaction, as the
 `pages_forget_retrievals` trigger does on Postgres.
 
 ## Differences from Postgres

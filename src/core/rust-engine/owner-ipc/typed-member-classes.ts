@@ -94,7 +94,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'inboundLinkCoverage', 'isCalibrationProfileUnchanged', 'isFactEntityUnbacked', 'isFactPurged', 'isFactWithdrawn',
   'isSourceClaimed', 'linkRelationshipKeysForOrigin', 'linkRelationshipKeysForPages', 'listAccessPolicySourceIds',
   'listAccessTokens', 'listActiveAccessMembers', 'listActiveFactIdsOfPage', 'listActiveFactsForEntity',
-  'listActiveSourceIds', 'listAgentSessionTakeCandidates', 'listAmendmentsNotApplied', 'listAppliedPolicyRevisions',
+  'listActiveSourceConfigs', 'listActiveSourceIds', 'listAgentSessionTakeCandidates', 'listAmendmentsNotApplied', 'listAppliedPolicyRevisions',
   'listAudienceAccessMembers', 'listAwaitingMemoryProposals', 'listBeliefEventsForPurgeProbe',
   'listBuildSkewStacktraceLines', 'listCallOffCueFacts', 'listCanonicalFenceRowNums',
   'listCaptureDuplicateCandidates', 'listCapturedFactsForClassification', 'listClaimConflictPairs',

@@ -1462,7 +1462,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'releaseDrainLeaseHolder': OOS.cycleLocks,
   // sources
   'listAllSources': 'sources', 'listSourceLocalPaths': 'sources', 'countRepoBoundSources': 'sources', 'updateSourceConfig': 'sources', 'markSourceSynced': 'sources', 'renameSource': 'sources', 'readFederationExposedPages': OOS.callerRawSql, 'advanceSyncCheckpoint': 'sources',
-  'listLocalPathSources': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
+  'listLocalPathSources': 'sources', 'listActiveSourceConfigs': 'sources', 'readPlainSyncSource': OOS.callerRawSql, 'readOwnerOnlySourcesPresent': OOS.callerRawSql, 'readOwnerOnlySourceConfig': OOS.callerRawSql, 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'getSource': 'sources',
   'listStaleSyncSourceIds': 'sources', 'readSourceRow': 'sources', 'lockSourceRow': 'sources', 'lockSourceForUpdate': 'sources', 'readSourceChunkerVersion': 'sources',
   'listLiveSlugSourceIds': OOS.listReads,
   'resolveChainAnchorRows': OOS.listReads,
@@ -2488,6 +2488,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('countDefaultSourceSplit', [['default', (e) => e.countDefaultSourceSplit()]]),
   ...variants('updateSourceConfig', [['default', (e) => e.updateSourceConfig(SRC, { federated: true })]]),
   ...variants('markSourceSynced', [['default', (e) => e.markSourceSynced(SRC)]]),
+  ...variants('listActiveSourceConfigs', [['default', (e) => e.listActiveSourceConfigs()]]),
   ...variants('advanceSyncCheckpoint', [['default', (e) => e.advanceSyncCheckpoint({ sourceId: SRC, incarnation: '00000000-0000-4000-8000-000000000000', commit: 'c1', from: null, acceptAtCommit: false, slugMode: 'git-root', keepPinnedSlugMode: false })]]),
   ...variants('renameSource', [['default', (e) => e.renameSource(SRC, 'Name')]]),
   ...variants('getSource', [['default', (e) => e.getSource(SRC)]]),

@@ -52,6 +52,7 @@ import { managedRootMarkerFor } from '../core/persistence/root-registry.ts';
 import { readManagedModeTyped } from '../core/persistence/ownership.ts';
 import { readPageBodyPolicy } from '../core/page-body/limits.ts';
 import { importSourceRefusal } from './import-source-refusal.ts';
+import { requestSignal } from '../core/request-signal.ts';
 import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { usesPostgresImportWorkers } from '../core/sync-concurrency.ts';
 import { wrapShadowSibling } from '../shadow/state.ts';
@@ -976,7 +977,8 @@ export async function runImport(
   // compares to import size; warns at >=10% untyped. The doctor
   // schema_pack_consistency check (also T7) gives the persistent surface.
   // Best-effort: query failure is non-fatal.
-  if (imported > 0) {
+  // Skipped for a cancelled request: the count statement used to refuse one, and `getStats` would send its queries.
+  if (imported > 0 && !requestSignal()?.aborted) {
     try {
       const sid = sourceId ?? 'default';
       // pages.type is NOT NULL, so the untyped pages are the empty-type bucket.

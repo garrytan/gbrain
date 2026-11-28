@@ -65,7 +65,7 @@ import type { PageEmbeddingBudgetRow, PageEmbeddingReservation, PageEmbeddingRes
 import type { EmbeddingCompletionOpts, EmbeddingCompletionRow } from './engine-sql/embedding-install.ts';
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from './engine-sql/page-visibility.ts';
 import type { PageDateFieldsByIdRow, PageDateFieldsRow, PageRefRow, RelationalPageRow } from './engine-sql/relational-reads.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourcesNotReadableOpts, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourcePathRow } from './engine-sql/sources.ts';
+import type { ActiveSourceConfigRow, DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PlainSyncSourceRow, RenameIdentityRow, SourceCheckRow, SourceInsert, SourcesNotReadableOpts, SourceUpstreamObservation, PageIdentityRow, PageSizeRow, ReasonPurgeTombstone, SourcePathPageRow, SourceRoutingRow, SourcePathRow } from './engine-sql/sources.ts';
 import type {
   Coverage as NotifierCoverage, MarkerIntent, NotifierHostSourceRow, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder,
   NotifierSourceRow, NotifierStatusRow, PendingWantedMarker, StatePatch as NotifierStatePatch, WantedMarker, WantedMarkerInput, FirstDueRow,
@@ -182,6 +182,7 @@ import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './en
 import type { PageRevisionWriter, RevisionWriterRequest } from './engine-sql/sync-run-reads.ts';
 import type { RepairBusyRows } from './engine-sql/repair-busy.ts';
 import type { SourceDeleteImpact, SourceDeleteResult, SourceSyncStampOptions, SourceIncarnationListRow as SourcesIncarnationRow, SyncCheckpointAdvance } from './engine-sql/sources.ts';
+import type { IgnoredLabelPageRow } from './engine-sql/entity-reads.ts';
 import type { SyncAdmissionEffectsInput } from './engine-sql/sync-admission.ts';
 import type { SyncImportPageQuery, SyncImportPageRow, SyncImportPageWindow } from './engine-sql/sync-pass-pages.ts';
 
@@ -1458,13 +1459,25 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readFederationExposedPages(sourceId: string, hidePrivate: boolean): Promise<FederationExposureSql.FederationExposedRow[]>;
 
   /** One source row (id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides), or null when no source has that id. */
-  getSource(sourceId: string): Promise<SourceDetailRow | null>;
+  getSource(sourceId: string, opts?: { timeoutMs?: number }): Promise<SourceDetailRow | null>;
 
   /**
    * Local paths of every source that has one (non-null, non-empty), in no particular order. The filesystem lock
    * (`withSourceFilesystemLock`) canonicalizes each to pick the outermost worktree root an import locks.
    */
   listSourceLocalPaths(): Promise<string[]>;
+  /** The active sources with their raw config, by id (the read that scopes a legacy remote caller). */
+  listActiveSourceConfigs(): Promise<ActiveSourceConfigRow[]>;
+  /**
+   * Live pages of one source, by slug or updated since a database timestamp, that carry a privacy label gbrain does not
+   * recognize and no visibility key (`ignoredPrivacyLabelSql`), at most `limit` (default 100,000), in no set order.
+   */
+  readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string },
+    opts?: { limit?: number; timeoutMs?: number }): Promise<IgnoredLabelPageRow[]>;
+  /** The type and frontmatter of the live page at `slug` in the source, or null; `timeoutMs` bounds Postgres (default 1 s). */
+  readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }): Promise<IgnoredLabelPageRow | null>;
+  /** Whether this connection's role owns the gbrain tables (so it can apply migrations); false only when it provably does not. */
+  ownsSchemaTables(): Promise<boolean>;
 
   /** How many sources that are not archived have a non-empty local path (the readiness sync probe). */
   countRepoBoundSources(): Promise<number>;
@@ -4241,7 +4254,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   ): Promise<{ migrated: number }>;
 
   // Config
-  getConfig(key: string): Promise<string | null>;
+  getConfig(key: string, opts?: { timeoutMs?: number }): Promise<string | null>;
   setConfig(key: string, value: string): Promise<void>;
   /**
    * v0.32.3 — delete a config row. Returns the number of rows deleted (0 or 1).

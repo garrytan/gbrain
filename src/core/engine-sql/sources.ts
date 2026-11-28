@@ -7,7 +7,7 @@
  */
 import type { SourceDetailRow, SourceRow } from '../engine.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
-import { jsonbParam, type SqlExecutor } from './executor.ts';
+import { jsonbParam, type RawQuery, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL } from '../access/owner-only.ts';
@@ -90,11 +90,22 @@ export async function renameSource(exec: SqlExecutor, sourceId: string, name: st
   return affectedRows > 0;
 }
 
+/** One active source with its raw config (`listActiveSourceConfigs`). */
+export interface ActiveSourceConfigRow { id: string; config: unknown; archived: boolean }
+
+/**
+ * The active sources with their raw config, by id: the read that scopes a legacy remote caller to the sources it may see
+ * (`SELECT id, config, archived FROM sources WHERE archived = false ORDER BY id`, as master issued it). Unscoped on master.
+ */
+export async function listActiveSourceConfigs(exec: RawQuery): Promise<ActiveSourceConfigRow[]> {
+  return exec.executeRaw<ActiveSourceConfigRow>(`SELECT id, config, archived FROM sources WHERE archived = false ORDER BY id`);
+}
+
 /** One source row with the columns a source check reads: its checkout path, raw config and archived flag. */
 export interface SourceCheckRow { id: string; local_path: string | null; config: unknown; archived: boolean }
 
 /** The source row, or null (`SELECT id, local_path, config, archived FROM sources WHERE id=$1`). Unscoped on master. */
-export async function readSourceRow(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceCheckRow | null> {
+export async function readSourceRow(exec: RawQuery, sourceId: string): Promise<SourceCheckRow | null> {
   const [row] = await exec.executeRaw<SourceCheckRow>('SELECT id, local_path, config, archived FROM sources WHERE id=$1', [sourceId]);
   return row ?? null;
 }
@@ -312,7 +323,7 @@ export async function listStaleSyncSourceIds(exec: LegacyUnscopedRead): Promise<
 }
 
 /** One source with the columns import and contextual retrieval read, or null for an unknown id. Rows come back as the driver returns them. */
-export async function getSource(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceDetailRow | null> {
+export async function getSource(exec: RawQuery, sourceId: string): Promise<SourceDetailRow | null> {
   const rows = await exec.executeRaw<SourceDetailRow>(
     `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at,
             contextual_retrieval_mode, trust_frontmatter_overrides
@@ -362,7 +373,7 @@ export async function listSourcePathRows(exec: LegacyUnscopedRead): Promise<Sour
   return exec.executeRaw<SourcePathRow>('SELECT id,local_path FROM sources WHERE local_path IS NOT NULL');
 }
 
-export async function listLocalPathSources(exec: LegacyUnscopedRead): Promise<LocalPathSourceRow[]> {
+export async function listLocalPathSources(exec: RawQuery): Promise<LocalPathSourceRow[]> {
   return exec.executeRaw<LocalPathSourceRow>(`SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL`);
 }
 
@@ -400,7 +411,7 @@ export async function readPlainSyncSource(exec: LegacyUnscopedRead, sourceId: st
  * Every source row ordered by id, each carrying whether `default` holds a live page, in one statement (the request
  * config snapshot's `sources` read, #7147). Unscoped on master.
  */
-export async function listSourceRoutingRows(exec: LegacyUnscopedRead): Promise<SourceRoutingRow[]> {
+export async function listSourceRoutingRows(exec: RawQuery): Promise<SourceRoutingRow[]> {
   return exec.executeRaw<SourceRoutingRow>(
     `SELECT id, local_path, archived, config, EXISTS (SELECT 1 FROM pages WHERE source_id = 'default' AND deleted_at IS NULL) AS default_has_pages FROM sources ORDER BY id COLLATE "C"`,
   );
@@ -410,7 +421,7 @@ export async function listSourceRoutingRows(exec: LegacyUnscopedRead): Promise<S
  * Live pages in `default`, live pages elsewhere, and the number of non-default sources holding a live page (the
  * default-write guard). Soft-deleted pages are left out. Unscoped on master.
  */
-export async function countDefaultSourceSplit(exec: LegacyUnscopedRead): Promise<DefaultSourceSplit> {
+export async function countDefaultSourceSplit(exec: RawQuery): Promise<DefaultSourceSplit> {
   const rows = await exec.executeRaw<{
     default_pages: number | string | bigint | null;
     non_default_pages: number | string | bigint | null;

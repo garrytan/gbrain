@@ -121,7 +121,9 @@ const DOCTOR_PATH_TYPED_READS: readonly string[] = [
 ];
 /** The typed reads (engine-sql/decide-store.ts) that replaced statements this wrapper bounded through executeRaw: decide_health. */
 export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'readSegmentedGateEvidence', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations',
-  'countSegmentedTimelinePages', 'listCoveredSources', 'listExportWithdrawals', 'listPrivateQueueHealth', 'listQueueWedgeCounts', 'listStuckActiveJobsByName', 'listWaitingByQueue', 'hasNotifierCoverage', 'readExportWithdrawalLedgerBytes', 'readMaxTimelineEntryId', 'readOldestWaitingAge', 'readQueueDivergence', 'readQueueHealthSignals', 'readWedgeSignals', 'storedTimelineRowsByPageIds', 'getWorktreeBinding']);
+  'countSegmentedTimelinePages', 'listCoveredSources', 'listExportWithdrawals', 'listPrivateQueueHealth', 'listQueueWedgeCounts', 'listStuckActiveJobsByName', 'listWaitingByQueue', 'hasNotifierCoverage', 'readExportWithdrawalLedgerBytes', 'readMaxTimelineEntryId', 'readOldestWaitingAge', 'readQueueDivergence', 'readQueueHealthSignals', 'readWedgeSignals', 'storedTimelineRowsByPageIds', 'getWorktreeBinding',
+  // Part A: the source reads source resolution makes inside a doctor check, each a statement the doctor bounded through executeRaw on master.
+  'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'readSourceRow', 'listActiveSourceConfigs', 'listSourceRecords']);
 /** The write-journal reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`), the liveness round trip (engine-sql/health.ts `pingStore`) and the doctor reads (engine-sql/doctor-*.ts), which also replaced bounded statements. */
 const DOCTOR_BOUNDED_READS: ReadonlySet<string> = new Set([
   ...JOURNAL_TYPED_READS, 'getWorktreeBinding', 'pingStore', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_TALLY_MEMBERS, ...DOCTOR_SEARCH_MEMBERS, ...DOCTOR_ACC_MEMBERS, ...DOCTOR_JOIN_MEMBERS,

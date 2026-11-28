@@ -1667,12 +1667,13 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Import-path guard, attribution and config reads: SQL in engine-sql (persistence-state, transaction-settings, belief, config, access-control, sources).
-  getSource(sourceId: string) { return sourcesImpl.getSource(unscopedExecutor(this.engineSql, 'sources: single-row read ran unscoped through executeRaw'), sourceId); }
+  getSource(sourceId: string, _opts?: { timeoutMs?: number }) { return sourcesImpl.getSource(unscopedExecutor(this.engineSql, 'sources: single-row read ran unscoped through executeRaw'), sourceId); } // PGLite has no statement deadline: it ignores the bound
   getConfigValues(keys: readonly string[]) { return configImpl.getConfigValues(unscopedExecutor(this.engineSql, 'config: keyed read ran unscoped through executeRaw'), keys); }
   readStoredConfigValue(key: string) { return configImpl.readStoredConfigValue(this, key); }
   readManagedModeRows() { return persistenceStateImpl.readManagedModeRows(unscopedExecutor(this.engineSql, 'persistence: managed-mode read ran unscoped through executeRaw')); }
 
   // Read-command statements (engine-sql/cli-reads-ops.ts), through executeRaw as before; PGLite has no statement deadline or JIT, so it ignores those bounds as it did.
+
   private get rawRead(): cliReadsOpsImpl.EngineRawRead { return (sql, params) => this.executeRaw(sql, params); }
   scanExactBatch(opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number) { return cliReadsOpsImpl.scanExactBatch(this.rawRead, opts, afterPageId, batchPages, timeoutMs); }
   nextLivePageAfter(afterPageId: number) { return cliReadsOpsImpl.nextLivePageAfter(this.rawRead, afterPageId); }
@@ -2759,6 +2760,12 @@ export class PGLiteEngine implements BrainEngine {
   listKnownBeliefSubjectKeys(sourceId: string, keys: readonly string[]) { return beliefPurgeLedgerImpl.listKnownBeliefSubjectKeys(unscopedExecutor(this.engineSql, 'belief: the purge ran this read through executeRaw unscoped'), sourceId, keys); }
   async listCoveredSources(subjectKey: string) { return beliefImpl.listCoveredSources(this, subjectKey); }
   isFolderRestricted(sourceId: string, slug: string) { return accessControlImpl.isFolderRestricted(unscopedExecutor(this.engineSql, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug); }
+  readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string }, opts?: { limit?: number; timeoutMs?: number }) { return entityReadsImpl.readIgnoredPrivacyLabelPages(this.untimedRead, sourceId, scope, opts); }
+  readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }) { return entityReadsImpl.readLivePageFrontmatter(this.untimedRead, sourceId, slug, opts); }
+  listLocalPathSources() { return sourcesImpl.listLocalPathSources(this); }
+  listSourceRoutingRows() { return sourcesImpl.listSourceRoutingRows(this); }
+  countDefaultSourceSplit() { return sourcesImpl.countDefaultSourceSplit(this); }
+  readSourceRow(sourceId: string) { return sourcesImpl.readSourceRow(this, sourceId); }
   readFolderAccess(readers: readonly string[]) { return accessControlImpl.readFolderAccess(this, readers); }
   readLiveMember(via: MemberBindingVia, key: string) { return accessControlImpl.readLiveMember(this, via, key); }
   // Session state runs through this engine's executeRaw, as context/session-state.ts did (engine-sql/session-state.ts).
@@ -2961,8 +2968,6 @@ export class PGLiteEngine implements BrainEngine {
   // field: a transaction engine is Object.create(this), and must run on its own executeRaw.
   private get untimedRead(): entityReadsImpl.TimedRawRead { return { executeRaw: (sql, params) => this.executeRaw(sql, params) }; }
   readExtractionLagCounts(q: entityReadsImpl.ExtractionLagQuery) { return entityReadsImpl.readExtractionLagCounts(this.untimedRead, q); }
-  readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string }, opts?: { limit?: number; timeoutMs?: number }) { return entityReadsImpl.readIgnoredPrivacyLabelPages(this.untimedRead, sourceId, scope, opts); }
-  readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }) { return entityReadsImpl.readLivePageFrontmatter(this.untimedRead, sourceId, slug, opts); }
   readEntityAnchoredPages(sourceId: string, entitySlug: string) { return entityReadsImpl.readEntityAnchoredPages(this.untimedRead, sourceId, entitySlug); }
   readPageTitlesById(ids: readonly number[]) { return entityReadsImpl.readPageTitlesById(this.untimedRead, ids); }
   readImageSealProbe(sourceId: string, slug: string) { return entityReadsImpl.readImageSealProbe(this.untimedRead, sourceId, slug); }
@@ -2970,19 +2975,15 @@ export class PGLiteEngine implements BrainEngine {
   readPrefixAnchoredPages(sourceId: string, prefix: string) { return entityReadsImpl.readPrefixAnchoredPages(this.untimedRead, sourceId, prefix); }
   readPrivateOnlySlugs(slugs: readonly string[], scope?: pageVisibilityImpl.PrivateOnlySlugScope, opts?: { includeDeleted?: boolean }) { return pageVisibilityImpl.readPrivateOnlySlugs(this.untimedRead, slugs, scope, opts); }
   readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]) { return entityReadsImpl.readTextMentionPages(this.untimedRead, sourceIds, slugs); }
-  listLocalPathSources() { return sourcesImpl.listLocalPathSources(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
   listSourcePathRows() { return sourcesImpl.listSourcePathRows(unscopedExecutor(this.engineSql, 'sources: sources add read it unscoped through executeRaw')); }
   readPlainSyncSource(sourceId: string) { return sourcesImpl.readPlainSyncSource(unscopedExecutor(this.engineSql, 'sources: plain-directory sync read it unscoped through executeRaw'), sourceId); }
   readOwnerOnlySourcesPresent() { return sourcesImpl.readOwnerOnlySourcesPresent(unscopedExecutor(this.engineSql, 'sources: the owner-only check read it unscoped through executeRaw'), ownerOnlyLineageReadable(this)); }
   readOwnerOnlySourceConfig(sourceId: string) { return sourcesImpl.readOwnerOnlySourceConfig(unscopedExecutor(this.engineSql, 'sources: the owner-only check read it unscoped through executeRaw'), sourceId); }
-  listSourceRoutingRows() { return sourcesImpl.listSourceRoutingRows(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
-  countDefaultSourceSplit() { return sourcesImpl.countDefaultSourceSplit(unscopedExecutor(this.engineSql, 'sources: the default-write guard read it unscoped through executeRaw')); }
   listStaleSyncSourceIds() { return sourcesImpl.listStaleSyncSourceIds(unscopedExecutor(this.engineSql, 'sources: the advisor read it unscoped through executeRaw')); }
   listSourceIds() { return sourcesImpl.listSourceIds(unscopedExecutor(this.engineSql, 'sources: get_backlinks read it unscoped through executeRaw')); }
   readSoleSourceId() { return sourcesImpl.readSoleSourceId(unscopedExecutor(this.engineSql, 'sources: the corpus source check read it unscoped through executeRaw')); }
   readFirstSourceId() { return sourcesImpl.readFirstSourceId(unscopedExecutor(this.engineSql, 'sources: doctor origin_twins read it unscoped through executeRaw')); }
   lockAllSourceRows(mode: 'update' | 'share') { return sourcesImpl.lockAllSourceRows(this.engineSql, mode); }
-  readSourceRow(sourceId: string) { return sourcesImpl.readSourceRow(unscopedExecutor(this.engineSql, 'sources: source checks read it unscoped through executeRaw'), sourceId); }
   readLiveSlugAliases(sourceId: string, targets: readonly string[]) { return linkSlugReadsImpl.readLiveSlugAliases(unscopedExecutor(this.engineSql, 'link preparation: the live alias targets read unscoped through executeRaw'), sourceId, targets); }
   readSourceSlugProbe(sourceId: string, afterId: number) { return linkSlugReadsImpl.readSourceSlugProbe(unscopedExecutor(this.engineSql, 'link preparation: the source slug fingerprint read unscoped through executeRaw'), sourceId, afterId); }
   readStoredSlugSpellings(key: string, scope: slugSpellingsImpl.StoredSpellingScope, after: string, keys?: readonly string[] | null) { return slugSpellingsImpl.readStoredSlugSpellings(unscopedExecutor(this.engineSql, 'slug params: the stored-spelling scan read unscoped through executeRaw'), key, scope, after, keys); }
@@ -3000,7 +3001,6 @@ export class PGLiteEngine implements BrainEngine {
   isSourceClaimed(sourceId: string) { return sourcesImpl.isSourceClaimed(unscopedExecutor(this.engineSql, 'sources: sync-authority read the claim unscoped through executeRaw'), sourceId); }
   readSourceChunkerVersion(sourceId: string) { return sourcesImpl.readSourceChunkerVersion(unscopedExecutor(this.engineSql, 'sources: sync preflight read it unscoped through executeRaw'), sourceId); }
   setSourceChunkerVersion(sourceId: string, version: string) { return sourcesImpl.setSourceChunkerVersion(this.engineSql, sourceId, version); }
-  markSourceSynced(sourceId: string, opts?: sourcesImpl.SourceSyncStampOptions) { return sourcesImpl.markSourceSynced(this.engineSql, sourceId, opts); }
   advanceSyncCheckpoint(input: sourcesImpl.SyncCheckpointAdvance) { return sourcesImpl.advanceSyncCheckpoint(this.engineSql, input); }
   renameSource(sourceId: string, name: string) { return sourcesImpl.renameSource(this.engineSql, sourceId, name); }
   readFederationExposedPages(sourceId: string, hidePrivate: boolean) { return federationExposureImpl.readFederationExposedPages(unscopedExecutor(this.engineSql, 'federation warning: the exposed pages read unscoped through executeRaw'), sourceId, hidePrivate); }
@@ -3117,10 +3117,13 @@ export class PGLiteEngine implements BrainEngine {
   async listSourceLocalPaths(): Promise<string[]> {
     return sourcesImpl.listSourceLocalPaths(unscopedExecutor(this.engineSql, 'sources: unscoped on master (the filesystem lock read it through executeRaw)'));
   }
+  listSourceRecords() { return cliReadsImpl.listSourceRecords(this); }
+  listActiveSourceConfigs() { return sourcesImpl.listActiveSourceConfigs(this); }
+  markSourceSynced(sourceId: string, opts?: sourcesImpl.SourceSyncStampOptions) { return sourcesImpl.markSourceSynced(this.engineSql, sourceId, opts); }
+  readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this, sourceId); }
 
   // The CLI import and extract reads that ran unscoped through executeRaw (engine-sql/cli-reads-import.ts), on the current connection.
   private get cliReads() { return unscopedExecutor(this.engineSql, 'cli reads: the import and extract paths ran these unscoped through executeRaw'); }
-  listSourceRecords() { return cliReadsImpl.listSourceRecords(this.cliReads); }
   readSourceIncarnation(sourceId: string) { return cliReadsImpl.readSourceIncarnation(this.cliReads, sourceId); }
   readSyncDispatchRow(sourceId: string) { return syncDispatchImpl.readSyncDispatchRow(this, sourceId); }
   readRetainedSources(sourceIds: readonly string[]) { return cliReadsImpl.readRetainedSources(this.cliReads, sourceIds); }
@@ -3159,7 +3162,6 @@ export class PGLiteEngine implements BrainEngine {
   readLatestTakeGrades(takeIds: readonly number[]) { return listReadsImpl.readLatestTakeGrades(this.rawRead, takeIds); }
   readBeliefCoverageEvents(sourceId: string) { return beliefLedgerImpl.readBeliefCoverageEvents(this, sourceId); }
   hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.cliReads, sourceId); }
-  readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this.cliReads, sourceId); }
   hasGuestSourceRow(sourceId: string) { return cliReadsImpl.hasGuestSourceRow(this.cliReads, sourceId); }
   upsertGuestSource(sourceId: string, writers: readonly string[], trustCeiling: string) { return collateGuestSourcesImpl.upsertGuestSource(this.rawRead, sourceId, writers, trustCeiling); }
   listGuestNotes(slug: string, guestSource?: string) { return collateGuestSourcesImpl.listGuestNotes(this.rawRead, slug, guestSource); }
@@ -5304,7 +5306,7 @@ export class PGLiteEngine implements BrainEngine {
   listPendingContradictions(filter: trustProposalsImpl.PendingContradictionFilter = {}) { return trustProposalsImpl.listPendingContradictions(unscopedExecutor(this.engineSql, 'trust: the trust review contradiction read ran through executeRaw unscoped'), filter); }
 
   // Config
-  async getConfig(key: string): Promise<string | null> {
+  async getConfig(key: string, _opts?: { timeoutMs?: number }): Promise<string | null> { // PGLite has no statement deadline: it ignores the bound
     const held = await requestConfigValue(this, key);
     if (held !== undefined) return held;
     const { rows } = await this.db.query('SELECT value FROM config WHERE key = $1', [key]);

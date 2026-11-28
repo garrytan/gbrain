@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2520/2552
+# covered: 2520/2553
 # lifecycle: 21/22
-# pages: 141/142
+# pages: 141/143
 # search: 8/8
 # search_reads: 9/9
 # link_reads: 15/15
@@ -144,21 +144,21 @@ scanTextColumns	lifecycle	yes	6	no	yes	yes	serves
 pauseManagedPersistence	lifecycle	yes	1	no	yes	yes	serves
 restoreManagedPersistence	lifecycle	no	0	no	-	-	-
 withManagedPersistencePaused	lifecycle	yes	7	no	yes	yes	serves
-getPage	pages	yes	295	yes	yes	yes	serves
+getPage	pages	yes	296	yes	yes	yes	serves
 readPageSnapshot	pages	yes	131	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1442	yes	yes	yes	serves
+putPage	pages	yes	1445	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
 deletePages	pages	yes	10	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
-softDeletePage	pages	yes	356	yes	yes	yes	serves
+softDeletePage	pages	yes	359	yes	yes	yes	serves
 softDeletePages	pages	yes	8	yes	yes	yes	serves
 restorePage	pages	yes	22	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	12	no	yes	yes	serves
-listPages	pages	yes	22	yes	yes	yes	serves
+listPages	pages	yes	24	yes	yes	yes	serves
 findPages	pages	yes	5	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 pageTypeTotals	pages	yes	2	no	yes	yes	serves
@@ -175,8 +175,9 @@ listAllSources	pages	yes	26	no	yes	yes	serves
 updateSourceConfig	pages	yes	23	no	yes	yes	serves
 renameSource	pages	yes	1	no	yes	yes	serves
 readFederationExposedPages	pages	yes	1	no	yes	yes	serves
-getSource	pages	yes	43	no	yes	yes	serves
+getSource	pages	yes	45	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
+listActiveSourceConfigs	pages	no	0	no	-	-	-
 countRepoBoundSources	pages	yes	2	no	yes	yes	serves
 listNotifierHostSourceRows	pages	yes	3	no	yes	yes	serves
 listLocalPathSources	pages	yes	1	no	yes	yes	serves
@@ -191,14 +192,14 @@ listSourceIds	pages	yes	3	no	yes	yes	serves
 readSoleSourceId	pages	yes	1	no	yes	yes	serves
 readFirstSourceId	pages	yes	1	no	yes	yes	serves
 lockAllSourceRows	pages	yes	1	no	yes	yes	serves
-readSourceRow	pages	yes	9	no	yes	yes	serves
+readSourceRow	pages	yes	10	no	yes	yes	serves
 lockSourceRow	pages	yes	8	no	yes	yes	serves
 lockSourceForUpdate	pages	yes	4	no	yes	yes	serves
 advanceSourceCommit	pages	yes	8	no	yes	yes	serves
 writeSourceSyncHeartbeat	pages	yes	1	no	yes	yes	serves
 writeSourceUpstreamObservation	pages	yes	1	no	yes	yes	serves
 readPageIdentity	pages	yes	2	no	yes	yes	serves
-markSourceSynced	pages	yes	8	no	yes	yes	serves
+markSourceSynced	pages	yes	9	no	yes	yes	serves
 advanceSyncCheckpoint	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
 readSourcesNotReadable	pages	yes	3	no	yes	yes	serves
@@ -369,7 +370,7 @@ listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
 upsertChunks	chunks	yes	75	yes	yes	yes	serves
 sealChunks	chunks	yes	109	no	yes	yes	serves
-getChunks	chunks	yes	83	yes	yes	yes	serves
+getChunks	chunks	yes	84	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	14	no	yes	yes	serves
 countStaleChunks	chunks	yes	9	no	yes	yes	serves
@@ -451,7 +452,7 @@ addTag	tags	yes	43	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	3	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
-getTags	tags	yes	14	yes	yes	yes	serves
+getTags	tags	yes	15	yes	yes	yes	serves
 sampleEffectiveDates	timeline	yes	1	no	yes	yes	serves
 sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	serves
 readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	serves
@@ -810,6 +811,7 @@ setWriteContext	import_guards	yes	4	no	yes	yes	serves
 readLedgerSource	import_guards	yes	31	no	yes	yes	serves
 listCoveredSources	import_guards	yes	3	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	5	no	yes	yes	serves
+ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 claimNotifierLease	persistence_journal	yes	4	no	yes	yes	serves
 readNotifierLease	persistence_journal	yes	1	no	yes	yes	serves
 holdsNotifierLease	persistence_journal	yes	1	no	yes	yes	serves
@@ -952,7 +954,6 @@ completeSyncedRefresh	persistence_journal	yes	2	no	yes	yes	serves
 hasDeferralRoom	persistence_journal	yes	2	no	yes	yes	serves
 readRefreshTiming	persistence_journal	yes	2	no	yes	yes	serves
 countHeldBehindImport	persistence_journal	yes	2	no	yes	yes	serves
-ownsSchemaTables	persistence_journal	yes	1	no	yes	yes	serves
 readOAuthClientWriteGrant	persistence_journal	yes	4	no	yes	yes	serves
 readAccessTokenWriteGrant	persistence_journal	yes	4	no	yes	yes	serves
 shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
@@ -1199,6 +1200,8 @@ countMentionLinksTo	mention_pass	yes	1	no	yes	yes	serves
 readPageNameText	mention_pass	yes	1	no	yes	yes	serves
 listFrontmatterAliasNorms	mention_pass	yes	1	no	yes	yes	serves
 listRejectedDeclarationPages	mention_pass	yes	1	no	yes	yes	serves
+readIgnoredPrivacyLabelPages	entity_reads	yes	4	no	yes	yes	serves
+readLivePageFrontmatter	entity_reads	yes	3	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 readMentionIndexStatus	entity_reads	yes	3	no	yes	yes	serves
 countLivePagesInSource	entity_reads	yes	2	no	yes	yes	serves
@@ -1226,8 +1229,6 @@ readVisibleVariantPages	entity_reads	no	0	no	-	-	-
 listNameVariantCardCandidates	entity_reads	yes	3	no	yes	yes	serves
 countDistinctInboundLinkers	entity_reads	yes	2	no	yes	yes	serves
 readExtractionLagCounts	entity_reads	yes	2	no	yes	yes	serves
-readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
-readLivePageFrontmatter	entity_reads	yes	2	no	yes	yes	serves
 readEntityAnchoredPages	entity_reads	yes	2	no	yes	yes	serves
 readPageTitlesById	entity_reads	yes	2	no	yes	yes	serves
 readImageSealProbe	entity_reads	yes	1	no	yes	yes	serves
@@ -2026,7 +2027,7 @@ unlinkEntityIdentityRow	entity_identities	yes	1	no	yes	yes	serves
 listEntityIdentityRows	entity_identities	yes	16	no	yes	yes	serves
 readEntityIdentityIdsForPages	entity_identities	yes	1	no	yes	yes	serves
 readCanonicalTwin	entity_identities	yes	1	no	yes	yes	serves
-listSourceRecords	cli_reads_import	yes	14	no	yes	yes	serves
+listSourceRecords	cli_reads_import	yes	15	no	yes	yes	serves
 readSourceIncarnation	cli_reads_import	yes	18	no	yes	yes	serves
 readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 readRetainedSources	cli_reads_import	yes	1	no	yes	yes	serves
