@@ -9,16 +9,20 @@
  *    pack from the source's canonical root commits it, and the sealed pack row (readSharedSkillPackRow) and the live
  *    source (readSourceIncarnationArchived) that adoption reads give the same answers on every engine arm (PGLite
  *    always; Postgres with DATABASE_URL; the Rust arm through test/engine-parity/harness.ts).
+ *    A put_skill that newly references a shared convention file another skill already holds for a narrower audience
+ *    refuses local_conflict by name and changes no head and no file, the same on every arm (refuseDependentWidening).
  *  - Regression: on a Rust brain a reviewed activation refused engine_capability_missing, and adoptSharedSkillpack
- *    refused engine_capability_missing before it read anything (its source and pack reads were raw SQL).
+ *    refused engine_capability_missing before it read anything (its source and pack reads were raw SQL). Before the
+ *    dependent-widening check, that put_skill republished the other skill's restricted convention to readers.
  *  - Why existing coverage misses it: shared-skill-members.test.ts activates without a reviewed state and publishes
- *    one skill with put_skill; no parity case adopted a pack.
+ *    one skill with put_skill; no parity case adopted a pack; test/shared-skills-import-closure.test.ts runs the
+ *    widening refusal on PGLite and Postgres only.
  *  - Seam: GBRAIN_HOME through withEnv (the local writer registration lives under it). Generated values (ids,
  *    revisions, timestamps) are reduced to their shape in the returned values.
  */
 import { describe, expect } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parityArms, type ParityBackend } from './harness.ts';
@@ -33,7 +37,8 @@ import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { setSharedSkillPolicy } from '../../src/core/shared-skills/policy.ts';
-import { adoptSharedSkillpack } from '../../src/core/shared-skills/publication.ts';
+import { adoptSharedSkillpack, submitSharedSkillMutation } from '../../src/core/shared-skills/publication.ts';
+import { getSharedSkill } from '../../src/core/shared-skills/catalog.ts';
 import { LATEST_VERSION } from '../../src/core/migrate.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -41,6 +46,11 @@ const { parityTest } = parityArms(testBackends());
 const BODY = '---\nname: notes\ndescription: Take notes.\n---\nTake notes.\n';
 const MANIFEST = `${JSON.stringify({ name: 'pack', brain_resident: true, skills: ['skills/notes'] }, null, 2)}\n`;
 const POLICY = { version: 1 as const, enabled: true, classes: ['prose' as const], audiences: ['readers'], requirements: [], allow_follow: true };
+const WIDEN_POLICY = { version: 1 as const, enabled: true, classes: ['prose' as const, 'reference' as const], audiences: ['readers', 'oauth_client:editor'], requirements: [], allow_follow: true };
+const GUIDE = 'skills/conventions/guide.md';
+const prose = (name: string, body: string, depends_on: string[] = []) => ({ path: `skills/${name}/SKILL.md`,
+  content: `---\nname: ${name}\ndescription: A synthetic ${name} fixture\n---\n\n${body}\n`, file_class: 'prose', depends_on });
+const guide = (audience: string[]) => ({ path: GUIDE, content: 'Synthetic shared guide body.\n', file_class: 'reference', audience });
 
 async function inFreshHome<T>(fn: () => Promise<T>): Promise<T> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-parity-skill-adoption-'));
@@ -161,6 +171,35 @@ describe('engine parity: reviewed shared-skill activation and canonical pack ado
     expect(result.receipts).toEqual([{ status: 'published', state: 'committed', delivery: 'canonical_committed', name: 'notes', pack_id: 'pack' }]);
     expect(result.pack).toMatchObject({ pack_id: 'pack', revision: '<uuid>', manifest_hash_is_hex: true });
     expect(result.missing).toBeNull();
+    return result;
+  })));
+
+  parityTest('a put_skill that newly references a convention another skill holds for a narrower audience refuses local_conflict and changes nothing', {
+    methods: ['readSourceIncarnationArchived', 'readSharedSkillPolicyRow', 'writeSharedSkillPolicy', 'writeSharedSkillRevision', 'transaction'],
+  }, (engine, backend) => inFreshHome(() => withCanonicalRoot(engine, backend, async (root) => {
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    await engine.setConfig('mcp.publish_skills', 'true');
+    const incarnation = (await engine.readSourceIncarnationArchived('default'))!.incarnation;
+    await setSharedSkillPolicy(local(engine), 'default', WIDEN_POLICY, null);
+    const ctx = { ...local(engine), sourceId: 'default' } as OperationContext;
+    const revision = async (name: string) => ((await getSharedSkill(ctx, { name }).catch(() => null)) as { revision?: string } | null)?.revision ?? null;
+    const put = async (name: string, files: Array<Record<string, unknown>>) => submitSharedSkillMutation(ctx, 'put_skill', { request_id: crypto.randomUUID(),
+      expected_revision: await revision(name), source_id: 'default', source_incarnation: incarnation, pack_id: 'pack', name, files });
+    const disk = () => Object.fromEntries(['skills/alpha/SKILL.md', 'skills/beta/SKILL.md', GUIDE, 'skillpack.json']
+      .map(rel => [rel, existsSync(join(root, rel)) ? readFileSync(join(root, rel), 'utf8') : null]));
+    // Alpha holds the guide restricted to the editor client; beta does not hold it yet.
+    const published = [await put('alpha', [prose('alpha', 'Use the guide.', [GUIDE]), guide(['oauth_client:editor'])]), await put('beta', [prose('beta', 'Standalone.')])]
+      .map(receipt => (receipt as { state?: string }).state);
+    const before = { alpha: await revision('alpha'), beta: await revision('beta'), disk: disk() };
+    const widened = await outcome(() => put('beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])]));
+    const result = { published, widened,
+      unchanged: { alpha: await revision('alpha') === before.alpha, beta: await revision('beta') === before.beta,
+        disk: JSON.stringify(disk()) === JSON.stringify(before.disk) } };
+    expect(result.published).toEqual(['committed', 'committed']);
+    expect(result.widened).toMatchObject({ code: 'local_conflict' });
+    expect((result.widened as { message?: string }).message).toContain('skills/alpha');
+    expect((result.widened as { message?: string }).message).toContain(GUIDE);
+    expect(result.unchanged).toEqual({ alpha: true, beta: true, disk: true });
     return result;
   })));
 });

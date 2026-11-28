@@ -127,7 +127,7 @@ disconnect	lifecycle	yes	3	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	4	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	409	no	yes	yes	serves
+transaction	lifecycle	yes	410	no	yes	yes	serves
 transactionDirect	lifecycle	yes	27	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -257,7 +257,7 @@ listLiveSourceIncarnations	pages	yes	3	no	yes	yes	serves
 readAttendanceWindow	pages	yes	3	no	yes	yes	serves
 listEmailAliasPages	pages	yes	1	no	yes	yes	serves
 readUploadSessionByRequest	pages	yes	1	no	yes	yes	serves
-readSourceIncarnationArchived	pages	yes	2	no	yes	yes	serves
+readSourceIncarnationArchived	pages	yes	3	no	yes	yes	serves
 listEnabledLabelledOnlyMemberIds	pages	yes	1	no	yes	yes	serves
 readChatCensusRows	pages	yes	3	no	yes	yes	serves
 readWhoCanReadRows	pages	yes	5	no	yes	yes	serves
@@ -2459,9 +2459,9 @@ writeCredentialReadsUnscoped	access_members	yes	5	no	yes	yes	serves
 readSharedSkillCatalogIdentity	shared_skill_members	yes	3	no	yes	yes	serves
 listSharedSkillCatalogHeads	shared_skill_members	yes	5	no	yes	yes	serves
 readSharedSkillPackRow	shared_skill_members	yes	1	no	yes	yes	serves
-readSharedSkillPolicyRow	shared_skill_members	yes	5	no	yes	yes	serves
-writeSharedSkillPolicy	shared_skill_members	yes	5	no	yes	yes	serves
-writeSharedSkillRevision	shared_skill_members	yes	4	no	yes	yes	serves
+readSharedSkillPolicyRow	shared_skill_members	yes	6	no	yes	yes	serves
+writeSharedSkillPolicy	shared_skill_members	yes	6	no	yes	yes	serves
+writeSharedSkillRevision	shared_skill_members	yes	5	no	yes	yes	serves
 readSharedSkillRevision	shared_skill_members	yes	4	no	yes	yes	serves
 listSharedSkillFollowSources	shared_skill_members	yes	3	no	yes	yes	serves
 lockSharedSkillBrainId	shared_skill_members	yes	6	no	yes	yes	serves
