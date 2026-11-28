@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { runEngineShadow, shadowPlan } from '../../src/commands/engine-shadow.ts';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import type { EngineConfig } from '../../src/core/types.ts';
-import { DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor } from '../../src/shadow/state.ts';
+import { DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, OPT_IN_WRITE_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor } from '../../src/shadow/state.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
 import { snapshotPersistence, snapshotTree } from '../helpers/primary-snapshot.ts';
 import { hasDatabase } from './helpers.ts';
@@ -69,6 +69,8 @@ d('engine shadow start on a Postgres brain', () => {
 
   const dir = (): string => shadowDirFor(shadowBrainKey(config)!);
   const hash = (): string => shadowPlan(shadowBrainKey(config)!, 'postgres', dir(), { sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND }).hash;
+  // A brain that can opt in compares every write, and the plan binds that applied rate.
+  const optInHash = (): string => shadowPlan(shadowBrainKey(config)!, 'postgres', dir(), { sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND, writeSampleRate: OPT_IN_WRITE_SAMPLE_RATE }).hash;
 
   test('a managed brain gets the plan, the preview and --yes, prints the line, records managed: true, and the primary is byte-identical', async () => {
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
@@ -101,8 +103,9 @@ d('engine shadow start on a Postgres brain', () => {
     expect(plan.code).toBe(0);
     expect(plan.text).not.toContain('storage:');
     expect(existsSync(dir())).toBe(false);
-    expect((await run(['start', '--yes', '--expect', hash()])).code).toBe(0);
+    expect((await run(['start', '--yes', '--expect', optInHash()])).code).toBe(0);
     expect(readShadowState(dir())?.storage).toEqual({ managed: false, checked_at: NOW.toISOString() });
+    expect(readShadowState(dir())?.write_sample_rate).toBe(OPT_IN_WRITE_SAMPLE_RATE);
   }, 60_000);
 
   test('a database that cannot be reached does not block start and records managed: null', async () => {
@@ -111,7 +114,10 @@ d('engine shadow start on a Postgres brain', () => {
     expect(plan.err).toEqual([]);
     expect(plan.code).toBe(0);
     expect(plan.out.join('\n')).toContain('could not read whether this brain uses managed storage; the swap will check it');
-    expect((await run(['start', '--yes', '--expect', hash()])).code).toBe(0);
+    // An unread storage mode counts as a brain that can opt in: every write is compared, and the plan binds that rate.
+    expect(plan.out.join('\n')).toContain(`every write is compared (rate ${OPT_IN_WRITE_SAMPLE_RATE}) in case this brain can opt in to the engine swap`);
+    expect((await run(['start', '--yes', '--expect', optInHash()])).code).toBe(0);
     expect(readShadowState(dir())?.storage?.managed).toBeNull();
+    expect(readShadowState(dir())?.write_sample_rate).toBe(OPT_IN_WRITE_SAMPLE_RATE);
   }, 60_000);
 });

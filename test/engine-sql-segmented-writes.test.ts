@@ -27,10 +27,13 @@ const OLD_STALE_CHUNKS_SQL = `WITH RECURSIVE occ(o) AS (
   SELECT c.id FROM content_chunks c -- chunk-visibility-ok: retirement selects the rows the live generation does not hold
   WHERE c.page_id=$1 AND c.occurrence_id IS NULL AND (c.body_generation IS NULL OR (cardinality($3::bigint[])=0 AND c.body_generation<=$2::bigint))`;
 
+// Master 8b03495120 (#10545, GST-4056): the rechunk page read also returns the content author while it still matches
+// the content (`CASE WHEN content_author_hash = content_hash ...`). Text as master's page-body/rechunk.ts PAGE_SQL.
 const OLD_RECHUNK_PAGE_SQL = `SELECT id, slug, source_id, title, type, page_kind, frontmatter, body_generation, body_flags, chunker_version,
     contextual_retrieval_mode, corpus_generation, knowledge_revision::text AS knowledge_revision,
     (text_projection_revision = knowledge_revision) IS TRUE AS sealed, (extract(epoch FROM updated_at) * 1000000)::bigint::text AS updated_us, deleted_at, content_hash, body_bytes, truth_bytes,
-    body_lines, segment_count, segmenter_version, truth_lead, timeline_lead
+    body_lines, segment_count, segmenter_version, truth_lead, timeline_lead,
+    CASE WHEN content_author_hash = content_hash THEN content_author END AS content_author
   FROM pages WHERE id=$1 AND body_storage='segmented'`;
 
 /** A recording executor: every statement and its parameters, answering `rows`. */

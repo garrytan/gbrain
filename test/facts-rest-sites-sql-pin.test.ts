@@ -569,23 +569,27 @@ const PINS: Pin[] = [
     statements: [{ digest: { length: 26129, sha256: '9a3b8ac9c1f38568d08233187437c829ff3bf12c375e3464ee9309b617b2d29f' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['people/x'], 3] }],
   },
   {
+    // Master e821edba7f (#10495, #10288): an undated fact ranks as of created_at and is never a call-off cue
+    // (`CASE WHEN f.valid_from IS NULL OR ...`, `AND f.valid_from IS NOT NULL`). Text as master's laterRetractions renders it.
     from: "src/core/search/fact-relevance.ts:324 laterRetractions",
     member: 'listCallOffCueFacts',
     label: "one source",
     run: e => e.listCallOffCueFacts(scopeA, [{ source_id: 's1', entity_slug: 'people/x' }, { source_id: 's1', entity_slug: 'people/y' }, { source_id: 's2', entity_slug: 'people/x' }]),
-    statements: [{ text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC) AS call_off_rank
+    statements: [{ text: `SELECT f.id, f.fact, f.kind, f.entity_slug, f.source_id, f.source, f.valid_from, f.valid_until, f.created_at, f.claim_metric, f.claim_period, f.source_markdown_slug, f.visibility, f.attributed_to, f.dimension, f.value_hash FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY (CASE WHEN f.valid_from IS NULL OR f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC) AS call_off_rank
        FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL AND (f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[]) AND NOT EXISTS (SELECT 1 FROM pages qp WHERE qp.source_id = f.source_id AND qp.slug = f.source_markdown_slug AND NOT NOT (COALESCE(qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = f.source_id
       AND elig_dp.slug = ANY(ARRAY[f.source_markdown_slug, f.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = f.source_id AND elig_qp.slug = f.source_markdown_slug
-      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.fact ~* $3
+      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.valid_from IS NOT NULL AND f.fact ~* $3
          AND (f.source_id, f.entity_slug) IN (SELECT * FROM unnest($4::text[], $5::text[]))) f
      WHERE f.call_off_rank <= $6`, params: [['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], CALL_OFF_REGEX, ['s1', 's1', 's2'], ['people/x', 'people/y', 'people/x'], 50] }],
   },
   {
+    // Master e821edba7f (#10495, #10288): the same two changes, 53 characters; equal to master's laterRetractions text. Reverting
+    // them gives the old 26390 / 84a0e5de... digest.
     from: "src/core/search/fact-relevance.ts:324 laterRetractions",
     member: 'listCallOffCueFacts',
     label: "remote, trust floor, two sources",
     run: e => e.listCallOffCueFacts(scopeB, [{ source_id: 's1', entity_slug: 'people/x' }]),
-    statements: [{ digest: { length: 26390, sha256: '84a0e5de167c674105336f8a3d56f4641ae07f1f4231afbb18ce870bf63dc208' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], CALL_OFF_REGEX, ['s1'], ['people/x'], 50] }],
+    statements: [{ digest: { length: 26443, sha256: '98bd3912b3f7facdcdfe12db86780739356a7c298723e854916eb4a9ceba323a' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], CALL_OFF_REGEX, ['s1'], ['people/x'], 50] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:355 poolEntityPairs",
@@ -597,11 +601,13 @@ const PINS: Pin[] = [
       AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = f.id::text) AND f.entity_slug IS NOT NULL ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`, params: [['s1'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal']] }],
   },
   {
+    // Master e821edba7f (#10495, #10288): `since` without include_undated also requires `f.valid_from IS NOT NULL` (29 characters).
+    // Master's poolEntityPairs text plus the four `COLLATE "C"` of the main join (header); reverting gives the old 26079 / 949066e0... digest.
     from: "src/core/search/fact-relevance.ts:355 poolEntityPairs",
     member: 'listPoolEntityPairs',
     label: "remote, trust floor, every filter",
     run: e => e.listPoolEntityPairs(scopeB, { entities: [{ sourceId: 's1', slug: 'people/x' }], sessionId: 'sess', since: new Date('2026-01-02T03:04:05Z'), grep: 'a_b', includeExpired: true }),
-    statements: [{ digest: { length: 26079, sha256: '949066e0f24ccf7c220c4ff813c1afa15ff6a0e335d58ff6558f1ed930e4b2ce' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1'], ['people/x'], 'sess', '2026-01-02T03:04:05.000Z', '%a\\_b%'] }],
+    statements: [{ digest: { length: 26108, sha256: '6ef200c2a992b158d7e36c34578d1aa1803c7e3b17f78b554ccef82d94fed6ce' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1'], ['people/x'], 'sess', '2026-01-02T03:04:05.000Z', '%a\\_b%'] }],
   },
   {
     from: 'src/core/search/fact-relevance.ts:224 collectFactCandidates (nearest); the text is the NEW renumbered one, see the header',

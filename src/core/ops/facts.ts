@@ -59,7 +59,6 @@ import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { parseSinceParam } from '../facts/since-parse.ts';
 import { callerSessionKey } from '../access/member-facts.ts';
 import { applySlotEnds } from '../search/slot-ends.ts';
-import { lacksRawSql } from '../engine-capabilities.ts';
 import { groupFactsByEntity, parseQuestionParam, QUESTION_MAX_CHARS, questionRecallNotices, rankFactsByQuestion, namesakesOrMerge, unlinkedNamesakes, type EntityCandidate, type QuestionRecall } from '../facts/question-recall.ts';
 
 // ============================================================
@@ -424,8 +423,9 @@ const recall: Operation = {
     const queryText = typeof p.query === 'string' && p.query.trim().length > 0 ? p.query.trim() : null;
     // #10225: a query with no fact selector ranks facts by the query instead of returning the newest ones.
     const explicitQuestion = parseQuestionParam(p);
-    // An engine without raw SQL (Rust) cannot rank, so a plain query there keeps the newest-facts read.
-    const question = explicitQuestion ?? (queryText && !entityParam && !sessionParam && !since && p.supersessions !== true && !lacksRawSql(ctx.engine)
+    // Sync 21: master kept the newest-facts read on an engine without raw SQL (`lacksRawSql`, the Rust brain). The trunk's Rust store serves every
+    // read the ranking makes through typed members (remote-access-matrix 'recall query' answers the same on the Rust arm), so every engine ranks.
+    const question = explicitQuestion ?? (queryText && !entityParam && !sessionParam && !since && p.supersessions !== true
       ? queryText.slice(0, QUESTION_MAX_CHARS) : null);
     let ranking: QuestionRecall | null = null;
     // Shared per-source opts for the fact-list arms (visibility, grep and the

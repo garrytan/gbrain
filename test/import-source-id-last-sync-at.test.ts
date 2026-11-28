@@ -339,7 +339,10 @@ describe('import stamps sources.last_sync_at for a local_path-registered source 
       const result = await runImport(spied, [repo, '--no-embed', '--json']);
       expect(result.failures.length).toBe(0);
       expect(calls.some((sql) => sql.includes('SELECT local_path, config FROM sources'))).toBe(false);
-      expect(calls).not.toContain('member:readSourceRow');
+      // Since d02e67de11 (#10372) the owner-import write gate reads the page's source through readSourceRow once per
+      // imported file (trust/channel.ts ownerSourceGateInput), so the one file here reads it once. The stamp's own read
+      // would be a second call.
+      expect(calls.filter((call) => call === 'member:readSourceRow').length).toBe(1);
       expect(calls).not.toContain('member:markSourceSynced');
       expect(await lastSyncAt('default')).toBeNull();
     });

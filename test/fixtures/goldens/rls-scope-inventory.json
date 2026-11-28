@@ -2970,6 +2970,17 @@
         ],
         "flagOnScopes": []
       },
+      "listActiveSourceConfigs#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listActiveTakesForPages#allowList": {
         "flagOffLanes": [
           "pool"
@@ -10205,6 +10216,7 @@
         "listActiveFactsForEntity": "none",
         "listActiveOauthClientRows": "none",
         "listActivePositionedFactIds": "none",
+        "listActiveSourceConfigs": "none",
         "listActiveSourceIds": "none",
         "listActiveTakesForPages": "none",
         "listActiveWorktreeRefreshRows": "none",
@@ -10635,6 +10647,7 @@
         "listPinnedQuestions": "none",
         "listPoolEntityPairs": "none",
         "listPoolUnbackedKeys": "none",
+        "listPooledFactRows": "none",
         "listPrefixSampledPages": "direct",
         "listPrivateQueueHealth": "none",
         "listPrivilegedDcrClients": "none",
@@ -10984,6 +10997,7 @@
         "moveTwinFacts": "none",
         "moveTwinPageChildren": "none",
         "moveTwinRelationships": "none",
+        "narrowConversationExpiredCopies": "none",
         "nextLivePageAfter": "none",
         "normalizeFenceLines": "none",
         "oauthClientHoldsAuthorization": "none",
@@ -11036,6 +11050,7 @@
         "pruneDecideReceipts": "none",
         "pruneFrontmatterTags": "none",
         "pruneHoldingPageVersions": "none",
+        "pruneInlineVersionsById": "none",
         "pruneJobs": "none",
         "pruneMcpRequestLogBatch": "none",
         "pruneOriginParkRecords": "none",

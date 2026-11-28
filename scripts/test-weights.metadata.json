@@ -5,7 +5,7 @@
   "commit": "7c7de751d86800a9547ab35209bfecbccaa9c1b7",
   "source": "github",
   "measuredFiles": 5549,
-  "totalFiles": 5831,
+  "totalFiles": 6009,
   "mergeExisting": true,
   "coverageOnly": {
     "addedFiles": 138,
@@ -25,5 +25,12 @@
       "4c675918ecc17619dc86e0b5c70cb3559c7e03b6",
       "c50e2d93552e23cffa3cb479d65b86bb5944a6f7"
     ]
+  },
+  "trunkFill": {
+    "run": "44896557949",
+    "commit": "cac1af275f848097edbc801cb90edb642663f820",
+    "source": "github",
+    "addedFiles": 178,
+    "note": "Rust trunk only: unit files with no mined weight take their time from the trunk's last green Test run; every existing weight is unchanged."
   }
 }

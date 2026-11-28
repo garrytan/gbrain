@@ -4581,7 +4581,8 @@ function briefPins(): Pin[] {
 
 /**
  * search/entity-facts.ts newestFacts's statement at efeb078093 (`worldOnly` stands for `worldOnlyFacts(opts.remote)`), with
- * main's ordering: a fact whose `valid_from` lies in the future sorts by `created_at`.
+ * master's ordering at ddbcac0b4e (e821edba7f, #10495): a fact whose `valid_from` is unknown or lies in the future sorts by
+ * `created_at`.
  */
 function pinnedNewestFacts(remote: boolean, worldOnly: boolean, minTrust?: TrustTier): string {
   const visibility = remote ? `${worldOnly ? `AND (f.visibility = 'world' OR ${grantedPrivateFactSql('f')})` : ''} AND ${privateFactFilterForReader('f')}` : '';
@@ -4592,7 +4593,7 @@ function pinnedNewestFacts(remote: boolean, worldOnly: boolean, minTrust?: Trust
         AND f.source != ALL($3::text[])
         ${visibility}
         AND ${projectionEligibleSql('facts', 'f', { floor: minTrust })}
-      ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC
+      ORDER BY (CASE WHEN f.valid_from IS NULL OR f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC
       LIMIT 50`;
 }
 
@@ -4618,13 +4619,16 @@ function pinnedTypeProbe(expanded: string[][], scope: { sourceId?: string; sourc
        FROM (SELECT ${probes.map(p => p.sql).join(', ')} OFFSET 0) probe`;
 }
 
-/** search/evidence-delivery.ts selectLongPages size preflight at efeb078093, verbatim; `timeline` is detail other than low. */
+/**
+ * search/evidence-delivery.ts selectLongPages size preflight at efeb078093, verbatim, with master's byte count at ddbcac0b4e
+ * (6d2e6bd3bf, #10516): detail low counts the whole timeline's bytes too. `timeline` is detail other than low.
+ */
 function pinnedLongPageSizes(scope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier; excludePrivate?: boolean }, timeline: boolean): string {
   const params: unknown[] = [[3]];
   const filter = pageReadFilter('p', scope, params, true);
   const tl = !timeline ? null : `CASE WHEN COALESCE(p.timeline, '') !~ '\\S' THEN 0 ELSE ${TIMELINE_SEPARATOR.length} + `;
   return `SELECT p.id, char_length(COALESCE(p.compiled_truth, ''))${tl ? ` + ${tl}char_length(p.timeline) END` : ''} AS chars,
-              octet_length(COALESCE(p.compiled_truth, ''))${tl ? ` + ${tl}octet_length(p.timeline) END` : ''} AS bytes FROM pages p
+              octet_length(COALESCE(p.compiled_truth, '')) + ${tl ? `${tl}octet_length(p.timeline) END` : `octet_length(COALESCE(p.timeline, ''))`} AS bytes FROM pages p
         WHERE p.id = ANY($1::int[]) AND ${filter} AND ${servedTextProjectionFilter('p')}${requiresSafeChunks(scope) ? ` AND ${safeChunksFilter('p')}` : ''}`;
 }
 
@@ -4880,7 +4884,9 @@ describe('the expired-credential sweep sends the same statements through an engi
   test('two expired tokens and one expired code', async () => {
     const template = await swept(e => new GBrainOAuthProvider({ sql: sqlQueryForEngine(e) }).sweepExpiredTokens());
     const member = await swept(e => new GBrainOAuthProvider({ sql: sqlQueryForEngine(e), engine: e }).sweepExpiredTokens());
-    expect(template.sent.length).toBe(2);
+    // Master ceaaca6fae (#10485): the sweep also runs sweepExpiredRotations, whose first statement is the
+    // `SELECT to_regclass('oauth_refresh_rotations') IS NOT NULL AS ready` probe (no table answers here), so three statements.
+    expect(template.sent.length).toBe(3);
     expect(template.count).toBe(3);
     expect({ ...member, sent: member.sent.map(s => ({ ...s, params: s.params.map(() => 'now') })) })
       .toEqual({ ...template, sent: template.sent.map(s => ({ ...s, params: s.params.map(() => 'now') })) });
@@ -4954,9 +4960,11 @@ describe('the OAuth code flow and the token grant send the same statements throu
   test('begin, decide, the code lookup, exchangeCode, refresh and clientCredentials', async () => {
     const template = await sentBy('flow-template', flow(false));
     const member = await sentBy('flow-member', flow(true));
+    // exchangeCode (after the code delete) and refresh (after the client lock) ask whether the brain has refresh families
+    // (master's to_regclass probe, ceaaca6fae #10485); the fake never answers ready, so nothing caches it.
     expect(template.map(s => s.text.trim().split(/\s+/).slice(0, 3).join(' '))).toEqual([
       'SELECT * FROM', 'SELECT * FROM', 'INSERT INTO oauth_codes', 'SELECT * FROM', 'SELECT * FROM',
-      'DELETE FROM oauth_codes', 'INSERT INTO oauth_tokens', 'INSERT INTO oauth_tokens', 'SELECT * FROM', 'SELECT * FROM', 'DELETE FROM oauth_tokens',
+      'DELETE FROM oauth_codes', "SELECT to_regclass('oauth_refresh_rotations') IS", 'INSERT INTO oauth_tokens', 'INSERT INTO oauth_tokens', 'SELECT * FROM', "SELECT to_regclass('oauth_refresh_rotations') IS", 'SELECT * FROM', 'DELETE FROM oauth_tokens',
       'INSERT INTO oauth_tokens', 'INSERT INTO oauth_tokens', 'SELECT * FROM', 'INSERT INTO oauth_tokens', 'SELECT code_challenge FROM']);
     expect(member).toEqual(template);
   });
