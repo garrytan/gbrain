@@ -10,6 +10,46 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.785.0] - 2026-11-28
+
+**CI unit tests run in 46 shards with the slow setup-layout suite split by shape, the nightly race hunt can use 36 shards, the shard-timing miner refreshes from a median of recent runs, and four tests that failed at random are fixed at the cause.**
+
+### Fixed
+- Shadow mode's status check could read a write-comparison tally as unchanged when it was saved again within one file-timestamp tick and kept its size and inode. It now compares the file's bytes too, so such a read is retried and then reported unresolved, never measured.
+- Four tests that failed at random on busy CI runners no longer depend on how fast the runner is. Two timer tests (the shadow keeper's refusal burst, #10584, and the bounded write waiters) run on a test clock, the shadow tally test above is deterministic, and the owner-contact enrich budget at 100k pages is measured in thread CPU time, the same 500 ms budget.
+
+### Changed
+- `test/setup-brain-layout.test.ts` (up to 595 s, nearly a whole 600 s shard) is split into personal, company, transcripts and member-transcripts files with a shared fixture; every test moved unchanged. The unit matrix grows from 42 to 46 shards so a full timing refresh fits the shard budget.
+- Unit shards no longer stack memory-heavy test files on one 16 GB runner. Packing by time alone put files that each peak at 2.5 GB or more in shards 11 and 12, and that runner was killed (exit 143). The twelve such files now go to different runners first, and the 100k-page owner-contact perf test runs in the perf job instead of a unit shard.
+- The nightly race hunt (every Postgres-arm test file, at least 3 times) may now use up to 36 shards of 55 minutes instead of 24, so the 971 files it covers run again instead of failing "race hunt over budget" with 2 left out. It still uses only as many shards as the files need.
+- `bun run weights:mine` takes `--latest N` (the newest N successful master runs that ran the lane, as a median) and `--coverage-only` (keep every existing weight and add only files the map lacks). The weight-coverage check prints those commands.
+
+**`gbrain config get` prints a known switch's default instead of "not found", writer status shows whether the write owner is alive, doctor stops counting sync failures a later write already settled, and two random test failures are fixed.**
+
+### Fixed
+- `gbrain config get` on a registered key that nothing sets now prints the value in effect, resolved the way the runtime resolves it, and says where it comes from, for the write switches (`persistence.single_consumer` and the rest), the preparation budgets and the terminal-failure thresholds. `persistence.single_consumer` prints `false` and exits 0, with stderr naming the built-in default, or the `GBRAIN_SINGLE_CONSUMER` override when one is set. A known key with no built-in default still exits 1, now saying it is a known key, and an unknown key is unchanged.
+- `gbrain sources writer status --json` no longer prints a worktree's claim stamp as if it were a heartbeat. Each worktree now carries `owner_live` (a consumer of the owner host renewed its heartbeat recently) and `owner_last_active` (the owner's newest heartbeat or committed receipt), and the raw column is renamed `owner_stamped_at`, since it changes only when a host claims the worktree or a consumer stops cleanly. The troubleshooting table has a row for it.
+- Doctor's `persistence_terminal_failures` and `gbrain sources writer failures` count a refused managed-sync page import or delete as settled once a later write of that page's content commits, such as the sync that imported the file again or a page edit. A later tag, link or take write does not count. Before, a burst of such refusals stayed unresolved for the whole window and kept the spike warning on after its fix ran. The 24-hour and daily counts behind the spike leave out rows a committed write replaced, and still count a failure whose retry has not committed yet.
+- On a stdio MCP server, `request_tools {surface}` now tells a client that opens a new session for every call (or never re-reads tools/list) that it keeps the wider tools only when gbrain is registered with them, with `--surface <surface> --advertise <surface>`, since a narrower `--advertise` or `mcp.advertised_surface` still hides them from tools/list. Widening on stdio stays session-only, since stdio has no client identity to save it under. An OAuth client's widening already reaches every later session of that client, and a new test pins it.
+- Two tests that failed at random under load now wait on the right event. The import-provenance test compared against `HEAD`, which the managed Git commit moves on its own schedule, and the suggestion-deadline test started its 60 ms deadline before the existence check had answered.
+
+### Changed
+- Docs. The doctor registry entry in the key-files index now counts 182 checks and lists `schema-pack-active.ts`.
+
+<!-- behavior-change: config_get_unset_default_gst3449 -->
+<!-- behavior-change: writer_status_owner_liveness_gst3519 -->
+<!-- behavior-change: terminal_failures_sync_superseded_gst3450 -->
+
+**Gmail sources can turn ingest tiers on when they are added, long GitHub sweeps that keep hitting their time limit now finish, plain-directory syncs take the source's sync lock, and the Git history read behind direction evidence asks only for the pages it needs in ancestry order.**
+
+### Added
+- `gbrain sources add --kind google` takes `--ingest-tiers` or `--no-ingest-tiers`. A source that reads Gmail through your own Google connection can now sort promotions and newsletters out before they become pages, and a gbrain.io source can turn sorting off. With neither flag nothing changes, so existing sources and new sources keep the default (on for gbrain.io, off otherwise). Contributed by @akinduroifedayo (#10570, #10571).
+
+### Fixed
+- A GitHub sweep that stops at its job deadline now records the items it finished, and the next run under the same cursor picks up from there. Before, every stopped run started the sweep over and re-read every page it had already handled, so a large source whose reads alone filled the time limit never finished and never stamped its freshness. The record is kept beside the cursor and never moves it, a changed or failed item is checked again from scratch, a damaged record is ignored, and a completed sweep clears it. A stopped request no longer counts as a failure of the item it was fetching, and a newly added repository with a failed item is listed in full again on the next run instead of being treated as caught up. Contributed by @jack60612 (#10578).
+- A plain-directory sync now waits for the same locks as a Git sync of that source (the source's sync lease, and on a classic brain the folder's writer lock), so an autopilot sync and a manual one can no longer import the same folder at once. A dry run still takes no lock. Contributed by @javieraldape (#10592, item 2 of #8362).
+- The history read that decides which side of a Git and database disagreement changed last lists commits in ancestry order, so a skewed commit clock across a merge can no longer make an older state look newer. When it judges a few dozen pages or fewer, it asks Git only for their paths, so one page no longer streams the whole history of its source. Contributed by @javieraldape (#10553, #10535, item 1 of #8693).
+
 ## [0.60.784.0] - 2026-11-28
 
 **A Rust brain now stores link writes that carry a link kind or a resolution type, instead of refusing them.**
