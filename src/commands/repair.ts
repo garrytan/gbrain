@@ -47,6 +47,12 @@ import { openFactsLedger, openFactsUndoLedger, readFactIdsFile } from './repair-
 import { createdBeforeRequired, memberModeRefused } from '../core/repair/open-facts.ts';
 import { isAbsolute } from 'node:path';
 import { readFileSync } from 'node:fs';
+import { embedCostCap, type EmbedCostCap } from '../core/embed-cost-cap.ts';
+import { loadPricingOverrides } from '../core/budget/budget-tracker.ts';
+import { anySignal } from '../core/abort-check.ts';
+import { requireEmbedBackfillConsent } from '../core/embed-consent.ts';
+import { isConsentRefusal, printConsentRefusal } from '../core/consent.ts';
+import { BUDGET_STOP_EXIT_CODE } from '../core/exit-codes.ts';
 
 /** The content-repair lane's command word (#6377): parsed like a kind, dispatched to repair-content.ts, never a RepairKind. */
 export const CONTENT_LANE = 'content';
@@ -134,6 +140,8 @@ Options:
   --source <id>  Limit to one source (default: every active source).
   --limit <n>    Repair at most n items; rerun the same command to continue.
   --no-embed     safe-chunks, contextual-mode: no provider call; embed later with gbrain embed --stale.
+  --no-current-projections-only  safe-chunks: owner authorization to rebuild held historical projections.
+                 With embedding enabled, --apply also requires --yes --max-usd <n>; or pass --no-embed.
   --all          Run every kind in order (${AUTO_REPAIR_REGISTRY.map(spec => spec.kind).join(', ')}).
                  Explicit-only kinds (${explicitKinds}) never run here; name each one.
   --expect <hash>
@@ -242,11 +250,12 @@ A sources add --url clone whose pull stops at pull_blocked_local_changes: docs/g
 Proposed readers for the pages every member's key reads (visibility --propose): docs/guides/repair.md#propose-readers.
 Renames whose identity sync did not keep (rename-identity): docs/guides/live-sync.md#renaming-a-page.`;
 
-const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--include-cross-entity', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held', '--allow-without-owner', '--propose', '--whole-class']);
+const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--no-current-projections-only', '--include-ambiguous', '--include-cross-entity', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held', '--allow-without-owner', '--propose', '--whole-class']);
 const VALUE_FLAGS = new Set(['--readers', '--slugs-file', '--out', '--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day', '--cwd', '--session', '--principal', '--created-before', '--ids-file', '--undo']);
 /** Flags only some kinds accept, with the kinds that do. */
 const KIND_FLAGS: Record<string, readonly string[]> = {
   '--only': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery', 'ghost-pages', 'legacy-twins', 'rename-identity', 'slug-spelling', 'url-clone-fences'],
+  '--no-current-projections-only': ['safe-chunks'],
   '--include-cross-entity': ['duplicate-facts'],
   '--slug': ['fences', 'file-drift', 'rename-identity', 'overwritten-edits', 'origin-twins', 'moved-pages', 'timeline-order', 'contact-rows', 'provenance', 'secret-spans', 'segmented-tiling', 'visibility'], '--from': ['rename-identity'], '--close': ['rename-identity'], '--prefer': ['file-drift'], '--request': ['file-drift'], '--all-drifted': ['file-drift'], '--class': ['file-drift', 'visibility', 'private-labels', 'open-facts'], '--since': ['file-drift', 'generations'],
   '--held': ['file-drift', 'generations'], '--side': ['file-drift'], '--state': ['file-drift'], '--cursor': ['file-drift'], '--provenance': ['file-drift'], '--whole-class': ['file-drift'],
@@ -266,7 +275,7 @@ const VALUE_EXAMPLES: Record<string, string> = { '--source': 'default', '--limit
 const invalid = (message: string, suggestion: string, preview: string[] = ['gbrain', 'repair', '--json']) => opError('invalid_params', message, suggestion,
   { fix: readFix('Previews the repair; without --apply it writes nothing.', { argv: preview }) });
 
-interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolean; noEmbed: boolean; includeAmbiguous: boolean; includeCrossEntity: boolean; diff: boolean; yes: boolean;
+interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolean; noEmbed: boolean; currentProjectionsOnly?: boolean; includeAmbiguous: boolean; includeCrossEntity: boolean; diff: boolean; yes: boolean;
   noLlm: boolean; source?: string; limit?: string; expect?: string; maxUsd?: number; only: string[]; skip: string[]; slugs: string[];
   allDrifted: boolean; prefer?: 'file' | 'database'; requests: string[]; driftClass?: string; since?: string;
   held: boolean; side?: string; state?: string; provenance?: string; cursor?: string; wholeClass: boolean;
@@ -352,6 +361,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
       else if (flag === '--force') parsed.force = true;
       else if (flag === '--close') parsed.close = true;
       else if (flag === '--allow-without-owner') parsed.allowWithoutOwner = true;
+      else if (flag === '--no-current-projections-only') parsed.currentProjectionsOnly = false;
       else if (flag === '--propose') parsed.propose = true;
       else parsed.noEmbed = true;
       continue;
@@ -460,7 +470,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
       'Run gbrain repair visibility --propose, then preview and apply each printed --readers command on its own.', ['gbrain', 'repair', 'visibility', '--propose', ...(parsed.source ? ['--source', parsed.source] : []), '--json']);
   }
   if (parsed.slugsFile !== undefined && parsed.slugs.length) throw invalid('Pass --slug or --slugs-file, not both.', 'List every page in the slugs file, or name them with --slug.', ['gbrain', 'repair', 'visibility', '--json']);
-  if (used.has('--yes') && REPAIR_REGISTRY.find(spec => spec.kind === parsed.kind)?.consent !== 'destructive') throw invalid('`--yes` is not accepted by gbrain repair; pass --apply to write.',
+  if (used.has('--yes') && !(parsed.kind === 'safe-chunks' && parsed.currentProjectionsOnly === false) && REPAIR_REGISTRY.find(spec => spec.kind === parsed.kind)?.consent !== 'destructive') throw invalid('`--yes` is not accepted by gbrain repair; pass --apply to write.',
     `Preview first with gbrain repair${parsed.kind ? ` ${parsed.kind}` : ''}, then run the same command with --apply instead of --yes.`,
     ['gbrain', 'repair', ...(parsed.kind ? [parsed.kind] : []), ...(parsed.source ? ['--source', parsed.source] : []), '--json']);
   const kindOnly = [...used].find(flag => flag !== '--yes' && !KIND_FLAGS[flag]!.includes(parsed.kind ?? ''));
@@ -476,13 +486,18 @@ export function parseRepairArgs(args: string[]): RepairArgs {
   }
   const llmKind = LLM_REPAIR_REGISTRY.some(spec => spec.kind === parsed.kind) || parsed.kind === CONTENT_LANE;
   if (maxUsdFlag) {
-    if (!llmKind) throw maxUsdRefusal(maxUsdFlag, maxUsdText, parsed.kind);
+    if (!llmKind && !(parsed.kind === 'safe-chunks' && parsed.currentProjectionsOnly === false)) throw maxUsdRefusal(maxUsdFlag, maxUsdText, parsed.kind);
     const cap = Number(maxUsdText);
     if (!/^\d+(\.\d+)?$/.test(maxUsdText!.trim()) || !Number.isFinite(cap)) {
       throw invalid(`--max-usd must be a non-negative USD amount such as 0.50 (got "${maxUsdText}").`, 'Pass --max-usd as a decimal number of US dollars; 0 keeps the run to the free tiers.',
         ['gbrain', 'repair', parsed.kind!, ...(parsed.source ? ['--source', parsed.source] : []), '--json']);
     }
     parsed.maxUsd = cap;
+  }
+  if (parsed.kind === 'safe-chunks' && parsed.currentProjectionsOnly === false && parsed.apply && !parsed.noEmbed
+    && (!parsed.yes || parsed.maxUsd === undefined || parsed.maxUsd <= 0)) {
+    throw invalid('Embedding held historical projections requires --yes and a finite positive --max-usd.',
+      'After owner approval pass --yes --max-usd <usd>, or use --no-embed to rebuild without provider calls.');
   }
   if (parsed.noLlm && !llmKind) throw new OperationError('invalid_params', `--no-llm applies only to a kind that may call a paid model (${llmKinds}).`,
     `Preview it by name: gbrain repair ${LLM_REPAIR_REGISTRY[0]?.kind ?? 'fences'}${parsed.source ? ` --source ${parsed.source}` : ''}`);
@@ -616,7 +631,7 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
 
 export async function runRepairCommand(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(REPAIR_HELP); return; }
-  const { kind, apply, all, json, noEmbed, includeAmbiguous, includeCrossEntity, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
+  const { kind, apply, all, json, noEmbed, yes, currentProjectionsOnly, includeAmbiguous, includeCrossEntity, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
     prefer, requests, allDrifted, driftClass, since, held, side, state, provenance, cursor, wholeClass, keep, requestId, olderThan, includeFailures, force, from, close, afterPage,
     generationKind, generationMode, run, key, generation, day, rules, cwdPrefixes, sessions, principal, readers, slugsFile, allowWithoutOwner, propose, out,
     classes, createdBefore, idsFile, undo } = parseRepairArgs(args);
@@ -687,6 +702,17 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
       argv: [...preview, ...(keep ? ['--keep', keep] : []), '--apply', '--expect', expect, ...(json ? ['--json'] : [])], preview_argv: [...preview, '--json'], plan_hash: expect, args }, { json, env: engineConsentEnv(engine) });
     if (!auth) return;
   }
+  const cappedRepair = apply && kind === 'safe-chunks' && currentProjectionsOnly === false && !noEmbed;
+  let repairCap: EmbedCostCap | null = null;
+  if (cappedRepair) {
+    try {
+      await requireEmbedBackfillConsent(engine, { command: 'repair safe-chunks', argv: ['gbrain', 'repair', ...args], args, scope: { sourceId: source, unestimated: true } });
+    } catch (error) {
+      if (isConsentRefusal(error)) { setCliExitVerdict(printConsentRefusal(error, { json })); return; }
+      throw error;
+    }
+    repairCap = embedCostCap(maxUsd, 'user', await loadPricingOverrides(engine));
+  }
   const runner = await repairRunner(engine, { apply, noEmbed });
   // GBRA-133: a SIGTERM or SIGHUP (an outer timeout, a closed terminal) stops an apply before its next item, so the run still
   // prints its result (what it applied and the resume command); a second signal takes the ordinary cleanup-and-exit path.
@@ -695,9 +721,10 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     if (!stop.signal.aborted) { process.stderr.write(`[repair] ${signal}: stopping after the current item; send it again to exit now\n`); stop.abort(signal); return; }
     releaseSignals?.(); process.kill(process.pid, signal);
   }) : undefined;
-  const results = await runRepairKinds(kinds, scope, { apply, source, noEmbed, named: kind !== undefined }, k => runner.run(k, scope, { limit, sourceFlag: source, explicit: k === kind, expect, includeAmbiguous, ...(k === kind && includeCrossEntity ? { includeCrossEntity } : {}),
+  const performRepairs = () => runRepairKinds(kinds, scope, { apply, source, noEmbed, named: kind !== undefined }, k => runner.run(k, scope, { limit, sourceFlag: source, explicit: k === kind, expect, includeAmbiguous, ...(k === kind && includeCrossEntity ? { includeCrossEntity } : {}),
+    ...(k === kind && currentProjectionsOnly === false ? { currentProjectionsOnly: false, embeddingCapUsd: maxUsd, embeddingConsent: yes } : {}),
     ...(k === kind && KIND_FLAGS['--only']!.includes(k) ? { only, skip } : {}), ...(k === kind && slugs.length ? { slugs } : {}),
-    ...(k === kind && noLlm ? { noLlm } : {}), ...(k === kind && maxUsd !== undefined ? { maxLlmUsd: maxUsd } : {}),
+    ...(k === kind && noLlm ? { noLlm } : {}), ...(k === kind && maxUsd !== undefined && !cappedRepair ? { maxLlmUsd: maxUsd } : {}),
     ...(k === kind && (k === 'visibility' || k === 'private-labels') && driftClass ? { driftClass } : {}),
     ...(k === kind && k === 'private-labels' ? { privateLabelsLedger: privateLabelsLedger(scope.brain_id) } : {}),
     ...(k === kind && k === 'open-facts' ? { openFacts: { classes, ledger: undo !== undefined ? openFactsUndoLedger(undo) : openFactsLedger(scope.brain_id), ...(createdBefore !== undefined ? { createdBefore } : {}),
@@ -709,7 +736,13 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     ...(k === kind && k === 'rename-identity' ? { from, close } : {}), ...(k === kind && afterPage !== undefined ? { afterPage } : {}),
     ...(k === kind && generations ? { generations } : {}), ...(k === kind && day ? { day } : {}), ...(k === kind && rules ? { rules } : {}),
     ...(k === kind && k === 'agent-session-facts' ? { cwdPrefixes, sessions, principal } : {}), ...(k === kind && readersRequest ? { readers: readersRequest } : {}),
-    ...(apply ? { stop: stop.signal, recordDatabaseStops: true } : {}) })).finally(() => releaseSignals?.());
+    ...(apply ? { stop: repairCap ? anySignal(stop.signal, repairCap.signal) : stop.signal, recordDatabaseStops: true } : {}) }));
+  const results = await (repairCap ? repairCap.metered(performRepairs) : performRepairs()).finally(() => releaseSignals?.());
+  const capStop = repairCap?.hit();
+  if (capStop && results[0]) {
+    results[0].complete = false;
+    results[0].stopped = { reason: 'cost_cap', message: `Embedding stopped at its approved $${maxUsd!.toFixed(2)} cap; completed projections and vectors remain. After approval, run gbrain embed --stale --yes --max-usd <usd> to finish pending embeddings.` };
+  }
   if (apply) clearHealthMemo(engine);
   const paidKinds = results.filter(r => r.paid).map(r => r.kind);
   if (json) {
@@ -730,7 +763,8 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     }
     if (explicitKindsNotRun.length) console.log(`Explicit-only kinds (not run without their name; preview each): ${explicitKindsNotRun.map(n => n.preview_command).join('; ')}`);
   }
-  if (repairExitVerdict(results, { previewBound: apply && expect !== undefined }) !== 0) setCliExitVerdict(1);
+  if (capStop) setCliExitVerdict(BUDGET_STOP_EXIT_CODE);
+  else if (repairExitVerdict(results, { previewBound: apply && expect !== undefined }) !== 0) setCliExitVerdict(1);
 }
 
 /**

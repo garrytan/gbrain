@@ -16,7 +16,7 @@ import type { Action } from '../core/agent-output.ts';
 import type { OperationError } from '../core/ops/contract.ts';
 import { catalogueError } from '../core/error-catalogue.ts';
 import type { LockHolderInfo } from '../core/pglite-lock.ts';
-import type { ProjectionBacklog, ProjectionDrainResult, ProjectionRebuildFailure } from '../core/page-state/projections.ts';
+import type { ProjectionBacklog, ProjectionDrainResult, ProjectionDrainPreview, ProjectionRebuildFailure } from '../core/page-state/projections.ts';
 import { IMAGE_SEAL_PAGES_PER_SECOND, TEXT_REBUILD_PAGES_PER_SECOND, projectionDrainLimit } from '../core/page-state/image-seal.ts';
 import { DEFAULT_DRAIN_CONCURRENCY } from '../core/page-state/rebuild-estimate.ts';
 // #6286: the drain lives in core so `migrate` can run it on its target before the config flip.
@@ -27,7 +27,7 @@ import { detectInstalledJob } from './autopilot/jobs.ts';
 
 export const PROJECTION_DRAIN_DOCS = 'docs/guides/repair.md#projection-drain';
 
-export const PROJECTIONS_HELP = `Usage: gbrain projections drain [--dry-run] [--limit <n>] [--concurrency <n>] [--json]
+export const PROJECTIONS_HELP = `Usage: gbrain projections drain [--dry-run] [--limit <n>] [--concurrency <n>] [--no-current-projections-only] [--json]
 
 Rebuild queued Markdown and code text projections now, in batches of up to 100,
 until every row queued before the run started has been tried once. Pages stored
@@ -48,6 +48,8 @@ Protected-OCR images and archived-source pages stay unsealed by design.
   --concurrency <n>  Postgres: rebuild n pages at once, each on its own pooled
                 connection (default ${DEFAULT_DRAIN_CONCURRENCY}; at most the pool size less 2). A refused
                 or dropped connection lowers it and the drain goes on. PGLite: 1
+  --no-current-projections-only  Owner authorization to rebuild projections held by
+                embed.current_projections_only. Unchanged vectors are kept.
   --json        Print {rebuilt, superseded, failed, remaining, limited, sealed,
                 sealed_with_visual, sealed_text_only, statistics_refreshed,
                 remaining_by_class} to stdout (the class counts and rows with --dry-run)
@@ -79,7 +81,8 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** The class counts of a backlog, one phrase. */
 export function projectionClassSummary(backlog: Required<ProjectionBacklog>): string {
   return `${backlog.pending} queued text, ${backlog.sealable} sealable image(s) (${backlog.sealable_with_visual} with a visual vector), `
-    + `${backlog.reimport} to reimport, ${backlog.protected} protected, ${backlog.archived} archived, ${backlog.failed} last failed`;
+    + `${backlog.reimport} to reimport, ${backlog.protected} protected, ${backlog.archived} archived, ${backlog.failed} last failed`
+    + (backlog.held ? `, ${backlog.held} historical held` : '');
 }
 
 /** What remains after a drain or preview, past what the drain itself takes: never "empty" while an image row needs work. */
@@ -93,12 +96,15 @@ function remainderLines(backlog: Required<ProjectionBacklog>): string[] {
 }
 
 /** Human output of `--dry-run`. */
-export function formatDrainPreview(preview: Awaited<ReturnType<typeof import('../core/page-state/projections.ts').previewProjectionDrain>>): string {
-  const rows = preview.rows.map(row => `  ${row.reason === 'rebuild_failed' ? 'last failed' : row.page_kind === 'image' ? 'sealable' : 'queued'}: ${row.source_id}/${row.slug} (${row.reason}, since ${row.updated_at})`);
-  const work = preview.pending + preview.sealable;
-  const empty = work + preview.reimport + preview.protected + preview.archived === 0;
+export function formatDrainPreview(preview: ProjectionDrainPreview): string {
+  const rows = preview.rows.map(row => `  ${row.reason === 'rebuild_failed' || row.reason === 'canonical_change_rebuild_failed' ? 'last failed' : row.page_kind === 'image' ? 'sealable' : 'queued'}: ${row.source_id}/${row.slug} (${row.reason}, since ${row.updated_at})`);
+  const work = preview.pending + preview.sealable - (preview.current_projections_only ? preview.held : 0);
+  const empty = preview.pending + preview.sealable + preview.reimport + preview.protected + preview.archived === 0;
   return [`projections drain --dry-run: ${projectionClassSummary(preview)}; nothing was changed.`, ...rows,
-    ...(work ? [`Run \`gbrain projections drain --limit ${projectionDrainLimit(preview.pending)}\` (repeat until sealable is 0) to rebuild the text rows and seal the sealable images; a page that fails again is printed with its next step.`] : []),
+    ...(preview.held ? [preview.current_projections_only
+      ? `${preview.held} historical projection(s) held by embed.current_projections_only; an owner may authorize them with --no-current-projections-only.`
+      : `The authorized drain includes ${preview.held} historical projection(s).`] : []),
+    ...(work ? [`Run \`gbrain projections drain --limit ${projectionDrainLimit(preview.pending)}${!preview.current_projections_only && preview.held ? ' --no-current-projections-only' : ''}\` to rebuild the listed projections.`] : []),
     ...remainderLines(preview), ...(empty ? ['The projection backlog is empty.'] : [])].join('\n');
 }
 
@@ -111,8 +117,9 @@ export function formatDrainResult(result: ProjectionDrainResult, limit?: number)
     : result.failed.length ? ' Failed pages stay queued; fix them as shown above, then run `gbrain projections drain` again.'
       : result.remaining === 0 && empty ? ' The projection backlog is empty.'
         : result.remaining === 0 ? ''
-          : ' Rows queued during this run are left for the next run or the resident owner.';
+          : result.held ? ' Historical work remains held.' : ' Rows queued during this run are left for the next run or the resident owner.';
   const lines = [summary + tail];
+  if (result.held) lines.push(`${result.held} historical projection(s) held by embed.current_projections_only; an owner may authorize them with --no-current-projections-only.`);
   if (result.sealed !== undefined) {
     lines.push(`images: ${result.sealed} sealed (${result.sealed_with_visual} with a visual vector, ${result.sealed_text_only} text-only)`
       + (result.sealed_text_only ? '; the text-only ones get their visual vector from `gbrain embed --stale --images --dry-run` then the paid run.' : '.')

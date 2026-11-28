@@ -117,6 +117,7 @@ export interface RepairListing { item: string; class: string; detail?: string; f
  * the run's paid-model allowance (it only lowers the kind's own cap). `deadline` (epoch ms) bounds a discovery scan.
  */
 export interface RepairPlanOptions { apply: boolean; expect?: string; includeAmbiguous?: boolean; only?: string[]; skip?: string[]; slugs?: string[];
+  currentProjectionsOnly?: boolean;
   /** `duplicate-facts` (#7043): also retire copies of a claim that sit on other entities than the kept row. */
   includeCrossEntity?: boolean;
   noLlm?: boolean; maxLlmUsd?: number; deadline?: number;
@@ -173,7 +174,7 @@ export interface RepairHandler {
    * cap), so the kind caps its own reservation at it. `deadline` (epoch ms) is when the run stops starting work; a
    * kind bounds its own provider calls by it. `noLlm` and `expect` repeat the run's options.
    */
-  apply(ctx: OperationContext, item: RepairItem, opts?: { embed: boolean; runId?: string; llmAllowanceUsd?: number; deadline?: number; noLlm?: boolean; expect?: string }): Promise<boolean | RepairItemOutcome>;
+  apply(ctx: OperationContext, item: RepairItem, opts?: { embed: boolean; runId?: string; llmAllowanceUsd?: number; deadline?: number; noLlm?: boolean; expect?: string; currentProjectionsOnly?: boolean; signal?: AbortSignal }): Promise<boolean | RepairItemOutcome>;
   /**
    * GBRA-443: apply a run of consecutive items at once (at most the run's admission window, each page once), so their writes
    * are admitted together and published in groups instead of one admission and wait per item. One settlement per item, in
@@ -377,7 +378,7 @@ function writerHeld(error: unknown): error is OperationError {
  * the core never opens a budget tracker of its own.
  */
 export async function runRepair(ctx: OperationContext, handler: RepairHandler, scope: RepairScope,
-  opts: { apply: boolean; limit?: number; embeddingModel?: string; sourceFlag?: string; embed?: boolean; applyArgs?: string[];
+  opts: { apply: boolean; limit?: number; embeddingModel?: string; sourceFlag?: string; embed?: boolean; applyArgs?: string[]; currentProjectionsOnly?: boolean;
     explicit?: boolean; expect?: string; includeAmbiguous?: boolean; includeCrossEntity?: boolean; only?: string[]; skip?: string[]; slugs?: string[]; noLlm?: boolean;
     prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string;
     provenance?: string; cursor?: string; progress?: ProgressReporter;
@@ -403,6 +404,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
   const { cursor: resumed, runId: storedRunId } = await readCursor(ctx.engine, handler.kind, scope, opts.apply ? opts.expect : undefined);
   const now = opts.now ?? Date.now;
   const planOpts: RepairPlanOptions = { apply: opts.apply, expect: opts.expect, includeAmbiguous: opts.includeAmbiguous, only: opts.only, skip: opts.skip,
+    currentProjectionsOnly: opts.currentProjectionsOnly,
     ...(opts.includeCrossEntity ? { includeCrossEntity: true } : {}),
     ...(opts.slugs?.length ? { slugs: opts.slugs } : {}), ...(opts.noLlm ? { noLlm: true } : {}), ...(opts.maxLlmUsd !== undefined ? { maxLlmUsd: opts.maxLlmUsd } : {}),
     ...(opts.deadline !== undefined ? { deadline: opts.deadline } : {}), remote: ctx.remote !== false,
@@ -592,7 +594,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
     batched.delete(index);
     try {
       const applied = prefetched ? await ('error' in prefetched ? Promise.reject(prefetched.error) : prefetched.value)
-        : await step(() => handler.apply({ ...ctx, sourceId: item.source_id, ...(unresolved.length ? { writeWaitMs: 0 } : {}) }, item, { embed: opts.embed === true, runId,
+        : await step(() => handler.apply({ ...ctx, sourceId: item.source_id, ...(unresolved.length ? { writeWaitMs: 0 } : {}) }, item, { embed: opts.embed === true, runId, currentProjectionsOnly: opts.currentProjectionsOnly, signal: opts.stop,
           ...(llm && opts.maxLlmUsd !== undefined ? { llmAllowanceUsd: opts.maxLlmUsd - llmSpent } : {}),
           ...(opts.deadline !== undefined ? { deadline: opts.deadline } : {}), ...(opts.noLlm ? { noLlm: true } : {}), ...(opts.expect ? { expect: opts.expect } : {}) }));
       if (llm && typeof applied === 'object' && applied.llm_usd) {

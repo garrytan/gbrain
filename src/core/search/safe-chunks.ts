@@ -193,6 +193,18 @@ export function safeChunksFilter(alias: string): string {
   return `${alias}.chunker_version >= ${SAFE_FENCE_CHUNKER_VERSION}`;
 }
 
+/** A run normally inherits the brain's projection policy; an explicit override is run-scoped. */
+export async function resolveCurrentProjectionsOnly(engine: Pick<BrainEngine, 'getConfig'>, override?: boolean): Promise<boolean> {
+  return override ?? (await engine.getConfig('embed.current_projections_only') === 'true');
+}
+
+/** SQL over a page alias: automatic embedding only reads a current, safe projection when the policy is enabled. */
+export function embeddingProjectionFilter(alias: string, override?: boolean): string {
+  if (override === false) return 'TRUE';
+  const safe = `(${safeChunksFilter(alias)} AND ${currentTextProjectionFilter(alias)})`;
+  return override === true ? safe : `(COALESCE((SELECT value='true' FROM config WHERE key='embed.current_projections_only'),false) IS NOT TRUE OR ${safe})`;
+}
+
 /**
  * Preserve an existing seal for an embedding-only refresh of the exact chunk
  * snapshot. Additions, removals and textual metadata changes invalidate before

@@ -35,7 +35,7 @@ import {
   COLUMN_NAME_REGEX,
   EmbeddingColumnNotRegisteredError,
 } from '../search/embedding-column.ts';
-import { chunkDocumentOrder, chunkGenerationFilter, chunkManifestJoin, chunkVisibleFilter, chunkWriteInvalidations, movableChunkSql, requiresSafeChunks, safeChunksFilter, servedTextProjectionFilter } from '../search/safe-chunks.ts';
+import { chunkDocumentOrder, chunkGenerationFilter, chunkManifestJoin, chunkVisibleFilter, chunkWriteInvalidations, embeddingProjectionFilter, movableChunkSql, requiresSafeChunks, safeChunksFilter, servedTextProjectionFilter } from '../search/safe-chunks.ts';
 import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { currentSpaceChunkPredicate, splitEmbeddingSignature, lockEmbeddingSources } from '../embedding-invalidation.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from '../embed-skip.ts';
@@ -65,7 +65,7 @@ export interface ChunkPageGuards {
  */
 export type ChunkTransactionRunner = <T>(fn: (tx: Pick<BrainEngine, 'executeRaw'>) => Promise<T>) => Promise<T>;
 
-type StaleChunkOpts = { sourceId?: string; signature?: string; includeNullSignature?: boolean };
+type StaleChunkOpts = { sourceId?: string; signature?: string; includeNullSignature?: boolean; currentProjectionsOnly?: boolean };
 
 /** Held or capped large pages (page-embedding-budget.ts) leave the embedding queue while the hold applies. */
 const budgetLimited = trustedSql(pageBudgetLimitedFilter('p'));
@@ -512,6 +512,7 @@ export async function getChunkPage(
 function staleChunkWhere(column: string, opts?: StaleChunkOpts, arm?: 'unembedded' | 'drifted'): SqlFragment {
   const staleColRef = trustedSql(`cc.${quoteIdentifier(column)}`);
   const conds: SqlFragment[] = [sqlFragment`p.deleted_at IS NULL`, sqlFragment`${trustedSql(chunkGenerationFilter('p', 'cc'))}`];
+  conds.push(sqlFragment`${trustedSql(embeddingProjectionFilter('p', opts?.currentProjectionsOnly))}`);
   if (arm === 'unembedded') {
     conds.push(sqlFragment`${staleColRef} IS NULL`);
   } else if (arm === 'drifted') {
@@ -585,7 +586,7 @@ export function currentSpaceChunkFragment(column: string, model: string, dims: n
 export async function invalidateStaleSignatureEmbeddings(
   inTransaction: ChunkTransactionRunner,
   column: string,
-  opts: { signature: string; sourceId?: string; includeNullSignature?: boolean },
+  opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; currentProjectionsOnly?: boolean },
 ): Promise<number> {
     const colId = trustedSql(quoteIdentifier(column));
     const { model, dims } = splitEmbeddingSignature(opts.signature);
@@ -601,6 +602,7 @@ export async function invalidateStaleSignatureEmbeddings(
            FROM pages p
           WHERE cc.page_id = p.id
             AND p.deleted_at IS NULL
+            AND ${trustedSql(embeddingProjectionFilter('p', opts.currentProjectionsOnly))}
             AND p.source_id=ANY(${sources}::text[])
             AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)
             AND cc.${colId} IS NOT NULL
@@ -641,7 +643,7 @@ export interface ContentDriftBatch {
 export async function invalidateContentDriftBatch(
   inTransaction: ChunkTransactionRunner,
   column: string,
-  opts: { afterChunkId: number; limit: number; sourceId?: string },
+  opts: { afterChunkId: number; limit: number; sourceId?: string; currentProjectionsOnly?: boolean },
 ): Promise<ContentDriftBatch> {
     const after = Math.trunc(opts.afterChunkId);
     const limit = Math.trunc(opts.limit);
@@ -663,6 +665,7 @@ export async function invalidateContentDriftBatch(
             AND p.source_id=ANY(${sources}::text[])
             AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)
             AND p.deleted_at IS NULL
+            AND ${trustedSql(embeddingProjectionFilter('p', opts.currentProjectionsOnly))}
             AND cc.${colId} IS NOT NULL
             AND cc.embedded_text_hash IS NOT NULL
             AND cc.embedded_text_hash <> md5(cc.chunk_text)
@@ -688,7 +691,7 @@ export async function invalidateContentDriftBatch(
 export async function invalidateContentDriftEmbeddings(
   inTransaction: ChunkTransactionRunner,
   column: string,
-  opts?: { sourceId?: string },
+  opts?: { sourceId?: string; currentProjectionsOnly?: boolean },
 ): Promise<number> {
     let afterChunkId = 0;
     let drifted = 0;
@@ -705,6 +708,7 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
   afterPageId?: number;
   afterChunkIndex?: number;
   sourceId?: string;
+  currentProjectionsOnly?: boolean;
   orderBy?: 'page_id' | 'updated_desc';
   afterUpdatedAt?: string | null;
 }): Promise<StaleChunkRow[]> {
@@ -717,6 +721,7 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
     const staleColId = trustedSql(quoteIdentifier(column));
     const read = async (fragment: SqlFragment) => (await exec.run(fragment)).rows as unknown as StaleChunkRow[];
     const generation = trustedSql(chunkGenerationFilter('p', 'cc'));
+    const eligible = trustedSql(embeddingProjectionFilter('p', opts?.currentProjectionsOnly));
 
       // v0.41.18.0 (A13, codex #9): --priority recent path. Composite cursor
       // (updated_at DESC NULLS LAST, page_id ASC, chunk_index ASC). Backed by
@@ -733,7 +738,7 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
             JOIN pages p ON p.id = cc.page_id
             WHERE cc.${staleColId} IS NULL AND p.deleted_at IS NULL
               AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT ${budgetLimited}
-              AND ${generation}
+              AND ${generation} AND ${eligible}
             ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
             LIMIT ${limit}
           `) : read(sqlFragment`
@@ -744,7 +749,7 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
             JOIN pages p ON p.id = cc.page_id
             WHERE cc.${staleColId} IS NULL AND p.deleted_at IS NULL
               AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT ${budgetLimited}
-              AND ${generation}
+              AND ${generation} AND ${eligible}
               AND (
                 p.updated_at < ${afterUpdated}::timestamptz
                 OR (p.updated_at = ${afterUpdated}::timestamptz AND p.id > ${afterPid})
@@ -763,7 +768,7 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
           WHERE cc.${staleColId} IS NULL AND p.deleted_at IS NULL
             AND p.source_id = ${opts.sourceId}
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT ${budgetLimited}
-              AND ${generation}
+              AND ${generation} AND ${eligible}
           ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
           LIMIT ${limit}
         `) : read(sqlFragment`
@@ -775,7 +780,7 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
           WHERE cc.${staleColId} IS NULL AND p.deleted_at IS NULL
             AND p.source_id = ${opts.sourceId}
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT ${budgetLimited}
-              AND ${generation}
+              AND ${generation} AND ${eligible}
             AND (
               p.updated_at < ${afterUpdated}::timestamptz
               OR (p.updated_at = ${afterUpdated}::timestamptz AND p.id > ${afterPid})
@@ -794,7 +799,7 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
           JOIN pages p ON p.id = cc.page_id
           WHERE cc.${staleColId} IS NULL AND p.deleted_at IS NULL
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT ${budgetLimited}
-              AND ${generation}
+              AND ${generation} AND ${eligible}
             AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
           ORDER BY cc.page_id, cc.chunk_index
           LIMIT ${limit}
@@ -808,7 +813,7 @@ export async function listStaleChunks(exec: ScopedRead, column: string, opts?: {
         WHERE cc.${staleColId} IS NULL AND p.deleted_at IS NULL
           AND p.source_id = ${opts.sourceId}
           AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT ${budgetLimited}
-              AND ${generation}
+              AND ${generation} AND ${eligible}
           AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
         ORDER BY cc.page_id, cc.chunk_index
         LIMIT ${limit}

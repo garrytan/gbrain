@@ -13,7 +13,7 @@ import { projectionBacklog } from '../src/core/page-state/projections.ts';
 import {
   PersistenceIpcTransportError, persistenceSocketPathForConfig, requestPersistenceProjectionStatus, startPersistenceIpcServer, type PersistenceIpcProvider,
 } from '../src/core/persistence/ipc.ts';
-import { projectionResidentEntry } from '../src/commands/doctor/checks/projection-readiness.ts';
+import { checkProjectionReadiness, projectionResidentEntry } from '../src/commands/doctor/checks/projection-readiness.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import type { Check } from '../src/commands/doctor.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -53,8 +53,8 @@ test('the resident answers projection_status with counts only; an owner without 
   try {
     const status = await requestPersistenceProjectionStatus(socket);
     expect(status).toMatchObject({ pending: 3, failed: 0 });
-    expect(Object.keys(status).sort()).toEqual(['archived', 'as_of', 'failed', 'ocr_required', 'oldest_age_seconds', 'pending', 'protected',
-      'reimport', 'sealable', 'sealable_with_visual']);
+    expect(Object.keys(status).sort()).toEqual(['actionable_pending', 'actionable_sealable', 'archived', 'as_of', 'failed', 'held', 'ocr_required', 'oldest_age_seconds',
+      'pending', 'protected', 'reimport', 'sealable', 'sealable_with_visual']);
     expect(status.oldest_age_seconds).toBeGreaterThanOrEqual(0);
   } finally { server.close(); }
   const old = (await startPersistenceIpcServer(socket, provider()))!;
@@ -107,4 +107,34 @@ test('doctor reports the resident backlog, its pid and the stop-drain-restart pa
 
   expect(await runEntry(doctorContext({ engine: engine as never }))).toEqual([]);
   expect(await runEntry(doctorContext({ fastMode: true }))).toEqual([]);
+}, 60_000);
+
+test('doctor and resident distinguish held history from actionable projections', async () => {
+  await engine.executeRaw(`UPDATE page_projection_jobs SET reason='protocol_activation'
+    WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id='resident-example')`);
+  await engine.setConfig('embed.current_projections_only', 'true');
+  const socket = persistenceSocketPathForConfig(config)!;
+  let server: Awaited<ReturnType<typeof startPersistenceIpcServer>> = null;
+  try {
+    const local = await checkProjectionReadiness(engine, { sourceId: 'resident-example' });
+    expect(local.details).toMatchObject({ pending: 0, held: 3 });
+    expect(local.fix).toMatchObject({ argv: ['gbrain', 'projections', 'drain', '--no-current-projections-only'],
+      preview_argv: ['gbrain', 'projections', 'drain', '--dry-run', '--json', '--no-current-projections-only'], ask_user: true });
+    expect(local.message).toContain('gbrain projections drain --no-current-projections-only');
+    expect(local.message).not.toContain('Run `gbrain projections drain`');
+
+    server = await startPersistenceIpcServer(socket, provider(() => projectionBacklog(engine)));
+    const status = await requestPersistenceProjectionStatus(socket);
+    expect(status).toMatchObject({ pending: 3, actionable_pending: 0, held: 3 });
+    const [resident] = await runEntry(doctorContext());
+    expect(resident.details).toMatchObject({ pending: 0, held: 3, ready: false });
+    expect(resident.message).toContain('gbrain projections drain --no-current-projections-only');
+    expect(resident.message).not.toContain('is draining 3 queued');
+    expect(resident.message).not.toContain('gbrain projections drain;');
+  } finally {
+    server?.close();
+    await engine.unsetConfig('embed.current_projections_only');
+    await engine.executeRaw(`UPDATE page_projection_jobs SET reason='canonical_change'
+      WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id='resident-example')`);
+  }
 }, 60_000);

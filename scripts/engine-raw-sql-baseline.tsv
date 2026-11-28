@@ -168,7 +168,7 @@ src/commands/doctor/skill-checks.ts	execute_raw	5
 src/commands/dream-retriage.ts	execute_raw	3
 src/commands/edge-proposals.ts	execute_raw	6
 src/commands/edges-backfill.ts	execute_raw	1
-src/commands/embed.ts	execute_raw	1
+src/commands/embed.ts	execute_raw	2	Projection eligibility is rechecked before sending text; this runs alongside the existing raw-SQL embedding path until it has typed engine methods.
 src/commands/embeddings.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
 src/commands/enrich.ts	execute_raw	2	GST-3815: the reader-scope check on backlink and search evidence (pageReadsToReadersOfSql) sits beside the raw facts read it shares a predicate with; no typed engine method exists for either, and both convert together
@@ -438,8 +438,8 @@ src/core/embed-backfill-stall.ts	execute_raw	1
 src/core/embed-backfill-submit.ts	execute_raw	2
 src/core/embed-consent.ts	execute_raw	2
 src/core/embed-facts.ts	execute_raw	8
-src/core/embed-stale-images.ts	execute_raw	2
-src/core/embed-stale.ts	execute_raw	3
+src/core/embed-stale-images.ts	execute_raw	3	The image sweep reports held historical projections alongside its existing raw-SQL counts; the sweep converts as a unit.
+src/core/embed-stale.ts	execute_raw	5	Eligibility is rechecked before provider calls and updates alongside existing raw-SQL recovery; this path converts as a unit.
 src/core/embed-takes.ts	execute_raw	1
 src/core/embedding-ann-build.ts	execute_raw	8
 src/core/embedding-dim-check.ts	execute_raw	4
@@ -448,7 +448,7 @@ src/core/embedding-migration-budget.ts	execute_raw	2
 src/core/embedding-migration-retention.ts	execute_raw	6
 src/core/embedding-migration-worst-case.ts	execute_raw	3
 src/core/embedding-migration.ts	execute_raw	34
-src/core/embedding-readiness.ts	execute_raw	5
+src/core/embedding-readiness.ts	execute_raw	6	Held counts use the same scoped predicates as the existing raw-SQL readiness counts; the readiness path converts as a unit.
 src/core/embedding-restamp.ts	execute_raw	2
 src/core/embedding-state.ts	execute_raw	1
 src/core/enrichment-service.ts	execute_raw	2
@@ -732,8 +732,9 @@ src/core/page-state/guards.ts	execute_raw	11
 src/core/page-state/history-prune.ts	execute_raw	4	#9737 history prune preview: lists inline versions and their pages for the selection, the brain id the plan_hash binds and the sources a bare slug names; the page-state area is still raw SQL (versions.ts) and converts with it
 src/core/page-state/image-seal.ts	execute_raw	5
 src/core/page-state/materialize.ts	execute_raw	5
+src/core/page-state/projection-policy.ts	execute_raw	1	Hold checks must use the active projection transaction; the projection area has no typed engine method for this query yet.
 src/core/page-state/projection-status.ts	execute_raw	1
-src/core/page-state/projections.ts	execute_raw	19
+src/core/page-state/projections.ts	execute_raw	20	The drain rechecks historical job eligibility inside its projection transaction alongside existing raw-SQL job reads.
 src/core/page-state/rebuild-estimate.ts	execute_raw	1
 src/core/page-state/rename-alias.ts	execute_raw	11
 src/core/page-state/revision-backfill-schema.ts	execute_raw	12

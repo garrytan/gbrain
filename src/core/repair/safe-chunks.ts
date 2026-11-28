@@ -20,7 +20,6 @@
  * stay withheld and the next run retries it. A run-scoped failure (a lost
  * connection, a failed transaction, a held writer) stops the run.
  */
-import type { BrainEngine } from '../engine.ts';
 import { resealSafeChunks } from '../page-state/projections.ts';
 import { PageRevisionConflictError } from '../page-state/types.ts';
 import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
@@ -29,33 +28,40 @@ import { CREDENTIAL_RESEAL_HELD } from '../page-state/credential-reseal.ts';
 import { afterCursor, type RepairCursor, type RepairHandler, type RepairItem, type RepairScope } from './core.ts';
 import { classifyItemFailure } from '../item-failure.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
+import { HISTORICAL_PROJECTION_HELD_SQL } from '../page-state/projection-policy-sql.ts';
+import { resolveCurrentProjectionsOnly } from '../search/safe-chunks.ts';
 
-interface PendingRow { id: number; source_id: string; slug: string; page_kind: string; rebuildable: boolean; chars: number }
+interface PendingRow { id: number; source_id: string; slug: string; page_kind: string; rebuildable: boolean; chars: number; held: boolean }
 
 export const safeChunksRepair: RepairHandler = {
   kind: 'safe-chunks',
   publication: 'projection',
-  async plan(engine: BrainEngine, scope: RepairScope, after: RepairCursor | null) {
+  async plan(engine, scope, after, opts) {
+    const currentOnly = await resolveCurrentProjectionsOnly(engine, opts?.currentProjectionsOnly);
     const rows = await engine.executeRaw<PendingRow>(`SELECT p.id,p.source_id,p.slug,p.page_kind,
         (p.page_kind='markdown' OR (p.page_kind='code' AND COALESCE(p.frontmatter->>'file',p.source_path) IS NOT NULL)) AS rebuildable,
-        length(p.compiled_truth)+length(COALESCE(p.timeline,'')) AS chars
-      FROM pages p WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL
+        length(p.compiled_truth)+length(COALESCE(p.timeline,'')) AS chars,
+        ${currentOnly ? HISTORICAL_PROJECTION_HELD_SQL : 'false'} AS held
+      FROM pages p JOIN sources s ON s.id=p.source_id
+      LEFT JOIN page_projection_jobs j ON j.source_incarnation=s.incarnation AND j.slug=p.slug
+      WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL
         AND (p.chunker_version < ${SAFE_FENCE_CHUNKER_VERSION} OR (${CREDENTIAL_RESEAL_HELD} AND p.body_storage IS DISTINCT FROM 'segmented'))
       ORDER BY p.id`, [scope.source_ids]);
-    const items: RepairItem[] = rows.filter(row => row.rebuildable)
+    const items: RepairItem[] = rows.filter(row => row.rebuildable && !row.held)
       .map(row => ({ cursor: { phase: 0, id: Number(row.id) }, source_id: row.source_id, slug: row.slug, chars: Number(row.chars),
         action: `re-seal ${row.page_kind} chunks` }))
       .filter(item => afterCursor(item.cursor, after));
-    const kept = rows.filter(row => !row.rebuildable);
+    const kept = rows.filter(row => !row.rebuildable && !row.held);
     return { items, residuals: {
       code_without_source_path: kept.filter(row => row.page_kind === 'code').length,
       unsupported_page_kind: kept.filter(row => row.page_kind !== 'code').length,
+      ...(currentOnly ? { historical_projection_held: rows.filter(row => row.held).length } : {}),
     } };
   },
   async apply(ctx, item, opts) {
-    let resealed: Awaited<ReturnType<typeof resealSafeChunks>>;
+    let resealed: { pendingChunks: number; pendingChars: number } | null;
     try {
-      resealed = await resealSafeChunks(ctx.engine, item.slug, item.source_id);
+      resealed = await resealSafeChunks(ctx.engine, item.slug, item.source_id, { currentProjectionsOnly: opts?.currentProjectionsOnly });
     } catch (error) {
       // A page edited since planning is re-sealed by its own write.
       if (error instanceof PageRevisionConflictError) return false;
@@ -68,7 +74,7 @@ export const safeChunksRepair: RepairHandler = {
     }
     if (!resealed) return false;
     if (opts?.embed && resealed.pendingChunks > 0) {
-      const embedded = await embedStalePages(ctx.engine, [item.slug], item.source_id);
+      const embedded = await embedStalePages(ctx.engine, [item.slug], item.source_id, { signal: opts.signal });
       // The re-seal stands; vectors the provider did not return stay in the ordinary stale backlog.
       if (embedded.pagesProcessed === 0) ctx.logger.warn(`[repair safe-chunks] ${item.source_id}:${item.slug} re-sealed, but some chunks were not embedded. `
         + `Run: gbrain embed --stale --source ${item.source_id}`);

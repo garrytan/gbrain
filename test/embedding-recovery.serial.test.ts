@@ -1282,7 +1282,7 @@ for (const kind of backends) {
         expect(result.embedded).toBe(103);
         expect(result.complete).toBe(true);
       }
-      expect(await prepareEmbeddingProjections(engine)).toEqual({ rebuilt: 0, blocked: 0 });
+      expect(await prepareEmbeddingProjections(engine)).toEqual({ rebuilt: 0, blocked: 0, held: 0 });
       expect(await engine.countStaleChunks()).toBe(0);
     }, 60_000);
     test.each([false, true])('standalone recovery refuses grandfathered paid work with signature=%s', async withSignature => {
@@ -1367,7 +1367,7 @@ for (const kind of backends) {
       expect(result.status).toBe('success');
       expect(result.embedded).toBe(3);
       expect(await engine.countStaleChunks()).toBe(0);
-      expect(await prepareEmbeddingProjections(engine)).toEqual({ rebuilt: 0, blocked: 0 });
+      expect(await prepareEmbeddingProjections(engine)).toEqual({ rebuilt: 0, blocked: 0, held: 0 });
       expect(await engine.executeRaw("SELECT id FROM gbrain_cycle_locks WHERE id='gbrain-embed-backfill:default'")).toHaveLength(0);
     });
     test('an expired stale budget prevents probing or repairing pending projections', async () => {
@@ -1382,7 +1382,7 @@ for (const kind of backends) {
       const result = await withEnv({ GBRAIN_EMBED_TIME_BUDGET_MS: '0' }, () => runEmbedCore(engine, { stale: true, quiet: true }));
       expect(result.embedded).toBe(0);
       expect(calls).toBe(0);
-      expect(await prepareEmbeddingProjections(engine, { repair: true, deadline: Date.now() - 1 })).toEqual({ rebuilt: 0, blocked: 1 });
+      expect(await prepareEmbeddingProjections(engine, { repair: true, deadline: Date.now() - 1 })).toEqual({ rebuilt: 0, blocked: 1, held: 0 });
       expect(await readProjectionSnapshot(engine, slug, 'default')).toBeNull();
       expect((await engine.getChunks(slug, { includeUnsealed: true }))[0].chunk_text).toBe('Synthetic obsolete projected body');
     });
@@ -1402,12 +1402,12 @@ for (const kind of backends) {
       } });
       expect(controller.signal.aborted).toBe(true);
       expect(installed).toBe(101);
-      expect(interrupted).toEqual({ rebuilt: 100, blocked: 3 });
+      expect(interrupted).toEqual({ rebuilt: 100, blocked: 3, held: 0 });
       expect((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM content_chunks WHERE chunk_text LIKE $1', ['Synthetic obsolete%']))[0].n).toBe(3);
       const resumed = await runEmbedCore(engine, { stale: true, quiet: true, catchUp: true });
       expect(resumed.embedded).toBe(103);
       expect(resumed.failures).toBe(0);
-      expect(await prepareEmbeddingProjections(engine)).toEqual({ rebuilt: 0, blocked: 0 });
+      expect(await prepareEmbeddingProjections(engine)).toEqual({ rebuilt: 0, blocked: 0, held: 0 });
     }, 60_000);
     test.skipIf(kind !== 'postgres')('file publication holds the lease against a second PostgreSQL owner through the real publisher', async () => {
       const other = new PostgresEngine();

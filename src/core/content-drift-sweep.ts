@@ -22,6 +22,7 @@ import type { BrainEngine } from './engine.ts';
 import { CONTENT_DRIFT_BATCH_ROWS, invalidateContentDriftBatch, type ContentDriftBatch } from './engine-sql/chunks.ts';
 import { resolveActiveEmbeddingColumnFromEngine } from './search/embedding-column.ts';
 import { isMissingSchemaObject } from './utils.ts';
+import { resolveCurrentProjectionsOnly } from './search/safe-chunks.ts';
 
 export const CONTENT_DRIFT_SWEEP_KEY_PREFIX = 'embed.content_drift_sweep.';
 export const CONTENT_DRIFT_PASS_INTERVAL_KEY = 'embed.content_drift.pass_interval_hours';
@@ -64,6 +65,7 @@ export interface ContentDriftSweepStatus {
 
 export interface ContentDriftSweepOpts {
   sourceId?: string;
+  currentProjectionsOnly?: boolean;
   signal?: AbortSignal;
   /** Epoch ms the caller must stop by (a job deadline). */
   deadline?: number;
@@ -130,7 +132,8 @@ export async function runContentDriftSweep(engine: BrainEngine, opts: ContentDri
   try {
     const column = (await resolveActiveEmbeddingColumnFromEngine(engine)).name;
     status.column = column;
-    const stateKey = contentDriftSweepKey(column, opts.sourceId);
+    const currentOnly = await resolveCurrentProjectionsOnly(engine, opts.currentProjectionsOnly);
+    const stateKey = contentDriftSweepKey(column, opts.sourceId) + (currentOnly ? '.current-only' : '');
     key = stateKey;
     const intervalMs = await passIntervalMs(engine);
     for (;;) {
@@ -144,7 +147,7 @@ export async function runContentDriftSweep(engine: BrainEngine, opts: ContentDri
           if (Date.now() < nextAt) return { state, nextAt };
         }
         const batch = await invalidateContentDriftBatch(run => run(tx), column, {
-          afterChunkId: state.cursor, limit: batchRows, ...(opts.sourceId !== undefined && { sourceId: opts.sourceId }),
+          afterChunkId: state.cursor, limit: batchRows, ...(opts.sourceId !== undefined && { sourceId: opts.sourceId }), currentProjectionsOnly: opts.currentProjectionsOnly,
         });
         const now = new Date().toISOString();
         const pass = state.cursor === 0

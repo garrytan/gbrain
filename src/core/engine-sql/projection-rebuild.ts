@@ -16,6 +16,7 @@ import { sealableImageSql } from '../page-state/projection-class.ts';
 import { movableChunkSql } from '../search/safe-chunks.ts';
 import { chunkModelMatchesSql } from '../embedding-invalidation.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
+import { currentProjectionReasonSql, HISTORICAL_PROJECTION_HELD_SQL } from '../page-state/projection-policy-sql.ts';
 
 /**
  * The live inline page (Markdown or code, not segmented; with `media`, also a sealable image) of an active source
@@ -176,7 +177,12 @@ export async function releaseDeferredReplacementClaim(raw: EngineRawRead, slug: 
 /** Queues the live page at its knowledge revision with `reason` at now, or moves its queued row there (queuePageProjection). */
 export async function queuePageProjectionJob(raw: EngineRawRead, sourceId: string, slug: string, reason: string): Promise<void> {
   await raw(`INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
-    SELECT s.incarnation,p.slug,p.knowledge_revision,$3 FROM pages p JOIN sources s ON s.id=p.source_id
+    SELECT s.incarnation,p.slug,p.knowledge_revision,
+      CASE WHEN COALESCE((SELECT value='true' FROM config WHERE key='embed.current_projections_only'),false) IS NOT TRUE THEN $3
+        WHEN ${HISTORICAL_PROJECTION_HELD_SQL} THEN COALESCE(j.reason,'legacy_projection')
+        WHEN ${currentProjectionReasonSql('$3::text')} THEN $3 ELSE 'canonical_change' END
+    FROM pages p JOIN sources s ON s.id=p.source_id
+    LEFT JOIN page_projection_jobs j ON j.source_incarnation=s.incarnation AND j.slug=p.slug
     WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL
     ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now()`, [sourceId, slug, reason]);
 }

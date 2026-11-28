@@ -2704,7 +2704,7 @@ CREATE TABLE IF NOT EXISTS page_projection_jobs (
     PRIMARY KEY(source_incarnation,slug)
   );
 CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS \$fn\$
-    DECLARE incarnation UUID;
+    DECLARE incarnation UUID; prior_reason TEXT; old_reason TEXT; held BOOLEAN := false; current_only BOOLEAN := false;
     BEGIN
       IF pg_catalog.row_security_active('sources') THEN
         IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r']) AS needed(cmd) WHERE NOT EXISTS (
@@ -2729,6 +2729,27 @@ CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUA
           WHERE s.id=OLD.source_id AND j.source_incarnation=s.incarnation AND j.slug=OLD.slug;
         RETURN NULL;
       END IF;
+      IF to_regclass('public.config') IS NOT NULL THEN
+        SELECT COALESCE((SELECT value='true' FROM config WHERE key='embed.current_projections_only'),false)
+          AND COALESCE(current_setting('gbrain.current_projections_only_override',true),'')<>'false' INTO current_only;
+      END IF;
+      IF TG_OP='UPDATE' AND current_only THEN
+        IF pg_catalog.row_security_active('page_projection_jobs') THEN
+          IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r']) AS needed(cmd) WHERE NOT EXISTS (
+              SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_projection_jobs'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+                AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+            RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+              TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+              DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_projection_jobs')::text;
+          END IF;
+        END IF;
+        SELECT j.reason INTO old_reason FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation
+          WHERE s.id=OLD.source_id AND j.slug=OLD.slug;
+        IF old_reason IS NULL AND (COALESCE((to_jsonb(OLD)->>'chunker_version')::int,0)<4
+          OR OLD.text_projection_revision IS DISTINCT FROM OLD.knowledge_revision) THEN
+          old_reason := 'legacy_projection';
+        END IF;
+      END IF;
       IF TG_OP='UPDATE' AND (OLD.source_id,OLD.slug) IS DISTINCT FROM (NEW.source_id,NEW.slug) THEN
         IF pg_catalog.row_security_active('page_projection_jobs') THEN
           IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','d']) AS needed(cmd) WHERE NOT EXISTS (
@@ -2743,7 +2764,22 @@ CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUA
           WHERE s.id=OLD.source_id AND j.source_incarnation=s.incarnation AND j.slug=OLD.slug;
       END IF;
       SELECT s.incarnation INTO incarnation FROM sources s WHERE s.id=NEW.source_id;
-      IF NEW.deleted_at IS NOT NULL OR NEW.text_projection_revision=NEW.knowledge_revision THEN
+      IF current_only THEN
+        IF pg_catalog.row_security_active('page_projection_jobs') THEN
+          IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r']) AS needed(cmd) WHERE NOT EXISTS (
+              SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_projection_jobs'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+                AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+            RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+              TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+              DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_projection_jobs')::text;
+          END IF;
+        END IF;
+        SELECT j.reason INTO prior_reason FROM page_projection_jobs j WHERE j.source_incarnation=incarnation AND j.slug=NEW.slug;
+        prior_reason := COALESCE(prior_reason,old_reason);
+        held := prior_reason IS NOT NULL AND NOT (prior_reason IN ('canonical_change','canonical_change_rebuild_failed','chunk_replacement_deferred')
+    OR split_part(prior_reason,':',1) IN ('segmented_projecting','chunk_replacement_continuing'));
+      END IF;
+      IF NEW.deleted_at IS NOT NULL THEN
         IF pg_catalog.row_security_active('page_projection_jobs') THEN
           IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','d']) AS needed(cmd) WHERE NOT EXISTS (
               SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_projection_jobs'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
@@ -2754,6 +2790,26 @@ CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUA
           END IF;
         END IF;
         DELETE FROM page_projection_jobs j WHERE j.source_incarnation=incarnation AND j.slug=NEW.slug;
+      ELSIF NEW.text_projection_revision=NEW.knowledge_revision THEN
+        IF held THEN
+          IF TG_OP='INSERT' OR OLD.text_projection_revision IS DISTINCT FROM OLD.knowledge_revision
+            OR OLD.knowledge_revision IS DISTINCT FROM NEW.knowledge_revision
+            OR (COALESCE((to_jsonb(OLD)->>'chunker_version')::int,0)<4
+              AND COALESCE((to_jsonb(NEW)->>'chunker_version')::int,0)>=4) THEN
+            RAISE EXCEPTION 'historical_projection_held: historical text requires an authorized rebuild' USING ERRCODE='55000';
+          END IF;
+        ELSE
+          IF pg_catalog.row_security_active('page_projection_jobs') THEN
+          IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','d']) AS needed(cmd) WHERE NOT EXISTS (
+              SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = 'page_projection_jobs'::regclass::oid AND p.polpermissive AND p.polcmd::text IN ('*', needed.cmd)
+                AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END))) THEN
+            RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='writer_coordinator_required: writer state is unreadable to this database role',
+              TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='managed_writer_guard:unreadable_state',
+              DETAIL=pg_catalog.jsonb_build_object('op',TG_OP,'relationship','unreadable_state','state','page_projection_jobs')::text;
+          END IF;
+        END IF;
+          DELETE FROM page_projection_jobs j WHERE j.source_incarnation=incarnation AND j.slug=NEW.slug;
+        END IF;
       ELSIF TG_OP='INSERT' OR NEW.knowledge_revision IS DISTINCT FROM OLD.knowledge_revision THEN
         IF pg_catalog.row_security_active('page_projection_jobs') THEN
           IF EXISTS (SELECT 1 FROM pg_catalog.unnest(ARRAY['r','a','w']) AS needed(cmd) WHERE NOT EXISTS (
@@ -2765,7 +2821,7 @@ CREATE OR REPLACE FUNCTION gbrain_queue_page_projection() RETURNS trigger LANGUA
           END IF;
         END IF;
         INSERT INTO page_projection_jobs(source_incarnation,slug,revision,reason)
-          VALUES (incarnation,NEW.slug,NEW.knowledge_revision,'canonical_change')
+          VALUES (incarnation,NEW.slug,NEW.knowledge_revision,CASE WHEN held THEN prior_reason ELSE 'canonical_change' END)
           ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now();
       END IF;
       RETURN NULL;

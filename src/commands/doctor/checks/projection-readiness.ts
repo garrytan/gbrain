@@ -16,17 +16,23 @@ const CODE_REPAIR = 'For code metadata repair, run `gbrain reindex-code --force 
 const DRAIN_PREVIEW = ['gbrain', 'projections', 'drain', '--dry-run', '--json'];
 const IMAGES_PREVIEW = ['gbrain', 'embed', '--stale', '--images', '--dry-run', '--json'];
 
+/** Older resident status replies omit policy counts; retain their original queue semantics. */
+function actionableBacklog(backlog: Required<ProjectionBacklog>): Required<ProjectionBacklog> {
+  return { ...backlog, held: backlog.held ?? 0, pending: backlog.actionable_pending ?? backlog.pending,
+    sealable: backlog.actionable_sealable ?? backlog.sealable };
+}
+
 /** #6803: the class counts doctor reports (counts only, never identifiers). */
 function classDetails(backlog: Required<ProjectionBacklog>) {
-  const { pending, failed, sealable, sealable_with_visual, reimport, ocr_required, protected: guarded, archived, oldest_age_seconds, as_of } = backlog;
-  return { pending, failed, sealable, sealable_with_visual, reimport, ocr_required, protected: guarded, archived, oldest_age_seconds, as_of };
+  const { pending, failed, sealable, sealable_with_visual, reimport, ocr_required, protected: guarded, archived, held, oldest_age_seconds, as_of } = backlog;
+  return { pending, failed, sealable, sealable_with_visual, reimport, ocr_required, protected: guarded, archived, ...(held ? { held } : {}), oldest_age_seconds, as_of };
 }
 
 /** One sentence per class that needs work or is unsealed by design, from the backlog's counts. */
 function classSentences(backlog: Required<ProjectionBacklog>, resident: boolean): string[] {
   const sentences: string[] = [];
   if (backlog.sealable) {
-    sentences.push(`${backlog.sealable} image page(s) the importer already attested (${backlog.sealable_with_visual} with a visual vector) are out of search until \`gbrain projections drain\` seals them (keyless: no provider call, no re-embedding; preview with \`gbrain projections drain --dry-run --json\`)${resident ? '; the resident never seals images' : ''}.`);
+    sentences.push(`${backlog.sealable} image page(s) the importer already attested${backlog.held ? '' : ` (${backlog.sealable_with_visual} with a visual vector)`} are out of search until \`gbrain projections drain\` seals them (keyless: no provider call, no re-embedding; preview with \`gbrain projections drain --dry-run --json\`)${resident ? '; the resident never seals images' : ''}.`);
   }
   if (backlog.reimport) {
     sentences.push(`${backlog.reimport} image page(s) need their importer (fresh OCR and pixels, paid): preview with \`gbrain embed --stale --images --dry-run\`${backlog.ocr_required
@@ -54,6 +60,11 @@ function projectionFix(backlog: Required<ProjectionBacklog>, opts: { remote?: bo
       why: `Rebuilds queued Markdown and code projections and seals importer-attested image pages in place, at most ${limit} pages per run; repeat until the dry run shows sealable 0.`,
       verify: { argv: DRAIN_PREVIEW }, docs: DOCS } };
   }
+  if (!backlog.reimport && backlog.held) return { fix: {
+    argv: ['gbrain', 'projections', 'drain', '--no-current-projections-only'], preview_argv: [...DRAIN_PREVIEW, '--no-current-projections-only'], consent: [], actor, ask_user: true, requires_exclusive: false,
+    user_message: `${backlog.held} historical projection(s) are held. May I rebuild them with the explicit owner opt-in?`,
+    why: 'Includes held historical projections only after the owner authorizes the run.', verify: { argv: DRAIN_PREVIEW }, docs: DOCS,
+  } };
   if (!backlog.reimport) return {};
   if (!isMultimodalEnabled()) return { blocked: 'GBRAIN_EMBEDDING_MULTIMODAL' };
   return { fix: { argv: ['gbrain', 'embed', '--stale', '--images', '--max-usd', '<USD>'], preview_argv: IMAGES_PREVIEW, consent: ['paid', 'egress'], actor, ask_user: true,
@@ -74,11 +85,12 @@ function projectionFix(backlog: Required<ProjectionBacklog>, opts: { remote?: bo
  */
 export async function checkProjectionReadiness(engine: BrainEngine, scope: PageReadScope = {}, opts: { resident?: boolean; remote?: boolean } = {}): Promise<Check> {
   const readiness = await probeProjectionReadiness(engine, scope);
-  const backlog = readiness.status === 'unknown' ? null : await projectionBacklog(engine, scope).catch(() => null);
-  if (!backlog) {
+  const measured = readiness.status === 'unknown' ? null : await projectionBacklog(engine, scope).catch(() => null);
+  if (!measured) {
     return { name: 'text_projection_readiness', status: 'warn', details: { readiness: 'unknown', ready: false },
       message: 'Text projection readiness is unknown because its read-only probe failed; index completeness could not be verified.' };
   }
+  const backlog = actionableBacklog(measured);
   // Wave B: pages stored in segments whose chunks were not built after their write committed (not searchable yet);
   // counted brain-wide, so only for an unscoped (local) doctor.
   const segmented = readiness.status === 'projection_pending' && Object.keys(scope).length === 0 ? Number((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages
@@ -90,7 +102,7 @@ export async function checkProjectionReadiness(engine: BrainEngine, scope: PageR
   const details = { readiness: readiness.status, ready: readiness.ready, ...classDetails(backlog), ...(segmented ? { segmented_pending: segmented } : {}),
     ...(held.length ? { credential_reseal_held: held.length, ...(opts.remote ? {} : { held_pages: held.slice(0, 20).map(hold => ({ source_id: hold.source_id, slug: hold.slug,
       code: hold.code, attempts: hold.attempts, fix: hold.fix.argv })) }) } : {}) };
-  const work = backlog.pending + backlog.sealable + backlog.reimport;
+  const work = backlog.pending + backlog.sealable + backlog.reimport + backlog.held;
   if (work === 0 && readiness.status !== 'projection_pending' && !held.length) {
     const byDesign = classSentences(backlog, false);
     return byDesign.length
@@ -100,6 +112,7 @@ export async function checkProjectionReadiness(engine: BrainEngine, scope: PageR
   }
   const heldText = held.length ? `${held.length} page(s) holding a private key failed their credential-safe re-chunk and stay withheld from search${opts.remote ? '' : ` (${held.slice(0, 3)
     .map(hold => `${hold.source_id}:${hold.slug} ${hold.code}`).join(', ')}${held.length > 3 ? ', ...' : ''})`}; retry them with ${[...new Set(held.map(hold => `\`${hold.fix.argv!.join(' ')}\``))].join(', ')}.` : '';
+  const historyText = backlog.held ? `${backlog.held} historical projection(s) are held by embed.current_projections_only; an owner may authorize \`gbrain projections drain --no-current-projections-only\`.` : '';
   const text = backlog.pending || (work === 0 && readiness.status === 'projection_pending')
     ? `Visible pages have missing or stale text projections${backlog.pending ? ` (${backlog.pending} queued Markdown/code page(s)${backlog.failed ? `, ${backlog.failed} last failed` : ''})` : ''}; ${readiness.status === 'projection_pending'
       ? 'search and code results may be incomplete.' : 'search keeps answering from the index these pages had before the upgrade until each is rebuilt.'} ${opts.resident
@@ -112,7 +125,7 @@ export async function checkProjectionReadiness(engine: BrainEngine, scope: PageR
   const unavailable = blocked ? ` Re-importing images needs multimodal embeddings, which are off (set ${blocked}=true on the brain host, then preview with \`gbrain embed --stale --images --dry-run\`).` : '';
   return {
     name: 'text_projection_readiness', status: 'warn',
-    message: [text, heldText, ...classSentences(backlog, opts.resident === true)].filter(Boolean).join(' ') + unavailable + ` ${UNCHANGED}`,
+    message: [text, historyText, heldText, ...classSentences(backlog, opts.resident === true)].filter(Boolean).join(' ') + unavailable + ` ${UNCHANGED}`,
     details: blocked ? { ...details, reimport_blocked_by: blocked } : details,
     ...(fix ? { fix } : { fix_unavailable_reason: 'operator_judgement' as const }),
   };
@@ -138,8 +151,8 @@ export function residentProjectionReadiness(pid: number | undefined, status: Per
       fix_unavailable_reason: 'operator_judgement',
     };
   }
-  const backlog = { sealable_with_visual: 0, reimport: 0, ocr_required: 0, protected: 0, archived: 0, as_of: '', ...status } as Required<ProjectionBacklog>;
-  const work = backlog.pending + backlog.sealable + backlog.reimport;
+  const backlog = actionableBacklog({ sealable_with_visual: 0, reimport: 0, ocr_required: 0, protected: 0, archived: 0, as_of: '', ...status } as Required<ProjectionBacklog>);
+  const work = backlog.pending + backlog.sealable + backlog.reimport + backlog.held;
   const details = { readiness: work ? 'projection_pending' : 'ready', ready: work === 0, owner_pid: pid ?? null, ...classDetails(backlog), docs: DOCS };
   const images = classSentences(backlog, true);
   if (work === 0) {
@@ -147,14 +160,17 @@ export function residentProjectionReadiness(pid: number | undefined, status: Per
       ? { status: 'ok', message: `${owner} and reports no queued text projections. ${images.join(' ')}`, details, fix_unavailable_reason: 'operator_judgement' }
       : { status: 'ok', message: `${owner} and reports no queued text projections.`, details };
   }
+  const onlyHeld = backlog.held > 0 && backlog.pending + backlog.sealable + backlog.reimport === 0;
+  const historyText = backlog.held ? `${backlog.held} historical projection(s) are held by embed.current_projections_only.`
+    + (onlyHeld ? ' After stopping the resident, an owner may run `gbrain projections drain --no-current-projections-only`, then restart it.' : '') : '';
   const age = status.oldest_age_seconds === null ? '' : `; the oldest was queued ${status.oldest_age_seconds}s ago`;
   const failed = status.failed ? `; ${status.failed} last failed and are retried after 30 seconds` : '';
-  const draining = status.pending
-    ? `${owner} and is draining ${status.pending} queued text projections${age}${failed}. Search and code results may be incomplete until it finishes; it rebuilds up to 100 pages per pass, fewer while writes wait. Re-run \`gbrain doctor\` to watch the count.`
-    : `${owner}; it has no queued text projections${age}.`;
+  const draining = backlog.pending
+    ? `${owner} and is draining ${backlog.pending} queued text projections${age}${failed}. Search and code results may be incomplete until it finishes; it rebuilds up to 100 pages per pass, fewer while writes wait. Re-run \`gbrain doctor\` to watch the count.`
+    : `${owner}; it has no actionable queued text projections${age}.`;
   return {
     status: 'warn',
-    message: [draining, ...images, steps, UNCHANGED].join(' '),
+    message: [draining, historyText, ...images, ...(onlyHeld ? [] : [steps]), UNCHANGED].filter(Boolean).join(' '),
     details,
     ...(backlog.sealable && drainFix ? { fix: drainFix } : { fix_unavailable_reason: 'operator_judgement' as const }),
   };

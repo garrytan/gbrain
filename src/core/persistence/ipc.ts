@@ -124,7 +124,7 @@ export interface PersistenceIpcAdminRequest {
  * knows the resident predates them.
  */
 export type PersistenceProjectionStatus = ProjectionBacklog;
-const PROJECTION_CLASS_KEYS = ['sealable', 'sealable_with_visual', 'reimport', 'ocr_required', 'protected', 'archived'] as const;
+const PROJECTION_CLASS_KEYS = ['sealable', 'sealable_with_visual', 'reimport', 'ocr_required', 'protected', 'archived', 'held', 'actionable_pending', 'actionable_sealable'] as const;
 
 export interface PersistenceIpcProvider {
   brainId: string;

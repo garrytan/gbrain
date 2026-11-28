@@ -1819,7 +1819,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'oauth.dcr_ttl_max_seconds',
   'embed.backfill_cooldown_min',
   'embed.backfill_max_usd_per_source_24h',
-  'embed.backfill_max_usd',
+  'embed.backfill_max_usd', 'embed.current_projections_only', // Withhold historical projections until owner-authorized rebuild.
   // GBRA-438: free unattended upkeep on/off and its daily embedding cap (core/maintenance/run.ts).
   'maintenance.auto', 'maintenance.embed_daily_usd',
   // Brain-level default source. Read by source-resolver.ts tier 5

@@ -14,6 +14,7 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
   }
   const json = args.includes('--json');
   const dryRun = args.includes('--dry-run');
+  const policy = args.includes('--no-current-projections-only') ? { currentProjectionsOnly: false } : {};
   const { OperationError } = await import('../../core/ops/contract.ts');
   const { reportPersistenceCliError } = await import('../../commands/persistence-delegate.ts');
   const refuse = async (error: InstanceType<typeof OperationError>) => {
@@ -24,7 +25,7 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
   const limitValue = limitAt === -1 ? undefined : args[limitAt + 1];
   const concurrencyAt = args.indexOf('--concurrency');
   const concurrencyValue = concurrencyAt === -1 ? undefined : args[concurrencyAt + 1];
-  const known = new Set(['drain', '--json', '--dry-run', '--limit', '--concurrency', ...(limitValue === undefined ? [] : [limitValue]),
+  const known = new Set(['drain', '--json', '--dry-run', '--limit', '--concurrency', '--no-current-projections-only', ...(limitValue === undefined ? [] : [limitValue]),
     ...(concurrencyValue === undefined ? [] : [concurrencyValue])]);
   const unknown = args.find(arg => !known.has(arg));
   if (args[0] !== 'drain' || unknown !== undefined) {
@@ -71,7 +72,7 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
   if (dryRun) {
     // #6803: the preview reads the queue and rebuilds nothing.
     try {
-      const preview = await projections.previewProjectionDrain(engine, limit ?? 50);
+      const preview = await projections.previewProjectionDrain(engine, limit ?? 50, policy);
       await writeStdoutFinal((json ? JSON.stringify(preview) : projections.formatDrainPreview(preview)) + '\n');
     } finally {
       await finishCliTeardown({ engine });
@@ -86,7 +87,7 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
         width.max > 1 ? `Run \`gbrain projections drain --concurrency ${width.max}\`, or raise the pool size.` : 'PGLite rebuilds one page at a time: omit --concurrency.', projections.PROJECTION_DRAIN_DOCS));
       return;
     }
-    const result = await projections.drainProjections(engine, { limit, media: true, progress: createProgress(cliOptsToProgressOptions(getCliOptions())),
+    const result = await projections.drainProjections(engine, { limit, media: true, ...policy, progress: createProgress(cliOptsToProgressOptions(getCliOptions())),
       concurrency: concurrency ?? width.default,
       onNarrow: (n, error) => console.error(`[gbrain] A database connection was refused or dropped (${(error instanceof Error ? error.message : String(error)).split('\n')[0]!.slice(0, 200)}); rebuilding ${n} page(s) at once from here.`) });
     if (json) {

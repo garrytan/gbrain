@@ -40,6 +40,8 @@ import { occurrencesWithoutChunks, stageOccurrenceChunks } from './ingest.ts';
 import { PROJECTION_RETIRE_MAX_ROWS } from './limits.ts';
 import type { JsonObject } from './types.ts';
 import { assertGenerationTiles } from './body-tiling.ts';
+import { pageProjectionHeld, projectionTransaction } from '../page-state/projection-policy.ts';
+import { CURRENT_PROJECTION_JOB_SQL, PROJECTION_POLICY_ADMITS_SQL } from '../page-state/projection-policy-sql.ts';
 
 /** `claimLost`: another process took the page's claim over (or a write re-queued the page) during the build, which stopped unsealed. */
 export interface SegmentedProjectionResult { chunks: number; retired: number; sealed: boolean; claimLost?: true }
@@ -95,11 +97,12 @@ export async function hasStaleChunks(engine: Pick<BrainEngine, 'executeRaw'>, pa
  * `generation` (a demotion's inline rows are the page's live chunks); `moved` when it was not.
  */
 async function retireStaleChunks(engine: BrainEngine, ref: { sourceId: string; slug: string }, pageId: number, generation: number,
-  live: readonly number[]): Promise<{ retired: number; moved: boolean }> {
+  live: readonly number[], currentProjectionsOnly?: boolean): Promise<{ retired: number; moved: boolean }> {
   let retired = 0;
   for (;;) {
     const deleted = await engine.transaction(async tx => {
       await tx.lockPageKeys([ref]);
+      if (await pageProjectionHeld(tx, ref, currentProjectionsOnly)) return null;
       const [page] = await tx.executeRaw<{ body_generation: number | string; body_storage: string }>('SELECT body_generation, body_storage FROM pages WHERE id=$1', [pageId]);
       if (page?.body_storage !== 'segmented' || Number(page.body_generation) !== generation) return null;
       return (await tx.executeRaw<{ id: number }>(`DELETE FROM content_chunks c WHERE c.id=ANY(ARRAY(${STALE_CHUNKS_SQL} LIMIT $4)) RETURNING c.id`,
@@ -121,14 +124,19 @@ type ProjectionClaim = string | null;
 const CLAIMED_BY_BUILD = `${JOB_OF_PAGE} AND reason=$3`;
 
 /** Claim the page's queue row; false when another process holds it. A page with no queued row is built unclaimed (null). */
-async function claimProjection(engine: Pick<BrainEngine, 'executeRaw'>, ref: { sourceId: string; slug: string }): Promise<ProjectionClaim | false> {
-  const claim = `${SEGMENTED_PROJECTION_CLAIM}:${randomUUID()}`;
-  const [job] = await engine.executeRaw<{ claimed: boolean }>(`WITH claimed AS (UPDATE page_projection_jobs SET reason=$3, updated_at=clock_timestamp()
-      WHERE ${JOB_OF_PAGE} AND NOT (split_part(reason,':',1)='${SEGMENTED_PROJECTION_CLAIM}' AND updated_at>=now()-interval '${SEGMENTED_PROJECTION_LEASE_SECONDS} seconds') RETURNING 1)
+async function claimProjection(engine: BrainEngine, ref: { sourceId: string; slug: string }, currentProjectionsOnly?: boolean): Promise<ProjectionClaim | false> {
+  return engine.transaction(async tx => {
+    await tx.lockPageKeys([ref]);
+    if (await pageProjectionHeld(tx, ref, currentProjectionsOnly)) return false;
+    const historical = await pageProjectionHeld(tx, ref, true);
+    const claim = `${historical ? 'historical_segmented_projecting' : SEGMENTED_PROJECTION_CLAIM}:${randomUUID()}`;
+    const [job] = await tx.executeRaw<{ claimed: boolean }>(`WITH claimed AS (UPDATE page_projection_jobs SET reason=$3, updated_at=clock_timestamp()
+      WHERE ${JOB_OF_PAGE} AND NOT (split_part(reason,':',1) IN ('${SEGMENTED_PROJECTION_CLAIM}','historical_segmented_projecting') AND updated_at>=now()-interval '${SEGMENTED_PROJECTION_LEASE_SECONDS} seconds') RETURNING 1)
     SELECT EXISTS (SELECT 1 FROM claimed) AS claimed WHERE EXISTS (SELECT 1 FROM claimed) OR EXISTS (SELECT 1 FROM page_projection_jobs WHERE ${JOB_OF_PAGE})`,
-  [ref.sourceId, ref.slug, claim]);
-  if (!job) return null;
-  return job.claimed ? claim : false;
+    [ref.sourceId, ref.slug, claim]);
+    if (!job) return null;
+    return job.claimed ? claim : false;
+  });
 }
 
 /**
@@ -153,7 +161,7 @@ const projecting = new WeakMap<BrainEngine, Map<string, Promise<unknown>>>();
  * projecting waits for it, and a page that call sealed has nothing left to project.
  */
 export async function buildSegmentedProjection(engine: BrainEngine, ref: { sourceId: string; slug: string },
-  opts: { expectedRevision?: string } = {}): Promise<SegmentedProjectionResult> {
+  opts: { expectedRevision?: string; currentProjectionsOnly?: boolean } = {}): Promise<SegmentedProjectionResult> {
   let pages = projecting.get(engine);
   if (!pages) projecting.set(engine, pages = new Map());
   const key = JSON.stringify([ref.sourceId, ref.slug]);
@@ -164,32 +172,33 @@ export async function buildSegmentedProjection(engine: BrainEngine, ref: { sourc
 }
 
 async function projectSegmentedPage(engine: BrainEngine, ref: { sourceId: string; slug: string },
-  opts: { expectedRevision?: string }): Promise<SegmentedProjectionResult> {
+  opts: { expectedRevision?: string; currentProjectionsOnly?: boolean }): Promise<SegmentedProjectionResult> {
   const page = await readProjectionPage(engine, ref);
   if (!page || (opts.expectedRevision !== undefined && page.knowledge_revision !== opts.expectedRevision)) return { chunks: 0, retired: 0, sealed: false };
+  if (await pageProjectionHeld(engine, ref, opts.currentProjectionsOnly)) return { chunks: 0, retired: 0, sealed: false };
   // A sealed page holding a retired occurrence's row (sealed by an older binary over a deferred retirement) is built again to retire it.
   if (page.text_projection_revision === page.knowledge_revision
     && !await hasStaleChunks(engine, Number(page.id), Number(page.body_generation), await liveOccurrenceIds(engine, Number(page.id), Number(page.body_generation)))) {
     return { chunks: 0, retired: 0, sealed: true };
   }
-  const claim = await claimProjection(engine, ref);
+  const claim = await claimProjection(engine, ref, opts.currentProjectionsOnly);
   if (claim === false) return { chunks: 0, retired: 0, sealed: false };
   try {
-    return await buildClaimedProjection(engine, ref, page, claim);
+    return await buildClaimedProjection(engine, ref, page, claim, opts.currentProjectionsOnly);
   } catch (error) {
-    if (claim) await engine.executeRaw(`UPDATE page_projection_jobs SET reason='canonical_change', updated_at=clock_timestamp() WHERE ${CLAIMED_BY_BUILD}`,
-      [ref.sourceId, ref.slug, claim]).catch(() => undefined);
+    if (claim) await engine.executeRaw(`UPDATE page_projection_jobs SET reason=$4, updated_at=clock_timestamp() WHERE ${CLAIMED_BY_BUILD}`,
+      [ref.sourceId, ref.slug, claim, claim.startsWith('historical_segmented_projecting:') ? 'legacy_projection' : 'canonical_change']).catch(() => undefined);
     throw error;
   }
 }
 
 async function buildClaimedProjection(engine: BrainEngine, ref: { sourceId: string; slug: string }, page: ProjectionPage,
-  claim: ProjectionClaim): Promise<SegmentedProjectionResult> {
+  claim: ProjectionClaim, currentProjectionsOnly?: boolean): Promise<SegmentedProjectionResult> {
   const generation = Number(page.body_generation);
   const pageId = Number(page.id);
   const liveRows = await engine.readManifest(pageId, { generation });
   await assertGenerationTiles(engine, pageId, generation, liveRows, Number(page.body_bytes));
-  const { retired, moved } = await retireStaleChunks(engine, ref, pageId, generation, liveRows.map(row => Number(row.occurrenceId)));
+  const { retired, moved } = await retireStaleChunks(engine, ref, pageId, generation, liveRows.map(row => Number(row.occurrenceId)), currentProjectionsOnly);
   if (moved) return { chunks: 0, retired, sealed: false };
   const frontmatter = page.frontmatter ?? {};
   const quarantined = isQuarantined(frontmatter);
@@ -197,11 +206,12 @@ async function buildClaimedProjection(engine: BrainEngine, ref: { sourceId: stri
   let claimLost = false;
   const staged = await stageOccurrenceChunks(engine, { pageId, sourceId: ref.sourceId, slug: ref.slug, generation, occurrences: unchunked, title: page.title,
     frontmatter, flags: page.body_flags ?? {}, chunking: { quarantined, corpusGeneration: null, tier: 'none' }, retiredOccurrences: [], guarded: true,
-    renew: async tx => { claimLost = !await renewClaim(tx, ref, claim); return !claimLost; } });
+    renew: async tx => { claimLost = await pageProjectionHeld(tx, ref, currentProjectionsOnly) || !await renewClaim(tx, ref, claim); return !claimLost; } });
   if (claimLost) return { chunks: staged.rows, retired, sealed: false, claimLost: true };
   await faultPoint('segmented:projection_staged', { sourceId: ref.sourceId, slug: ref.slug });
-  const sealed = await engine.transaction(async tx => {
+  const sealed = await projectionTransaction(engine, currentProjectionsOnly, async tx => {
     await tx.lockPageKeys([{ sourceId: ref.sourceId, slug: ref.slug }]);
+    if (await pageProjectionHeld(tx, ref, currentProjectionsOnly)) return false;
     const current = await readProjectionPage(tx, ref);
     if (!current || current.knowledge_revision !== page.knowledge_revision || Number(current.body_generation) !== generation) return false;
     if (current.text_projection_revision === current.knowledge_revision) return true;
@@ -224,11 +234,13 @@ async function buildClaimedProjection(engine: BrainEngine, ref: { sourceId: stri
  */
 export async function rebuildPendingSegmentedProjections(engine: BrainEngine, limit: number,
   opts: { deadlineMs?: number; now?: () => number; notAfter?: string; reasons?: readonly string[]; retryCooldown?: boolean; exclude?: readonly string[];
-    onFailure?: (failure: ProjectionRebuildFailure) => void } = {}): Promise<{ rebuilt: number; failed: number; listed: string[] }> {
+    currentProjectionsOnly?: boolean; onFailure?: (failure: ProjectionRebuildFailure) => void } = {}): Promise<{ rebuilt: number; failed: number; listed: string[] }> {
   const now = opts.now ?? Date.now;
   const startedAt = now();
   const params: unknown[] = [Math.max(1, limit)];
   const filters = [opts.retryCooldown === false ? `NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}` : PROJECTION_RETRY_READY_SQL];
+  if (opts.currentProjectionsOnly === true) filters.push(CURRENT_PROJECTION_JOB_SQL);
+  else if (opts.currentProjectionsOnly !== false) filters.push(PROJECTION_POLICY_ADMITS_SQL);
   if (opts.notAfter !== undefined) filters.push(`j.updated_at<=$${params.push(opts.notAfter)}::text::timestamptz`);
   if (opts.reasons) filters.push(`j.reason=ANY($${params.push(opts.reasons)}::text[])`);
   if (opts.exclude?.length) filters.push(`NOT (j.source_incarnation::text || '/' || j.slug)=ANY($${params.push(opts.exclude)}::text[])`);
@@ -242,12 +254,13 @@ export async function rebuildPendingSegmentedProjections(engine: BrainEngine, li
     if (opts.deadlineMs !== undefined && index > 0 && now() - startedAt >= opts.deadlineMs) break;
     listed.push(`${job.source_incarnation}/${job.slug}`);
     try {
-      if (!(await buildSegmentedProjection(engine, { sourceId: job.source_id, slug: job.slug }, { expectedRevision: job.revision })).sealed) continue;
+      if (!(await buildSegmentedProjection(engine, { sourceId: job.source_id, slug: job.slug }, { expectedRevision: job.revision, currentProjectionsOnly: opts.currentProjectionsOnly })).sealed) continue;
       rebuilt++;
       await engine.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', [job.source_incarnation, job.slug, job.revision]);
     } catch (error) {
       failed++;
-      await engine.executeRaw(`UPDATE page_projection_jobs j SET reason='rebuild_failed', updated_at=now()
+      await engine.executeRaw(`UPDATE page_projection_jobs j SET reason=CASE WHEN COALESCE((SELECT value='true' FROM config WHERE key='embed.current_projections_only'),false) AND ${CURRENT_PROJECTION_JOB_SQL}
+          THEN 'canonical_change_rebuild_failed' ELSE 'rebuild_failed' END, updated_at=now()
         WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid AND NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}`, [job.source_incarnation, job.slug, job.revision]);
       opts.onFailure?.({ source_id: job.source_id, slug: job.slug, reason: (error instanceof Error ? error.message : String(error)).split('\n')[0]!.slice(0, 300) });
     }
