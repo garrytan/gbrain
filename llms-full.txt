@@ -6293,8 +6293,11 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   more, and a failure withdraws it (`revokeSeal`: invalid again, full obligation). A confirmation that was sent but not
   acknowledged is withdrawn too (`seal_confirm_unacknowledged`): a timeout does not cancel what is already in the pipe.
   Every withdrawal first appends a `seal_revoked:<reason>` line to `follower-invalidations.jsonl`, which the child reads
-  on its own, then sends `revokeSeal` again until the child acknowledges it. When neither gets through the doubt is
-  returned: the first check runs a full pass and the close does not seal. PGLite never seals or confirms
+  on its own (and always before its last write at close and before a refused seal), then sends `revokeSeal` again
+  until the child acknowledges it. When no revoke is acknowledged the doubt is returned, even if the line got through:
+  the first check withdraws the confirmation once more and runs a fresh full pass, never one resumed from before, and
+  the close does not seal. Nor does a close seal while the confirmation is still running (`seal_confirm_pending`): its
+  second read is what would catch a write that began after its first. PGLite never seals or confirms
   (`pglite_no_db_continuity`). Any doubt, a failed read or a timeout leaves the watermark invalid until a full pass. A
   write published after the follower closed, or one the child would not take, leaves an invalidation line, which
   voids the seal; write capture stays on through the close, so a write a later before-disconnect callback makes is
@@ -6324,7 +6327,10 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   no pass (closing is not a failed pass, so the count of trailing clean full passes is kept) and the next session with
   the same continuity, seed and evidence epoch finishes that pass instead of starting over. The exception is a stopped
   part that repaired rows or found follower misses: it is recorded at once as a full pass with error `stopped`, so the
-  repair is on record even if the next pass starts fresh, and the next full pass is then due. Otherwise only a finished
+  repair is on record even if the next pass starts fresh, and the next full pass is then due. If that record cannot be
+  written, the progress keeps the counts: status and writer coverage count them as that stopped pass, and the next full
+  pass that does not continue it records them before removing the progress, or fails with `pending_repair_unrecorded`
+  and keeps it. Otherwise only a finished
   full pass is recorded, and only a clean one counts. A seal or a resumed half never counts as a pass of its own. Swap readiness (criterion 1)
   also needs the newest clean full pass to have finished under 24 hours ago (`reconcile.last_clean_full_pass_at`), so a
   brain that ran its three clean passes and then stopped reconciling is not ready. A pass that
@@ -6393,7 +6399,8 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,
   `error`), `last_pass` (with `repaired_rows`, `repaired_by_relation` and `follower_misses`: repaired rows found while the
   watermark claimed coverage), `consecutive_clean_full_passes`, `last_clean_full_pass_at` (when the newest full pass
-  finished, if it was clean; `null` otherwise), `next_full_pass_due`; `fingerprints` (`checked_rows`,
+  finished, if it was clean; `null` otherwise), `next_full_pass_due` (24 hours after the newest full pass finished, or
+  its finish time when it was stopped: due at once); `fingerprints` (`checked_rows`,
   `mismatches`, and a `probe`, described below); `allocators`;
   `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
   aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
