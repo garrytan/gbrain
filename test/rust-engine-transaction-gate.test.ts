@@ -9,6 +9,9 @@
  *    `disconnect` had returned, on a pool and store that were shut down.
  *  - Served reads never wait for an open transaction, including the reads whose names do not start with a read verb.
  *    Before the fix the gate decided by name, and those reads waited for the writer.
+ *  - Writes admitted before a transaction finish before it takes the writer: test/rust-engine-write-drain.test.ts.
+ *  - A nested transaction that fails while its own nested transaction is still open cannot be rolled back alone; the
+ *    whole transaction then rolls back instead of committing. Before the fix its writes were committed.
  *  - A transaction that waits for the open one rejects `cancelled` as soon as its signal aborts, even when the abort
  *    came before its wait began. When an abort comes while it waits and no transaction is left, it still opens nothing
  *    and its callback never runs.
@@ -170,4 +173,29 @@ describe('Rust engine writer gate', () => {
       expect(outcome).toBe('resolved');
     }, 30_000);
   }
+
+  withAddon('a nested transaction that fails while its own nested one is open rolls back the whole transaction', async () => {
+    const brain = await openRustBrain();
+    brains.push(brain);
+    let hold!: () => void;
+    const held = new Promise<void>((resolve) => { hold = resolve; });
+    releases.push(hold);
+    const outer = brain.engine.transaction(async (tx) => {
+      await tx.putPage('sp/outer', NOTE);
+      try {
+        await tx.transaction(async (child) => {
+          await child.putPage('sp/parent', NOTE);
+          await Promise.all([
+            child.transaction(async (grandchild) => { await grandchild.putPage('sp/desc', NOTE); await held; }),
+            (async () => { await new Promise((resolve) => setTimeout(resolve, 300)); throw new Error('boom'); })(),
+          ]);
+        });
+      } catch { /* the caller believes the failed nested transaction was rolled back */ }
+    });
+    outer.catch(() => undefined);
+    expect(await within(outer, 10_000)).toBe('rejected:internal_error');
+    hold();
+    for (const slug of ['sp/outer', 'sp/parent', 'sp/desc']) expect(await brain.engine.getPage(slug)).toBeNull();
+    expect(await within(brain.engine.putPage('sp/after', NOTE), 5_000)).toBe('resolved');
+  }, 60_000);
 });

@@ -94,6 +94,11 @@ export interface RustTransactionScope {
   readonly brain: StoreBrain;
   live: boolean;
   ended: boolean;
+  /**
+   * Set when a savepoint inside the transaction failed and could not be rolled back (store-members/transactions.ts):
+   * the transaction then rolls back instead of committing, so the failed savepoint's writes are never kept.
+   */
+  savepointRollbackFailed?: unknown;
   /** The attribution and source-scope settings applied in it (store-members/transactions.ts); trust ones live in the store. */
   readonly settings: Map<string, string>;
 }
@@ -159,6 +164,13 @@ export class RustEngine implements BrainEngine {
    * open transaction ends and running on a store that `disconnect` is about to close.
    */
   private _gateClosed = false;
+  /**
+   * Root writes admitted at the gate and not yet finished. A transaction waits for them to finish before it takes the
+   * writer: a write admitted before it, but dispatched after it opened, would otherwise wait in the store for the
+   * writer on one of the root store's worker threads, and enough of them would leave no thread for any read.
+   */
+  private _writesInFlight = 0;
+  private _writesDrained: { promise: Promise<void>; resolve: () => void } | null = null;
 
   constructor(opts: OpenRustEngineOptions) {
     this.addon = opts.addon;
@@ -352,18 +364,45 @@ export class RustEngine implements BrainEngine {
    * open transactions throws `internal_error` with reason `transaction_reentry` (it would wait for the writer that
    * transaction holds), and a write waits while a transaction is open. Reads never wait.
    */
-  async _admit(member: string): Promise<void> {
-    if (this._txScope) return;
+  async _admit(member: string): Promise<(() => void) | null> {
+    if (this._txScope) return null;
     if (transactionContext.getStore()?.some((scope) => scope.root === this && scope.live)) {
       throw opError('internal_error', `${member} was called on the engine from inside its own transaction(fn), and would wait forever for the writer that transaction holds.`,
         'Make every call inside transaction(fn) on the engine passed to fn, not on the outer engine.', { reason: 'transaction_reentry', detail: `member=${member}` });
     }
-    if (SELF_ADMITTED.has(member) || isReadMember(member)) return;
+    if (SELF_ADMITTED.has(member) || isReadMember(member)) return null;
     while (this._writer) {
       await this._writer.done;
       this._throwIfGateClosed(member);
     }
     this._throwIfGateClosed(member);
+    // Counted with no await after the check above, so a transaction cannot take the writer between them.
+    return this._countWrite();
+  }
+
+  /** Counts one admitted root write until the function it returns is called (once; later calls do nothing). */
+  private _countWrite(): () => void {
+    this._writesInFlight++;
+    let counted = true;
+    return () => {
+      if (!counted) return;
+      counted = false;
+      if (--this._writesInFlight > 0) return;
+      const drained = this._writesDrained;
+      this._writesDrained = null;
+      drained?.resolve();
+    };
+  }
+
+  /** Settles when no admitted root write is still running. */
+  private _whenWritesDrained(): Promise<void> {
+    if (this._writesInFlight === 0) return Promise.resolve();
+    if (!this._writesDrained) {
+      let resolve!: () => void;
+      const promise = new Promise<void>((r) => { resolve = r; });
+      this._writesDrained = { promise, resolve };
+    }
+    return this._writesDrained.promise;
   }
 
   /** A call that waited at the gate while `disconnect` ran rejects `engine_closed`; nothing has run. */
@@ -371,10 +410,13 @@ export class RustEngine implements BrainEngine {
     if (this._gateClosed) throw mapStoreError({ code: 'store_closed' }, { member });
   }
 
-  /** Waits until no transaction holds the writer, bounded by `signal`: an abort while waiting rejects `cancelled`. */
+  /**
+   * Waits until no transaction holds the writer and no admitted root write is still running, bounded by `signal`: an
+   * abort while waiting rejects `cancelled`.
+   */
   private async _awaitWriter(signal: AbortSignal | undefined): Promise<void> {
-    while (this._writer) {
-      const open = this._writer.done;
+    while (this._writer || this._writesInFlight > 0) {
+      const open = this._writer ? this._writer.done : this._whenWritesDrained();
       if (!signal) { await open; continue; }
       // An abort that came before the listener was added fired no event, so the signal itself is read after adding it.
       if (signal.aborted) throw transactionCancelledWhileWaiting();
@@ -406,7 +448,7 @@ export class RustEngine implements BrainEngine {
       this._throwIfGateClosed('transaction');
       rootBrain = (await this.storeFor('transaction')).brain;
       this._throwIfGateClosed('transaction');
-      if (!this._writer) break;
+      if (!this._writer && this._writesInFlight === 0) break;
     }
     // The waits above can end after an abort with no writer left to wait for; nothing has opened yet, so it rejects here.
     if (signal?.aborted) throw transactionCancelledWhileWaiting();
@@ -430,6 +472,12 @@ export class RustEngine implements BrainEngine {
       let value: T;
       try {
         value = await transactionContext.run([scope, ...(transactionContext.getStore() ?? [])], () => run(scope));
+        // A nested transaction that failed and could not be rolled back alone leaves its writes in this one: it rolls
+        // back (the catch below) instead of committing them.
+        if (scope.savepointRollbackFailed !== undefined) {
+          throw opError('internal_error', 'A nested transaction failed and its writes could not be rolled back on their own, so the whole transaction was rolled back; nothing was written.',
+            'Let every nested transaction(fn) finish before its parent ends, then retry.', { reason: 'savepoint_rollback_failed', detail: 'member=transaction' });
+        }
       } catch (error) {
         scope.live = false;
         await brain.rollbackTransaction().catch(() => undefined);
@@ -506,8 +554,12 @@ for (const [member, impl] of Object.entries(STORE_MEMBERS)) {
     enumerable: false,
     value: async function served(this: RustEngine, ...args: unknown[]): Promise<unknown> {
       const store = this.openStoreIfOpen(member) ?? await this.storeFor(member, args);
-      await this._admit(member);
-      return (impl as (this: RustEngine, brain: unknown, ...rest: unknown[]) => Promise<unknown>).call(this, store.brain, ...args);
+      const finished = await this._admit(member);
+      try {
+        return await (impl as (this: RustEngine, brain: unknown, ...rest: unknown[]) => Promise<unknown>).call(this, store.brain, ...args);
+      } finally {
+        finished?.();
+      }
     },
   });
 }

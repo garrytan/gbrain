@@ -196,7 +196,13 @@ async function savepoint<T>(engine: BoundEngine, brain: StoreBrain, fn: Transact
       try {
         value = await fn(asEngine(boundEngine(engine, scope, held)));
       } catch (error) {
-        await brain.rollbackSavepoint(depth).catch(() => undefined);
+        try {
+          await brain.rollbackSavepoint(depth);
+        } catch (rollbackError) {
+          // The store refused to roll back (a nested savepoint is still open, for one): the failed savepoint's writes are
+          // still in the transaction, so it must not commit. The caller still gets the original error.
+          scope.savepointRollbackFailed ??= rollbackError;
+        }
         // ROLLBACK TO SAVEPOINT restores the settings too; a name first set inside reads '' (its placeholder stays).
         scope.settings.clear();
         for (const [name, kept] of settings) scope.settings.set(name, kept);
