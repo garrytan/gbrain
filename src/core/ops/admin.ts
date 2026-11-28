@@ -28,6 +28,7 @@ import { worldOnlyFacts } from '../search/private-visibility.ts';
 import { LARGE_PAGES_CAPABILITY } from './get-page-body.ts';
 import { GUEST_MARKER_CAPABILITY } from '../guests/marker.ts';
 import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
+import type { GetVersionsOpts } from '../page-state/version-types.ts';
 import { openSegmentedBody } from '../page-body/read-range.ts';
 import { segmentedReadDocument } from '../page-window/segmented.ts';
 import { getVersionsKnownAsOf, KNOWN_AS_OF_PARAM, VERSIONS_DIFF_PARAM } from './known-as-of.ts';
@@ -225,14 +226,16 @@ const run_doctor: Operation = {
  * #10586: a slug that no page holds but a rename or merge alias names reads the surviving page's history, as get_page
  * resolves it. A page holding the slug keeps its own history (exact outranks alias); the alias read keeps the caller's scope.
  */
-async function versionsViaAlias(ctx: OperationContext, slug: string, opts: Parameters<OperationContext['engine']['getVersions']>[1]) {
-  const rows = await ctx.engine.getVersions(slug, opts);
+async function versionsViaAlias<B extends boolean = true>(ctx: OperationContext, slug: string, opts: GetVersionsOpts<B>) {
+  const rows = await ctx.engine.getVersions<B>(slug, opts);
   if (rows.length > 0) return rows;
   const sources = opts?.sourceIds?.length ? opts.sourceIds : [opts?.sourceId ?? 'default'];
-  if (await ctx.engine.getPage(slug, { sourceId: sources[0], includeDeleted: true }).catch(() => null)) return rows;
+  for (const sourceId of sources) {
+    if (await ctx.engine.getPage(slug, { sourceId, includeDeleted: true }).catch(() => null)) return rows; // silent-read-ok: an unreadable exact page falls through to the alias lookup, which keeps the caller's scope
+  }
   const hit = await ctx.engine.resolveSlugWithAliasDetailed(slug, sources, { excludePrivate: opts?.excludePrivate });
   if (!hit || hit.canonical_slug === slug) return rows;
-  return ctx.engine.getVersions(hit.canonical_slug, { ...opts, sourceId: hit.source_id, sourceIds: undefined });
+  return ctx.engine.getVersions<B>(hit.canonical_slug, { ...opts, sourceId: hit.source_id, sourceIds: undefined });
 }
 
 const get_versions: Operation = {
