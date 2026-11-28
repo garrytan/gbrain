@@ -183,8 +183,8 @@ export function epochWatch(dir: string, now: () => number = Date.now, ttlMs = 1_
  * The version of the TS adapter that turns the Rust store's answers into engine results (src/core/rust-engine/
  * store-members/**, store-codec.ts, members.ts). It is an epoch input: bump it with any change to that mapping.
  * test/shadow-evidence.test.ts pins it to a digest of those files, so a change that forgets to bump it fails CI.
- * 20: the write comparison covers nine more page and link writes (write-compare.ts PILOT_WRITES) and reads three more page columns; the adapter files are unchanged, and
- * the new epoch keeps no `comparable` an older epoch counted under the old rules. (13 to 19 are taken by other branches.)
+ * 26: the write comparison covers nine more page and link writes (write-compare.ts PILOT_WRITES) and reads three more page columns; the adapter files are unchanged, and
+ * the new epoch keeps no `comparable` an older epoch counted under the old rules. (13 to 25 are taken by other branches.)
  */
 export const SHADOW_ADAPTER_VERSION = 26;
 

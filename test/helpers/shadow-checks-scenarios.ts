@@ -54,8 +54,8 @@ export const vec = (seed: number): Float32Array => {
 /** Twelve pages, one chunk each, with distinct embeddings; once per primary. Returns the chunk ids by seed. */
 export async function vectorFixture(engine: BrainEngine): Promise<Map<number, number>> {
   const chunks = async () => new Map((await engine.executeRaw<{ id: number; chunk_text: string }>(`SELECT c.id, c.chunk_text FROM content_chunks c WHERE c.chunk_text LIKE 'vec note %'`)).map((r) => [Number(r.chunk_text.slice(9)), Number(r.id)]));
-  if ((await chunks()).size === 12) return chunks(); // pregate-literal: SHADOW_ADAPTER_VERSION=12 an unrelated 12 (a count, size or id), not the adapter version
-  for (let i = 0; i < 12; i++) { // pregate-literal: SHADOW_ADAPTER_VERSION=12 an unrelated 12 (a count, size or id), not the adapter version
+  if ((await chunks()).size === 12) return chunks(); // pregate-literal: SHADOW_ADAPTER_VERSION=12 a count or search limit, not the adapter version
+  for (let i = 0; i < 12; i++) { // pregate-literal: SHADOW_ADAPTER_VERSION=12 a count or search limit, not the adapter version
     await engine.putPage(`vec/n${i}`, { type: 'note', title: `V${i}`, compiled_truth: `vec note ${i}`, timeline: '' });
     await installFixtureChunks(engine, `vec/n${i}`, [{ chunk_index: 0, chunk_text: `vec note ${i}`, chunk_source: 'compiled_truth', embedding: vec(i), model: MODEL, token_count: 3 }]);
   }
@@ -276,7 +276,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       await vectorFixture(primary);
       const opts = { limit: 10, excludePrivate: true, ...o.opts };
       const theirs = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), opts)) as unknown as Rows;
-      // pregate-literal: SHADOW_ADAPTER_VERSION=12 an unrelated 12 (a count, size or id), not the adapter version
+      // pregate-literal: SHADOW_ADAPTER_VERSION=12 a count or search limit, not the adapter version
       const spare = (await withCallerAccess(ALICE, () => primary.searchVector(vec(3), { ...opts, limit: 12 })) as unknown as Rows)[10]!; // a real chunk the caller may read, outside the top ten // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
       const rig = await start(o.child ? { child: o.child } : {});
       if (o.noRecall) { // the recall score has its own waits: leave it out, so the waits counted are the rerun's
@@ -397,7 +397,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
     test('an extra row the caller\'s own query filters would exclude is unexplained: a slug named in exclude_slugs is not a ranking difference', async () => {
       const primary = ctx.primary();
       await vectorFixture(primary);
-      const all = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), { limit: 12, excludePrivate: true })) as unknown as Rows; // pregate-literal: SHADOW_ADAPTER_VERSION=12 an unrelated 12 (a count, size or id), not the adapter version
+      const all = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), { limit: 12, excludePrivate: true })) as unknown as Rows; // pregate-literal: SHADOW_ADAPTER_VERSION=12 a count or search limit, not the adapter version
       // pregate-literal: SHADOW_ADAPTER_VERSION=11 unrelated literal, not the adapter version
       const banned = all[11]!; // a real chunk the caller may read, that this query excludes
       const opts = { exclude_slugs: [String(banned.slug)] };
@@ -948,7 +948,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         });
         const cosine = (a: Float32Array, b: Float32Array): number => { let d = 0, x = 0, y = 0; for (let i = 0; i < a.length; i++) { d += a[i]! * b[i]!; x += a[i]! ** 2; y += b[i]! ** 2; } return d / Math.sqrt(x * y); };
         const exact = [...chunkOf.keys()].sort((p, q) => cosine(vec(3), vec(q)) - cosine(vec(3), vec(p))).map((i) => String(chunkOf.get(i)));
-        // pregate-literal: SHADOW_ADAPTER_VERSION=12 an unrelated 12 (a count, size or id), not the adapter version
+        // pregate-literal: SHADOW_ADAPTER_VERSION=12 a count or search limit, not the adapter version
         expect(reference).toHaveLength(Math.min(RECALL_REFERENCE_LIMIT, 12)); // asked for more than the caller's ten, so a tie at the cutoff is visible
         expect(new Set(reference.slice(0, 10).map((r) => r.k))).toEqual(new Set(exact.slice(0, 10))); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
         expect(sql.slice(0, 2)).toEqual(['SET LOCAL enable_indexscan = off', 'SET LOCAL enable_bitmapscan = off']); // before any search statement
@@ -1196,7 +1196,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
           const lsn = async (): Promise<string> => String((await primary.executeRaw<{ l: string }>('SELECT pg_current_wal_insert_lsn()::text AS l'))[0]!.l);
           let pruned = false;
           let moves = 0; // attempts an unrelated commit moved: asked again from a new capture, up to 5
-          for (let attempt = 0; attempt < 12 && moves < 5 && !pruned; attempt++) { // pregate-literal: SHADOW_ADAPTER_VERSION=12 an unrelated 12 (a count, size or id), not the adapter version
+          for (let attempt = 0; attempt < 12 && moves < 5 && !pruned; attempt++) { // pregate-literal: SHADOW_ADAPTER_VERSION=12 a count or search limit, not the adapter version
             for (let i = 0; i < 3; i++) await primary.executeRaw('ANALYZE content_chunks'); // each one leaves the old statistics rows dead
             const token = await watch.live();
             const [l0, s0] = [await lsn(), await snapshot()];
@@ -1438,9 +1438,10 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       };
       const reads = openReadSource(primary);
       try {
+        // pregate-literal: SHADOW_ADAPTER_VERSION=12 a count or search limit, not the adapter version
         // 262 pages the query resembles (cosine 0.9 down to 0.5) and 12 it barely resembles (0.3) that the source boost lifts to the top
         for (let i = 0; i < 262; i++) await add(`win/n${i}`, mix(0.9 - i * 0.0015, 1000 + i));
-        for (let i = 0; i < 12; i++) await add(`boost/b${i}`, mix(0.3, 2000 + i)); // pregate-literal: SHADOW_ADAPTER_VERSION=12 an unrelated 12 (a count, size or id), not the adapter version
+        for (let i = 0; i < 12; i++) await add(`boost/b${i}`, mix(0.3, 2000 + i)); // pregate-literal: SHADOW_ADAPTER_VERSION=12 a count or search limit, not the adapter version
         const boosted = new Set((await primary.executeRaw<{ id: number }>(`SELECT c.id FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug LIKE 'boost/%'`)).map((r) => String(r.id)));
         const opts = { limit: 10, source_boosts: { 'boost/': 5 } };
         const samples = new SampleRegistry();
@@ -1482,7 +1483,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
     test('a sampled vector read is scored against the reference through the real child; a second one within a minute is not', async () => {
       const primary = ctx.primary();
       await vectorFixture(primary);
-      const full = await primary.searchVector(vec(3), { limit: 12 });
+      const full = await primary.searchVector(vec(3), { limit: 12 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 a count or search limit, not the adapter version
       const { rig, epoch } = await untilNotMoved(async () => { // the whole read again with a new child when an unrelated commit kept every run of the first from being scored
         const rig = await start();
         // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version

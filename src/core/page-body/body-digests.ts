@@ -84,6 +84,23 @@ export function fileBodyDigests(bytes: ByteSource, reading: FileReading, filePat
     regions: { truth: scan.truth, timeline: scan.timeline } };
 }
 
+/** The digest of each file region as written, one segment at a time; `between` runs after each piece (an effect's claim renewal). */
+export async function rawFileBodyDigests(bytes: ByteSource, reading: FileReading, regions: Record<BodyRegion, readonly BodyPiece[]>,
+  between?: () => Promise<void>): Promise<RegionDigests> {
+  const digests = {} as RegionDigests;
+  for (const region of REGIONS) {
+    const hash = createHash('sha256');
+    for (const piece of regions[region]) {
+      for (const part of 'text' in piece ? [Buffer.from(piece.text, 'utf8')] : virtualSlice(bytes, reading, piece.start, piece.end)) {
+        hash.update(count(part, 'fileBytes'));
+        await between?.();
+      }
+    }
+    digests[region] = hash.digest('hex');
+  }
+  return digests;
+}
+
 /** A fence opener keeps at most this much of its line before it (UTF-16 units): the stored side overlays a segment, so it sees at most that much. */
 const OPENER_CONTEXT = SEGMENT_MAX_BYTES;
 const MARKER_KEEP = Math.max(FACTS_FENCE_BEGIN.length, FACTS_FENCE_END.length) - 1;

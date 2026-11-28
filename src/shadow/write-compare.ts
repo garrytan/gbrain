@@ -524,10 +524,11 @@ const MAX_LOST_PER_RECORD = 10_000;
  * `session` key is an older writer's: its obligation is unknown (the tally's `legacy_lines`). True only when the line and its directory entry are flushed to disk; false otherwise.
  */
 export const lostPath = (dir: string, pid: number): string => join(dir, `write-lost.${pid}.jsonl`);
-/** Appends `n` lost lines (no flush). Throws when the append failed. */
-function appendLostLines(dir: string, epoch: string, reason: string, n: number, session: string, numbered?: { w: string; from: number }): void {
+/** Appends `n` lost lines (no flush). Throws when the append failed. `qualifying`: each line settles one page or link write of its session (`q: 1`, see `QUALIFYING_LINE_REASONS`). */
+function appendLostLines(dir: string, epoch: string, reason: string, n: number, session: string, numbered?: { w: string; from: number }, qualifying = false): void {
   // A numbered line (`w`, `n`) is added once by the owner however often it is written: a partial append that is retried whole leaves the same numbers twice, and the second copy of each is skipped.
-  const text = numbered ? Array.from({ length: n }, (_, i) => JSON.stringify({ epoch_id: epoch, reason, session, w: numbered.w, n: numbered.from + i }) + '\n').join('') : (JSON.stringify({ epoch_id: epoch, reason, session }) + '\n').repeat(n);
+  const q = qualifying ? { q: 1 } : {};
+  const text = numbered ? Array.from({ length: n }, (_, i) => JSON.stringify({ epoch_id: epoch, reason, session, w: numbered.w, n: numbered.from + i, ...q }) + '\n').join('') : (JSON.stringify({ epoch_id: epoch, reason, session, ...q }) + '\n').repeat(n);
   appendFileSync(lostPath(dir, process.pid), text, { flag: 'a', mode: 0o600 });
 }
 function flushLostFile(dir: string): void { flushFile(lostPath(dir, process.pid)); flushDirectory(dir); }
@@ -541,8 +542,8 @@ export function recordLostCount(dir: string, epoch: string, reason: string, n: n
   while (done < n) { const k = Math.min(n - done, MAX_LOST_PER_RECORD); if (!recordLost(dir, epoch, reason, k, session)) break; done += k; }
   return done;
 }
-/** One line of a lost file: its reason, whether it names the epoch asked for, and its session (`null`: no `session` key at all, an older writer's). */
-interface LostLine { reason: string; thisEpoch: boolean; epoch: string | null; session: string | null; w: string | null; n: number | null }
+/** One line of a lost file: its reason, whether it names the epoch asked for, and its session (`null`: no `session` key at all, an older writer's). `q`: the line says it settles a page or link write (`q: 1`). */
+interface LostLine { reason: string; thisEpoch: boolean; epoch: string | null; session: string | null; w: string | null; n: number | null; q: boolean }
 /** The lost lines past what `applied` took, per file: the complete lines' end offset and the lines (every epoch's: another epoch's settle their session but are no outcome here; a line that is not readable, or an unfinished one whose writer is dead, counts as `lost_unreadable`). */
 function readLost(dir: string, epoch: string, applied: Record<string, number> = {}): Array<{ name: string; end: number; lines: LostLine[]; unreadable?: true }> {
   let names: string[] = [];
@@ -554,7 +555,7 @@ function readLost(dir: string, epoch: string, applied: Record<string, number> = 
       const end = open && !running(Number(/\d+/.exec(name)![0])) ? buf.length : cut; // its writer is gone: it ends as one lost_unreadable (its offset moves past it); while the writer lives it is unresolved
       if (end <= from && !open) return [];
       const lines = buf.subarray(from, end).toString('utf8').split('\n').filter(Boolean).map((l): LostLine => {
-        try { const e = JSON.parse(l); return { reason: String(e?.reason), thisEpoch: e?.epoch_id === epoch, epoch: typeof e?.epoch_id === 'string' ? e.epoch_id : null, session: typeof e?.session === 'string' ? e.session : null, w: typeof e?.w === 'string' ? e.w : null, n: Number.isSafeInteger(e?.n) ? e.n : null }; } catch { return { reason: 'lost_unreadable', thisEpoch: true, epoch: null, session: '', w: null, n: null }; }
+        try { const e = JSON.parse(l); return { reason: String(e?.reason), thisEpoch: e?.epoch_id === epoch, epoch: typeof e?.epoch_id === 'string' ? e.epoch_id : null, session: typeof e?.session === 'string' ? e.session : null, w: typeof e?.w === 'string' ? e.w : null, n: Number.isSafeInteger(e?.n) ? e.n : null, q: e?.q === 1 }; } catch { return { reason: 'lost_unreadable', thisEpoch: true, epoch: null, session: '', w: null, n: null, q: false }; }
       });
       return [{ name, end: Math.max(end, from), lines, ...(open && end < buf.length ? { unreadable: true as const } : {}) }];
     } catch { return [{ name, end: 0, lines: [], unreadable: true }]; } // a file that cannot be read stays unfolded and unresolved: status reads it as no evidence
@@ -579,7 +580,7 @@ export function unfoldedLines(dir: string, epoch: string | null, taken?: Record<
     for (const x of lines) {
       if (!x.session) continue;
       out.bySession[x.session] = (out.bySession[x.session] ?? 0) + 1;
-      if (QUALIFYING_LINE_REASONS.has(x.reason)) out.qualifyingBySession[x.session] = (out.qualifyingBySession[x.session] ?? 0) + 1;
+      if (settlesQualifying(x)) out.qualifyingBySession[x.session] = (out.qualifyingBySession[x.session] ?? 0) + 1;
     }
   }
   return out;
@@ -634,6 +635,8 @@ const MAX_KEYS = 64;
 export const WINDOW_LOST_REASON = 'write_window_lost';
 /** Lost-line reasons that settle page and link writes (`settled_qualifying`); a line of any other reason settles only `settled`, so the qualifying part of a session is never overstated. A lost window's one counts: the open marker's extra sample is counted as a page and link write. */
 export const QUALIFYING_LINE_REASONS: ReadonlySet<string> = new Set(['pipe_unflushed', 'receipt_orphaned', WINDOW_LOST_REASON]);
+/** Whether a lost line settles a page or link write: its reason is one of `QUALIFYING_LINE_REASONS`, or it says so (`q: 1`, a client or retired worker's verdict on one). A line of an older writer has no `q`: it settles only `settled`. */
+const settlesQualifying = (x: LostLine): boolean => x.q || QUALIFYING_LINE_REASONS.has(x.reason);
 const bump = (map: Record<string, number>, key: string, n: number): void => { const k = key in map || Object.keys(map).length < MAX_KEYS || key === WINDOW_LOST_REASON ? key : 'other'; map[k] = (map[k] ?? 0) + n; };
 function applyVerdict(file: WriteTallyFile, outcome: WriteOutcome, key: string | undefined, n: number): void {
   file[outcome] += n;
@@ -660,6 +663,7 @@ interface Batch { seq: number; delta: WriteTallyFile; credit: number; creditQual
  *
  * Settling. Each verdict is noted with the credit it settles: how many of the session's owed samples (`write-owed.<session>.json`) it stands for. The credit is part of the verdict's batch, so one rename takes both or neither (`settled[session]`).
  * A client child and a child whose epoch was retired cannot write the tally: their verdicts become lost lines tagged with the session (`no_epoch`, `epoch_retired`), which the owner folds into `settled` (any epoch's) and into the outcomes (this epoch's only).
+ * A line that settles a page or link write says so (`q: 1`), so the owner's `settled_qualifying` matches what the tally would have saved and the orphan pass books the rest of the session by kind.
  * Each such line is numbered (`w`, `n`) when its batch is first tried, and a retry writes the same numbers: after an append that failed part-way, or that succeeded and whose flush failed, the owner adds each number once, so no partial write can credit a line twice.
  */
 export class WriteTally {
@@ -667,15 +671,28 @@ export class WriteTally {
   private sealed = 0; // the first `sealed` pending batches were in a save that may have landed: never added to, until a durable save takes them
   private seq = 0;
   private retired = false; // the manifest names another epoch than this child's: its verdicts can only be lost lines
-  private readonly journal = new Map<string, number>(); // lost lines not yet appended: `reason\0credited` -> count
+  private readonly journal = new Map<string, number>(); // lost lines not yet appended: `reason\0credited\0qualifying` -> count
   private nextLine = 0; // the last line number given to a lost line
   private attempt: { k: string; from: number; n: number } | null = null; // the batch being written: its numbers stay the same on every retry
   private failingSince: number | null = null;
   private readonly id: string;
   private readonly key: string;
-  constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid, session = '', private readonly now: () => number = Date.now) {
+  private saveQueued = false;
+  /**
+   * `defer`: when given, `note` does not save at once; it asks `defer` to run one save later (the child passes `setImmediate`), and every outcome noted before that save runs goes into it. Without it every `note` saves at once.
+   * The child reads a burst of write samples far faster than one locked, flushed rename per sample allows (about 6 ms each): saving once per event-loop turn removes that bottleneck; the measured bursts through 1,000 page writes left no pipe backlog at exit. Slow or failing saves and other bottlenecks can still leave samples unsettled.
+   * An outcome not yet saved when the child dies is a deficit the next owner books as `receipt_orphaned`, as for any unsaved outcome; a replay's in-flight mark stays on disk until the save that ends it.
+   */
+  constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid, session = '', private readonly now: () => number = Date.now, private readonly defer?: (save: () => void) => void) {
     this.id = `${pid}.${randomBytes(4).toString('hex')}`;
     this.key = session ? sessionKey(session) : '';
+  }
+  /** Saves now, or once later for everything noted until then (see `defer`). */
+  private saveSoon(): void {
+    if (!this.defer) { this.update(); return; }
+    if (this.saveQueued) return;
+    this.saveQueued = true;
+    this.defer(() => { this.saveQueued = false; this.update(); });
   }
   private journalSize(): number { let n = 0; for (const v of this.journal.values()) n += v; return n; }
   private holding(): boolean { return this.pending.length > 0 || this.journal.size > 0; }
@@ -719,7 +736,7 @@ export class WriteTally {
         for (const l of lost) {
           for (const x of firstCopies(l.lines, file.line_seq)) {
             if (x.thisEpoch) { applyVerdict(file, LOST_NONQUALIFYING.has(x.reason) ? 'capability_missing' : 'uncomparable', x.reason, 1); if (x.session === null) file.legacy_lines = (file.legacy_lines ?? 0) + 1; }
-            if (x.session) { this.credit(file, x.session, 1, QUALIFYING_LINE_REASONS.has(x.reason) ? 1 : 0); credited.add(x.session); if (x.reason === WINDOW_LOST_REASON && x.epoch !== null) windowLines.set(x.session, x.epoch); }
+            if (x.session) { this.credit(file, x.session, 1, settlesQualifying(x) ? 1 : 0); credited.add(x.session); if (x.reason === WINDOW_LOST_REASON && x.epoch !== null) windowLines.set(x.session, x.epoch); }
           }
           file.lost_applied[l.name] = l.end;
         }
@@ -764,7 +781,7 @@ export class WriteTally {
     } catch { if (renamed) this.sealed = batches.length; return this.track(false); } // silent-read-ok: false is the answer, never a pass: begin() refuses the replay, and note() keeps the unsaved batches for the next save
   }
   /**
-   * This child's epoch is not the manifest's any more. Its verdicts can never be added to the tally, so each unsaved credit becomes lost lines of its own epoch (`epoch_retired`) that the owner of the current epoch folds into `settled`.
+   * This child's epoch is not the manifest's any more. Its verdicts can never be added to the tally, so each unsaved credit becomes lost lines of its own epoch (`epoch_retired`) that the owner of the current epoch folds into `settled` (and its page and link writes, `q: 1`, into `settled_qualifying`).
    * A batch the current file already took (a save that landed, then failed to flush) is left out: its credit exists once. Until the current file can be read to tell, the batches stay.
    */
   private retire(): void { this.retired = true; this.reconcileRetired(); }
@@ -772,11 +789,13 @@ export class WriteTally {
     if (this.pending.length === 0) return true;
     let taken = 0;
     try { taken = loadTally(this.dir)?.applied?.[this.id] ?? 0; } catch { return false; } // silent-read-ok: an unreadable file cannot say which batches it took; they stay until it can
-    for (const b of this.pending) if (b.seq > taken && b.credit - b.windowCredit > 0 && this.key) this.addJournal(RETIRED_REASON, true, b.credit - b.windowCredit); // the window's credit is not retired credit: its verdict was never saved, so the next epoch's owner books it
+    for (const b of this.pending) if (b.seq > taken && b.credit - b.windowCredit > 0 && this.key) this.addCredit(RETIRED_REASON, b.credit - b.windowCredit, b.creditQualifying - b.windowCredit); // the window's credit is not retired credit: its verdict was never saved, so the next epoch's owner books it (a window's credit is all page and link writes)
     this.pending = []; this.sealed = 0;
     return true;
   }
-  private addJournal(reason: string, credited: boolean, n: number): void { if (n > 0) this.journal.set(`${reason}\0${credited ? 1 : 0}`, (this.journal.get(`${reason}\0${credited ? 1 : 0}`) ?? 0) + n); }
+  private addJournal(reason: string, credited: boolean, n: number, qualifying = false): void { if (n <= 0) return; const k = `${reason}\0${credited ? 1 : 0}\0${qualifying && credited ? 1 : 0}`; this.journal.set(k, (this.journal.get(k) ?? 0) + n); }
+  /** `n` credited lost lines of `reason`, `qualifying` of them (clamped to 0..n) settling a page or link write each, so the owner's `settled_qualifying` takes them as the tally would have. */
+  private addCredit(reason: string, n: number, qualifying: number): void { const q = Math.min(n, Math.max(0, qualifying)); this.addJournal(reason, true, q, true); this.addJournal(reason, true, n - q); }
   /**
    * The lost lines of a client child (no epoch of its own) or a retired child, written once the flusher or a save asks: one append per reason, never one durable write per verdict. The tally file itself is not touched.
    * With no epoch on disk yet a client's count waits for the next flush. True when nothing is left to write (or the shadow directory is gone).
@@ -786,13 +805,13 @@ export class WriteTally {
     if (!this.alive()) { this.journal.clear(); this.attempt = null; return true; }
     const keys = [...this.journal.keys()]; if (this.attempt && keys.includes(this.attempt.k)) keys.splice(keys.indexOf(this.attempt.k), 1), keys.unshift(this.attempt.k); // the batch that was being written goes first, with its own numbers
     for (const k of keys) {
-      const [reason, credited] = k.split('\0') as [string, string];
+      const [reason, credited, qualifying] = k.split('\0') as [string, string, string];
       for (let left = this.journal.get(k) ?? 0; left > 0; left = this.journal.get(k) ?? 0) {
         const epoch = this.retired ? this.epoch() : readEpoch(this.dir)?.epoch_id;
         if (epoch === null || epoch === undefined) return this.track(false);
         if (!this.attempt || this.attempt.k !== k) { const n = Math.min(left, MAX_LOST_PER_RECORD); this.attempt = { k, from: this.nextLine + 1, n }; this.nextLine += n; }
         const { from, n } = this.attempt;
-        try { appendLostLines(this.dir, epoch, reason, n, credited === '1' ? this.key : '', { w: this.id, from }); flushLostFile(this.dir); } catch { return this.track(false); } // a failure keeps the batch and its numbers: the retry writes them all again, and the owner takes each number once
+        try { appendLostLines(this.dir, epoch, reason, n, credited === '1' ? this.key : '', { w: this.id, from }, qualifying === '1'); flushLostFile(this.dir); } catch { return this.track(false); } // a failure keeps the batch and its numbers: the retry writes them all again, and the owner takes each number once
         this.attempt = null;
         if (left - n > 0) this.journal.set(k, left - n); else this.journal.delete(k);
       }
@@ -900,9 +919,9 @@ export class WriteTally {
     const epoch = this.epoch();
     if (!this.alive()) return;
     if (epoch === null || this.retired) { // a client child (another process owns the store), or a child whose epoch was retired: it records nothing in the tally; its verdict is written as lost lines for the owner to add up
-      const settles = this.key ? Math.min(n, credit) : 0;
-      if (this.retired) this.addJournal(RETIRED_REASON, true, key === WINDOW_LOST_REASON ? 0 : settles); // a retired epoch's outcome counts nowhere: only what it settles matters, and never the window (the next epoch's owner books it)
-      else { this.addJournal(NO_EPOCH_REASON, true, settles); this.addJournal(NO_EPOCH_REASON, false, n - settles); }
+      const settles = this.key ? Math.min(n, credit) : 0; const settlesQualifying = Math.min(settles, creditQualifying); // the page and link writes it settles ride the lines (`q`), as a batch's `creditQualifying` would
+      if (this.retired) { if (key !== WINDOW_LOST_REASON) this.addCredit(RETIRED_REASON, settles, settlesQualifying); } // a retired epoch's outcome counts nowhere: only what it settles matters, and never the window (the next epoch's owner books it)
+      else { this.addCredit(NO_EPOCH_REASON, settles, settlesQualifying); this.addJournal(NO_EPOCH_REASON, false, n - settles); }
       return;
     }
     let batch = this.pending.at(-1);
@@ -911,7 +930,7 @@ export class WriteTally {
     batch.credit += credit; batch.creditQualifying += Math.min(credit, creditQualifying);
     if (key === WINDOW_LOST_REASON) batch.windowCredit += credit; // the window's own credit is kept apart: a batch that never saved before its epoch was retired must not stand for a booked window
     batch.ending ||= ends;
-    this.update();
+    this.saveSoon();
   }
   /**
    * `n` samples the pipe never delivered (the serving process owed them, the child never read them), settling that many: `nonqualifying` of them were writes the shadow never compares (`capability_missing` `pipe_unflushed_nonqualifying`),
@@ -926,11 +945,13 @@ export class WriteTally {
       for (const [reason, k] of [['pipe_unflushed', plain], ['pipe_unflushed_nonqualifying', other], [WINDOW_LOST_REASON, win]] as const) { if (k > 0) { this.addJournal(reason, true, k * settles); this.addJournal(reason, false, k * (1 - settles)); } }
       return;
     }
-    if (plain > 0) this.note('uncomparable', 'pipe_unflushed', plain, false, plain, plain);
-    if (other > 0) this.note('capability_missing', 'pipe_unflushed_nonqualifying', other, false, other, 0);
+    // Each part is saved on its own, at once, even when `note` defers its saves: the window's one must be saved after the others, in a save of its own.
+    if (plain > 0) { this.note('uncomparable', 'pipe_unflushed', plain, false, plain, plain); if (this.defer) this.update(); }
+    if (other > 0) { this.note('capability_missing', 'pipe_unflushed_nonqualifying', other, false, other, 0); if (this.defer) this.update(); }
     if (win > 0) { // the window's one is booked LAST (as `obligations` does), and only once its blocker is on disk: a save that only partly lands leaves a deficit the next owner books as the window, exactly once
       if (!this.retired && (!this.key || holdBlocker(this.dir, this.key, this.epoch()!) === null)) return; // no blocker held (no marker any more, a lock that stayed held): the pass books the rest
       this.note('uncomparable', WINDOW_LOST_REASON, win, false, win, win);
+      if (this.defer) this.update();
     }
   }
   /**

@@ -102,6 +102,54 @@ const gbrainHome = (b: Box) => join(b.home, '.gbrain');
 const statePath = (b: Box) => join(gbrainHome(b), 'openclaw-skill-resolver.json');
 const pluginDir = (b: Box) => join(b.state, 'gbrain', 'gbrain-skill-resolver');
 const readState = (b: Box) => JSON.parse(readFileSync(statePath(b), 'utf8'));
+const PLUGIN_MODULE = join(import.meta.dir, '..', 'src', 'core', 'setup', 'openclaw-skill-plugin.ts');
+
+/** Another process that takes the state lock the way setup does and holds it until release() (or until it is killed): the run that died or paused holding it. */
+async function holdStateLock(b: Box, tag: string): Promise<{ proc: ReturnType<typeof Bun.spawn>; release: () => Promise<string> }> {
+  const entered = join(b.root, tag + '.entered'), go = join(b.root, tag + '.go');
+  const script = 'import { existsSync, writeFileSync } from "node:fs"; import { withOpenclawStateLock } from ' + JSON.stringify(PLUGIN_MODULE) + ';\n'
+    + 'console.log(JSON.stringify(withOpenclawStateLock(' + JSON.stringify(statePath(b)) + ', () => { writeFileSync(' + JSON.stringify(entered) + ', ""); while (!existsSync(' + JSON.stringify(go) + ')) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20); return "held"; })));\n';
+  const proc = Bun.spawn([process.execPath, '--no-env-file', '-e', script], { env: { PATH: b.env.PATH!, HOME: b.home, GBRAIN_HOME: b.home }, stdout: 'pipe', stderr: 'pipe' });
+  while (!existsSync(entered)) {
+    if (proc.exitCode !== null) throw new Error('the lock holder exited before it took the lock: ' + await new Response(proc.stderr).text());
+    await Bun.sleep(20);
+  }
+  return { proc, release: async () => { writeFileSync(go, ''); await proc.exited; return (await new Response(proc.stdout).text()).trim(); } };
+}
+
+/** What another process gets from the state lock right now: the callback's value, or null when the lock stayed held past its 10-second wait. */
+function takeStateLock(b: Box): string {
+  const script = 'import { withOpenclawStateLock } from ' + JSON.stringify(PLUGIN_MODULE) + '; console.log(JSON.stringify(withOpenclawStateLock(' + JSON.stringify(statePath(b)) + ', () => "entered")));\n';
+  const r = Bun.spawnSync([process.execPath, '--no-env-file', '-e', script], { env: { PATH: b.env.PATH!, HOME: b.home, GBRAIN_HOME: b.home }, stdout: 'pipe', stderr: 'pipe', timeout: 60_000 });
+  return r.stdout.toString().trim() || r.stderr.toString();
+}
+
+/**
+ * Puts a fake openclaw in front of the box's own that stops a run started with hold.env at its first call whose
+ * arguments contain `on`, until hold.go(); every other run passes straight through. Deterministic interleaving of two
+ * setup runs at a point the code under test cannot see.
+ */
+function holdOpenclaw(b: Box, on: string, tag: string) {
+  const binDir = join(b.root, 'bin');
+  if (!existsSync(join(binDir, 'openclaw-real'))) {
+    writeFileSync(join(binDir, 'openclaw-real'), FAKE_OPENCLAW);
+    chmodSync(join(binDir, 'openclaw-real'), 0o755);
+    writeFileSync(join(binDir, 'openclaw'), '#!/bin/sh\nif [ -n "$HOLD_DIR" ] && [ ! -f "$HOLD_DIR/go" ]; then case "$*" in *"$HOLD_ON"*) touch "$HOLD_DIR/entered"; while [ ! -f "$HOLD_DIR/go" ]; do sleep 0.05; done;; esac; fi\nexec "' + join(binDir, 'openclaw-real') + '" "$@"\n');
+    chmodSync(join(binDir, 'openclaw'), 0o755);
+  }
+  const dir = join(b.root, tag);
+  mkdirSync(dir);
+  return {
+    env: { HOLD_DIR: dir, HOLD_ON: on },
+    reached: async (run: Promise<unknown>) => {
+      let settled = false;
+      void run.finally(() => { settled = true; });
+      while (!existsSync(join(dir, 'entered'))) { if (settled) throw new Error('the held run finished without reaching ' + on); await Bun.sleep(25); }
+    },
+    go: () => writeFileSync(join(dir, 'go'), ''),
+  };
+}
+
 /** The ctx field OpenClaw sets on a turn from the agent's owner (with a native memory provider). */
 const OWNER = { memoryAudience: { kind: 'owner-private', agentId: 'main' } };
 /** The block the plugin sends on a conversation turn so an owner block an earlier turn left in OpenClaw's pinned system prompt no longer applies. */
@@ -1174,24 +1222,23 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect(readState(b).agents.main).toMatchObject({ mode: 'live', require_owner_sender: true, owner_sender_ids: ['owner-1'] });
   });
 
-  test('GST-4004: the final state write waits for another run holding the state lock, refuses past 10 seconds without writing, and breaks a lock a dead run left', async () => {
+  test('GST-4004: the final state write waits for another run holding the state lock, refuses past 10 seconds without writing, and takes the lock once the run holding it died', async () => {
     const b = box();
     expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
     const before = readFileSync(statePath(b), 'utf8');
-    const lock = statePath(b) + '.lock';
-    writeFileSync(lock, '');
+    const holder = await holdStateLock(b, 'held');
     const held = await runCli(['setup', 'openclaw', '--skills-index-only', '--json', '--agent', 'main', '--operator-rule', 'Ask first.'], { env: b.env, timeoutMs: 110_000 });
     expect(held.exitCode, held.stdout + held.stderr).not.toBe(0);
     expect(held.stdout + held.stderr).toContain('.lock for more than 10 seconds');
     expect(readFileSync(statePath(b), 'utf8')).toBe(before);
-    utimesSync(lock, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    holder.proc.kill('SIGKILL');
+    await holder.proc.exited;
     const stale = await runCli(['setup', 'openclaw', '--skills-index-only', '--json', '--agent', 'main', '--operator-rule', 'Ask first.'], { env: b.env, timeoutMs: 110_000 });
     expect(stale.exitCode, stale.stdout + stale.stderr).toBe(0);
     expect(readState(b).agents.main.operator_rule).toBe('Ask first.');
-    expect(existsSync(lock)).toBe(false);
   });
 
-  test('GST-4004: a pin refresh and turning one agent off both take the state lock: a held lock writes nothing and says so, a dead run\'s lock is broken', async () => {
+  test('GST-4004: a pin refresh and turning one agent off both take the state lock: a held lock writes nothing and says so, and a dead run\'s lock is free', async () => {
     const b = box();
     const ops = join(b.state, 'workspace-ops');
     skill(join(ops, 'skills'), 'ops-runbook', 'Use when you run the ops runbook');
@@ -1199,8 +1246,7 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     const ws = ['--workspace', join(b.state, 'workspace')];
     expectExit(await setup(b, ['--skill-loading', 'resolve', '--all-agents', ...ws]), 0);
     const before = readFileSync(statePath(b), 'utf8');
-    const lock = statePath(b) + '.lock';
-    writeFileSync(lock, '');
+    const holder = await holdStateLock(b, 'held');
     const pin = await runCli(['skills', 'pin', 'add', 'deploy-service', '--catalog', 'openclaw-main', '--json'], { env: b.env, timeoutMs: 110_000 });
     expect(pin.exitCode, pin.stdout + pin.stderr).toBe(0);
     const pinDoc = JSON.parse(pin.stdout);
@@ -1211,17 +1257,93 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect(off.exitCode, off.stdout + off.stderr).not.toBe(0);
     expect(off.stdout + off.stderr).toContain('.lock for more than 10 seconds');
     expect(readFileSync(statePath(b), 'utf8')).toBe(before);
-    utimesSync(lock, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    holder.proc.kill('SIGKILL');
+    await holder.proc.exited;
     const pin2 = await runCli(['skills', 'pin', 'add', 'deploy-service', '--catalog', 'openclaw-main', '--json'], { env: b.env, timeoutMs: 110_000 });
     expect(pin2.exitCode, pin2.stdout + pin2.stderr).toBe(0);
     expect(JSON.parse(pin2.stdout).openclaw_agents_updated).toContain('main');
     expect(readState(b).agents.main.pinned_ids).toEqual(['deploy-service']);
-    writeFileSync(lock, '');
-    utimesSync(lock, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    const dead = await holdStateLock(b, 'dead');
+    dead.proc.kill('SIGKILL');
+    await dead.proc.exited;
     expectExit(await setup(b, ['--skill-loading', 'off', '--agent', 'ops', ...ws]), 0);
     expect(readState(b).agents.ops.mode).toBe('off');
     expect(readState(b).agents.main.mode).toBe('live');
-    expect(existsSync(lock)).toBe(false);
+  }, 240_000);
+
+  test('GST-4068: a run never breaks the state lock of a live holder, however old its lock file is, and refuses after 10 seconds instead', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    const paused = await holdStateLock(b, 'paused');
+    const lock = statePath(b) + '.lock';
+    utimesSync(lock, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    expect(takeStateLock(b)).toBe('null');
+    expect(await paused.release()).toBe('"held"');
+    expect(takeStateLock(b)).toBe('"entered"');
+  });
+
+  test('GST-4068: a pin added while setup probes the host is kept: setup renders the pins from config.json under the state lock, not before it', async () => {
+    const b = box();
+    const ops = join(b.state, 'workspace-ops');
+    skill(join(ops, 'skills'), 'ops-runbook', 'Use when you run the ops runbook');
+    writeFileSync(join(b.state, 'openclaw.json'), JSON.stringify({ agents: { list: [{ id: 'main', workspace: join(b.state, 'workspace') }, { id: 'ops', workspace: ops }] } }));
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--all-agents', '--workspace', join(b.state, 'workspace')]), 0);
+    expect(readState(b).agents.main.pinned_ids).toEqual([]);
+    const hold = holdOpenclaw(b, '"agentId":"ops"', 'pins');
+    const refresh = runCli(['setup', 'openclaw', '--skills-index-only', '--json'], { env: { ...b.env, ...hold.env }, timeoutMs: 110_000 });
+    await hold.reached(refresh);
+    const pin = await runCli(['skills', 'pin', 'add', 'deploy-service', '--catalog', 'openclaw-main', '--json'], { env: b.env, timeoutMs: 110_000 });
+    expect(pin.exitCode, pin.stdout + pin.stderr).toBe(0);
+    expect(readState(b).agents.main.pinned_ids).toEqual(['deploy-service']);
+    hold.go();
+    const r = await refresh;
+    expect(r.exitCode, r.stdout + r.stderr).toBe(0);
+    expect(readState(b).agents.main).toMatchObject({ pinned_ids: ['deploy-service'] });
+    expect(readState(b).agents.main.pinned_block).toContain('deploy-service');
+  }, 240_000);
+
+  test('GST-4068: two --owner-skill runs at once keep both restrictions: each run applies its own additions and removals to the newest list under the state lock', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    const hold = holdOpenclaw(b, 'skills.status', 'owner');
+    const first = setup(b, ['--skill-loading', 'resolve', '--owner-skill', 'email-triage'], hold.env);
+    await hold.reached(first);
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--owner-skill', 'calendar-sync']), 0);
+    expect(readState(b).agents.main.owner_skill_ids).toEqual(['calendar-sync']);
+    hold.go();
+    expectExit(await first, 0);
+    expect(readState(b).agents.main.owner_skill_ids).toEqual(['calendar-sync', 'email-triage']);
+    const removal = holdOpenclaw(b, 'skills.status', 'owner-removal');
+    const remove = setup(b, ['--skill-loading', 'resolve', '--no-owner-skill', 'email-triage'], removal.env);
+    await removal.reached(remove);
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--owner-skill', 'deploy-service']), 0);
+    removal.go();
+    expectExit(await remove, 0);
+    expect(readState(b).agents.main.owner_skill_ids).toEqual(['calendar-sync', 'deploy-service']);
+  }, 240_000);
+
+  test('GST-4068: turning the last agent off while another setup turns a second agent on never loses that agent: the off run decides and uninstalls under the state lock, and the other run installs the plugin again', async () => {
+    const b = box();
+    const ops = join(b.state, 'workspace-ops');
+    skill(join(ops, 'skills'), 'ops-runbook', 'Use when you run the ops runbook');
+    writeFileSync(join(b.state, 'openclaw.json'), JSON.stringify({ agents: { list: [{ id: 'main', workspace: join(b.state, 'workspace') }, { id: 'ops', workspace: ops }] } }));
+    const ws = ['--workspace', join(b.state, 'workspace')];
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--agent', 'main', ...ws]), 0);
+    expect(Object.keys(readState(b).agents)).toEqual(['main']);
+    const hold = holdOpenclaw(b, 'plugins uninstall', 'teardown');
+    const off = setup(b, ['--skill-loading', 'off', '--agent', 'main', ...ws], hold.env);
+    await hold.reached(off);
+    const on = setup(b, ['--skill-loading', 'resolve', '--agent', 'ops', ...ws]);
+    await Promise.race([on, Bun.sleep(3000)]);
+    hold.go();
+    expectExit(await off, 0);
+    expectExit(await on, 0);
+    const st = readState(b);
+    expect(st.agents.ops.mode).toBe('live');
+    expect(st.agents.main?.mode ?? 'off').toBe('off');
+    expect(existsSync(join(pluginDir(b), 'index.js'))).toBe(true);
+    const log = calls(b);
+    expect(log.findLastIndex((l) => l.startsWith('plugins install'))).toBeGreaterThan(log.findLastIndex((l) => l.startsWith('plugins uninstall')));
   }, 240_000);
 
   test('GST-4004: a daily turn log past the read cap is read from its end, so the newest turn still counts', () => {

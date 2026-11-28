@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { dbRepairRecurrenceCheck, pgliteScaleCheck, PGLITE_SCALE_PAGE_THRESHOLD } from '../src/commands/doctor/checks/engine-fit.ts';
 import { writeReceipt, type RepairReceipt } from '../src/core/db-repair-receipts.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { hnswBuildMemoryMb } from '../src/core/vector-index.ts';
 
 const NOW = Date.now();
 const DAY = 24 * 3600 * 1000;
@@ -144,6 +145,37 @@ describe('pgliteScaleCheck', () => {
     expect(check).not.toBeNull();
     expect(check!.status).toBe('ok');
     expect(check!.message).toContain('10 pages');
+  });
+
+  const chunkEngine = (pages: number, rows: number, dims = 1024) => ({
+    kind: 'pglite',
+    getStats: async () => ({ page_count: pages }),
+    executeRaw: async (sql: string, params: unknown[]) => {
+      expect(sql).toContain('pg_attribute');
+      expect(params).toEqual(['content_chunks', 'embedding']);
+      return [{ rows, type: 'vector', dims }];
+    },
+  }) as unknown as BrainEngine;
+
+  test('GST-4084: a PGLite brain whose chunk vector index nears the PGLite ceiling warns with the move-to-Postgres plan, at any page count', async () => {
+    const check = await pgliteScaleCheck(chunkEngine(400, 250_000));
+    expect(check!.status).toBe('warn');
+    expect(check!.message).toContain('250000 embedded chunks');
+    expect(check!.message).toContain('migrate --to postgres --plan');
+    expect((check!.fix as { argv: string[] }).argv).toEqual(['gbrain', 'migrate', '--to', 'postgres', '--plan', '--json']);
+    expect(check!.details).toMatchObject({ embedded_chunks: 250_000, hnsw_build_mb: hnswBuildMemoryMb(250_000, 8 + 1024 * 4), hnsw_budget_mb: 1536, over_budget: false });
+  });
+
+  test('GST-4084: past the budget the warning says the vector index cannot be built on PGLite', async () => {
+    const check = await pgliteScaleCheck(chunkEngine(53_000, 375_000));
+    expect(check!.status).toBe('warn');
+    expect(check!.message).toContain('cannot be built on PGLite');
+    expect(check!.details).toMatchObject({ embedded_chunks: 375_000, over_budget: true });
+  });
+
+  test('GST-4084: a chunk count well inside the budget keeps the page-count verdict', async () => {
+    expect((await pgliteScaleCheck(chunkEngine(10, 100_000)))!.status).toBe('ok');
+    expect((await pgliteScaleCheck(chunkEngine(1500, 100_000)))!.message).toContain(String(PGLITE_SCALE_PAGE_THRESHOLD));
   });
 
   test('getStats throwing → null (other checks own that failure)', async () => {

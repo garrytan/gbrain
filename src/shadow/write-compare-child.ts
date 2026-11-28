@@ -48,7 +48,7 @@ type Verdict = [WriteOutcome, string?];
 /** The pages a sample says it touched: only well-formed refs, and none at all when any is malformed. */
 const namedPages = (v: unknown): PageRef[] => (Array.isArray(v) && v.every((r) => typeof r?.source === 'string' && r.source && typeof r?.slug === 'string' && r.slug) ? v.map((r) => ({ source: r.source, slug: r.slug })) : []);
 
-export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent, bytes?: number, qualifying?: number): void; unreadable(weight: number, qualifying?: number): void; idle(): Promise<boolean>; abandon(): void; flush(): boolean; pass(): boolean; missing(n: number, nonqualifying?: number, windowLost?: number): void; finish(): boolean } {
+export function createWriteComparer(d: WriteComparerDeps): { handle(event: WriteEvent, bytes?: number, qualifying?: number): void; unreadable(weight: number, qualifying: number): void; idle(): Promise<boolean>; abandon(): void; flush(): boolean; pass(): boolean; missing(n: number, nonqualifying?: number, windowLost?: number): void; finish(): boolean } {
   // Each replay gets a private (0700) directory named for this process, removed when the replay ends, whatever its outcome. Directories of processes
   // that no longer exist (a killed child) are swept here, at shadow start; another child never deletes a live one.
   const scratchRoot = d.scratchRoot ?? scratchRootDefault();
@@ -154,8 +154,15 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       queued++; queuedBytes += bytes; waiting.add(event);
       chain = chain.then(() => run(event)).finally(() => { queued--; queuedBytes -= bytes; }); // every path (a replay, an abandoned one, an early return) ends here
     },
-    /** A write line that could not be read (the weight its text states, `sampleWeight`): one `uncomparable` / `line_unreadable`, settling all of it, so it cannot hold its session unsettled. */
-    unreadable(weight, qualifying = 0) { d.tally.note('uncomparable', 'line_unreadable', weight, false, weight, qualifying); },
+    /**
+     * A write line that could not be read (the weight its text states, `sampleWeight`), settled whole so it cannot hold its session unsettled. Only its page and link writes (`qualifying`, `sampleQualifyingWeight`) are `uncomparable` / `line_unreadable`;
+     * the rest are writes the shadow never compares, booked as `capability_missing` / `line_unreadable_nonqualifying` (the split the owed record used), never as uncomparable page and link writes.
+     */
+    unreadable(weight, qualifying) {
+      const q = Math.min(weight, Math.max(0, qualifying));
+      if (q > 0) d.tally.note('uncomparable', 'line_unreadable', q, false, q, q);
+      if (weight - q > 0) d.tally.note('capability_missing', 'line_unreadable_nonqualifying', weight - q, false, weight - q, 0);
+    },
     /** The lost lines a client or retired child holds are written (the 2 s flusher); true when none is left. */
     flush: () => d.tally.flush(),
     /** The 10 s pass: one more save, the lost lines held, the gone sessions settled. True when saves have been failing for `SAVE_FAILURE_EXIT_MS` with outcomes held: the child should exit (it is restarted, and the next owner books what it never settled). */

@@ -477,7 +477,8 @@ async function editTarget(ctx: OperationContext, page: Page, doc: WindowDocument
       if (u.row < 0) return truthBytes;
       const row = rows[u.row]!;
       if (u.bytes === row.byteLen && !row.hasFacts) return row.byteStart + Math.min(row.byteLen, p - u.start);
-      return side === 'start' ? row.byteStart : row.byteStart + row.byteLen;
+      const last = rows[u.last ?? u.row]!;
+      return side === 'start' ? row.byteStart : last.byteStart + last.byteLen;
     };
     if (remote && await hiddenBefore(ctx.engine, seg.body, win.byte_end, 'projected')) return undefined;
     const start = map(win.byte_start, 'start');

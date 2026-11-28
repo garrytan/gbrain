@@ -7,10 +7,13 @@
  * issuing a second one. A receipt holds no token value, only names, paths and times.
  */
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { configDir } from '../core/config.ts';
 import { brainIdentity } from '../core/context/capture-consent.ts';
+import { HOST_BRAIN_ID } from '../core/brain-registry.ts';
+import { resolveBrainId } from '../core/brain-resolver.ts';
+import { getCliOptions } from '../core/cli-options.ts';
 import { opError } from '../core/ops/contract.ts';
 
 export const RECEIPT_DIR = 'setup-receipts';
@@ -33,7 +36,7 @@ export interface TemplateReceipt {
   id: string;
   template: string;
   harness: string | null;
-  /** brainIdentity(): a hash of the config directory this run wrote through. */
+  /** receiptBrain(): a hash of the config directory this run wrote through and, for a mounted brain, its id. */
   brain: string;
   source_id: string;
   created_at: string;
@@ -47,10 +50,20 @@ export interface TemplateReceipt {
 
 export const receiptDir = (): string => join(configDir(), RECEIPT_DIR);
 
+/**
+ * The brain a receipt names. Mounted brains share the host's config directory (and its receipt folder), so a mounted
+ * brain adds its id (--brain, GBRAIN_BRAIN_ID, .gbrain-mount) and a receipt written on one brain never reads as
+ * another's. The host keeps brainIdentity() alone, the identity every earlier receipt carries.
+ */
+export function receiptBrain(): string {
+  const brain = resolveBrainId(getCliOptions().brain);
+  return brain === HOST_BRAIN_ID ? brainIdentity() : createHash('sha256').update(`${brainIdentity()}:${brain}`).digest('hex').slice(0, 24);
+}
+
 export function newReceipt(template: string, target: { harness: string | null; source_id: string }, params: Record<string, unknown>, steps: string[]): TemplateReceipt {
   const now = new Date().toISOString();
   const id = `${template}-${now.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z')}-${randomBytes(3).toString('hex')}`;
-  return { version: RECEIPT_VERSION, id, template, harness: target.harness, brain: brainIdentity(), source_id: target.source_id, created_at: now, updated_at: now,
+  return { version: RECEIPT_VERSION, id, template, harness: target.harness, brain: receiptBrain(), source_id: target.source_id, created_at: now, updated_at: now,
     params, steps: steps.map(s => ({ id: s, state: 'pending' })), keys: [] };
 }
 
@@ -86,7 +99,7 @@ export function loadReceipt(id: string, template: string, dir: string = receiptD
 /** The newest receipt of `template` for this brain, narrowed to a source and harness when given; null when there is none. */
 export function latestReceipt(template: string, filter: { source_id?: string; harness?: string | null } = {}, dir: string = receiptDir()): TemplateReceipt | null {
   if (!existsSync(dir)) return null;
-  const brain = brainIdentity();
+  const brain = receiptBrain();
   const all = readdirSync(dir).filter(f => f.endsWith('.json')).map(f => parse(join(dir, f))).filter((r): r is TemplateReceipt => !!r
     && r.template === template && r.brain === brain && (filter.source_id === undefined || r.source_id === filter.source_id)
     && (filter.harness == null || r.harness === filter.harness));
@@ -99,7 +112,7 @@ export function latestReceipt(template: string, filter: { source_id?: string; ha
  */
 export function assertReceiptTarget(r: TemplateReceipt, target: { source_id?: string; harness?: string | null }): void {
   const wrong = [
-    ...(r.brain !== brainIdentity() ? [`brain (it was written through another config directory)`] : []),
+    ...(r.brain !== receiptBrain() ? [`brain (it was written for another brain or through another config directory)`] : []),
     ...(target.source_id !== undefined && target.source_id !== r.source_id ? [`source (it is for ${r.source_id}, not ${target.source_id})`] : []),
     ...(target.harness != null && r.harness != null && target.harness !== r.harness ? [`harness (it is for ${r.harness}, not ${target.harness})`] : []),
   ];
