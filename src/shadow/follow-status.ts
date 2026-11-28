@@ -162,6 +162,8 @@ export interface FollowStatus {
     state: 'never_run' | 'ok' | 'repaired' | 'error';
     last_pass: Omit<PassRecord, 'error'> | null;
     consecutive_clean_full_passes: number;
+    /** When the newest full pass of the epoch finished, if it was clean; null otherwise. Criterion 1 needs it under 24 h old. */
+    last_clean_full_pass_at: string | null;
     next_full_pass_due: string | null;
   };
   /**
@@ -243,6 +245,7 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
       state: !last ? 'never_run' : error ? 'error' : last.repaired_rows > 0 ? 'repaired' : 'ok',
       last_pass: last ? lastPass : null,
       consecutive_clean_full_passes: clean,
+      last_clean_full_pass_at: clean > 0 ? lastFull!.finished_at : null,
       next_full_pass_due: lastFull ? new Date(Date.parse(lastFull.finished_at) + NIGHTLY_MS).toISOString() : null,
     },
     write_comparisons: {
@@ -271,7 +274,7 @@ export function renderFollowStatus(s: FollowStatus): string[] {
   const lines = [f.action ? `  follower: this brain needs a reseed (its seed was written before follow existed, so nothing is followed): ${f.action}` : `  follower: ${f.state}; applied rows ${f.applied_rows}; queue ${f.queue_depth}; lag ${f.lag_ms ?? 'unknown'} ms (p99 24h ${f.lag_ms_p99_24h ?? '-'}, epoch ${f.lag_ms_p99_epoch ?? '-'})`];
   lines.push(`  coverage watermark: ${w.valid ? `valid through ${w.through ?? '-'}` : `invalid (${w.invalidated_reason ?? 'unknown'})`}`);
   const r = s.reconcile;
-  lines.push(`  reconcile: ${r.state}; clean full passes in a row ${r.consecutive_clean_full_passes}; next full pass ${r.next_full_pass_due ?? 'when one runs'}`);
+  lines.push(`  reconcile: ${r.state}; clean full passes in a row ${r.consecutive_clean_full_passes}; last clean full pass ${r.last_clean_full_pass_at ?? 'none'}; next full pass ${r.next_full_pass_due ?? 'when one runs'}`);
   if (r.last_pass) lines.push(`    last pass ${r.last_pass.kind} ${r.last_pass.finished_at}: repaired ${r.last_pass.repaired_rows}, follower misses ${r.last_pass.follower_misses}`);
   lines.push(`  fingerprints (epoch): checked ${s.fingerprints.checked_rows}, mismatches ${s.fingerprints.mismatches}; probe ${s.fingerprints.probe.state}`);
   const wc = s.write_comparisons;

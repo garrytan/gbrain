@@ -24,7 +24,8 @@ export interface ShadowStatus {
     applied_rows?: number;
     coverage_watermark?: { valid?: boolean; through?: string | null; invalidated_reason?: string | null };
   };
-  reconcile?: { state?: string; consecutive_clean_full_passes?: number; next_full_pass_due?: string | null };
+  /** `last_clean_full_pass_at`: when the newest full pass finished, if it was clean; null when it was not or none ran (shadow/follow-status.ts). */
+  reconcile?: { state?: string; consecutive_clean_full_passes?: number; last_clean_full_pass_at?: string | null; next_full_pass_due?: string | null };
   write_comparisons?: {
     state?: string;
     sample_rate?: number;
@@ -110,6 +111,12 @@ export interface ReadinessVerdict {
 export const MIN_SHADOW_DAYS = DEFAULT_SHADOW_MIN_DAYS;
 export const MAX_LAG_P99_MS = 60_000;
 export const MIN_CLEAN_RECONCILES = 3;
+/**
+ * Criterion 1's freshness rule: the newest of those clean full passes finished less than 24 h ago. An evaluator rule like
+ * caught-up following, never a policy value: `READINESS_POLICY` and `policyHash()` (an evidence-epoch input) do not
+ * carry it. Only a finished full pass sets the time; a carried seal or a half-done pass never does (shadow/reconcile.ts).
+ */
+export const MAX_CLEAN_PASS_AGE_MS = 24 * 3_600_000;
 export const MIN_TOTAL_READS = 10_000;
 export const MIN_WRITE_COMPARISONS = 1_000;
 export const MIN_VECTOR_RECALL = 0.98;
@@ -197,6 +204,18 @@ function guarded(r: Reader, body: () => Check): Check {
   return r.missing.length > before ? missingCheck(r.missing.slice(before)) : out;
 }
 
+const hours = (ms: number): string => (ms / 3_600_000).toFixed(1);
+
+/** The age in ms of the newest clean full pass, or why it does not count (none, not a time, not before now, too old). */
+function cleanPassAge(at: unknown, now: Date): number | string {
+  if (at === null) return 'no clean full pass has finished in the epoch';
+  if (typeof at !== 'string' || !Number.isFinite(Date.parse(at))) return `the last clean full pass finish time is not a time: ${String(at)}`;
+  const age = now.getTime() - Date.parse(at);
+  if (age < 0) return `the last clean full pass finish time is not before now: ${at}`;
+  if (age >= MAX_CLEAN_PASS_AGE_MS) return `last clean full pass finished ${hours(age)} h ago (needs under ${MAX_CLEAN_PASS_AGE_MS / 3_600_000} h)`;
+  return age;
+}
+
 function shadowDuration(r: Reader, now: Date): Check {
   return guarded(r, () => {
     const started = r.s('epoch_started_at');
@@ -206,7 +225,10 @@ function shadowDuration(r: Reader, now: Date): Check {
     const lag = r.n('follower.lag_ms');
     const queue = r.n('follower.queue_depth');
     const watermark = r.b('follower.coverage_watermark.valid');
-    if (started === undefined || p99 === undefined || clean === undefined || lag === undefined || queue === undefined || watermark === undefined) {
+    // null is evidence (no clean full pass); a document without the field (an older build) is not.
+    const lastClean = r.peek<unknown>('reconcile.last_clean_full_pass_at');
+    if (lastClean === undefined && !r.missing.includes('reconcile.last_clean_full_pass_at')) r.missing.push('reconcile.last_clean_full_pass_at');
+    if (started === undefined || p99 === undefined || clean === undefined || lag === undefined || queue === undefined || watermark === undefined || lastClean === undefined) {
       return { state: 'missing', detail: '' };
     }
     const t = Date.parse(started);
@@ -216,9 +238,11 @@ function shadowDuration(r: Reader, now: Date): Check {
     if (days < MIN_SHADOW_DAYS) fails.push(`${days.toFixed(1)} of ${MIN_SHADOW_DAYS} days in the epoch`);
     if (p99 >= MAX_LAG_P99_MS) fails.push(`follower lag p99 ${p99} ms (needs under ${MAX_LAG_P99_MS})`);
     if (clean < MIN_CLEAN_RECONCILES) fails.push(`${clean} of ${MIN_CLEAN_RECONCILES} consecutive clean reconcile passes`);
+    const fresh = cleanPassAge(lastClean, now);
+    if (typeof fresh === 'string') fails.push(fresh);
     return fails.length
       ? { state: 'fail', detail: fails.join('; ') }
-      : { state: 'pass', detail: `${days.toFixed(1)} days, lag p99 ${p99} ms, ${clean} clean reconciles` };
+      : { state: 'pass', detail: `${days.toFixed(1)} days, lag p99 ${p99} ms, ${clean} clean reconciles, last clean full pass ${hours(fresh as number)} h ago` };
   });
 }
 

@@ -508,7 +508,7 @@ describe('shadowReadiness (the S5a reading rules)', () => {
   const good = (): FollowStatus => ({
     epoch_id: 'e', epoch_started_at: 't',
     follower: { state: 'following', action: null, lag_ms: 0, lag_ms_p99_24h: 4, lag_ms_p99_epoch: 4, queue_depth: 0, applied_rows: 1, coverage_watermark: { valid: true, through: 't', invalidated_reason: null } },
-    reconcile: { state: 'ok', last_pass: null, consecutive_clean_full_passes: 1, next_full_pass_due: null },
+    reconcile: { state: 'ok', last_pass: null, consecutive_clean_full_passes: 1, last_clean_full_pass_at: 't', next_full_pass_due: null },
     write_comparisons: { state: 'capability_missing', sample_rate: 1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
     fingerprints: { checked_rows: 1, mismatches: 0, probe: { ...NOT_RUN_PROBE, state: 'pass', checked_at: 't', server_version: '17', collation: 'C' } },
     seed: { seed_id: 'e', finished_at: 't', unseeded_gap_rows_total: 0 }, allocators: { verified: true, checked_at: 't' },
