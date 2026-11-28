@@ -7707,12 +7707,25 @@ SELECT calls, round(mean_exec_time) AS mean_ms, shared_blks_read, left(query, 12
 FROM pg_stat_statements ORDER BY shared_blks_read DESC LIMIT 10;
 ```
 
-These totals are cumulative since the last reset, so they name the statements
-that read the most blocks, not the one that evicted the search data during a
-given timeout. Run `SELECT pg_stat_statements_reset();`, wait through a slow
-period and list them again: statements near the top that are not search
-statements are the likely ones. While a slow search runs, `pg_stat_activity`
-showing `wait_event = 'DataFileRead'` for it confirms it is waiting on disk.
+These totals are cumulative, so they name the statements that read the most
+blocks overall, not the one that evicted the search data during a given
+timeout. To see one slow period, take a snapshot in a session, wait through the
+slow period, and compare from the same session (nothing is reset, so other
+databases' statistics stay intact):
+
+```sql
+CREATE TEMP TABLE stmt_before AS
+SELECT dbid, userid, toplevel, queryid, shared_blks_read FROM pg_stat_statements;
+-- wait through a slow period, then:
+SELECT s.shared_blks_read - COALESCE(b.shared_blks_read, 0) AS blks_read, left(s.query, 120) AS query
+FROM pg_stat_statements s LEFT JOIN stmt_before b USING (dbid, userid, toplevel, queryid)
+WHERE s.dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+ORDER BY blks_read DESC LIMIT 10;
+```
+
+Statements near the top that are not search statements are the likely ones.
+While a slow search runs, `pg_stat_activity` showing
+`wait_event = 'DataFileRead'` for it confirms it is waiting on disk.
 
 **Give back the space compacted receipts left behind.** Receipt compaction
 (after `persistence.receipt_retention_days`, 30 days by default) drops each old

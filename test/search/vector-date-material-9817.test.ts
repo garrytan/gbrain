@@ -141,6 +141,13 @@ describe('#9817 the brain chunk estimate', () => {
       clock += 61_000;
       expect(await estimate(async () => { calls.push('transaction'); return [{ chunks: 500_000 }]; })).toBe(500_000);
       expect(calls).toEqual(['pool', 'transaction']);
+      clock += 61_000;
+      let release!: () => void;
+      const stuck = estimate(() => new Promise(resolve => { release = () => resolve([{ chunks: 600_000 }]); }));
+      expect(await estimate(async () => { calls.push('second'); return [{ chunks: 1 }]; })).toBe(500_000);
+      expect(calls).toEqual(['pool', 'transaction']);
+      release();
+      expect(await stuck).toBe(600_000);
     } finally { now.mockRestore(); }
   });
 });

@@ -169,15 +169,16 @@ export const BRAIN_CHUNK_ESTIMATE_SQL = `SELECT reltuples::float8 AS chunks FROM
 
 /**
  * The engines' brain-wide chunk estimate: BRAIN_CHUNK_ESTIMATE_SQL at most once a minute; a failed read keeps the last
- * value. The caller passes the read, so a transaction's search reads on its own connection instead of waiting for another.
+ * value. The caller passes the read, so a transaction's search reads on its own connection, and a caller arriving while
+ * another caller's read is still running takes the last completed value instead of waiting on a connection it may hold.
  */
 export function brainChunkEstimateLoader(): (load: () => Promise<Array<{ chunks: unknown }>>) => Promise<number | undefined> {
-  let cached: { at: number; value: Promise<number | undefined> } | undefined;
-  return load => {
-    if (cached && performance.now() - cached.at <= 60_000) return cached.value;
-    const previous = cached?.value ?? Promise.resolve(undefined);
-    cached = { at: performance.now(), value: load().then(rows => Number(rows[0]?.chunks ?? -1), () => previous) };
-    return cached.value;
+  let last: number | undefined, at = -Infinity, reading = false;
+  return async load => {
+    if (reading || performance.now() - at <= 60_000) return last;
+    reading = true;
+    try { last = Number((await load())[0]?.chunks ?? -1); } catch { /* keep the last value */ } finally { at = performance.now(); reading = false; }
+    return last;
   };
 }
 
