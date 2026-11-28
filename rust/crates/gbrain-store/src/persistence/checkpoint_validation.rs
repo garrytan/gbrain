@@ -523,6 +523,38 @@ mod tests {
         );
     }
 
+    /// KNOWN RED 7: the same two mixed-probe fixtures the SQL engines answer
+    /// (test/persistence-sync-checkpoint-validation.test.ts): the cut is by probe, then sequence, before the list
+    /// dedupes and sorts, so it is not "the 20 lowest sequences".
+    #[test]
+    fn mixed_probes_are_cut_by_probe_then_sequence() {
+        let recovering = |n: u64| with(page(n, "running", n), "recovery", json!({ "version": 1 }));
+        let ids = |range: std::ops::Range<u64>| range.map(id).collect::<Vec<_>>();
+        let listed = |all: &[RequestRecord]| {
+            read_incomplete_sync_receipt_rows_in(all, &spec(&[], &[]))
+                .unwrap()
+                .into_iter()
+                .map(|row| row["request_id"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        };
+        // A: 15 high-sequence recovery rows that are also open; lower open and failed rows.
+        let mut rows: Vec<Value> = (0..10).map(|n| page(n, "failed", n)).collect();
+        rows.extend((10..20).map(|n| page(n, "queued", n)));
+        rows.extend((20..35).map(recovering));
+        rows.reverse();
+        let all = records(rows);
+        assert_eq!(read_incomplete_sync_receipt_in(&all, &spec(&[], &[])).unwrap(), Some(id(20)));
+        assert_eq!(listed(&all), [ids(10..15), ids(20..35)].concat());
+        // B: 15 low-sequence recovery rows that are also open; the open probe repeats them, so the list holds 15.
+        let mut rows: Vec<Value> = (0..15).map(recovering).collect();
+        rows.extend((15..20).map(|n| page(n, "queued", n)));
+        rows.extend((20..30).map(|n| page(n, "failed", n)));
+        rows.reverse();
+        let all = records(rows);
+        assert_eq!(read_incomplete_sync_receipt_in(&all, &spec(&[], &[])).unwrap(), Some(id(0)));
+        assert_eq!(listed(&all), ids(0..15));
+    }
+
     #[test]
     fn the_list_is_capped_in_sequence_order_with_what_status_shows() {
         let mut rows: Vec<Value> = (1..=25).map(|n| page(n, "queued", n - 1)).collect();

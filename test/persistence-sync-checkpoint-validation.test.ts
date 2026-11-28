@@ -13,7 +13,7 @@ import { readPassRow } from '../src/core/persistence/sync-pass-row.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
-import { INCOMPLETE_SYNC_RECEIPT_SQL, checkpointRetryCommand, findIncompleteSyncReceipt, formatCheckpointTimeoutHint, readRequestIndexStates } from '../src/core/persistence/checkpoint-validation.ts';
+import { INCOMPLETE_SYNC_RECEIPT_SQL, checkpointRetryCommand, findIncompleteSyncReceipt, findOpenPassWork, formatCheckpointTimeoutHint, listIncompleteSyncReceipts, readRequestIndexStates } from '../src/core/persistence/checkpoint-validation.ts';
 import { persistenceOperations } from '../src/core/ops/persistence.ts';
 import { printManagedSyncDiagnostic } from '../src/commands/sync-diagnostics.ts';
 import { WRITE_ERROR_CODES } from '../src/core/persistence/types.ts';
@@ -326,3 +326,90 @@ test('#5762 a dropped index reads as missing and the hint then names the rebuild
     await engine.executeRaw(PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL);
   }
 }), 60_000);
+
+/**
+ * KNOWN RED 7: the rows are written so the table and its indexes meet them in the reverse of their sequence order. Each
+ * read must still answer by sequence: the checkpoint names the lowest-sequence blocker of the first probe that has one
+ * (recovery, then open, then failed, as the Rust engine answers), the status list holds the 20 lowest, and the pass stamp
+ * names the lowest-sequence open work.
+ */
+test('KNOWN RED 7: the first blocker and the first 20 follow sequence order, not the order a scan meets the rows', async () => {
+  // Every engine's answers are compared at the end, so a failure shows each engine's wrong answer, not only the first.
+  const got: Record<string, unknown> = {}, want: Record<string, unknown> = {};
+  await each(async engine => {
+  const self = randomUUID();
+  const name = engine.constructor.name;
+  const answer = (key: string, value: unknown, expected: unknown) => { got[`${name} ${key}`] = value; want[`${name} ${key}`] = expected; };
+  const setup = async () => {
+    const f = await fixture(engine);
+    const binding = (await getWorktreeBinding(engine, f.id))!;
+    const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text FROM sources WHERE id=$1', [f.id]);
+    const [{ base }] = await engine.executeRaw<{ base: string }>('SELECT (COALESCE(max(sequence),0)+1000)::text AS base FROM persistence_requests');
+    const runId = randomUUID();
+    /** Writes rows newest-sequence first: row i gets sequence base+i, so a scan in table order meets the highest first. */
+    const write = async (rows: Array<{ i: number; state: string; recovery?: boolean }>) => {
+      const ids = new Map<number, string>();
+      for (const row of [...rows].sort((a, b) => b.i - a.i)) {
+        const id = randomUUID(); ids.set(row.i, id);
+        await engine.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,worktree_id,
+            digest,intent,authority,intent_bytes,terminal_reservation,state,recovery,sequence) VALUES('local_cli','order',$1::uuid,'submit_job',$2,$3::uuid,'p'||$9::text,$4::uuid,
+            'd',$5::text::jsonb,'{}'::jsonb,1,16384,$6,$7::text::jsonb,$8::bigint)`,
+          [id, f.id, source!.incarnation, binding.worktree_id, JSON.stringify({ kind: 'managed_sync_import', runId, index: row.i }), row.state,
+            row.recovery ? JSON.stringify({ version: 1 }) : null, String(BigInt(base!) + BigInt(row.i)), String(row.i)]);
+      }
+      return rows.map(row => ids.get(row.i)!);
+    };
+    return { f, w: binding.worktree_id, runId, write };
+  };
+  const range = (n: number) => Array.from({ length: n }, (_, i) => i);
+
+  // Open receipts (the second probe), then failed ones with no committed retry (the third).
+  for (const state of ['queued', 'failed']) {
+    const { f, w, runId, write } = await setup();
+    const ids = await write(range(25).map(i => ({ i, state })));
+    answer(`${state} receipt`, await findIncompleteSyncReceipt(engine, w, runId), ids[0]);
+    answer(`${state} list`, (await listIncompleteSyncReceipts(engine, w, runId)).map(r => r.request_id), ids.slice(0, 20));
+    if (state === 'queued') answer('queued pass', await findOpenPassWork(engine, w, self), ids[0]);
+    await engine.executeRaw('DELETE FROM persistence_requests WHERE source_id=$1', [f.id]);
+  }
+
+  // Recovery rows (the first probe) come first, before an open receipt with a lower sequence.
+  const { f, w, runId, write } = await setup();
+  const ids = await write([{ i: 0, state: 'queued' }, ...range(3).map(i => ({ i: i + 1, state: 'running', recovery: true }))]);
+  answer('recovery receipt', await findIncompleteSyncReceipt(engine, w, runId), ids[1]);
+  answer('recovery pass', await findOpenPassWork(engine, w, self), ids[1]);
+  answer('recovery list', (await listIncompleteSyncReceipts(engine, w, runId)).map(r => r.request_id), ids);
+  // The stamp's own recovery record is exempt: the next-lowest recovery row blocks.
+  answer('own recovery pass, others left', await findOpenPassWork(engine, w, ids[1]!, true), ids[2]);
+  await engine.executeRaw('DELETE FROM persistence_requests WHERE source_id=$1', [f.id]);
+  // With the stamp the only recovery row, the pass names the open work.
+  {
+    const { f, w, write } = await setup();
+    const ids = await write([{ i: 0, state: 'queued' }, { i: 1, state: 'running', recovery: true }]);
+    answer('own recovery pass, only row', await findOpenPassWork(engine, w, ids[1]!, true), ids[0]);
+    await engine.executeRaw('DELETE FROM persistence_requests WHERE source_id=$1', [f.id]);
+  }
+
+  // Mixed probes past the 20-entry cut (the Rust engine's unit test pins the same answers). A: 15 high-sequence recovery
+  // rows that are also open, then lower open and failed rows. The pick is probe first: the 15 recovery rows, then the 5
+  // lowest open ones, not the 20 lowest sequences.
+  {
+    const { f, w, runId, write } = await setup();
+    const ids = await write([...range(10).map(i => ({ i, state: 'failed' })), ...range(10).map(i => ({ i: 10 + i, state: 'queued' })),
+      ...range(15).map(i => ({ i: 20 + i, state: 'running', recovery: true }))]);
+    answer('mixed A receipt', await findIncompleteSyncReceipt(engine, w, runId), ids[20]);
+    answer('mixed A list', (await listIncompleteSyncReceipts(engine, w, runId)).map(r => r.request_id), [...ids.slice(10, 15), ...ids.slice(20, 35)]);
+    await engine.executeRaw('DELETE FROM persistence_requests WHERE source_id=$1', [f.id]);
+  }
+  // B: 15 low-sequence recovery rows that are also open: the open probe repeats them, so the 20 entries hold 15 receipts.
+  {
+    const { f, w, runId, write } = await setup();
+    const ids = await write([...range(15).map(i => ({ i, state: 'running', recovery: true })), ...range(5).map(i => ({ i: 15 + i, state: 'queued' })),
+      ...range(10).map(i => ({ i: 20 + i, state: 'failed' }))]);
+    answer('mixed B receipt', await findIncompleteSyncReceipt(engine, w, runId), ids[0]);
+    answer('mixed B list', (await listIncompleteSyncReceipts(engine, w, runId)).map(r => r.request_id), ids.slice(0, 15));
+    await engine.executeRaw('DELETE FROM persistence_requests WHERE source_id=$1', [f.id]);
+  }
+  });
+  expect(got).toEqual(want);
+}, 120_000);

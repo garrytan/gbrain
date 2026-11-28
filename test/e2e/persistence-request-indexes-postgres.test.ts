@@ -9,7 +9,7 @@ import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { claimWorktree, getWorktreeBinding } from '../../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
-import { INCOMPLETE_SYNC_RECEIPT_SQL, readRequestIndexStates } from '../../src/core/persistence/checkpoint-validation.ts';
+import { INCOMPLETE_SYNC_RECEIPT_SQL, findIncompleteSyncReceipt, incompleteSyncReceiptSql, listIncompleteSyncReceipts, readRequestIndexStates } from '../../src/core/persistence/checkpoint-validation.ts';
 import { PERSISTENCE_REQUEST_ONLINE_INDEXES, PERSISTENCE_SYNC_RUN_INDEXES } from '../../src/core/persistence/schema.ts';
 import { SCHEMA_SQL } from '../../src/core/schema-embedded.generated.ts';
 import { v179 } from '../../src/core/schema-migrations/v179-persistence-request-sync-run-indexes.ts';
@@ -185,3 +185,57 @@ test('#5762 persistence_request_growth reads an estimate on Postgres', async () 
   const check = await requestGrowthCheck(engine);
   expect(check).toMatchObject({ name: 'persistence_request_growth', status: 'ok', details: { rows_exact: false } });
 }), 60_000);
+
+/**
+ * KNOWN RED 7: ordering each probe by sequence must not turn a probe into a walk of the table's unique sequence index or a
+ * sequential scan. A large run (3,000 receipts, late in 240k rows of other history) with recovery, open and failed
+ * blockers: each probe stays on its own index, the committed-sibling read is at most one row per non-committed receipt
+ * of the run, and the statement ends well inside the 5-second validation budget, for the checkpoint (limit 1) and the
+ * status list (limit 20).
+ */
+test('KNOWN RED 7 on a populated run every probe stays on its index and the ordered read fits the validation budget', async () => withEnv(env, async () => {
+  const f = await fixture();
+  const binding = (await getWorktreeBinding(engine, f.id))!;
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text FROM sources WHERE id=$1', [f.id]);
+  const insert = (sql: string, params: unknown[]) => engine.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,
+      source_incarnation,slug,worktree_id,digest,intent,authority,intent_bytes,terminal_reservation,state,recovery) ${sql}`, params);
+  // Other history first: 240k receipts of 6,000 other runs, one in eight on this worktree, some failed.
+  await insert(`SELECT 'local_cli','seed',gen_random_uuid(),'submit_job',$1,$2::uuid,'seed-'||g,CASE WHEN g%8=0 THEN $3::uuid END,'d',
+      jsonb_build_object('kind','managed_sync_import','runId',md5((g%6000)::text),'index',g/6000),'{}'::jsonb,1,16384,
+      CASE WHEN g%97=0 THEN 'failed' ELSE 'committed' END, NULL FROM generate_series(1,240000) g`, [f.id, source.incarnation, binding.worktree_id]);
+  // Then the run: 2,000 committed, 600 failed with no committed retry, 400 queued, and 5 recovery rows at the end.
+  const runId = randomUUID();
+  const run = (from: number, to: number, state: string, recovery: string | null) => insert(`SELECT 'local_cli','seed',gen_random_uuid(),'submit_job',$1,$2::uuid,'run-'||i,$3::uuid,'d',
+      jsonb_build_object('kind','managed_sync_import','runId',$4::text,'index',i),'{}'::jsonb,1,16384,$5,$6::text::jsonb FROM generate_series(${from},${to}) i`,
+    [f.id, source.incarnation, binding.worktree_id, runId, state, recovery]);
+  await run(0, 1999, 'committed', null);
+  await run(2000, 2599, 'failed', null);
+  await run(2600, 2999, 'queued', null);
+  await run(3000, 3004, 'running', JSON.stringify({ version: 1 }));
+  await engine.executeRaw('ANALYZE persistence_requests');
+  const allowed = new Set(['persistence_requests_recovery', ...NAMES]);
+  const params = [binding.worktree_id, runId, [], [], []];
+  for (const limit of [1, 20]) {
+    const [{ 'QUERY PLAN': [plan] }] = await engine.executeRaw<{ 'QUERY PLAN': Array<{ Plan: Record<string, unknown>; 'Execution Time': number }> }>(
+      `EXPLAIN (ANALYZE, FORMAT JSON) ${incompleteSyncReceiptSql(limit)}`, params);
+    const nodes = planNodes(plan.Plan).filter(node => node['Relation Name'] === 'persistence_requests');
+    const shape = {
+      limit,
+      seqScans: nodes.filter(node => node['Node Type'] === 'Seq Scan').length,
+      foreignIndexes: [...new Set(nodes.map(node => node['Index Name'] as string | undefined).filter(name => name && !allowed.has(name)))],
+      siblingRowsAtMostOnePerReceipt: nodes.filter(node => node['Alias'] === 'committed')
+        .reduce((sum, node) => sum + Number(node['Actual Rows']) * Number(node['Actual Loops']), 0) <= 1000,
+    };
+    console.log(`[KNOWN RED 7] limit ${limit}: ${plan['Execution Time'].toFixed(1)} ms on ${nodes.length} request scans`);
+    expect(shape).toEqual({ limit, seqScans: 0, foreignIndexes: [], siblingRowsAtMostOnePerReceipt: true });
+    expect(plan['Execution Time']).toBeLessThan(5_000);
+  }
+  // The answers: the recovery rows come first, in sequence order; the list is their five, then the 15 lowest open receipts.
+  const ids = await engine.executeRaw<{ request_id: string; index: number }>(
+    `SELECT request_id::text, (intent->>'index')::int AS index FROM persistence_requests WHERE intent->>'runId'=$1 ORDER BY sequence`, [runId]);
+  const at = (index: number) => ids.find(row => row.index === index)!.request_id;
+  expect(await findIncompleteSyncReceipt(engine, binding.worktree_id, runId)).toBe(at(3000));
+  expect((await listIncompleteSyncReceipts(engine, binding.worktree_id, runId)).map(row => row.request_id))
+    .toEqual([...Array.from({ length: 15 }, (_, i) => at(2600 + i)), ...Array.from({ length: 5 }, (_, i) => at(3000 + i))]);
+  await engine.executeRaw("DELETE FROM persistence_requests WHERE principal_id='seed'");
+}), 300_000);
