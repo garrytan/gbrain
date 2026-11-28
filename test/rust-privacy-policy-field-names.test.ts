@@ -76,6 +76,8 @@ function unknownToRust(ts: string, rust: string): Record<string, string[]> {
   return out;
 }
 
+// test-reads-source-ok[structural]: the check compares the key spellings of two languages; no runtime path in a unit test
+// reaches the Rust struct, so reading both files is the only way to catch a mismatch before cargo runs.
 const ts = readFileSync(join(root, TS_FILE), 'utf8');
 const rust = readFileSync(join(root, RUST_FILE), 'utf8');
 
