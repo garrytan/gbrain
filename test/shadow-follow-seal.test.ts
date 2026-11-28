@@ -200,8 +200,16 @@ describe('a sealed close', () => {
    */
   async function sealedOverBlocker(): Promise<{ dir: string; continuity: string; foreign: number }> {
     const line = `${JSON.stringify({ at: 5_000, pid: process.pid, reason: 'seal_revoked' })}\n`;
-    const { dir, continuity } = await sealed({ beforeSeal: (_s, d) => { appendFileSync(join(d, FOREIGN), line); } });
-    const foreign = readFollowerFile(dir)!.seal!.foreign_size;
+    const { dir, continuity } = await sealed({
+      beforeSeal: async (s, d) => {
+        appendFileSync(join(d, FOREIGN), line);
+        await s.ask('state'); // the session reads the line, then a full pass after its lease makes it valid again
+        expect(await s.ask('watermark', { valid: true, since: 7_000 })).toMatchObject({ valid: true });
+      },
+    });
+    const seal = readFollowerFile(dir)!.seal!;
+    expect(seal.watermark.valid).toBe(true); // valid coverage, sealed
+    const foreign = seal.foreign_size;
     expect(foreign).toBe(Buffer.byteLength(line)); // sealed over the earlier blocker line, read before the seal
     return { dir, continuity, foreign };
   }
