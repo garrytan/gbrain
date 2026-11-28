@@ -71,6 +71,9 @@ never a pass. With no shadow running, every criterion is `missing`.
    who runs gbrain, never in a shared temp directory), for one comparison only: it is deleted when the comparison ends,
    however it ends, and a killed shadow's leftovers are swept the next time shadow mode starts. The shadow's own evidence
    files hold no page content. The comparison counts as `comparable` when the two read-backs match and `unexplained_difference` when they do not.
+   The page read-back also includes `links_extracted_at`, `links_attendance_blocked_revision` and `embedding_signature`, which the typed page read does not return.
+   `stripStaleFrontmatterKeys` is compared only outside a transaction. Frontmatter repair runs it inside a transaction, where the sampler cannot name its pages,
+   so those calls are `uncomparable` (`target_unresolved`) and do not count toward criterion 5.
    A write that cannot be checked (the copy could not be read or loaded, the write failed on either side, another write landed in between, it touched too many rows, a copied page is soft-deleted, the source holds
    a withdrawn or purged fact (the primary then serves a redacted body the copy does not have), the Rust store cannot keep
    a copied column, or the shadow could not record that a comparison was starting) is `uncomparable` and never counts as
