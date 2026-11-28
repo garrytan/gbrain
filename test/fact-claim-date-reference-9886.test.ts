@@ -14,6 +14,8 @@ const REFERENCES = [
   'See [previous session](records/2024-03-14)',
   'Acme Example delivered what 2024-03-14 “Planning notes” promised',
   '这次活动兑现了 2024-03-14「示例记录」所述的安排',
+  'See [minutes](records/(draft)/2024-03-14)',
+  'Acme Example delivered what 2024-03-14 "Planning notes" promised',
 ];
 const OWN_DATES = [
   'Acme Example closed a seed round on 2025-03-14',
@@ -44,6 +46,6 @@ describe('#9886 doctor count agrees with claimDate (PGLite)', () => {
         VALUES ('default', 'companies/acme-example', $1, 'fact', 'world', 'bulk-import', $2::timestamptz)`, [fact, `${DAY}T00:00:00Z`]);
     }
     const [day] = await findBulkFactDays(engine, ['default']);
-    expect(day).toMatchObject({ day: DAY, facts: 248, dated_claims: OWN_DATES.length });
+    expect(day).toMatchObject({ day: DAY, facts: 240 + REFERENCES.length + OWN_DATES.length, dated_claims: OWN_DATES.length });
   }, 120_000);
 });

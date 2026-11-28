@@ -1040,16 +1040,14 @@ async function processPage(
   const fullyProcessed = segmentsThisPage === segments.length;
   const inScope = (list: typeof segments) => list.reduce((n, seg) => n + seg.messages.length, 0);
   const scope: ConversationScope = inScope(segments) < inScope(allSegments) ? 'window' : !fullyProcessed ? 'partial' : declined.length > 0 ? 'window' : 'full'; // #9956: a cut --since run stays a window
-  if (
-    fullyProcessed &&
-    newestEnd !== null &&
-    await snapshotIsCurrent(state.engine, state.sourceId, snapshot)
-  ) {
+  // #9956: a cut --since window publishes its facts, so an unmanaged one checks the page too (managed batches check at publish).
+  const current = newestEnd !== null && (fullyProcessed || (scope === 'window' && !managed)) ? await snapshotIsCurrent(state.engine, state.sourceId, snapshot) : null;
+  if (fullyProcessed && current) {
     // The terminal row publishes in the same transaction as the page's facts.
     // A publication failure propagates, so bulk accounting, CLI exit status,
     // cycle status, and rollups all report the page as unfinished.
     pageRows.push(terminalAuditFact(page.slug, rowNum, snapshot.versionToken));
-  } else if (fullyProcessed && newestEnd !== null) {
+  } else if (current === false) {
     process.stderr.write(
       `[extract-conversation-facts] ${page.slug} changed during extraction; leaving it unfinished for replay\n`,
     );

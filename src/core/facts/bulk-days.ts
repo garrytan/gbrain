@@ -27,7 +27,7 @@ const TOP_SOURCES = 5;
 
 const DATE_TOKEN = '(^|[^0-9])([0-9]{4}-[0-9]{2}-[0-9]{2})(?![0-9])';
 const ISO_DATE = '[0-9]{4}-[0-9]{2}-[0-9]{2}';
-const DATE_IN_REFERENCE = String.raw`\[\[[^\]\r\n]*${ISO_DATE}|\]\([^()\r\n]*${ISO_DATE}|${ISO_DATE}[ \t]*[「『《“]`;
+const DATE_IN_REFERENCE = String.raw`\[\[[^\]\r\n]*${ISO_DATE}|\]\((?:[^()\r\n]|\([^()\r\n]*\))*${ISO_DATE}|${ISO_DATE}[ \t]*[「『《“"]`;
 const EARLIEST = '1900-01-01';
 
 export interface BulkFactDay {

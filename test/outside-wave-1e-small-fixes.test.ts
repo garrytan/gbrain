@@ -83,7 +83,7 @@ describe('#10039 unlinked_facts conversation hint', () => {
       new_7d: { facts: 60, unlinked: 40, no_subject: 0, conversation_unresolved: 0 },
       no_subject: 0, origins: [{ origin: 'conversation', unlinked: 40 }], inferred_7d: { page: 0, mention: 0 }, relinked_7d: {},
     });
-    expect(verdict.message).toContain('repeat it until a pass reports no pages');
+    expect(verdict.message).toContain('afterwards run gbrain facts relink --conversation --source default (no --slugs, so each pass takes the next pages it has not tried) and repeat it until a pass reports no pages');
     expect(verdict.message).toContain('records what it tried even when it links nothing');
   });
 });
