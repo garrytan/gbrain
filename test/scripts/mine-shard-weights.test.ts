@@ -409,6 +409,8 @@ it('full-profile CLI pins source, attempt and job provenance and preserves both 
     mkdirSync(bin);
     writeFileSync(join(bin, 'gh'), `#!/bin/sh
 case "$*" in
+  "api repos/{owner}/{repo}/actions/workflows/e2e.yml/runs?branch=master&status=completed&per_page=100&page=1"*) printf '124\\tschedule\\n123\\tschedule\\n' ;;
+  "run view 124 --json attempt,conclusion,headSha,jobs") cat "$FIXTURE_GH_RED" ;;
   "run view 123 --json attempt,conclusion,headSha,jobs") cat "$FIXTURE_GH_INFO" ;;
   "run view 123 --attempt 2 --job 456 --log") cat "$FIXTURE_GH_LOG" ;;
   *) exit 2 ;;
@@ -422,7 +424,8 @@ esac
     const line = (text: string) => `coverage-full-e2e\tstep\t2026-09-24T06:00:00.000Z ${text}\n`;
     const files = corpus.map(path => line(`=== ${path.split('/').at(-1)} ===`) + line(' 0 fail') + line('Ran 1 test across 1 file. [1.00ms]'));
     const complete = files.join('') + line(`Files: ${files.length} total, ${files.length} passed, 0 failed`);
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH_INFO: infoPath, FIXTURE_GH_LOG: logPath };
+    const redPath = join(dir, 'red.json');
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH_INFO: infoPath, FIXTURE_GH_LOG: logPath, FIXTURE_GH_RED: redPath };
     const base = [join(repo, 'scripts/mine-shard-weights.ts'), '--lane', 'e2e', '--e2e-profile', 'full', '--out', out];
     const run = (args = ['--run', '123']) => spawnSync(process.execPath, [...base, ...args], { env, encoding: 'utf8' });
     writeFileSync(out, '{"keep":123}\n');
@@ -445,7 +448,9 @@ esac
     expect(run(['--from-file', logPath]).status).not.toBe(0);
     writeFileSync(infoPath, JSON.stringify(info));
     writeFileSync(logPath, complete);
-    const result = run();
+    // The newest nightly's coverage jobs passed but another job failed; a full corpus needs a green run, so --latest takes the older one.
+    writeFileSync(redPath, JSON.stringify({ ...info, attempt: 1, conclusion: 'failure', jobs: [...info.jobs, { name: 'unit', databaseId: 9, conclusion: 'failure' }] }));
+    const result = run(['--latest', '1']);
     expect(result.status, result.stderr).toBe(0);
     expect(Object.keys(JSON.parse(readFileSync(out, 'utf8'))).sort()).toEqual([...corpus].sort());
     expect(JSON.parse(readFileSync(meta, 'utf8'))).toMatchObject({
@@ -536,14 +541,14 @@ it('a refresh from several GitHub runs takes each file\'s median, so one fast or
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-it('--latest N mines the newest N successful master runs that ran the lane, and --coverage-only adds only the files the map lacks', () => {
+it('--latest N mines the newest N master runs whose lane jobs all passed, paging past runs that skipped it, and --coverage-only adds only the files the map lacks', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-mine-latest-'));
   try {
     const bin = join(dir, 'bin');
     const fixtures = join(dir, 'fixtures');
     mkdirSync(bin);
     mkdirSync(fixtures);
-    writeFileSync(join(bin, 'gh'), '#!/bin/sh\ncase "$*" in\n  "run list --workflow test.yml --branch master --status success --limit "*" --json databaseId,event") cat "$FIXTURE_GH/list.json" ;;\n  "run view "*" --json conclusion,headSha,jobs") cat "$FIXTURE_GH/$3.json" ;;\n  "run download "*" --name timings-unit-"*) [ -f "$FIXTURE_GH/$3-$5.log" ] && cp "$FIXTURE_GH/$3-$5.log" "$7/unit.log" ;;\n  *) exit 2 ;;\nesac\n', { mode: 0o755 });
+    writeFileSync(join(bin, 'gh'), '#!/bin/sh\ncase "$*" in\n  "api repos/{owner}/{repo}/actions/workflows/test.yml/runs?branch=master&status=completed&per_page=100&page="*) p="${2##*page=}"; [ -f "$FIXTURE_GH/page-$p.tsv" ] && cat "$FIXTURE_GH/page-$p.tsv" ;;\n  "run view "*" --json conclusion,headSha,jobs") cat "$FIXTURE_GH/$3.json" ;;\n  "run download "*" --name timings-unit-"*) [ -f "$FIXTURE_GH/$3-$5.log" ] && cp "$FIXTURE_GH/$3-$5.log" "$7/unit.log" ;;\n  *) exit 2 ;;\nesac\n', { mode: 0o755 });
     const at = (ms: number) => new Date(Date.UTC(2026, 9, 30, 12) + ms).toISOString();
     const line = (job: string, ms: number, text: string) => `${job}\tcapture\t${at(ms)} ${text}\n`;
     const shard = (job: string, files: [string, number][]) => {
@@ -552,17 +557,23 @@ it('--latest N mines the newest N successful master runs that ran the lane, and 
       for (const [file, ms] of files) { body += line(job, t, `::group::${file}:`); t += ms; }
       return body + line(job, t, ' 0 fail') + line(job, t, `Ran ${files.length} tests across ${files.length} files. [1ms]`) + line(job, t, '##[gbrain-capture-complete] exit=0');
     };
-    const run = (id: string, files: [string, number][]) => {
-      writeFileSync(join(fixtures, `${id}.json`), JSON.stringify({ conclusion: 'success', headSha: `commit-${id}`, jobs: [{ name: 'test (1, 2)', conclusion: 'success' }] }));
+    const run = (id: string, files: [string, number][], conclusion = 'success') => {
+      writeFileSync(join(fixtures, `${id}.json`), JSON.stringify({ conclusion, headSha: `commit-${id}`, jobs: [{ name: 'test (1, 2)', conclusion: 'success' }] }));
       writeFileSync(join(fixtures, `${id}-timings-unit-1.log`), shard('test (1)', files.slice(0, 1)));
       writeFileSync(join(fixtures, `${id}-timings-unit-2.log`), shard('test (2)', files.slice(1)));
     };
-    // 105 reused an earlier full run of its tree (no unit jobs); 104 is a manual dispatch, not a master push or the nightly.
-    writeFileSync(join(fixtures, 'list.json'), JSON.stringify([{ databaseId: 105, event: 'push' }, { databaseId: 104, event: 'workflow_dispatch' }, { databaseId: 103, event: 'push' }, { databaseId: 102, event: 'schedule' }, { databaseId: 101, event: 'push' }]));
-    writeFileSync(join(fixtures, '105.json'), JSON.stringify({ conclusion: 'success', headSha: 'commit-105', jobs: [{ name: 'verify', conclusion: 'success' }, { name: 'test (1, 2)', conclusion: 'skipped' }] }));
+    // The first page is 98 pushes that reused an earlier full run of their tree (no unit jobs), 104, a manual dispatch,
+    // not a master push or the nightly, and 103. A run that finished meanwhile shifted the list, so the next page repeats
+    // 103, which counts once. There 106 ran one unit job and cancelled the other, and the nightly 102 went red after its
+    // unit jobs passed (a weight-coverage failure), so its timings count.
+    const reused = Array.from({ length: 98 }, (_, i) => String(900 + i));
+    for (const id of reused) writeFileSync(join(fixtures, `${id}.json`), JSON.stringify({ conclusion: 'success', headSha: `commit-${id}`, jobs: [{ name: 'verify', conclusion: 'success' }, { name: 'test (1, 2)', conclusion: 'skipped' }] }));
+    writeFileSync(join(fixtures, 'page-1.tsv'), [...reused.map(id => `${id}\tpush`), '104\tworkflow_dispatch', '103\tpush'].join('\n') + '\n');
+    writeFileSync(join(fixtures, 'page-2.tsv'), ['103\tpush', '106\tpush', '102\tschedule', '101\tpush'].join('\n') + '\n');
+    writeFileSync(join(fixtures, '106.json'), JSON.stringify({ conclusion: 'cancelled', headSha: 'commit-106', jobs: [{ name: 'test (1, 2)', conclusion: 'success' }, { name: 'test (3, 4)', conclusion: 'cancelled' }, { name: 'test (5, 6)', conclusion: 'skipped' }] }));
     run('104', [['test/one.test.ts', 99_000], ['test/two.test.ts', 99_000]]);
     run('103', [['test/one.test.ts', 4000], ['test/two.test.ts', 3000], ['test/new.test.ts', 700]]);
-    run('102', [['test/one.test.ts', 2000], ['test/two.test.ts', 6000]]);
+    run('102', [['test/one.test.ts', 2000], ['test/two.test.ts', 6000]], 'failure');
     run('101', [['test/one.test.ts', 1000], ['test/two.test.ts', 9000], ['test/new.test.ts', 500]]);
     const out = join(dir, 'weights.json');
     const meta = join(dir, 'weights.metadata.json');
@@ -571,7 +582,7 @@ it('--latest N mines the newest N successful master runs that ran the lane, and 
     writeFileSync(out, '{"test/one.test.ts":42,"test/two.test.ts":43}\n');
     writeFileSync(meta, '{"lane":"unit","run":"90","measuredFiles":2,"totalFiles":2}\n');
     const short = mine('--latest', '4');
-    expect(short.stderr).toContain('only 3 of the newest 4 successful test.yml master runs ran the unit lane');
+    expect(short.stderr).toContain('only 3 of the newest 103 completed test.yml master runs ran the unit lane to success');
     expect(readFileSync(out, 'utf8')).toBe('{"test/one.test.ts":42,"test/two.test.ts":43}\n');
     expect(mine('--latest', '3', '--run', '101').status).not.toBe(0);
     expect(mine('--lane', 'e2e', '--e2e-profile', 'full', '--latest', '2').status).not.toBe(0);
@@ -580,7 +591,7 @@ it('--latest N mines the newest N successful master runs that ran the lane, and 
     expect(coverage.status, coverage.stderr).toBe(0);
     expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ 'test/new.test.ts': 600, 'test/one.test.ts': 42, 'test/two.test.ts': 43 });
     expect(JSON.parse(readFileSync(meta, 'utf8'))).toEqual({
-      lane: 'unit', run: '90', measuredFiles: 2, totalFiles: 3,
+      lane: 'unit', run: '90', measuredFiles: 2, totalFiles: 3, mergeExisting: true,
       coverageOnly: [{ addedFiles: 1, run: '103', commit: 'commit-103', runs: ['103', '102', '101'], commits: ['commit-103', 'commit-102', 'commit-101'] }],
     });
     const recorded = readFileSync(meta, 'utf8');
@@ -592,6 +603,30 @@ it('--latest N mines the newest N successful master runs that ran the lane, and 
     expect(full.status, full.stderr).toBe(0);
     expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ 'test/new.test.ts': 600, 'test/one.test.ts': 2000, 'test/two.test.ts': 6000 });
     expect(JSON.parse(readFileSync(meta, 'utf8'))).toMatchObject({ run: '103', runs: ['103', '102', '101'], measuredFiles: 3, totalFiles: 3, mergeExisting: false });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('--coverage-only on a full-profile E2E map marks the output merged and keeps the full run\'s hashes as its baseline only', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-mine-e2e-baseline-'));
+  try {
+    const out = join(dir, 'e2e-weights.json');
+    const meta = join(dir, 'e2e-weights.metadata.json');
+    const input = join(dir, 'selected.log');
+    const line = (text: string) => 'Selected E2E (diff-relevant) 1\tstep\t2026-10-30T12:00:00.000Z ' + text + '\n';
+    writeFileSync(input, line('=== alpha.test.ts ===') + line(' 0 fail') + line('Ran 1 test across 1 file. [900.00ms]')
+      + line('=== beta.test.ts ===') + line(' 0 fail') + line('Ran 1 test across 1 file. [800.00ms]') + line('Files: 2 total, 2 passed, 0 failed'));
+    writeFileSync(out, '{"test/e2e/alpha.test.ts":1000}\n');
+    const full = { e2eProfile: 'full', attempt: 1, jobs: [{ name: 'coverage-full-e2e (1)', databaseId: 7 }], logSha256: 'a'.repeat(64), corpusSha256: 'b'.repeat(64) };
+    writeFileSync(meta, JSON.stringify({ lane: 'e2e', unit: 'milliseconds', run: '45', commit: 'commit-45', source: 'github', measuredFiles: 1, totalFiles: 1, mergeExisting: false, ...full }));
+    const env = trackedCheckout(dir, ['test/e2e/alpha.test.ts', 'test/e2e/beta.test.ts']);
+    const mine = (log: string) => spawnSync(process.execPath, [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--lane', 'e2e', '--from-file', log, '--coverage-only', '--out', out], { env, encoding: 'utf8' });
+    const result = mine(input);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ 'test/e2e/alpha.test.ts': 1000, 'test/e2e/beta.test.ts': 800 });
+    expect(JSON.parse(readFileSync(meta, 'utf8'))).toEqual({
+      lane: 'e2e', unit: 'milliseconds', run: '45', commit: 'commit-45', source: 'github', measuredFiles: 1, totalFiles: 2, mergeExisting: true,
+      baseline: full, coverageOnly: [{ addedFiles: 1, run: null, commit: null }],
+    });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

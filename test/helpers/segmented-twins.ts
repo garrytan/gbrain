@@ -50,7 +50,8 @@ export interface TwinBrain {
   setSwitch(on: boolean): Promise<void>;
   /** The extraction model's next reply (extract_facts). */
   setChatReply(reply: string): void;
-  call(name: string, params: Record<string, unknown>, target?: string): Promise<Record<string, any>>;
+  /** `writeWaitMs`: the reply's commit wait (default the agent's 5 s); a reply still pending at it is replayed until the write settles. */
+  call(name: string, params: Record<string, unknown>, target?: string, opts?: { writeWaitMs?: number }): Promise<Record<string, any>>;
   view(slug: string): Promise<Record<string, unknown>>;
   hits(term: string): Promise<string[]>;
   storageOf(slug: string): Promise<string>;
@@ -100,16 +101,19 @@ export async function openTwinBrain(kind: 'pglite' | 'postgres', inlineSlugs: re
   return {
     engine, sourceId, root, cli, env, setSwitch,
     setChatReply: reply => { chatReply = reply; },
-    call: async (name, params, target = String(params.slug)) => {
+    call: async (name, params, target = String(params.slug), opts = {}) => {
       await setSwitch(!inlineSlugs.includes(target));
       const request = { request_id: randomUUID(), ...params };
       return withEnv(env(), async () => {
-        // A write still pending after the reply's wait (a page near 24 MiB on PGLite) is replayed with the same request_id until it settles.
+        // A write still pending after the reply's wait (a page near 24 MiB on PGLite, or any write on a loaded runner) is replayed
+        // with the same request_id until it settles. The tool reply names it `write_error: 'write_pending'` under code `unavailable`.
         for (let replay = 0; ; replay++) {
           const response = await withVerifiedLocalRegistration(engine, cli, () => dispatchToolCall(engine, name, request, {
-            remote: false, config: { engine: kind }, sourceId, logger: { info() {}, warn() {}, error() {} } }));
+            remote: false, config: { engine: kind }, sourceId, ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
+            logger: { info() {}, warn() {}, error() {} } }));
           const out = JSON.parse((response.content[0] as { text: string }).text) as Record<string, any>;
-          if (out.code !== 'write_pending' || replay >= 20) return out;
+          if ((out.write_error ?? out.code) !== 'write_pending' || replay >= 20) return out;
+          await Bun.sleep(out.write_request?.retry_after_ms ?? 1000);
         }
       });
     },

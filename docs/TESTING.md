@@ -730,13 +730,18 @@ bun run weights:mine --lane e2e --run <successful-e2e-run>
 bun run weights:mine --lane e2e --e2e-profile full --run <successful-full-corpus-run>
 ```
 
-`--latest N` takes the newest N successful master runs of the lane's workflow
-that ran the lane (a push that reused a full run of its tree has no lane jobs),
-so a refresh is a median without run IDs collected by hand. `--coverage-only`
+`--latest N` takes the newest N completed master runs of the lane's workflow
+whose lane jobs all succeeded, whatever the rest of the run concluded (a nightly
+that a weight-coverage failure turned red still measured its unit jobs). It
+pages past runs that skipped the lane (a push that reused a full run of its tree)
+or ran only part of it, up to 500 runs, so a refresh is a median without run IDs
+collected by hand. `--coverage-only`
 keeps every existing weight, drops untracked files and adds only the files the
-map lacks, appending the runs behind them to the `coverageOnly` list in the metadata:
-it closes a coverage gap when a full unit refresh would push shards over
-`UNIT_SHARD_BUDGET_MS`. A full refresh is the same command without it.
+map lacks, appending the runs behind them to the `coverageOnly` list in the metadata,
+which then says `mergeExisting: true` and keeps a full-profile E2E run's hashes
+under `baseline`: it closes a coverage gap when a full unit refresh would push
+shards over `UNIT_SHARD_BUDGET_MS`. It never refreshes a stale weight; a full
+refresh is the same command without it.
 
 The miner accepts `--from-file` or stdin for timestamped GitHub-format logs and
 `--out` for inspection before replacing a checked-in map. Unit timing uses only

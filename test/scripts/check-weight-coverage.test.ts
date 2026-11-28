@@ -65,6 +65,7 @@ describe('check-weight-coverage', () => {
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toContain('unit: 2 of 20 files (10.0%) have no weight in scripts/test-weights.json, above the 5% bound');
     expect(r.stdout).toContain('Fix: bun run weights:mine --lane unit --latest 5 --coverage-only');
+    expect(r.stdout).toContain('keeps every existing weight. After a large test wave, or when a shard runs 25% past the mean, refresh every weight: bun run weights:mine --lane unit --latest 5\n');
     expect(r.summary).toContain('Shard weight coverage');
   });
 
