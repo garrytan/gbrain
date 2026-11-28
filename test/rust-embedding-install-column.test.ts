@@ -2,13 +2,16 @@
  * Embedding install on a Rust brain refuses a batch the store cannot write exactly.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: `installChunkEmbeddings` refuses with `engine_capability_missing`, before writing anything, a `halfvec`
- *    descriptor, a vector whose length differs from the width the store keeps (a stored vector, else the config
- *    `embedding_dimensions`), and, with no width known, a batch whose rows differ in length from each other. A refused
- *    batch leaves every chunk without a vector, so `readEmbeddingCompletion` never reports one complete. The default
- *    descriptor (a 1536 placeholder on every brain) installs vectors of the store's own width, whatever it is.
+ *  - Contract: `installChunkEmbeddings` refuses, before writing anything, a `halfvec` descriptor
+ *    (`engine_capability_missing`), and a batch with a vector whose length differs from the width upsertChunks takes (the
+ *    config `embedding_dimensions`, else 1536) (`invalid_argument`, as upsertChunks
+ *    refuses it). A refused batch leaves every chunk without a
+ *    vector, so `readEmbeddingCompletion` never reports one complete. The default descriptor (a 1536 placeholder on
+ *    every brain) is not read: the configured width is the check.
  *  - Regression: the member read only the column's name, so a short vector or a `halfvec` column's vector was forwarded
- *    as float32 and the chunk was marked complete, where Postgres rejects the length and rounds `halfvec`.
+ *    as float32 and the chunk was marked complete, where Postgres rejects the length and rounds `halfvec`. Later, with no
+ *    width configured, a first batch of width 3 installed and fixed the store at 3 while upsertChunks kept writing 1536,
+ *    so both writes succeeded and every vector search then failed on mixed widths.
  *  - Why existing coverage misses it: the landing test for the member runs on PGLite, whose column has a fixed width.
  *  - Seam: none. The engine is the real addon.
  */
@@ -61,18 +64,37 @@ describe.skipIf(!rustArmRequested())('Rust engine: installChunkEmbeddings width 
     await nothingInstalled(null);
   });
 
-  test.each([3, 768])('the default descriptor installs vectors of the width the store keeps (%d), not the placeholder 1536', async (width) => {
+  test.each([3, 768])('the default descriptor installs vectors of the configured width (%d), not the placeholder 1536', async (width) => {
+    await engine.setConfig('embedding_dimensions', String(width));
     await engine.installChunkEmbeddings(pageId, column(), batch(width));
     expect((await completion()).map(c => c.embedded)).toEqual([true, true]);
     expect(await storedWidth()).toEqual({ exists: true, dims: width });
   });
 
-  test('a short or a long vector is refused against a width held by a stored vector, and no chunk is marked complete', async () => {
+  test('with no width configured the install takes upsertChunks\' 1536: a width-3 batch is refused, so a later 1536 write and vector search agree', async () => {
+    const refused = await refusal(() => engine.installChunkEmbeddings(pageId, column(), batch(3)));
+    expect({ code: refused?.code, message: (refused as { message?: string } | null)?.message })
+      .toEqual({ code: 'invalid_argument', message: expect.stringContaining('expected 1536 dimensions, not 3') });
+    await nothingInstalled(null);
+    await engine.installChunkEmbeddings(pageId, column(), batch(1536));
+    expect((await completion()).map(c => c.embedded)).toEqual([true, true]);
+    await engine.putPage('embed/other', { type: 'note', title: 'other', compiled_truth: 'Another page.', timeline: '' });
+    const wide = new Float32Array(1536).fill(0.25);
+    await engine.upsertChunks('embed/other', [{ chunk_index: 0, chunk_text: 'another chunk text', chunk_source: 'compiled_truth', embedding: wide, model: 'test:model' }], { sourceId: 'default' });
+    const widths = async (slug: string) => (await engine.getChunks(slug, { includeEmbedding: true, includeUnsealed: true }))
+      .map(c => (c.embedding as Float32Array | null)?.length ?? null);
+    expect({ install: await widths('embed/install'), other: await widths('embed/other') }).toEqual({ install: [1536, 1536], other: [1536] });
+    // With two widths stored, this read failed with "different vector dimensions"; one width answers it.
+    expect(Array.isArray(await engine.searchVector(wide, { limit: 10 }))).toBe(true);
+  });
+
+  test('a short or a long vector is refused against the configured width once a vector is stored, and no chunk is marked complete', async () => {
+    await engine.setConfig('embedding_dimensions', '3');
     await engine.installChunkEmbeddings(pageId, column(), JSON.stringify([{ id: chunks[0]!.id, chunk_text: chunks[0]!.text, embedding: vector(3), image: null, model: 'test:model', input_hash: 'h0' }]));
     for (const length of [2, 4]) {
       const refused = await refusal(() => engine.installChunkEmbeddings(pageId, column(), JSON.stringify([{ id: chunks[1]!.id, chunk_text: chunks[1]!.text, embedding: vector(length), image: null, model: 'test:model', input_hash: 'h1' }])));
-      expect(refused?.code).toBe('engine_capability_missing');
-      expect(refused?.detail).toContain(`a vector of ${length} dimensions for column embedding; the store keeps 3`);
+      expect(refused?.code).toBe('invalid_argument');
+      expect((refused as { message?: string }).message).toContain(`expected 3 dimensions, not ${length}`);
     }
     expect((await completion()).map(c => c.embedded)).toEqual([true, false]);
     expect(await storedWidth()).toEqual({ exists: true, dims: 3 });
@@ -83,19 +105,18 @@ describe.skipIf(!rustArmRequested())('Rust engine: installChunkEmbeddings width 
     expect((await storedWidth()).dims).toBe(4);
     for (const length of [3, 5]) {
       const refused = await refusal(() => engine.installChunkEmbeddings(pageId, column(), batch(length)));
-      expect(refused?.code).toBe('engine_capability_missing');
-      expect(refused?.detail).toContain(`a vector of ${length} dimensions for column embedding; the store keeps 4`);
+      expect(refused?.code).toBe('invalid_argument');
+      expect((refused as { message?: string }).message).toContain(`expected 4 dimensions, not ${length}`);
     }
     await nothingInstalled(4);
     await engine.installChunkEmbeddings(pageId, column(), batch(4));
     expect((await completion()).map(c => c.embedded)).toEqual([true, true]);
   });
 
-  test('a batch whose rows differ in length is refused when the store keeps no width', async () => {
+  test('a batch whose rows differ in length is refused whole, and nothing is written', async () => {
     expect(await storedWidth()).toEqual({ exists: false, dims: null });
-    const refused = await refusal(() => engine.installChunkEmbeddings(pageId, column(), batch(3, 2)));
-    expect(refused?.code).toBe('engine_capability_missing');
-    expect(refused?.detail).toContain('member=installChunkEmbeddings');
+    const refused = await refusal(() => engine.installChunkEmbeddings(pageId, column(), batch(1536, 3)));
+    expect(refused?.code).toBe('invalid_argument');
     await nothingInstalled(null);
   });
 });
