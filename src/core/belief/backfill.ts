@@ -161,6 +161,7 @@ async function preparePage(engine: BrainEngine, sourceId: string, slug: string, 
 async function appendPrepared(engine: BrainEngine, sourceId: string, slug: string, prepared: Prepared): Promise<{ events: number; publications: string[] }> {
   const publications: string[] = [];
   const events = await engine.transaction(async tx => {
+    publications.length = 0; // A transaction callback may run more than once (the multi-user Rust engine retries it after a write conflict).
     await tx.lockPageKeys([{ sourceId, slug }]);
     const source = await readLedgerSource(tx, sourceId);
     if (!source || source.incarnation !== prepared.incarnation) return 0;

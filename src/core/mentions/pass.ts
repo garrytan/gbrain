@@ -519,6 +519,7 @@ async function reconcileSource(engine: BrainEngine, sourceId: string, gazetteer:
     // page keys are locked first, as every publisher locks them before the page rows.
     let beliefs = null as ReturnType<typeof unmanagedBeliefPoint> | null;
     const outcome = await engine.transaction(async tx => {
+      beliefs = null; // A transaction callback may run more than once (the multi-user Rust engine retries it after a write conflict): only the committed run's point is committed.
       await lockMentionSources(tx, genSources, true);
       const journaled = (await beliefCoveredSources(tx, [sourceId])).has(sourceId);
       if (journaled) await tx.lockPageKeys(readable.map(p => ({ sourceId: p.source_id, slug: p.slug })));

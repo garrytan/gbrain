@@ -117,7 +117,9 @@ export async function sweepHoldRechecks(engine: BrainEngine, opts: HoldRecheckOp
 
   for (const g of byHold.values()) {
     out.checked++;
-    await engine.transaction(async (tx: BrainEngine) => {
+    // A transaction callback may run more than once (the multi-user Rust engine retries it after a write conflict): the callback returns its counts and only the committed run's are added.
+    const counted = await engine.transaction(async (tx: BrainEngine) => {
+      const n = { receipts: 0, deleted: 0, kept: 0, notes_consumed: 0 };
       await opts.beforeHold?.(g.holdId);
       await tx.executeRaw('SET LOCAL row_security = off');
       const [row] = await tx.executeRaw<{ page_id: string | null; marked: boolean; version: string }>(
@@ -133,13 +135,15 @@ export async function sweepHoldRechecks(engine: BrainEngine, opts: HoldRecheckOp
       }
       await opts.afterCheck?.(g.holdId);
       if (orphan) {
-        out.receipts += (await tx.executeRaw("DELETE FROM write_gate_receipts WHERE target_table = 'write_gate_holds' AND target_id = $1 RETURNING 1", [g.holdId])).length;
-        out.deleted += (await tx.executeRaw('DELETE FROM write_gate_holds WHERE id = $1::bigint RETURNING 1', [g.holdId])).length;
+        n.receipts += (await tx.executeRaw("DELETE FROM write_gate_receipts WHERE target_table = 'write_gate_holds' AND target_id = $1 RETURNING 1", [g.holdId])).length;
+        n.deleted += (await tx.executeRaw('DELETE FROM write_gate_holds WHERE id = $1::bigint RETURNING 1', [g.holdId])).length;
       } else if (row) {
-        out.kept++;
+        n.kept++;
       }
-      out.notes_consumed += (await tx.executeRaw('DELETE FROM write_gate_hold_rechecks WHERE id = ANY($1::text[]::bigint[]) RETURNING 1', [g.ids])).length;
+      n.notes_consumed += (await tx.executeRaw('DELETE FROM write_gate_hold_rechecks WHERE id = ANY($1::text[]::bigint[]) RETURNING 1', [g.ids])).length;
+      return n;
     });
+    out.receipts += counted.receipts; out.deleted += counted.deleted; out.kept += counted.kept; out.notes_consumed += counted.notes_consumed;
   }
   return out;
 }

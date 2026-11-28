@@ -156,11 +156,14 @@ export async function scanRowsBehind(engine: BrainEngine, sourceId: string,
     const skip = (id: string, why: RowsBehindSkip) => { skipped.push([Number(id), why]); };
     let ids: number[] = [];
     const candidates: Array<{ key: Key; rel: string; blob: TreeBlob; record: RowBehind['record']; content: Buffer | null; compared: ExportFileComparison | null }> = [];
+    const from = cursor;
     const done = await engine.transaction(async tx => {
+      // A transaction callback may run more than once (the multi-user Rust engine retries it after a write conflict): each run starts this batch afresh.
+      stop = null; skipped.length = 0; candidates.length = 0; ids = [];
       await tx.executeRaw('SET TRANSACTION READ ONLY');
       const batch = await tx.executeRaw<Key>(`SELECT id::text, slug, source_id, source_path, source_uri, withheld_source_path, type, frontmatter, database_only_reason,
           body_storage='segmented' AS segmented, knowledge_revision::text AS revision, NOT ${privatePagesFilterFragment('pages')} AS lineage_private
-        FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL AND pages.id > $2::bigint ORDER BY pages.id LIMIT ${ROWS_BEHIND_BATCH}`, [sourceId, cursor]);
+        FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL AND pages.id > $2::bigint ORDER BY pages.id LIMIT ${ROWS_BEHIND_BATCH}`, [sourceId, from]);
       if (!batch.length) return true;
       cursor = batch[batch.length - 1]!.id;
       ids = batch.map(key => Number(key.id));

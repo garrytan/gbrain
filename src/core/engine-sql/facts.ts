@@ -296,6 +296,7 @@ export async function insertFacts(
     // stamped inline here, and `superseded by #N` references are resolved
     // to `facts.superseded_by` in a second pass below (same transaction).
     const ids = await exec.transaction(async (tx) => {
+      warnings.length = 0; // A transaction callback may run more than once (the multi-user Rust engine retries it after a write conflict).
       // v0.46 (#3014) — atomic reconcile: wipe the page's fence-owned rows
       // as the FIRST statement of this transaction so a failing insert
       // below rolls the delete back too. Inlined (not a deleteFactsForPage

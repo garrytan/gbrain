@@ -134,7 +134,11 @@ async function execute(engine: BrainEngine, input: CompanyBrainDestination, opts
       evidence: await readCompanyBrainEvidence(engine, input.sourceId) };
     await checkCompanyBrainDestination(engine, { ...input, path: source.local_path, plan: fresh }, false);
     if (opts.dryRun) return { ok: true, code: 'dry_run', receipt };
+    const [startReceipt, startProfile] = [receipt, profile];
     await engine.transaction(async tx => {
+      // A transaction callback may run more than once (the multi-user Rust engine retries it after a write conflict):
+      // each run starts from the receipt and profile read before it, never from an earlier run's.
+      [receipt, profile] = [startReceipt, startProfile];
       await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
       const [current] = await tx.executeRaw<{ config: unknown; local_path: string }>('SELECT config,local_path FROM sources WHERE id=$1 AND incarnation=$2::uuid AND NOT archived FOR UPDATE', [input.sourceId, source.incarnation]);
       if (!current || companyBrainProfile(current.config)?.receiptId !== receipt!.id) {
