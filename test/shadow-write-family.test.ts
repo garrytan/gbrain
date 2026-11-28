@@ -53,17 +53,26 @@ describe('a sampled raw SQL statement is counted under the first table it writes
     expect([...families].filter((f) => !named.has(f))).toEqual([]);
   });
 
-  test('a statement the parser cannot read stays raw_sql, and one that writes no table is raw_sql too', async () => {
+  test('a statement the parser cannot read stays raw_sql', async () => {
     expect(await sampleOne('executeRaw', ['DO $$ BEGIN PERFORM 1; END $$', []])).toEqual([{ t: 'write', op: 'executeRaw', outcome: 'capability_missing', family: 'raw_sql' }]);
-    expect(await sampleOne('executeRaw', ['SET LOCAL statement_timeout = 1000', []])).toEqual([{ t: 'write', op: 'executeRaw', outcome: 'capability_missing', family: 'raw_sql' }]);
     expect(await sampleOne('executeRaw', [{ text: 'not a string' }])).toEqual([{ t: 'write', op: 'executeRaw', outcome: 'capability_missing', family: 'raw_sql' }]);
+  });
+
+  // The PG17 run sampled lockTableForAnalyze's lock (src/core/analyze-lock.ts) twice; the write parser reads its
+  // SHARE UPDATE EXCLUSIVE as an UPDATE of a table named "exclusive". A lock or a setting writes no row.
+  test.each([
+    ['LOCK TABLE content_chunks IN SHARE UPDATE EXCLUSIVE MODE NOWAIT'],
+    ['LOCK TABLE minion_jobs IN SHARE ROW EXCLUSIVE MODE'],
+    ['SET LOCAL statement_timeout = 1000'],
+  ])('a raw statement that writes no row is no_row:executeRaw: %s', async (sql) => {
+    expect(await sampleOne('executeRaw', [sql, []])).toEqual([{ t: 'write', op: 'executeRaw', outcome: 'capability_missing', family: 'no_row:executeRaw' }]);
   });
 });
 
 describe('a sampled typed member outside the write map is counted under the table its statements write', () => {
   // The nine members a real PG17 serve run sampled as unmapped besides onCheckout (it is pinned as sending nothing here and in
   // test/shadow-follow-producer.test.ts). no_row:<member> marks a member whose statements only set transaction
-  // settings or take row locks.
+  // settings or take locks.
   const MEMBERS: Array<[string, string]> = [
     ['declarePersistence', 'no_row:declarePersistence'],
     ['lockEffectGuard', 'no_row:lockEffectGuard'],

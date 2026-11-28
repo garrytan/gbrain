@@ -11,7 +11,7 @@ import { DIGEST_SESSION_SETTINGS, digestQuery } from '../core/persistence/gradua
 import { CAPTURE_BUDGET_BYTES, encodeArgs, encodeValue } from './codec.ts';
 import { pageSearchVectorSql } from '../core/fts-language.ts';
 import { relationRead } from './seed.ts';
-import { MAX_DROPPED, MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, readBackText, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
+import { MAX_DROPPED, MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, PURE_LOCK, readBack, readBackText, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
 import { sqlWrites } from './sql-writes.ts';
 import { memberKind } from './write-map.ts';
 import { COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL, PUBLICATION_EFFECTS_SQL } from '../core/engine-sql/persistence-journal.ts';
@@ -169,8 +169,6 @@ const AFTER_PAGE_WRITE: ReadonlySet<string> = new Set([
     WHERE source_id=$1 AND slug=$2 RETURNING id`),
   squash('UPDATE pages SET chunker_version=$3 WHERE source_id=$1 AND slug=$2'),
 ]);
-/** A single `LOCK TABLE <names> IN <mode> MODE [NOWAIT]` statement: no `;` inside, so no second statement can ride behind it. (The write parser reads `SHARE UPDATE EXCLUSIVE` as an UPDATE, so a lock is never left to it.) */
-const PURE_LOCK = /^\s*LOCK\s+TABLE\s+(ONLY\s+)?[\w."]+(\s*,\s*(ONLY\s+)?[\w."]+)*\s+IN\s+[A-Za-z ]+\s+MODE(\s+NOWAIT)?\s*;?\s*$/i;
 function rawKind(args: unknown[]): 'bookkeeping' | 'seal' | undefined {
   const sql = args[0];
   if (typeof sql !== 'string') return undefined;

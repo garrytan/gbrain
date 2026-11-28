@@ -114,8 +114,11 @@ export function readBackText(encoded: any): string {
 }
 
 /** The first table `statements` write, '' when they write none, or undefined when one cannot be read or writes something other than a table. */
+/** A single `LOCK TABLE <names> IN <mode> MODE [NOWAIT]` statement: no `;` inside, so no second statement can ride behind it. (The write parser reads `SHARE UPDATE EXCLUSIVE` as an UPDATE, so a lock is never left to it.) */
+export const PURE_LOCK = /^\s*LOCK\s+TABLE\s+(ONLY\s+)?[\w."]+(\s*,\s*(ONLY\s+)?[\w."]+)*\s+IN\s+[A-Za-z ]+\s+MODE(\s+NOWAIT)?\s*;?\s*$/i;
 function firstWrittenTable(statements: readonly string[]): string | undefined {
   for (const sql of statements) {
+    if (PURE_LOCK.test(sql)) continue; // a table lock writes no row
     let writes; try { writes = sqlWrites(sql); } catch { return undefined; }
     const first = writes[0];
     if (first) return first.kind === 'relation' ? first.relation : undefined;
@@ -126,7 +129,7 @@ function firstWrittenTable(statements: readonly string[]): string | undefined {
 /**
  * The family a sampled write that the pilot does not cover is counted under (never a pilot member's own family): the first table it writes. A mapped member's
  * comes from the write map. A raw statement's, and a typed member's whose statements are known (`statements`: write-capture.ts `sampledStatements`), come from
- * parsing them. A member whose statements write no row (transaction settings, row locks) is `no_row:<member>`. A page or link table is `pages:<member>` or
+ * parsing them. A member or raw statement that writes no row (transaction settings, row or table locks) is `no_row:<member>` (`no_row:executeRaw` for raw SQL). A page or link table is `pages:<member>` or
  * `links:<member>`. A raw statement the parser cannot read stays `raw_sql`, and a typed member outside the map with no known statements is `unmapped:<member>`.
  * The family only names the sample: every one of them is `capability_missing`, never compared and never counted toward the write bar.
  */
@@ -134,7 +137,7 @@ export function writeFamily(op: string, statements?: readonly string[]): string 
   const kind = memberKind(op);
   const table = kind === 'mapped' ? WRITE_MAP[op]!.tables[0]! : statements?.length ? firstWrittenTable(statements) : undefined;
   if (table === undefined) return kind === 'raw' ? 'raw_sql' : `unmapped:${op}`;
-  if (table === '') return kind === 'raw' ? 'raw_sql' : `no_row:${op}`;
+  if (table === '') return `no_row:${op}`;
   return table === 'pages' || table === 'links' ? `${table}:${op}` : table;
 }
 
