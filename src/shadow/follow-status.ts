@@ -288,7 +288,8 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
       last_pass: last ? lastPass : null,
       consecutive_clean_full_passes: clean,
       last_clean_full_pass_at: clean > 0 ? lastFull!.finished_at : null,
-      next_full_pass_due: lastFull ? new Date(Date.parse(lastFull.finished_at) + NIGHTLY_MS).toISOString() : null,
+      // A stopped full pass did not finish, so the next one is due at once (reconcile.ts `fullPassDue`).
+      next_full_pass_due: !lastFull ? null : lastFull.error === 'stopped' ? lastFull.finished_at : new Date(Date.parse(lastFull.finished_at) + NIGHTLY_MS).toISOString(),
     },
     write_comparisons: {
       state: writes && !unresolved && !windowsLost && writes.comparable + writes.unexplained_difference > 0 ? 'measured' : 'capability_missing', sample_rate: state ? writeSampleRate(state) : null,
