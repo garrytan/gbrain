@@ -282,8 +282,14 @@ impl Brain {
                     log_retention_bytes: None,
                 };
                 for (name, text) in [
-                    (gbrain_store::replica::TIMEOUT_ENV, options.replica_ack_timeout_ms),
-                    (gbrain_store::replica::MAX_WAITERS_ENV, options.replica_ack_max_waiters),
+                    (
+                        gbrain_store::replica::TIMEOUT_ENV,
+                        options.replica_ack_timeout_ms,
+                    ),
+                    (
+                        gbrain_store::replica::MAX_WAITERS_ENV,
+                        options.replica_ack_max_waiters,
+                    ),
                 ] {
                     if let Some(text) = text {
                         opts.replica_ack_env.push((name.into(), text));

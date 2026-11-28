@@ -434,7 +434,10 @@ fn the_ack_settings_come_from_the_open_options() {
     use gbrain_store::replica::{MAX_WAITERS_ENV, TIMEOUT_ENV};
     let dir = TempDir::new("ra-settings");
     let with = |env: &[(&str, &str)], options: OpenOptions| OpenOptions {
-        replica_ack_env: env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        replica_ack_env: env
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
         ..options
     };
     let store = Store::open_dir(
@@ -450,9 +453,12 @@ fn the_ack_settings_come_from_the_open_options() {
             .unwrap();
         assert_eq!(error.code, INVALID_ARGUMENT, "{bad:?}");
     }
-    let error = Store::open_dir(&dir.path().join("b"), with(&[(MAX_WAITERS_ENV, "65537")], mu(true)))
-        .err()
-        .unwrap();
+    let error = Store::open_dir(
+        &dir.path().join("b"),
+        with(&[(MAX_WAITERS_ENV, "65537")], mu(true)),
+    )
+    .err()
+    .unwrap();
     assert_eq!(error.code, INVALID_ARGUMENT);
     let off = Store::open_dir(
         &dir.path().join("c"),

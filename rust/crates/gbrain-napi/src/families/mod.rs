@@ -48,7 +48,6 @@ mod fact_relink_writes;
 mod facts_holding_purges;
 mod field_usage;
 mod follower;
-mod replica_acks;
 mod generations;
 mod graph;
 mod import_members;
@@ -59,6 +58,7 @@ mod links;
 mod notifier;
 mod op_checkpoint;
 mod page_purges;
+mod replica_acks;
 
 mod git_durability;
 mod git_effects;

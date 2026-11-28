@@ -199,9 +199,7 @@ impl Follower {
     pub(super) fn run_store<'env>(
         &self,
         env: &'env Env,
-        work: impl FnOnce(&StoreFollower) -> Result<Value, gbrain_store::StoreError>
-        + Send
-        + 'static,
+        work: impl FnOnce(&StoreFollower) -> Result<Value, gbrain_store::StoreError> + Send + 'static,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |f| work(f).map_err(task_error))
     }
