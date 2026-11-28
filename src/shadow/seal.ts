@@ -22,7 +22,8 @@
  *    previous version's included, is refused as `mark_unreadable`;
  *  - at the next start (`quietSince`, from `confirmSeal`) the same read must show the same token: any new write (or an
  *    aborted one), a TRUNCATE or rewrite, a relation dropped, created or replaced, a statistics reset or a restarted
- *    server refuses it. Counters only prove what the server has flushed (a backend flushes at most about a minute
+ *    server refuses it (resetting one table's counters moves the statistics epoch too: `stats_reset_changed`, pinned
+ *    by test/e2e/shadow-seal-token.test.ts). Counters only prove what the server has flushed (a backend flushes at most about a minute
  *    after a write, and at exit), so the check also refuses while another connection to this database, of a login that
  *    can write a copied relation itself or through a role it can SET ROLE to, is not idle, went idle less than a minute ago, or cannot be seen by the reading role
  *    (a read-only role, such as a monitoring agent, is never waited on), while a prepared transaction exists, while another connection

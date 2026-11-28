@@ -180,6 +180,18 @@ describe('swap readiness', () => {
     expect(row(v, 11).state).not.toBe('pass');
   });
 
+  test('an invalid watermark names its reason and the last seal\'s in the criterion 1 detail (follower_behind)', () => {
+    const v = evaluateReadiness(edit((d) => {
+      d.follower!.coverage_watermark = { valid: false, through: null, invalidated_reason: 'seal_confirm_pending' };
+      (d.follower as Record<string, unknown>).seal = { outcome: 'not_sealed', reason: 'writes_since_verified', at: '2026-11-30T00:00:00Z' };
+    }), NOW);
+    expect(v.reason as string | null).toBe('follower_behind');
+    expect(row(v, 1).detail).toBe('the follower is behind: lag 0 ms, queue 0, coverage watermark invalid (seal_confirm_pending); last seal not_sealed (writes_since_verified)');
+    // A reason that is not a short code is left out, never echoed.
+    const odd = evaluateReadiness(edit((d) => { d.follower!.coverage_watermark = { valid: false, through: null, invalidated_reason: 'a b\nc' }; }), NOW);
+    expect(row(odd, 1).detail).toBe('the follower is behind: lag 0 ms, queue 0, coverage watermark invalid');
+  });
+
   test('a topology reason outranks every other failure', () => {
     const v = evaluateReadiness(edit(d => { d.eligibility!.writer_hosts_7d = 3; d.fingerprints!.probe!.state = 'fail'; d.follower!.lag_ms = 50; }), NOW);
     expect(v.reason).toBe('multiple_writer_hosts');

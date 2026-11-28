@@ -23,6 +23,8 @@ export interface ShadowStatus {
     queue_depth?: number;
     applied_rows?: number;
     coverage_watermark?: { valid?: boolean; through?: string | null; invalidated_reason?: string | null };
+    /** The last seal decision (shadow/follow-status.ts): why a session did or did not carry the watermark on. */
+    seal?: { outcome?: string; reason?: string | null; at?: string };
   };
   /** `last_clean_full_pass_at`: when the newest full pass finished, if it was clean; null when it was not or none ran (shadow/follow-status.ts). */
   reconcile?: { state?: string; consecutive_clean_full_passes?: number; last_clean_full_pass_at?: string | null; next_full_pass_due?: string | null };
@@ -463,7 +465,12 @@ export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date
   // Caught-up following can never be waived: a lagging follower fails criterion 1 whatever its p99 says (S3 rule).
   if (checks[0]!.state === 'pass' && followerBehind(doc)) {
     const f = doc!.follower!;
-    checks[0] = { state: 'fail', detail: `the follower is behind: lag ${f.lag_ms ?? 0} ms, queue ${f.queue_depth ?? 0}, coverage watermark ${f.coverage_watermark?.valid === false ? 'invalid' : 'valid'}` };
+    // The reason an invalid watermark names, and the last seal's: a brain served only by short writing sessions shows
+    // why it stays invalid (the close did not seal, for example writes_since_verified) instead of only "invalid".
+    const code = (v: unknown): string | null => (typeof v === 'string' && /^[a-z0-9_:.-]{1,80}$/i.test(v) ? v : null);
+    const why = f.coverage_watermark?.valid === false ? code(f.coverage_watermark?.invalidated_reason) : null;
+    const seal = f.coverage_watermark?.valid === false && code(f.seal?.outcome) ? `; last seal ${code(f.seal!.outcome)}${code(f.seal!.reason) ? ` (${code(f.seal!.reason)})` : ''}` : '';
+    checks[0] = { state: 'fail', detail: `the follower is behind: lag ${f.lag_ms ?? 0} ms, queue ${f.queue_depth ?? 0}, coverage watermark ${f.coverage_watermark?.valid === false ? `invalid${why ? ` (${why})` : ''}` : 'valid'}${seal}` };
   }
   const criteria = CRITERIA.map((c, i) => ({ ...c, state: checks[i]!.state, detail: checks[i]!.detail, gating: c.n !== 8, ...(checks[i]!.lines ? { lines: checks[i]!.lines } : {}) }));
   const ready = criteria.every(c => !c.gating || c.state === 'pass');

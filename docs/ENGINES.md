@@ -2143,17 +2143,31 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   not restarted, the evidence epoch is the same and no line was added to `follower-invalidations.jsonl`; it is still
   invalid until its serving process confirms that the primary shows no write since the seal. On Postgres the seal holds
   a versioned token read from the database's own counters: the statistics epoch and, for each relation the seed copied
-  (and `page_projection_jobs`), its oid, relfilenode and insert, update and delete counts. The confirmation refuses any
+  (and `page_projection_jobs`), its oid, relfilenode and insert, update and delete counts. That token is the session's
+  verified point, never a reading taken at close: the counters read just before a full pass started, which count only
+  once that pass restored the watermark (a pass stopped at close leaves its own), or the token of a carried seal the
+  child committed. The close seals that point itself, and refuses when any counter moved since (`writes_since_verified`,
+  this process's own writes included: a session that writes after its last full pass does not seal, so a brain served
+  only by short writing sessions reaches valid only after a session completes a full pass) or when there is none
+  (`no_verified_mark`). The token is version 3; the version 2 token of an older build is refused once after an upgrade
+  (`mark_unreadable`). Resetting one table's counters moves the statistics epoch and is refused
+  (`stats_reset_changed`). The confirmation refuses any
   difference, a new coverage gap, a hook that is not working, a login role that can write a brain table with no way to
   record evidence, `track_counts` off, a server older than PostgreSQL 15, a prepared transaction, another connection
   with a write open, and any other connection of a role that can write a copied relation (itself, or through any role
   it can switch to with SET ROLE: a NOINHERIT login that writes after `SET ROLE` counts) that is not idle, went idle
   under a minute ago, or cannot be seen by the reading role (without superuser or `pg_read_all_stats` another role's
   `pg_stat_activity` row has NULL state, transaction id and backend type), because counters show only what the server
-  has flushed. A connection of a read-only role, such as a monitoring agent, is never waited on. No seal is written under the same conditions, and not while a
+  has flushed. A connection of a read-only role, such as a monitoring agent, is never waited on. The sealing process's
+  own connections are left out only when proven its own: the backend pid of a connection its database driver holds,
+  read before and after the check (the vendored driver's read-only `backend_pids`); its application name alone
+  exempts nothing, and a pool that cannot be proven refuses (`own_backends_unproven`). No seal is written under the same conditions, and not while a
   connection the writer hooks recorded is still connected, whatever the age of its row: a writer still connected during
   the seal check is refused until it commits or disconnects. After the child took a confirmation the check reads once
-  more, and a failure withdraws it (`revokeSeal`: invalid again, full obligation). A confirmation that was sent but not
+  more: the child stays invalid (`seal_confirm_pending`) until that second read is quiet and the serving process sends
+  `commitSeal`, and a failure withdraws it (`revokeSeal`: invalid again, full obligation). A commit that was sent but
+  not acknowledged is withdrawn (`seal_commit_unacknowledged`); a commit the child cannot match to its confirmation
+  drops the seal (`seal_commit_mismatch`). A confirmation that was sent but not
   acknowledged is withdrawn too (`seal_confirm_unacknowledged`): a timeout does not cancel what is already in the pipe.
   Every withdrawal first appends a `seal_revoked:<reason>` line to `follower-invalidations.jsonl`, which the child reads
   on its own (and always before its last write at close and before a refused seal), then sends `revokeSeal` again
