@@ -1,0 +1,13 @@
+// Routing eval fixtures for skills/citation-graph-ingest. Positive cases
+// exercise typed inter-document edge creation over an ingested corpus.
+// Negative cases protect citation-fixer (formatting in our own pages),
+// academic-verify (single-claim verification), and bare graph-query usage.
+{"intent":"Build a citation graph over this case-law corpus so I can see what overrules what","expected_skill":"citation-graph-ingest"}
+{"intent":"Run citation graph ingest on the patents source","expected_skill":"citation-graph-ingest"}
+{"intent":"Create a typed citation graph for these papers — extends, relies on, refutes","expected_skill":"citation-graph-ingest"}
+{"intent":"Build a reference graph over the ingested filings so we can trace which ones supersede which","expected_skill":"citation-graph-ingest"}
+{"intent":"I want to reason over a domain corpus, not just similarity-search it — graph the citations","expected_skill":"citation-graph-ingest"}
+{"intent":"Fix broken citations in my essay pages","expected_skill":"citation-fixer"}
+{"intent":"Verify this academic claim from the book against the original paper","expected_skill":"academic-verify"}
+{"intent":"Just walk one hop out from doc-a-example with the gbrain graph CLI","expected_skill":null}
+{"intent":"Audit how the ingested court documents cite each other — build a reference graph of it","expected_skill":"citation-graph-ingest","ambiguous_with":["citation-fixer"]}
