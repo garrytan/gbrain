@@ -1,0 +1,23 @@
+# Served rows whose scope comes from arguments the client chose, with no server guard (lane L3 S4, Q1-B).
+# Per-user access (A1) must not lift while this file has rows; test/rust-served-a1-lock.test.ts enforces it.
+# Keep rows sorted (LC_ALL=C) and unique.
+member	hazard
+readPageTitle	sourceId and slug come from the client; no privacy or member check, so it answers the title of a private, readers-only or soft-deleted page
+readPageTitlesById	page ids come from the client; no privacy or member check, so it answers the title of any page id, soft-deleted ones too
+readPrefixCandidates	sourceId and the prefix query come from the client; the SQL has no privacy or member predicate, so it lists private pages of the bare-name family
+readPrefixDirs	sourceId and the patterns come from the client; no privacy or member predicate, so it lists directories that hold only private pages
+readPrefixTitleMatches	sourceId, patterns and title come from the client; no privacy or member predicate, so it matches private pages by title
+readReferrerGroupRows	the source list and the excludePrivate flag come from the client; a call with excludePrivate false groups the private referrers
+readReferrerRecordCandidates	the source list and the excludePrivate flag come from the client; a call with excludePrivate false lists private records
+readReferrerRecordPages	page ids come from the client; no privacy or member check, so it answers the title and dates of any page id, soft-deleted ones too
+readReflexLiveKeys	sourceIds come from the client (privacy none is served as the caller policy, but the source list is not narrowed); it names live pages of any source the client lists
+readReflexPages	sourceIds come from the client (privacy none is served as the caller policy, but the source list is not narrowed); it reads pages of any source the client lists
+readScopeSourceConfigs	source ids come from the client and the lock variants (FOR SHARE, FOR UPDATE) cross; it answers the config of any source and takes row locks on the brain
+readSeedTitleSlugs	sourceId, types and title come from the client; no privacy or member predicate, so it lists the slugs of private pages by exact title
+readSegmentRegions	page and chunk ids come from the client; no privacy or member check, so it answers the stored byte position of any chunk
+readSiblingGroupRows	sourceId, slugs and the excludePrivate flag come from the client; a call with excludePrivate false lists private same-name pages
+readSourcesNotReadable	the readable list and the excludePrivate flag come from the client; the answer is one boolean about other sources, and a call with excludePrivate false counts private pages
+readTextMentionPages	sourceIds and slugs come from the client; no privacy or member predicate, so it lists private pages that name an entity in text
+readVolunteerUsage	sourceIds come from the client; aggregate usage counts of any source, no per-caller scoping
+resolveChainAnchorRows	the slug and the page policy come from the client; a policy that hides nothing resolves a private anchor to its source
+scanExactBatch	the scan options, with excludePrivate and remote, come from the client; a call with excludePrivate false scans and returns private pages
