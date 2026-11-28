@@ -342,8 +342,15 @@ function bankSettled(dir: string, key: string, tally: WriteTallyFile | null, tot
   renameSync(tmp, writeTallyPath(dir));
   flushDirectory(dir);
 }
-/** The serving process of a session's owed record (the owner's own pid when there is none to read): the blocker carries it. */
-function servingPidOf(dir: string, key: string): number { const o = parseOwed(owedPath(dir, key)); return o === null || o === 'unreadable' ? process.pid : o.serving_pid; }
+/**
+ * The serving process of a session's owed record (the owner's own pid when there is no record): the blocker carries it. A record that cannot be read is not "no record": it throws, so the fold that asked fails and
+ * is retried, rather than stamping this worker's pid on a blocker whose session is still being served by another process.
+ */
+function servingPidOf(dir: string, key: string): number {
+  const o = parseOwed(owedPath(dir, key));
+  if (o === 'unreadable') throw new Error('owed record unreadable');
+  return o === null ? process.pid : o.serving_pid;
+}
 /**
  * Under the tally lock, makes sure `key` has a blocker for `epoch` BEFORE its window is booked: the one that exists; or, over another epoch's blocker whose window was never booked, that blocker taken over for `epoch` (same target and anchor); or a new one whose target
  * is the owed count of the session's open marker (re-read here). Null when nothing could be held: a window another epoch's blocker already booked (it is that epoch's window, never this one's), no marker any more (it was replaced by a record that closed normally, so
@@ -411,7 +418,8 @@ function removeSettledOwed(dir: string, key: string, requireClosed: boolean, epo
 
 /**
  * Removes a tombstone of an EARLIER epoch (it goes with its epoch), under the tally lock and judged on the record read again there: the serving process may have republished a higher obligation for the session since the listing, and that
- * record is not a tombstone (or names this epoch, or has a marker) and stays. False when the file stays.
+ * record is not a tombstone (or names this epoch, or has a marker) and stays. The manifest is read again there too: a pass that began in an epoch the manifest has since left removes nothing, since what it lists may be the new epoch's own
+ * blocker. False when the file stays.
  */
 function removeStaleTomb(dir: string, key: string, epoch: string): boolean {
   try {
@@ -422,6 +430,7 @@ function removeStaleTomb(dir: string, key: string, epoch: string): boolean {
       const rec = parseOwed(join(dir, `write-owed.${key}.json`));
       if (rec === null) return true;
       if (rec === 'unreadable' || rec.v !== 2 || rec.booked_epoch === undefined || rec.booked_epoch === epoch) return false;
+      if (readEpoch(dir)?.epoch_id !== epoch) return false; // the epoch moved after this pass began: this may be the new epoch's blocker, and the new owner decides
       if (session !== key && rec.serving_pid > 1 && running(rec.serving_pid)) return false; // the session's serving process is alive: its delayed record (the cumulative count) may still be published, and this blocker is what keeps the samples it already settled from being booked again
       removeOwed(dir, key); return true;
     }, REMOVER_LOCK_WAIT_MS);
@@ -476,13 +485,17 @@ function readLost(dir: string, epoch: string, applied: Record<string, number> = 
 function firstCopies(lines: LostLine[], seen: Record<string, number>): LostLine[] {
   return lines.filter((x) => { if (x.w === null || x.n === null) return true; if (x.n <= (seen[x.w] ?? 0)) return false; seen[x.w] = x.n; return true; });
 }
-/** Lost samples that no tally has taken yet: `outcomes` of `epoch` (status reads any as no evidence, like a standing in-flight mark) and, per session, the samples every epoch's lines would settle. */
-export function unfoldedLines(dir: string, epoch: string | null, taken?: Record<string, number>, lineSeq?: Record<string, number>): { outcomes: number; bySession: Record<string, number>; qualifyingBySession: Record<string, number> } {
-  const out = { outcomes: 0, bySession: {} as Record<string, number>, qualifyingBySession: {} as Record<string, number> };
+/**
+ * Lost samples that no tally has taken yet: `outcomes` of `epoch` (status reads any as no evidence, like a standing in-flight mark) and, per session, the samples every epoch's lines would settle.
+ * `unreadable` is true when a journal could not be read: `bySession` then lacks that journal's lines, so a pass that books from it would book samples a later fold counts again.
+ */
+export function unfoldedLines(dir: string, epoch: string | null, taken?: Record<string, number>, lineSeq?: Record<string, number>): { outcomes: number; bySession: Record<string, number>; qualifyingBySession: Record<string, number>; unreadable: boolean } {
+  const out = { outcomes: 0, bySession: {} as Record<string, number>, qualifyingBySession: {} as Record<string, number>, unreadable: false };
   if (epoch === null) return out;
   const seen = { ...lineSeq };
   for (const l of readLost(dir, epoch, taken)) {
     const lines = firstCopies(l.lines, seen);
+    if (l.unreadable) out.unreadable = true;
     out.outcomes += lines.filter((x) => x.thisEpoch).length + (l.unreadable ? 1 : 0);
     for (const x of lines) {
       if (!x.session) continue;
@@ -729,7 +742,7 @@ export class WriteTally {
    * The obligations and receipts of sessions that are gone, settled by an owner worker (one with an epoch). A session's owed file is orphaned when its child was seen to exit, its child pid is not running, it was closed more than 10 minutes ago, or its serving pid is gone and it is older than
    * that. What it never settled (`owed` less `settled` and the lines no tally has folded yet) becomes `uncomparable` `receipt_orphaned` lines tagged with the session, and the file is removed only once a tally read back from disk shows the session settled: a closed file
    * whose samples are all settled is removed whoever settled them. A worker whose own epoch is no longer the manifest's settles nothing (what it booked would be another epoch's lines, and what it removed would be gone). Write receipts of older versions are settled the same way, by
-   * their whole sent count. Cost: one listing of the shadow directory per call (at start, at each save and every 10 s), one read per file found.
+   * their whole sent count. Cost: one listing of the shadow directory per call (at start, at each save and every 10 s), and up to two reads per owed file found (one to judge its child before the journals are read).
    */
   private obligations(): void {
     const epoch = this.epoch();
@@ -739,7 +752,14 @@ export class WriteTally {
       const pending = listPending(this.dir); if (pending.failed) return; // a marker that cannot be listed settles nothing
       let booked = false; const removable: string[] = []; const stale: string[] = [];
       let tally: WriteTallyFile | null = null; try { tally = loadTally(this.dir); } catch { return; } // silent-read-ok: a tally that cannot be read settles nothing now
+      const gone = new Set<string>(); // children seen exited before the journals are read: a child that exits later may have journalled after the read, so it waits for the next pass
+      for (const name of names) {
+        const key = OWED_NAME.exec(name)?.[1]; if (key === undefined || isBlockerKey(key)) continue;
+        const rec = parseOwed(join(this.dir, name));
+        if (rec !== null && rec !== 'unreadable' && (rec.child_exited || (rec.child_pid !== undefined && rec.child_pid > 1 && !running(rec.child_pid)))) gone.add(key);
+      }
       const lines = unfoldedLines(this.dir, epoch, tally?.lost_applied, tally?.line_seq);
+      if (lines.unreadable) return; // a journal that cannot be read settles nothing now (booking from the rest would count its samples twice); the pass is retried
       for (const name of names) {
         const key = OWED_NAME.exec(name)?.[1];
         if (key === undefined || key === this.key || pending.keys.includes(key)) continue; // this child's own session is settled at the end of its input; a marked session is the serving process's to publish and clear
@@ -753,7 +773,7 @@ export class WriteTally {
           continue;
         }
         const age = Date.now() - statSync(path).mtimeMs;
-        const orphaned = rec.child_exited || (rec.child_pid !== undefined && rec.child_pid > 1 && !running(rec.child_pid)) || (rec.closed && age > STALE_RECEIPT_MS) || (rec.serving_pid > 1 && !running(rec.serving_pid) && age > STALE_RECEIPT_MS);
+        const orphaned = gone.has(key) || (rec.closed && age > STALE_RECEIPT_MS) || (rec.serving_pid > 1 && !running(rec.serving_pid) && age > STALE_RECEIPT_MS);
         if (!orphaned && !rec.closed) continue;
         const prior = parseOwed(blockerPath(this.dir, key)); if (prior === 'unreadable') continue; // the window blocker of this session, of whatever epoch: its credit anchor settles the session either way, and a window it booked is that epoch's, never this one's
         const settled = settledOf(tally?.settled?.[key] ?? 0, lines.bySession[key] ?? 0, anchorOf(tally, prior, key)); // the credit banked before the entry restarted outlives the tally's own entry
