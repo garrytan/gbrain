@@ -23,7 +23,7 @@ A policy that is not that text refuses `engine_capability_missing` before any re
 member's policy ANDed with the labelled-only conjunct (`memberViewPolicySql` with `labelled`, `labelledOnlyForSql` for the member's identity as one
 audience entry, readers and rules, no lineage), and the member sends the store the sets that conjunct embeds (`labelledOnlyTerms`, the
 `labelledOnly` field of the policy, the form `readLinkTargetPages` takes for a labelled-only writer). The store judges the page by it as it does for a
-remote read (`page_hidden`). `readHiddenPageSlugs` (the output guard) still refuses a labelled-only record.
+remote read (`page_hidden`). `readHiddenPageSlugs` (the output guard) serves a labelled-only record that has no lineage the same way (an empty ask makes no read; a named slug reaches the store with the same terms); a record with lineage, an audience or an owner record still refuses.
 
 | Member | Returns |
 | --- | --- |
