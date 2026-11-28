@@ -16,10 +16,15 @@
  *    lockedPage). On a multi-user Rust brain the first run ends with a write_conflict error, so the engine's real optimistic
  *    retry runs the callback again. Every other arm has no optimistic retry, so the wrapper runs the callback once in a
  *    transaction it rolls back and then once for real: the same two runs from a fresh state.
+ *  - Not forced on the served Rust arm (GBRAIN_TEST_RUST_SERVED=1): there the brain's owner, behind the served client, runs
+ *    the effect on its own engine (a client's run is refused host_fence_required), out of the case's reach. The case still
+ *    runs there and checks the same end state (waiting for the owner, as a client's own effect run is refused there), but
+ *    nothing makes the callback run twice, so that arm proves no rerun.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine, WantedLinkRowsReplacement } from '../../src/core/engine.ts';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
+import { rustServedRequested } from './rust-arm.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { addMember, bindCredential } from '../../src/core/access/members.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
@@ -85,8 +90,10 @@ function forceOneRerun(engine: BrainEngine) {
     try { return await call(once); }
     catch (error) { if (!forcedHere) throw error; return call(async tx => (await run(fn, tx)).value); }
   };
+  // Restored as it was: an own member is put back, an inherited one is uncovered.
+  const own = Object.getOwnPropertyDescriptor(engine, 'transaction');
   Object.defineProperty(engine, 'transaction', { value: transaction, configurable: true, writable: true });
-  const restore = () => { delete (engine as { transaction?: unknown }).transaction; };
+  const restore = () => { if (own) Object.defineProperty(engine, 'transaction', own); else delete (engine as { transaction?: unknown }).transaction; };
   return { seen, restore };
 }
 
@@ -110,7 +117,9 @@ describe('engine parity: the links effect of a remote write when its transaction
     await engine.putPage('notes/real', { type: 'note', title: 'Real', compiled_truth: 'Real fixture.', timeline: '', frontmatter: {} }, { sourceId: SRC });
     await engine.putPage('notes/mine', { type: 'note', title: 'Mine', compiled_truth: 'First.', timeline: '', frontmatter: {} }, { sourceId: SRC });
     const revision = (await engine.getPage('notes/mine', { sourceId: SRC }))?.knowledge_revision;
-    const { seen, restore } = forceOneRerun(engine);
+    // The served arm's owner runs the effect where the case cannot reach it (header): nothing is forced there.
+    const served = backend === 'rust' && rustServedRequested();
+    const { seen, restore } = served ? { seen: null, restore: () => {} } : forceOneRerun(engine);
     try {
       const credential: { id?: string } = {};
       const dispatched = await ownerPut(engine, { slug: 'notes/mine', content: '---\ntitle: Mine\n---\nMentions [[notes/real]], [[notes/ghost]] and [[notes/ghost-two]].', expected_revision: revision }, credential);
@@ -120,20 +129,21 @@ describe('engine parity: the links effect of a remote write when its transaction
       expect(request?.id).toBeTruthy();
       const links = async () => (await engine.readRequestEffects(request!.id)).find(e => e.kind === 'links');
       for (let pass = 0; pass < 100 && !(await links())?.outcome?.links; pass++) {
-        await runPersistenceEffects(engine, { engine: engine.kind }, { hostId: localHostId(), limit: 10 });
+        // On the served arm the owner's effect worker runs it; a client's own run is refused host_fence_required and backs off.
+        if (!served) await runPersistenceEffects(engine, { engine: engine.kind }, { hostId: localHostId(), limit: 10 });
         await Bun.sleep(50);
       }
       const effect = await links();
       const outcome = effect?.outcome as { links?: string; added?: number; skipped_targets?: Array<{ slug: string; reason: string }> } | undefined;
       // Two runs, each sending the two missing targets once; the effect commits on its first claim.
-      expect({ forced: seen.forced, runs: seen.runs, sent: seen.sent }).toEqual({ forced: 1, runs: 2, sent: [['notes/ghost', 'notes/ghost-two'], ['notes/ghost', 'notes/ghost-two']] });
+      if (seen) expect({ forced: seen.forced, runs: seen.runs, sent: seen.sent }).toEqual({ forced: 1, runs: 2, sent: [['notes/ghost', 'notes/ghost-two'], ['notes/ghost', 'notes/ghost-two']] });
       expect({ state: effect?.state, links: outcome?.links, added: outcome?.added, skipped: outcome?.skipped_targets })
         .toEqual({ state: 'committed', links: 'committed', added: 1, skipped: [{ slug: 'notes/ghost', reason: 'missing' }, { slug: 'notes/ghost-two', reason: 'missing' }] });
       const edges = (await engine.getLinks('notes/mine', { sourceId: SRC })).map(l => `${l.link_type}:${l.to_slug}`).sort();
       expect(edges).toEqual(['mentions:notes/real']);
       const wanted = (await engine.listWantedPages({ sourceId: SRC, limit: 50, offset: 0 })).rows.map(row => ({ target: row.target, referenced_by: row.referenced_by, link_types: row.link_types }));
       expect(wanted).toEqual([{ target: 'notes/ghost', referenced_by: 1, link_types: ['mentions'] }, { target: 'notes/ghost-two', referenced_by: 1, link_types: ['mentions'] }]);
-      return { sent: seen.sent, outcome: { links: outcome?.links, added: outcome?.added, skipped: outcome?.skipped_targets }, edges, wanted };
+      return { outcome: { links: outcome?.links, added: outcome?.added, skipped: outcome?.skipped_targets }, edges, wanted };
     } finally { restore(); }
   });
 });
