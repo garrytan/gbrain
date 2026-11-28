@@ -12,6 +12,11 @@ import { rustMultiuserFromEnv, rustMultiuserSetting, rustMultiuserSubSwitch } fr
 
 /** Worker threads the store's pool runs its calls on. One write runs at a time; reads overlap. */
 const STORE_POOL_THREADS = 4;
+/**
+ * Extra threads that take only calls made through `RustStore.readBrain` (the pool's read lane, rust/README.md). A write
+ * waiting for the writer holds its thread, so without them a read waited behind every queued write.
+ */
+const STORE_READ_THREADS = 2;
 /** How long closing the store waits for calls that are still running (milliseconds). */
 const STORE_SHUTDOWN_WAIT_MS = 5_000;
 
@@ -68,11 +73,16 @@ export interface StoreBrain {
 }
 
 interface StorePool { shutdown(waitMs: number): Promise<unknown> }
-interface StoreAddon { Pool: new (threads: number) => StorePool; Brain: new (pool: StorePool) => StoreBrain }
+interface StoreAddon { Pool: new (threads: number, readThreads?: number) => StorePool; Brain: new (pool: StorePool) => StoreBrain }
 
 /** An open store: the brain and the pool it runs on. */
 export interface RustStore {
   readonly brain: StoreBrain;
+  /**
+   * The same open brain, for calls that only read: they wait in the pool's read lane, not behind queued writes.
+   * `brain` itself on an addon without the read lane. Which handle a call uses changes only where it waits.
+   */
+  readonly readBrain?: StoreBrain;
   /** True when the store runs in multi-user mode (I-0): the environment switch or the brain's own config row. */
   readonly multiuser: boolean;
   /** True when the store keeps a commit log (multi-user mode): the engine then reports `commit_log`. */
@@ -134,6 +144,14 @@ export interface RustStore {
   /** Asks the snapshot `opId` to stop; true when one was running. It returns at once and does not wait for the copy. */
   snapshotCancel(opId: string): boolean;
   close(): Promise<void>;
+}
+
+/**
+ * The handle for a call that only reads and writes nothing (routes.ts ownerMemberOnlyReads): the read-lane view, or
+ * `brain` on an addon without one. Never for a transaction's calls: those keep the transaction's own handle.
+ */
+export function readView(store: RustStore): StoreBrain {
+  return store.readBrain ?? store.brain;
 }
 
 /** What `snapshotTo` takes. The two test seams only slow a copy down so a test can reach its middle. */
@@ -297,7 +315,7 @@ export async function openRustStore(
   origin?: { hostId?: string; mint?: () => string },
 ): Promise<RustStore> {
   const { Pool, Brain } = addon as StoreAddon;
-  const pool = new Pool(STORE_POOL_THREADS);
+  const pool = new Pool(STORE_POOL_THREADS, STORE_READ_THREADS);
   const brain = new Brain(pool);
   let multiuser = false;
   let commitLog = false;
@@ -352,6 +370,7 @@ export async function openRustStore(
   };
   return {
     brain,
+    readBrain: typeof brain.withReadLane === 'function' ? brain.withReadLane() as StoreBrain : brain,
     multiuser,
     commitLog,
     importRelation: (seedId, relation, rows, digests) => call('importRelation', () => brain.importRelation(seedId, relation, rows, digests ?? null)),

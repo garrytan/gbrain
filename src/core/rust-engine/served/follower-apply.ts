@@ -23,7 +23,7 @@ import {
   encodeReplAck, encodeReplRecords, encodeSnapshotBegin, encodeSnapshotChunk, encodeSnapshotEnd, encodeSnapshotWindow,
   type CommitPositionWire, type SnapshotManifestWire, type TimelineWire,
 } from './follower-frames.ts';
-import type { RustStore } from '../store.ts';
+import { readView, type RustStore } from '../store.ts';
 
 type Frame = { header: Record<string, unknown>; tail: Buffer | null };
 
@@ -51,7 +51,8 @@ interface RawLogPage {
  */
 export async function primaryRecordsFrame(store: RustStore, after: CommitPositionWire | null, max: number, id: number, seq: number):
   Promise<{ header: Record<string, unknown>; tail: Buffer } | null> {
-  const page = await store.brain.readCommitLogRaw(after, max) as RawLogPage;
+  // Reading the log writes nothing: it waits in the read lane, so a write burst does not hold back the follower.
+  const page = await readView(store).readCommitLogRaw(after, max) as RawLogPage;
   if (page.snapshotRequired ?? page.snapshot_required) {
     throw Object.assign(new Error('the follower\'s position cannot be continued from the commit log: send a snapshot'), { code: 'snapshot_required' });
   }

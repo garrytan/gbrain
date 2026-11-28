@@ -11,7 +11,7 @@
 import type { CommitLogPage, CommitPosition, EntityFactCommitPosition } from '../../engine-members/commit-log.ts';
 import type { EngineCapabilities } from '../../engine-capabilities.ts';
 import type { RustTransactionScope } from '../../rust-engine.ts';
-import type { RustStore } from '../store.ts';
+import { readView, type RustStore, type StoreBrain } from '../store.ts';
 import { capabilityMissing } from '../errors.ts';
 import { storeCall } from './common.ts';
 
@@ -24,6 +24,11 @@ interface CommitLogEngine {
 
 type CommitLogMember = 'readCommitLog' | 'lastCommitPosition' | 'listEntityFactsInCommitOrder';
 
+/** The read-lane view outside a transaction; a transaction keeps its own handle, so it reads its own writes. */
+function logView(engine: CommitLogEngine, store: RustStore): StoreBrain {
+  return engine._txScope ? store.brain : readView(store);
+}
+
 async function storeOf(engine: CommitLogEngine, member: CommitLogMember, args: unknown[]): Promise<RustStore> {
   if (!engine.capabilities.has('commit_log')) throw capabilityMissing('commit_log', member);
   return engine.openStoreIfOpen(member) ?? await engine.storeFor(member, args);
@@ -31,7 +36,7 @@ async function storeOf(engine: CommitLogEngine, member: CommitLogMember, args: u
 
 export async function readCommitLog(engine: CommitLogEngine, after: CommitPosition | null, limit: number): Promise<CommitLogPage> {
   const store = await storeOf(engine, 'readCommitLog', [after, limit]);
-  return await storeCall({ member: 'readCommitLog' }, () => store.brain.readCommitLog(after, limit)) as CommitLogPage;
+  return await storeCall({ member: 'readCommitLog' }, () => logView(engine, store).readCommitLog(after, limit)) as CommitLogPage;
 }
 
 export async function lastCommitPosition(engine: CommitLogEngine): Promise<CommitPosition | null> {
@@ -39,7 +44,7 @@ export async function lastCommitPosition(engine: CommitLogEngine): Promise<Commi
   // A transaction's own engine: the position it committed at (none while open or after a rollback).
   if (engine._txScope) return engine._txScope.committedAt ?? null;
   const store = await storeOf(engine, 'lastCommitPosition', []);
-  return await storeCall({ member: 'lastCommitPosition' }, () => store.brain.lastCommitPosition()) as CommitPosition | null;
+  return await storeCall({ member: 'lastCommitPosition' }, () => logView(engine, store).lastCommitPosition()) as CommitPosition | null;
 }
 
 /**
@@ -63,5 +68,5 @@ export async function listEntityFactsInCommitOrder(
   }
   const store = await storeOf(engine, member, [sourceId, entitySlug, opts]);
   return await storeCall({ member }, () =>
-    store.brain.listEntityFactsInCommitOrder(sourceId, entitySlug, afterSequence ?? null, limit)) as EntityFactCommitPosition[];
+    logView(engine, store).listEntityFactsInCommitOrder(sourceId, entitySlug, afterSequence ?? null, limit)) as EntityFactCommitPosition[];
 }

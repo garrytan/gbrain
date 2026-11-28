@@ -21,7 +21,7 @@ import { grantFromTokenRow, type PrincipalGrant } from '../grants/model.ts';
 import { hasScope, operationScopesAllowed } from '../scope.ts';
 import { operationsByName } from '../operations.ts';
 import { ownerMemberOnlyReads } from './owner-ipc/routes.ts';
-import type { RustStore } from './store.ts';
+import { readView, type RustStore } from './store.ts';
 import { storeMultiuser, withAccessStore } from './access-self-check.ts';
 import { remotePrivacyHatch, withCallerAccess, withoutCallerAccess, type CallerAccess } from '../search/private-visibility.ts';
 
@@ -67,7 +67,8 @@ function asDenied(error: unknown, detail: string): never {
 /** Opens a session for `bearer` on `store`, or refuses `permission_denied`. */
 export async function openPrincipalSession(store: RustStore, bearer: string, addon: object = {}): Promise<PrincipalSession> {
   if (!storeMultiuser(store)) throw denied('reason=multiuser_off');
-  const brain = store.brain;
+  // Admission only reads (the token rows, the session table in memory), so it waits in the read lane, not behind writes.
+  const brain = readView(store);
   let handle: string;
   let row: Record<string, unknown>;
   try {

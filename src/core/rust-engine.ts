@@ -23,7 +23,7 @@ import type { EngineConfig } from './types.ts';
 import type { GBrainConfig } from './config.ts';
 import { capabilityMissing } from './rust-engine/errors.ts';
 import { RUST_ENGINE_MEMBERS } from './rust-engine/members.ts';
-import { openRustStore, seedEmbeddingIdentity, type RustStore, type StoreBrain } from './rust-engine/store.ts';
+import { openRustStore, readView, seedEmbeddingIdentity, type RustStore, type StoreBrain } from './rust-engine/store.ts';
 import { opError } from './ops/contract.ts';
 import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
@@ -37,6 +37,7 @@ import { noteRustEngine } from './persistence/managed-operations.ts';
 import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/owner-ipc/client.ts';
+import { ownerMemberOnlyReads } from './rust-engine/owner-ipc/routes.ts';
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
 import type { OwnerEngineServer, OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
 import { withAccessStore } from './rust-engine/access-self-check.ts';
@@ -649,7 +650,11 @@ for (const [member, impl] of Object.entries(STORE_MEMBERS)) {
       const store = this.openStoreIfOpen(member) ?? await this.storeFor(member, args);
       refuseUnfencedLeaseCall(this, member, args); // decision A: a registered process must send its host fence
       await this._admit(member);
-      const brain = this.multiuser && !this._txScope ? brainWithCallDeadline(store.brain) : store.brain;
+      // A member that only reads waits in the pool's read lane, not behind queued writes (store.ts, readView). The
+      // audited list decides (routes.ts ownerMemberOnlyReads), not the name: an unlisted member stays general. A
+      // transaction scope keeps its own handle: its reads must see its uncommitted writes.
+      const base = !this._txScope && ownerMemberOnlyReads(member) ? readView(store) : store.brain;
+      const brain = this.multiuser && !this._txScope ? brainWithCallDeadline(base) : base;
       // Multi-user lane L4: a store in multi-user mode runs the member with its answer in context (access-self-check.ts).
       return withAccessStore(store, this.addon, () =>
         (impl as (this: RustEngine, brain: unknown, ...rest: unknown[]) => Promise<unknown>).call(this, brain, ...args));

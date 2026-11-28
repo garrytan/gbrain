@@ -25,8 +25,10 @@ type PositionBrain = { commitPosition?: () => Promise<PublishedPosition>; lastCo
  */
 export function storePositionReader(engine: object): PositionReader {
   return async () => {
-    const open = (engine as { openStoreIfOpen?: (member: string) => { commitLog?: boolean; brain: PositionBrain } | null })
+    const store = (engine as { openStoreIfOpen?: (member: string) => { commitLog?: boolean; brain: PositionBrain; readBrain?: PositionBrain } | null })
       .openStoreIfOpen?.('commitPosition');
+    // A position read writes nothing: it waits in the read lane (store.ts readView), not behind queued writes.
+    const open = store ? { commitLog: store.commitLog, brain: store.readBrain ?? store.brain } : null;
     if (open?.commitLog && typeof open.brain.lastCommitPosition === 'function') {
       const last = await open.brain.lastCommitPosition();
       return { sequence: Number(last?.sequence ?? 0), index: Number(last?.index ?? 0), exact: true };
