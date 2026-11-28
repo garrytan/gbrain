@@ -15,8 +15,15 @@
  * (the store moved a row off a natural key another row took) is marked dirty for another pass and is not restored by
  * this one. Not done: reconcile does not fingerprint-check the `facts` rows it rewrites, and it cannot see drift that
  * begins on the Rust side after an import (the digests it compares are the ones the store was given).
+ *
+ * A full pass saves its progress (`reconcile/progress.json`) after every interval. A process that closes in the middle
+ * of one records no pass (closing is not a failed pass) and leaves the progress; the next process's first check resumes
+ * it only under the same follower continuity (follow-child.ts: an unbroken run of owner sessions, each confirmed to
+ * continue the one before it), so a brain served only in short sessions still completes full passes.
  */
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { quoteIdent, readKeysetRows, type DigestPlan, type KeysetRow } from '../core/persistence/graduation-digest.ts';
 import type { SeedEntry, SeedFollowResult, SeedIntervalDigest, SeedPlan, SeedRelationPlan } from '../core/rust-engine/store.ts';
 import { hasFingerprintFunctions, probeOnPrimary } from './fingerprints.ts';
@@ -26,15 +33,19 @@ import { nextGeneration, type ShadowFollower } from './follower.ts';
 import { primaryTables } from './seed-gaps.ts';
 import { ACTIVE_REFRESH_STATES_SQL } from '../core/persistence/worktree-refresh-schema.ts';
 import type { ReadSource } from './read-pool.ts';
-import { relationRead } from './seed.ts';
+import { readSeedRecord, relationRead } from './seed.ts';
+import { readEpoch } from './evidence-epoch.ts';
 
 export const RECONCILE_INTERVAL_ROWS = 500;
 const ENTRY_PAGE = 5000;
 const INVALID_RETRY_MS = 3_600_000;
 const DEBOUNCE_MS = 2_000;
 const TICK_MS = 15 * 60_000;
-/** A process that has run this long after it started checks whether its watermark needs a full pass. */
-const FIRST_CHECK_MS = 60_000;
+/**
+ * A process that has run this long after it started checks whether its watermark needs a full pass. Short: an MCP
+ * client keeps a stdio serve session for seconds, and a pass that cannot finish in one resumes in the next.
+ */
+export const FIRST_CHECK_MS = 5_000;
 
 export interface ReconcilerOptions {
   dir: string;
@@ -44,6 +55,53 @@ export interface ReconcilerOptions {
   follower?: ShadowFollower | null;
   /** Rows per interval; tests make it small to walk several intervals. */
   intervalRows?: number;
+  /** Awaited before the first check: the serving process's seal confirmation (seal.ts), so the check sees its outcome. */
+  ready?: () => Promise<void>;
+}
+
+/** What the child's `state` call answers: the watermark, and the continuity a half-done pass may resume under. */
+type StateReply = Watermark & { continuity?: string | null };
+
+/** A full pass in progress, saved after each interval so a later process with the same continuity can finish it. */
+interface PassProgress {
+  version: 1;
+  id: string;
+  started_at: string;
+  pass_start: number;
+  valid_at_start: boolean;
+  continuity: string;
+  seed_id: string | null;
+  epoch_id: string | null;
+  verified: boolean;
+  settled: string[];
+  maxima: Record<string, string>;
+  repaired_rows: number;
+  repaired_by_relation: Record<string, number>;
+  follower_misses: number;
+  /** Relations walked to the end. */
+  done: string[];
+  /** Where the relation being walked continues: the next interval's lower bound, the last key read, rows displaced so far. */
+  cursor: { relation: string; lo: string; after: string[]; displaced: number } | null;
+}
+
+const progressPath = (dir: string): string => join(dir, 'reconcile', 'progress.json');
+
+function readProgress(dir: string): PassProgress | null {
+  // silent-read-ok: a missing or torn progress file only means the next full pass starts from the beginning.
+  try { const p = JSON.parse(readFileSync(progressPath(dir), 'utf8')) as PassProgress; return p?.version === 1 ? p : null; } catch { return null; }
+}
+
+function writeProgress(dir: string, p: PassProgress): void {
+  try {
+    mkdirSync(join(dir, 'reconcile'), { recursive: true, mode: 0o700 });
+    const tmp = `${progressPath(dir)}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(p) + '\n', { mode: 0o600 });
+    renameSync(tmp, progressPath(dir));
+  } catch { /* a full disk loses the resume point, never the pass */ }
+}
+
+function clearProgress(dir: string): void {
+  try { rmSync(progressPath(dir), { force: true }); } catch { /* the next pass checks the continuity anyway */ }
 }
 
 const unref = (timer: unknown): void => { (timer as { unref?: () => void }).unref?.(); };
@@ -59,11 +117,21 @@ export class Reconciler {
 
   constructor(private readonly o: ReconcilerOptions) {}
 
-  /** Runs one pass after any pass already running. Never rejects: failures are in the record's `error`. */
-  run(kind: 'full' | 'dirty', relations?: string[]): Promise<PassRecord> {
-    const next = this.chain.then(() => this.pass(kind, relations));
+  /**
+   * Runs one pass after any pass already running. Never rejects: failures are in the record's `error`. `resume` lets a
+   * full pass continue the one a closed process left half done (same continuity, seed and evidence epoch).
+   */
+  run(kind: 'full' | 'dirty', relations?: string[], o: { resume?: boolean } = {}): Promise<PassRecord> {
+    const next = this.chain.then(() => this.pass(kind, relations, o.resume === true));
     this.chain = next.catch(() => undefined);
     return next;
+  }
+
+  /** Waits, at most `ms`, for the passes queued so far to end (after `stop()` one ends at its next read). */
+  async idle(ms: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([this.chain, new Promise((resolve) => { timer = setTimeout(resolve, ms); unref(timer); })]);
+    if (timer) clearTimeout(timer);
   }
 
   /** A relation the follower could not describe: repair it soon (debounced). */
@@ -81,17 +149,26 @@ export class Reconciler {
 
   /**
    * A full pass when one has not run for 24 h, or an hour after the last pass while the watermark is invalid; and one
-   * a minute after start if the watermark is already invalid (a new session starts that way). A short command exits
-   * before that minute and never runs it.
+   * FIRST_CHECK_MS after start when the watermark is invalid then (once a seal is confirmed or refused), a pass is
+   * left half done, or the last full pass is 24 h old. A command that exits sooner never runs it.
    */
   startNightly(): void {
     if (this.nightly) return;
     this.nightly = setInterval(() => { void this.tick(); }, TICK_MS);
-    this.firstCheck = setTimeout(() => {
-      void this.o.rpc<Watermark>('state', {}, 10_000).then((w) => (w.valid ? undefined : this.run('full')), () => undefined);
-    }, FIRST_CHECK_MS);
+    this.firstCheck = setTimeout(() => { void this.firstRun(); }, FIRST_CHECK_MS);
     unref(this.nightly);
     unref(this.firstCheck);
+  }
+
+  private async firstRun(): Promise<void> {
+    try {
+      await this.o.ready?.();
+      if (this.stopped) return;
+      const w = await this.o.rpc<StateReply>('state', {}, 10_000);
+      const lastFull = readPasses(this.o.dir).filter((p) => p.kind === 'full').at(-1);
+      const due = !w.valid || readProgress(this.o.dir) !== null || !lastFull || Date.now() - Date.parse(lastFull.finished_at) >= NIGHTLY_MS;
+      if (due && !this.stopped) await this.run('full', undefined, { resume: true });
+    } catch { /* the nightly tick tries again */ }
   }
 
   stop(): void {
@@ -115,7 +192,7 @@ export class Reconciler {
     } catch { /* the next tick tries again */ }
   }
 
-  private async pass(kind: 'full' | 'dirty', only?: string[]): Promise<PassRecord> {
+  private async pass(kind: 'full' | 'dirty', only?: string[], resume = false): Promise<PassRecord> {
     const startedAt = new Date().toISOString();
     const rec: PassRecord = { id: `pass-${startedAt.replace(/[-:.]/g, '')}-${randomUUID().slice(0, 4)}`, kind, started_at: startedAt, finished_at: startedAt, repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0 };
     let verified = true;
@@ -123,26 +200,59 @@ export class Reconciler {
     let probeFailed = false;
     let passStart = Date.now();
     const settled: string[] = [];
+    const resumable = kind === 'full' && !only;
+    let progress: PassProgress | null = null;
     try {
       await this.o.follower?.settle();
-      const barrier = await this.o.rpc<Watermark>('state', {}, 30_000);
+      const barrier = await this.o.rpc<StateReply>('state', {}, 30_000);
       const plan = await this.o.rpc<SeedPlan>('seedPlan', {}, 30_000);
       passStart = Date.now();
-      const validAtStart = barrier.valid && (this.o.follower?.lastInvalidatedAt ?? 0) < passStart;
+      let validAtStart = barrier.valid && (this.o.follower?.lastInvalidatedAt ?? 0) < passStart;
       const tables = new Set(await this.read((_, query) => primaryTables(query)));
       const maxima: Record<string, string> = {};
+      const done = new Set<string>();
+      let cursor: PassProgress['cursor'] = null;
+      if (resumable) {
+        const continuity = typeof barrier.continuity === 'string' && barrier.continuity ? barrier.continuity : null;
+        const seedId = readSeedRecord(this.o.dir)?.seed_id ?? null;
+        const epochId = readEpoch(this.o.dir)?.epoch_id ?? null;
+        const prior = resume && continuity ? readProgress(this.o.dir) : null;
+        if (prior && prior.continuity === continuity && prior.seed_id === seedId && prior.epoch_id === epochId) {
+          // The same pass, continued: its start (what its restore settles), its counts and where it stopped.
+          Object.assign(rec, { id: prior.id, started_at: prior.started_at, repaired_rows: prior.repaired_rows, repaired_by_relation: { ...prior.repaired_by_relation }, follower_misses: prior.follower_misses });
+          passStart = prior.pass_start; validAtStart = prior.valid_at_start; verified = prior.verified;
+          settled.push(...prior.settled); Object.assign(maxima, prior.maxima);
+          for (const relation of prior.done) done.add(relation);
+          cursor = prior.cursor;
+        } else clearProgress(this.o.dir);
+        if (continuity) {
+          progress = {
+            version: 1, id: rec.id, started_at: rec.started_at, pass_start: passStart, valid_at_start: validAtStart, continuity, seed_id: seedId, epoch_id: epochId,
+            verified, settled, maxima, repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0, done: [], cursor: null,
+          };
+        }
+      }
+      const save = (at: PassProgress['cursor']): void => {
+        if (!progress) return;
+        writeProgress(this.o.dir, { ...progress, verified, settled: [...settled], maxima: { ...maxima }, repaired_rows: rec.repaired_rows, repaired_by_relation: { ...rec.repaired_by_relation }, follower_misses: rec.follower_misses, done: [...done], cursor: at });
+      };
       for (const rp of plan.relations) {
         if (only && !only.includes(rp.relation)) continue;
-        if (!tables.has(rp.relation)) { settled.push(rp.relation); continue; }
+        if (done.has(rp.relation)) continue;
+        if (!tables.has(rp.relation)) { settled.push(rp.relation); done.add(rp.relation); continue; }
         const read = await this.read((tx) => relationRead(tx, rp.relation, rp.key));
-        if (sortKeyUnsupported(read.key)) { verified = false; continue; }
-        const displaced = await this.relation(rp, read, validAtStart, rec);
+        if (sortKeyUnsupported(read.key)) { verified = false; done.add(rp.relation); save(null); continue; }
+        const from = cursor?.relation === rp.relation ? cursor : null;
+        cursor = null;
+        const displaced = await this.relation(rp, read, validAtStart, rec, from, (lo, after, displaced) => save({ relation: rp.relation, lo, after, displaced }));
         if (displaced > 0) { verified = false; this.markDirty(rp.relation); } else settled.push(rp.relation);
         const [k] = read.key;
         if (kind === 'full' && read.key.length === 1 && k!.name === 'id' && ['smallint', 'integer', 'bigint'].includes(k!.type)) {
           const [row] = await this.read((_, query) => query(`SELECT max("id")::text AS m FROM ${quoteIdent(rp.relation)}`));
           if (typeof row?.m === 'string' && /^\d+$/.test(row.m)) maxima[rp.relation] = row.m;
         }
+        done.add(rp.relation);
+        save(null);
       }
       // The probe's answer depends on the stored facts and purge tombstones: a dirty pass for either runs it again, so a tombstone
       // added after a passing probe cannot be covered by a cached pass.
@@ -161,7 +271,12 @@ export class Reconciler {
         try { await this.probe(); } catch (error) { rec.error ??= `probe:${(error as { code?: string }).code ?? 'failed'}`; }
         try { rec.nonterminal_refresh_rows = !tables.has('persistence_worktree_refreshes') ? 0 : Number((await this.read((_, query) => query(`SELECT count(*)::int AS n FROM persistence_worktree_refreshes WHERE state IN ${ACTIVE_REFRESH_STATES_SQL}`)))[0]?.n); } catch (error) { rec.error ??= `refresh_count:${(error as { code?: string }).code ?? 'failed'}`; }
       }
+      // Stopped during the closing checks: the walked relations are saved as done, and the next process runs only these.
+      if (this.stopped) throw new Error('reconciler stopped');
     } catch (error) {
+      // The process is closing (its reads were stopped): that is no failed pass. Nothing is recorded or restored, and the
+      // progress stays for the next process to resume.
+      if (this.stopped) { rec.error = 'stopped'; rec.finished_at = new Date().toISOString(); return rec; }
       repairFailed = true;
       // The child still holds what it was told is dirty; a later pass for these relations repairs it.
       for (const relation of only ?? []) this.dirty.add(relation);
@@ -169,6 +284,7 @@ export class Reconciler {
     }
     // Allocator and full-pass probe failures are reported but do not decide whether the rows are covered; a failed probe of a dirty
     // pass for facts or purge tombstones does, because those rows are what it checks.
+    if (resumable) clearProgress(this.o.dir);
     if (!repairFailed && !probeFailed) await this.restore(kind, passStart, verified, settled);
     rec.finished_at = new Date().toISOString();
     try { appendPass(this.o.dir, rec); } catch { /* a full disk loses the record, never the pass */ }
@@ -190,11 +306,14 @@ export class Reconciler {
   }
 
   /** Walks one relation interval by interval; returns how many rows the store displaced while rewriting. */
-  private async relation(rp: SeedRelationPlan, read: DigestPlan, validAtStart: boolean, rec: PassRecord): Promise<number> {
+  private async relation(
+    rp: SeedRelationPlan, read: DigestPlan, validAtStart: boolean, rec: PassRecord,
+    from: { lo: string; after: string[]; displaced: number } | null = null, onInterval?: (lo: string, after: string[], displaced: number) => void,
+  ): Promise<number> {
     const size = this.o.intervalRows ?? RECONCILE_INTERVAL_ROWS;
-    let lo: string | null = null;
-    let after: readonly string[] | null = null;
-    let displaced = 0;
+    let lo: string | null = from?.lo ?? null;
+    let after: readonly string[] | null = from?.after ?? null;
+    let displaced = from?.displaced ?? 0;
     for (;;) {
       const generation = nextGeneration();
       const from: readonly string[] | null = after;
@@ -211,6 +330,7 @@ export class Reconciler {
       if (hi === null) return displaced;
       lo = hi;
       after = rows[rows.length - 1]!.key;
+      onInterval?.(lo, [...after], displaced);
       await pause(this.o.reads.pauseMs);
     }
   }

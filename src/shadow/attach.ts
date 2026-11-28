@@ -130,7 +130,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     onLost: (reason) => { const now = Date.now(); if (now - lostAt < 1_000) return; lostAt = now; try { noteLostWrite(dir, reason, now); } catch { lostAt = 0; } },
   }) : undefined;
   generation = () => follower?.published;
-  const reconciler = reads ? new Reconciler({ dir, reads, rpc, follower }) : undefined;
+  const reconciler = reads ? new Reconciler({ dir, reads, rpc, follower, ready: askConfirm }) : undefined;
   reconciler?.startNightly();
   const observer = new WriterObserver({
     primary: engine, dir, identity: () => writerIdentity(engine),
@@ -151,6 +151,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
       clearInterval(usageTimer);
       flushUsage();
       reconciler?.stop();
+      if (reconciler) await reconciler.idle(1_000); // a pass in flight stops at its next read and keeps its progress
       follower?.close(); // from here a write is only recorded as lost
       // Seal: tell the child its store holds every write this process committed, so the next session can carry the
       // watermark on (follow-child.ts, seal.ts). Only when the follower finished, holds nothing, and no other writer may
