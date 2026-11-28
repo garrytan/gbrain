@@ -1603,6 +1603,14 @@
               {
                 "name": "persistence_requests_slug_sequence",
                 "state": "valid"
+              },
+              {
+                "name": "persistence_requests_created",
+                "state": "valid"
+              },
+              {
+                "name": "persistence_requests_committed_seen",
+                "state": "valid"
               }
             ],
             "repair": "request-indexes"

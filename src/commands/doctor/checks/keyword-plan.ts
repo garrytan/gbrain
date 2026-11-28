@@ -42,6 +42,13 @@ const name = 'keyword_plan';
 const DOCS = 'docs/guides/troubleshooting.md#keyword-search-times-out-on-a-large-postgres-brain';
 export const KEYWORD_PLAN_MIN_CHUNKS = 10_000;
 export const KEYWORD_PLAN_CANARY_TIMEOUT_MS = 2_000;
+/**
+ * #10605: below this many chunks a slow or timed-out canary usually waited on disk reads, because other statements
+ * (the write bookkeeping's maintenance reads, for example) pushed the search data out of the database cache, not because
+ * the term matches too many chunks. The warning then points at cache pressure first.
+ */
+export const KEYWORD_PLAN_CACHE_CONTENTION_MAX_CHUNKS = 500_000;
+const CACHE_DOCS = 'docs/guides/troubleshooting.md#keyword-search-times-out-on-a-small-postgres-brain';
 
 export type KeywordPlanCount = { outcome: 'counted'; pages: number; ms: number } | { outcome: 'timed_out'; ms: number };
 
@@ -137,15 +144,17 @@ export async function keywordPlanCheck(engine: BrainEngine, probe: KeywordPlanPr
     const count = await probe.count(canary.term, Math.min(KEYWORD_PLAN_CANARY_TIMEOUT_MS, timeoutMs));
     const details = { ...base, chunks_estimate: chunks, canary_term: canary.term, canary_share: canary.share, plan_scans: scans, count };
     const coverage = `One canary term is not workload coverage: other common terms, source scopes and OR fallbacks are not measured here. See ${DOCS}.`;
+    const contention = chunks < KEYWORD_PLAN_CACHE_CONTENTION_MAX_CHUNKS;
+    const cacheHint = contention ? ` On a brain under ${KEYWORD_PLAN_CACHE_CONTENTION_MAX_CHUNKS.toLocaleString('en-US')} chunks a slow keyword statement is more often waiting on disk reads than ranking matches: other statements can push the search data out of the database cache. On the brain host, list pg_stat_statements by shared_blks_read to see which statements read the most; see ${CACHE_DOCS}.` : '';
     if (count.outcome === 'timed_out') {
-      return { name, status: 'warn', details: { ...details, outcome: 'canary_timed_out' },
+      return { name, status: 'warn', details: { ...details, outcome: 'canary_timed_out', cache_contention_suspected: contention },
         message: `Keyword search's commonest term "${canary.term}" (about ${percent} of chunks) did not finish a strict page count within ${count.ms} ms, so broad keyword queries on this brain are likely to hit ${knob} and fail open to the vector arm (keyword_arm_failed). `
-          + `A timed-out count is never "no matches". Raising the knob (gbrain config set ${KEYWORD_STATEMENT_TIMEOUT_KEY} <ms>, then restart the serving process) buys time, not a cheaper statement: ranking cost grows with the number of matching chunks (#6495); narrow queries to one source (gbrain search --source-id <id>, MCP source_id). Plan: ${scans.join(', ') || 'unavailable'}. ${coverage}${recorded}` };
+          + `A timed-out count is never "no matches". Raising the knob (gbrain config set ${KEYWORD_STATEMENT_TIMEOUT_KEY} <ms>, then restart the serving process) buys time, not a cheaper statement: ranking cost grows with the number of matching chunks (#6495); narrow queries to one source (gbrain search --source-id <id>, MCP source_id).${cacheHint} Plan: ${scans.join(', ') || 'unavailable'}. ${coverage}${recorded}` };
     }
     if (count.ms > timeoutMs / 2) {
-      return { name, status: 'warn', details: { ...details, outcome: 'canary_slow' },
+      return { name, status: 'warn', details: { ...details, outcome: 'canary_slow', cache_contention_suspected: contention },
         message: `Keyword search's commonest term "${canary.term}" (about ${percent} of chunks) took ${count.ms} ms for a strict page count, more than half of ${knob}; a slightly broader query or a busier host will hit the bound and fail open to the vector arm (keyword_arm_failed). `
-          + `A timed-out count is never "no matches". Raising the knob (gbrain config set ${KEYWORD_STATEMENT_TIMEOUT_KEY} <ms>, then restart the serving process) buys time, not a cheaper statement (#6495); narrow queries to one source (gbrain search --source-id <id>, MCP source_id). Plan: ${scans.join(', ') || 'unavailable'}. ${coverage}${recorded}` };
+          + `A timed-out count is never "no matches". Raising the knob (gbrain config set ${KEYWORD_STATEMENT_TIMEOUT_KEY} <ms>, then restart the serving process) buys time, not a cheaper statement (#6495); narrow queries to one source (gbrain search --source-id <id>, MCP source_id).${cacheHint} Plan: ${scans.join(', ') || 'unavailable'}. ${coverage}${recorded}` };
     }
     return { name, status: 'ok', details: { ...details, outcome: 'ok' },
       message: `Keyword search's commonest term "${canary.term}" (about ${percent} of chunks) counted ${count.pages} page(s) in ${count.ms} ms, inside half of ${knob}. Plan: ${scans.join(', ') || 'unavailable'}. ${coverage}${recorded}` };

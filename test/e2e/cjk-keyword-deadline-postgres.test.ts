@@ -69,7 +69,7 @@ describe.skipIf(!RUN)('CJK keyword arm on Postgres', () => {
       cjkKeyword: { deadlineMs: 30_000, fullBudgetMs: 150, onMeta: (m) => metas.push(m) } });
     expect(metas).toHaveLength(1);
     expect(metas[0]).toMatchObject({ incomplete: true, reason: 'candidate_budget', capped: true });
-    // Identical chunk texts tie on score, so the page-grain dedup headroom (innerLimit) decides how many pages survive; any is fine here.
+    // Identical chunk texts tie on score, so which pages the capped stage's candidates reach varies; any is fine here.
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.source_id === 'cjk-a')).toBe(true);
     const after = await engine.searchKeyword('席位', { sourceId: 'cjk-b' });

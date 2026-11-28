@@ -103,6 +103,7 @@
 | [A page exists (`gbrain get <slug>` returns it) but search never finds text from it](memory-boundaries.md#large-pages) | `gbrain reindex --oversized --dry-run --json` lists pages stored before the upgrade with a size-based `embed_skip` marker (without `--dry-run` it keyword-indexes them, free); a page above an operator-lowered `content_sanity.bytes_block` keeps its marker until it is raised; a page the content-quality gate quarantined shows in `gbrain quarantine list` (`gbrain quarantine clear <slug>` re-checks it once the user agrees); a file over the 24 MiB page ceiling was never stored ([`file_too_large`](write-refusals.md#file_too_large)). Its chunks waiting for embedding approval (doctor `partial_embedding`) are a paid step: `gbrain embed --held --dry-run`, then `gbrain embed --held --source <id> --max-usd <N>` as printed | agent for the reindex; the user decides embedding spend, a `bytes_block` change and a quarantine clear | none for the reindex; `paid` for `gbrain embed` | `gbrain reindex --oversized --dry-run --json` lists nothing; `gbrain search "<phrase from deep in the page>"` returns the page |
 | [Search answers look keyword-only on a large Postgres brain](#hybrid-search-returns-only-keyword-hits) | read doctor's `vector_plan`; run the index command it prints | brain host | none | `gbrain doctor --only vector_plan --json` |
 | [Broad keyword queries take about 8 s and come back vector-only (`keyword_arm_failed`, or `skipped_after_timeout` for 10 minutes after a timeout) on a large Postgres brain](#keyword-search-times-out-on-a-large-postgres-brain) | read doctor's `keyword_plan`; narrow with `--source-id`, or raise `search.keyword_statement_timeout_ms` on the brain host and restart the serving process | brain host | none | `gbrain doctor --only keyword_plan --json` |
+| [Keyword search keeps timing out on a small Postgres brain (under 500,000 chunks) and doctor's `keyword_plan` details say `cache_contention_suspected`](#keyword-search-times-out-on-a-small-postgres-brain) | upgrade, then list `pg_stat_statements` by `shared_blks_read` to find what evicts the search data; optionally repack `persistence_requests` | brain host | none | `gbrain doctor --only keyword_plan --json` |
 | A second `gbrain serve` cannot open the brain | the readiness `harness_wiring` fix: every session shares one `gbrain serve --http` | user | `persistent_install`, `credentials` | `gbrain doctor --only harness_wiring --json` |
 | `harness_wiring` reports `http_serve_unreachable` or `http_serve_unhealthy` for an HTTP registration | nothing automatic: doctor probed the registered `/health` without credentials and the endpoint did not answer as a healthy gbrain server; check the URL in the harness config and the server it points at (a hosted brain is its operator's). A `wired_running` verdict with `mcp_access: unverified` proves a listener only: confirm tools in a new session | user | none | `gbrain doctor --only harness_wiring --json` |
 | A tool the fix names is missing after a serve recovered | restart the gbrain MCP server in the harness, or start a new session ([why](../protocol/AGENT_OPERATOR_v1.md#tool-catalog-changes-toolslist_changed)) | user | none | list the tools again |
@@ -647,6 +648,82 @@ since the previous timeout, last timeout time), never one per search, and
 `gbrain doctor --only keyword_plan --json` reports it under
 `details.negative_cache`. Postgres only: PGLite has no keyword statement
 timeout.
+
+## Keyword search times out on a small Postgres brain
+
+**Symptom.** Hybrid search's keyword arm keeps failing open
+(`keyword_arm_failed: timeout`) on a Postgres brain with well under 500,000
+chunks, and doctor's `keyword_plan` warns with `cache_contention_suspected:
+true` in its details. Raising `search.keyword_statement_timeout_ms` helps for a
+while and then stops helping.
+
+**Why.** On a small brain the keyword statement rarely runs out of time because
+too many chunks match. It runs out because it waits on disk: each matching
+chunk's `search_vector` is read from the table, and when other statements have
+pushed those pages out of the database's cache, every read goes to disk. On a
+managed database with a small cache (`shared_buffers` of a few hundred MB),
+gbrain's own write bookkeeping was the usual culprit: maintenance reads of
+`persistence_requests` that read the whole receipt table, every heap page, on
+each call. Since #10605
+those reads use indexes (migration `persistence_request_window_indexes`), so
+upgrading is the first step.
+
+**Check what reads the most.** On the brain host, with the
+`pg_stat_statements` extension on (Supabase has it on by default):
+
+```sql
+SELECT calls, round(mean_exec_time) AS mean_ms, shared_blks_read, left(query, 120) AS query
+FROM pg_stat_statements ORDER BY shared_blks_read DESC LIMIT 10;
+```
+
+These totals are cumulative, so they name the statements that read the most
+blocks overall, not the one that evicted the search data during a given
+timeout. To see one slow period, take a snapshot in a session, wait through the
+slow period, and compare from the same session (nothing is reset, so other
+databases' statistics stay intact):
+
+```sql
+CREATE TEMP TABLE stmt_before AS
+SELECT dbid, userid, toplevel, queryid, shared_blks_read FROM pg_stat_statements;
+-- wait through a slow period, then:
+SELECT s.shared_blks_read - COALESCE(b.shared_blks_read, 0) AS blks_read, left(s.query, 120) AS query
+FROM pg_stat_statements s LEFT JOIN stmt_before b USING (dbid, userid, toplevel, queryid)
+WHERE s.dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+ORDER BY blks_read DESC LIMIT 10;
+```
+
+Statements near the top that are not search statements are the likely ones.
+While a slow search runs, `pg_stat_activity` showing
+`wait_event = 'DataFileRead'` for it confirms it is waiting on disk.
+
+**Give back the space compacted receipts left behind.** Receipt compaction
+(after `persistence.receipt_retention_days`, 30 days by default) drops each old
+receipt's stored intent, and autovacuum makes that space reusable for new
+receipts, but the table's files never shrink. A long-lived brain can hold over
+a gigabyte of `persistence_requests` TOAST that is mostly empty. Two ways to
+return it to the operating system, both on the brain host:
+
+1. Measure first: `SELECT pg_size_pretty(pg_relation_size('persistence_requests')) AS heap,
+   pg_size_pretty(pg_total_relation_size('persistence_requests') - pg_relation_size('persistence_requests')) AS toast_and_indexes;`
+2. If your database offers the `pg_repack` extension (Supabase does), first
+   check that the disk has free space of about twice the table plus its
+   indexes (`pg_size_pretty(2 * pg_total_relation_size('persistence_requests'))`),
+   then run `pg_repack --no-kill-backend --table=persistence_requests` against
+   the brain's database. It rebuilds the table while writes continue and holds
+   an exclusive lock only briefly, at the start and at the end. Without
+   `--no-kill-backend`, pg_repack cancels and then disconnects any session that
+   blocks that lock for long, which can roll back a gbrain write; with it, a
+   lock it cannot get skips the table instead, so run it again at a quieter
+   time.
+3. Otherwise stop everything that writes to the brain (`gbrain serve`,
+   autopilot, job workers, cron syncs), then run
+   `VACUUM (FULL, ANALYZE) persistence_requests;`. It locks the table against
+   every read and write until it finishes (minutes for a table of a few
+   gigabytes) and needs free disk about the size of the live data. Start the
+   writers again afterwards.
+
+Neither step is needed for correctness, and gbrain never runs them for you.
+Plain `VACUUM` (or autovacuum) is safe at any time but does not shrink files.
 
 ## Migration statement timeout
 

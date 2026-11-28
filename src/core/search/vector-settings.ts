@@ -1,7 +1,7 @@
 import { hnswEfSearchFor, HNSW_EF_SEARCH_DEFAULT } from '../vector-index.ts';
-import { remainingVectorBudget } from './vector-pool.ts';
+import { remainingVectorBudget, type VectorPoolAttempt } from './vector-pool.ts';
 import { HNSW_ITERATIVE_SCAN_DEFAULT, type HnswIterativeScanMode } from './hnsw-iterative-scan.ts';
-import { HNSW_ORDERED_POOL_SETTINGS, INDEX_WALK_SETTINGS, JOINED_STATEMENT_SETTINGS } from './vector-statement.ts';
+import { HNSW_ORDERED_POOL_SETTINGS, INDEX_WALK_SETTINGS, JOINED_STATEMENT_SETTINGS, type VectorSearchStatement } from './vector-statement.ts';
 
 /**
  * `walkOverfetch` (the statement's `indexWalkOverfetch`, set only for the
@@ -12,6 +12,22 @@ import { HNSW_ORDERED_POOL_SETTINGS, INDEX_WALK_SETTINGS, JOINED_STATEMENT_SETTI
  * with an index walk) adds JOINED_STATEMENT_SETTINGS. `hnswOrdered` (Postgres,
  * on the same attempts) adds HNSW_ORDERED_POOL_SETTINGS.
  */
+
+/**
+ * Which statement a Postgres attempt runs and which settings it adds: `walk` runs `indexWalkSql`; `joined` (the
+ * joined statement's ANN attempt behind an index walk) adds HNSW_ORDERED_POOL_SETTINGS; `materialOff` adds
+ * JOINED_STATEMENT_SETTINGS on those attempts and on the joined ANN attempts of a statement with
+ * `dateFilterMaterialOff`. Scope scans and the exact fallback add neither.
+ */
+export function vectorAttemptFlags(
+  shape: Pick<VectorSearchStatement, 'indexWalkSql' | 'scopeScanSql' | 'dateFilterMaterialOff'>,
+  { exact, indexWalk, scopeScan }: Pick<VectorPoolAttempt, 'exact' | 'indexWalk' | 'scopeScan'>,
+): { walk: boolean; joined: boolean; materialOff: boolean } {
+  const walk = !!indexWalk && !!shape.indexWalkSql;
+  const joinedAnn = !walk && !(scopeScan && shape.scopeScanSql) && !exact;
+  const joined = joinedAnn && !!shape.indexWalkSql;
+  return { walk, joined, materialOff: joined || (joinedAnn && shape.dateFilterMaterialOff) };
+}
 
 /** What each scan setting reads as when nothing set it (pgvector's defaults; NULL before the extension loads). */
 export const VECTOR_SETTING_DEFAULTS: Readonly<Record<string, string>> = { 'hnsw.ef_search': String(HNSW_EF_SEARCH_DEFAULT), 'hnsw.iterative_scan': 'off', 'hnsw.max_scan_tuples': '20000' };

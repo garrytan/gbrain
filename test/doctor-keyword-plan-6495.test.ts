@@ -20,6 +20,7 @@ import { WAVE_CHECKS } from '../src/commands/doctor/wave-checks.ts';
 import {
   engineKeywordPlanProbe,
   keywordPlanCheck,
+  KEYWORD_PLAN_CACHE_CONTENTION_MAX_CHUNKS,
   KEYWORD_PLAN_CANARY_TIMEOUT_MS,
   KEYWORD_PLAN_MIN_CHUNKS,
   type KeywordPlanCount,
@@ -85,6 +86,21 @@ describe('keyword_plan on a fake probe', () => {
     expect(check.message).toContain('took 4500 ms for a strict page count, more than half of');
     expect(check.message).toContain('A timed-out count is never "no matches"');
     required(check.message);
+  });
+
+  test('#10605: on a brain under 500k chunks a slow or timed-out canary points at cache pressure first; a larger brain does not', async () => {
+    for (const count of [{ outcome: 'timed_out', ms: 2003 }, { outcome: 'counted', pages: 10_001, ms: 4500 }] as KeywordPlanCount[]) {
+      const small = await keywordPlanCheck(postgresEngine, fakeProbe(count, { chunks: 82_000 }));
+      expect(small.status).toBe('warn');
+      expect(small.details?.cache_contention_suspected).toBe(true);
+      expect(small.message).toContain('more often waiting on disk reads than ranking matches');
+      expect(small.message).toContain('pg_stat_statements by shared_blks_read');
+      expect(small.message).toContain('troubleshooting.md#keyword-search-times-out-on-a-small-postgres-brain');
+      required(small.message);
+      const large = await keywordPlanCheck(postgresEngine, fakeProbe(count, { chunks: KEYWORD_PLAN_CACHE_CONTENTION_MAX_CHUNKS }));
+      expect(large.details?.cache_contention_suspected).toBe(false);
+      expect(large.message).not.toContain('shared_blks_read');
+    }
   });
 
   test('a fast count is ok and still says the canary is not coverage', async () => {

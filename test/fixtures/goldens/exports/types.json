@@ -1836,6 +1836,7 @@
           "private applyForwardReferenceBootstrap",
           "private autocommitSql",
           "private batchRetry",
+          "private brainChunkEstimate",
           "private checkoutGauge",
           "private chunkRead",
           "private cliReads",

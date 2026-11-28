@@ -80,7 +80,7 @@ describe('#10417 CJK quoted phrases and OR', () => {
   });
 
   test('a boosted partial match that repeats its terms still ranks below a page satisfying an alternative', async () => {
-    const built = buildCJKKeywordSql('대전 OR 광주 울산 포항', { limit: 2, offset: 0, innerLimit: 50, sourceFactorCase: '100.0', hardExcludeClause: '',
+    const built = buildCJKKeywordSql('대전 OR 광주 울산 포항', { limit: 2, offset: 0, sourceFactorCase: '100.0', hardExcludeClause: '',
       visibilityClause: '', detailFilter: '', opts: undefined, dedup: true }, { match: 'any' })!;
     const ranked = (await engine.executeRaw<{ slug: string }>(built.sql, built.params)).map(r => r.slug);
     expect(ranked[0]).toBe('notes/daejeon');
@@ -89,7 +89,7 @@ describe('#10417 CJK quoted phrases and OR', () => {
   test('building the SQL for a very long CJK query stays linear in its terms', () => {
     const terms = Array.from({ length: 40_000 }, (_, i) => String.fromCharCode(0xAC00 + (i % 11_172)) + String.fromCharCode(0xAC00 + Math.floor(i / 11_172)));
     const started = performance.now();
-    expect(buildCJKKeywordSql(terms.join(' '), { limit: 10, offset: 0, innerLimit: 50, sourceFactorCase: '1.0', hardExcludeClause: '',
+    expect(buildCJKKeywordSql(terms.join(' '), { limit: 10, offset: 0, sourceFactorCase: '1.0', hardExcludeClause: '',
       visibilityClause: '', detailFilter: '', opts: undefined, dedup: true })).not.toBeNull();
     expect(performance.now() - started).toBeLessThan(1_000);
   });

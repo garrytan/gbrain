@@ -24,7 +24,6 @@ function ctx(overrides: Partial<CjkKeywordCtx> = {}): CjkKeywordCtx {
   return {
     limit: 5,
     offset: 0,
-    innerLimit: 15,
     sourceFactorCase: '1.0',
     hardExcludeClause: '',
     visibilityClause: '',
