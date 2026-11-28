@@ -915,32 +915,19 @@ export async function computeAtomProvenanceDriftCheck(
     if (drifted === 0) return { name, status: 'ok', message: `${total} atom(s), all provenance-resolved${su}`, details };
 
     if (drifted >= MIN_DRIFTED && ratio > WARN_RATIO) {
-      // #8848: warn only on what gbrain repair stale-atoms can retire (source gone, or source edited and already
-      // re-extracted). An edited page that was not extracted again is the extract_atoms backlog, which re-extraction
-      // drains, so its atoms are reported here and never move the verdict.
-      const sourceIds = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id', [])).map(row => row.id);
-      const retirable = await countRetirableStaleAtoms(engine, sourceIds);
-      const retirableTotal = retirable.origin_gone + retirable.origin_changed;
-      const awaiting = Math.max(0, drifted - retirableTotal);
-      const counted = { ...details, retirable: retirableTotal, retirable_gone: retirable.origin_gone, retirable_changed: retirable.origin_changed,
-        awaiting_reextraction: awaiting };
-      const backlog = awaiting > 0
-        ? `; ${awaiting} belong to edited pages not extracted again yet (the extract_atoms backlog, drained by extract_atoms, not by this repair)`
-        : '';
-      const drift = `${drifted}/${total} atom(s) (${details.drift_pct}%) reference a source_hash no live page carries ` +
-        `— ${sourceChanged} whose source page still exists (edited), ${sourceGone} whose source page is gone` +
-        (oldestDays != null ? `; oldest ${oldestDays}d` : '') + su;
+      // #8848: warn only on what gbrain repair stale-atoms can retire; an edited page not extracted again is the extract_atoms backlog.
+      const retirable = await countRetirableStaleAtoms(engine, (await engine.listAllSources({ includeArchived: true })).map(source => source.id));
+      const retirableTotal = retirable.origin_gone + retirable.origin_changed, awaiting = Math.max(0, drifted - retirableTotal);
+      const counted = { ...details, retirable: retirableTotal, retirable_gone: retirable.origin_gone, retirable_changed: retirable.origin_changed, awaiting_reextraction: awaiting };
+      const backlog = awaiting > 0 ? `; ${awaiting} belong to edited pages not extracted again yet (the extract_atoms backlog, drained by extract_atoms, not by this repair)` : '';
+      const drift = `${drifted}/${total} atom(s) (${details.drift_pct}%) reference a source_hash no live page carries — ${sourceChanged} whose source page still exists (edited), ` +
+        `${sourceGone} whose source page is gone${oldestDays != null ? `; oldest ${oldestDays}d` : ''}${su}`;
       if (retirableTotal < MIN_DRIFTED || retirableTotal / total <= WARN_RATIO) {
         return { name, status: 'ok', message: `${drift}. ${retirableTotal} of them can be retired now (below warn threshold)${backlog}`, details: counted };
       }
-      return {
-        name, status: 'warn',
-        message:
-          `${drift}. ${retirableTotal} of them (${retirable.origin_gone} source gone, ${retirable.origin_changed} source edited and already re-extracted) ` +
-          `are stale and can be retired${backlog}. This compares source_hash only; it does not re-check whether ` +
-          `the atom's source_quote still appears in the page. Fix: preview them with gbrain repair stale-atoms, then apply with the --expect hash it prints`,
-        details: counted,
-      };
+      return { name, status: 'warn', details: counted, message: `${drift}. ${retirableTotal} of them (${retirable.origin_gone} source gone, ${retirable.origin_changed} source edited and already re-extracted) ` +
+        `are stale and can be retired${backlog}. This compares source_hash only; it does not re-check whether ` +
+        `the atom's source_quote still appears in the page. Fix: preview them with gbrain repair stale-atoms, then apply with the --expect hash it prints` };
     }
 
     return {

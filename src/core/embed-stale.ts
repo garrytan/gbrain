@@ -389,6 +389,10 @@ export async function embedStalePages(
   return result;
 }
 
+/**
+ * A spend refusal only stops claiming new keys; a request a sibling already sent was paid for, so its install
+ * checks key on abort and deadline alone (GST-4106).
+ */
 export async function embedStaleForSource(
   engine: BrainEngine,
   sourceId: string,
@@ -418,10 +422,7 @@ export async function embedStaleForSource(
   if (await embeddingSendBlocked(engine)) return await embeddingsDisabled(engine) ? { ...result, done: true } : { ...result, done: true, complete: false };
   const signature = opts.embeddingSignature;
   let refused: unknown;
-  // A spend refusal only stops claiming new keys; a sibling's request already sent was paid for, so its install
-  // checks key on abort and deadline alone.
-  const cancelled = () => !!signal?.aborted || Date.now() >= (opts.deadline ?? Infinity);
-  const stopped = () => refused !== undefined || cancelled();
+  const cancelled = () => !!signal?.aborted || Date.now() >= (opts.deadline ?? Infinity), stopped = () => refused !== undefined || cancelled();
   if (stopped()) return { ...result, aborted: true };
   await opts.assertOwned?.();
   if (stopped()) return { ...result, aborted: true };

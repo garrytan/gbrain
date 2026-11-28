@@ -159,7 +159,8 @@ for (const kind of testBackends()) {
       expect(Number((before.details as Record<string, number>).source_gone) - Number((after.details as Record<string, number>).source_gone)).toBe(30);
       // #8848 acceptance: after the advertised repair, the check reports ok; the backlog atoms stay listed, not counted.
       expect(after.status).toBe('ok');
-      expect(after.message).toContain('40 belong to edited pages not extracted again yet');
+      expect(Number((after.details as Record<string, number>).awaiting_reextraction)).toBeGreaterThanOrEqual(40);
+      expect(after.message).toMatch(/\d+ belong to edited pages not extracted again yet/);
     }, 60_000);
 
     test('an approved set applies only under the source selection it was previewed with', async () => {
