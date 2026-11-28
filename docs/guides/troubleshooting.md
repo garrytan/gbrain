@@ -662,7 +662,8 @@ chunk's `search_vector` is read from the table, and when other statements have
 pushed those pages out of the database's cache, every read goes to disk. On a
 managed database with a small cache (`shared_buffers` of a few hundred MB),
 gbrain's own write bookkeeping was the usual culprit: maintenance reads of
-`persistence_requests` that scanned every receipt and its TOAST. Since #10605
+`persistence_requests` that read the whole receipt table, every heap page, on
+each call. Since #10605
 those reads use indexes (migration `persistence_request_window_indexes`), so
 upgrading is the first step.
 
@@ -674,9 +675,12 @@ SELECT calls, round(mean_exec_time) AS mean_ms, shared_blks_read, left(query, 12
 FROM pg_stat_statements ORDER BY shared_blks_read DESC LIMIT 10;
 ```
 
-Statements near the top that are not search statements are the ones evicting
-the search data. While a slow search runs, `pg_stat_activity` showing
-`wait_event = 'DataFileRead'` for it says the same thing.
+These totals are cumulative since the last reset, so they name the statements
+that read the most blocks, not the one that evicted the search data during a
+given timeout. Run `SELECT pg_stat_statements_reset();`, wait through a slow
+period and list them again: statements near the top that are not search
+statements are the likely ones. While a slow search runs, `pg_stat_activity`
+showing `wait_event = 'DataFileRead'` for it confirms it is waiting on disk.
 
 **Give back the space compacted receipts left behind.** Receipt compaction
 (after `persistence.receipt_retention_days`, 30 days by default) drops each old

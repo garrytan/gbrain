@@ -45,10 +45,19 @@ describe('#9817 the date-bound materialization rule', () => {
       [{ types: ['meeting'] }, ABOVE, false],
       [{ where: { status: ['open'] } }, ABOVE, false],
       [{ afterDate: '2026-01-01', where: { status: ['open'] } }, ABOVE, false],
+      [{ afterDate: '2026-01-01', exclude_slugs: ['notes/a'] }, ABOVE, false],
+      [{ afterDate: '2026-01-01', language: 'typescript' }, ABOVE, false],
+      [{ afterDate: '2026-01-01', symbolKind: 'function' }, ABOVE, false],
+      [{ afterDate: '2026-01-01', detail: 'low' }, ABOVE, false],
       [{}, ABOVE, false],
       [{ afterDate: '2026-01-01', vectorLegacyGuard: true }, ABOVE, false],
     ];
     for (const [opts, chunks, expected] of cases) expect([opts, chunks, build(opts, chunks).dateFilterMaterialOff]).toEqual([opts, chunks, expected]);
+  });
+
+  test('a source scope keeps the rule only while it covers most of the brain', () => {
+    expect(build({ afterDate: '2026-01-01', sourceId: 'source-a' }, ABOVE, { share: 0.9 }).dateFilterMaterialOff).toBe(true);
+    expect(build({ afterDate: '2026-01-01', sourceId: 'source-a' }, ABOVE, { share: 0.01 }).dateFilterMaterialOff).toBe(false);
   });
 
   test('a non-indexed column (no relaxed statement) never flips', () => {
@@ -84,11 +93,11 @@ describe('#9817 planner flags per attempt', () => {
     }
   });
 
-  test('a date-bounded small source scope keeps its scope scan on the planner\'s plan', () => {
+  test('a date-bounded small source scope keeps the planner\'s plan on its scope scan and its pooled attempts', () => {
     const stmt = build({ afterDate: '2026-01-01', sourceId: 'side' }, ABOVE, { share: 0.02, chunks: 5_000 });
     expect(stmt.scopeScanSql).toBeDefined();
     expect(flagsFor(stmt, { exact: false, scopeScan: true })).toEqual({ enable_material: undefined, enable_sort: undefined });
-    expect(flagsFor(stmt, pooled)).toEqual({ enable_material: 'off', enable_sort: undefined });
+    expect(flagsFor(stmt, pooled)).toEqual({ enable_material: undefined, enable_sort: undefined });
   });
 
   test('#10507 unchanged: the joined attempt behind an index walk keeps both flags, the walk keeps its sort setting, exact keeps neither', () => {
@@ -109,15 +118,29 @@ describe('#9817 the brain chunk estimate', () => {
     let clock = 1_000, reads = 0, fail = false;
     const now = spyOn(performance, 'now').mockImplementation(() => clock);
     try {
-      const estimate = brainChunkEstimateLoader(async () => { reads++; if (fail) throw new Error('down'); return [{ chunks: 400_000 }]; });
-      expect(await estimate()).toBe(400_000);
+      const read = async () => { reads++; if (fail) throw new Error('down'); return [{ chunks: 400_000 }]; };
+      const estimate = brainChunkEstimateLoader();
+      expect(await estimate(read)).toBe(400_000);
       clock += 59_000;
-      expect(await estimate()).toBe(400_000);
+      expect(await estimate(read)).toBe(400_000);
       expect(reads).toBe(1);
       clock += 2_000; fail = true;
-      expect(await estimate()).toBe(400_000);
+      expect(await estimate(read)).toBe(400_000);
       expect(reads).toBe(2);
-      expect(await brainChunkEstimateLoader(async () => { throw new Error('down'); })()).toBeUndefined();
+      expect(await brainChunkEstimateLoader()(async () => { throw new Error('down'); })).toBeUndefined();
+    } finally { now.mockRestore(); }
+  });
+
+  test('a refresh runs the read its caller passes, so a transaction reads on its own connection', async () => {
+    let clock = 1_000;
+    const now = spyOn(performance, 'now').mockImplementation(() => clock);
+    try {
+      const calls: string[] = [];
+      const estimate = brainChunkEstimateLoader();
+      expect(await estimate(async () => { calls.push('pool'); return [{ chunks: 400_000 }]; })).toBe(400_000);
+      clock += 61_000;
+      expect(await estimate(async () => { calls.push('transaction'); return [{ chunks: 500_000 }]; })).toBe(500_000);
+      expect(calls).toEqual(['pool', 'transaction']);
     } finally { now.mockRestore(); }
   });
 });

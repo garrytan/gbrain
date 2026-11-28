@@ -128,9 +128,11 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
   // orders by matched terms first. GST-4037: a multi-term strict pass scores the same way as its any-term retry, so the
   // strict rows are exactly the retry's leading rows in the same order and an OFFSET page means the same rows whichever
   // pass served it (hybrid search runs the retry only when the strict page comes back short).
-  // A strict row of a single alternative matches every term, so its matched count is the term count.
-  const matchedScore = any || groups.length > 1 ? `(${matchedExpr})` : String(terms.length);
-  const scoreExpr = terms.length > 1 ? `(${MATCHED_TERM_WEIGHT} * ${matchedScore} + LEAST(${tfScoreExpr}, ${MATCHED_TERM_WEIGHT - 1}))` : tfScoreExpr;
+  // A strict row of a single alternative matches every term, so the capped term-frequency part alone gives that order
+  // and its score stays on the term-frequency scale that keyword-arm confidence reads.
+  const cappedTf = `LEAST(${tfScoreExpr}, ${MATCHED_TERM_WEIGHT - 1})`;
+  const scoreExpr = terms.length < 2 ? tfScoreExpr
+    : any || groups.length > 1 ? `(${MATCHED_TERM_WEIGHT} * (${matchedExpr}) + ${cappedTf})` : cappedTf;
   return assemble({ dedup, fromClause, scoreExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, limitIndex, offsetIndex, params });
 }
 

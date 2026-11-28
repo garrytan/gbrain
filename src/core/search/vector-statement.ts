@@ -156,7 +156,9 @@ export const JOINED_STATEMENT_SETTINGS: Readonly<Record<string, string>> = { ena
  * plan walked the HNSW index and returned 60-87% of the true top 20, and with
  * materialization off the planner scored the filtered chunks exactly. Below
  * this size, and for frontmatter filters, turning it off slowed 75k-chunk
- * searches 2.3x warm and 5.9x cold, so they keep the planner's plan. Only
+ * searches 2.3x warm and 5.9x cold, so they keep the planner's plan, as do the
+ * shapes the evaluation did not measure (slug exclusions, language, symbol
+ * kind, compiled-truth detail and a narrowing source scope). Only
  * materialization moves: HNSW_ORDERED_POOL_SETTINGS and the pool's exact
  * fallback routing still follow the index walk alone.
  */
@@ -165,10 +167,13 @@ export const DATE_FILTER_MATERIAL_OFF_MIN_CHUNKS = 375_000;
 /** `content_chunks` planner row estimate; -1 before the first ANALYZE. A catalog read, never a count. */
 export const BRAIN_CHUNK_ESTIMATE_SQL = `SELECT reltuples::float8 AS chunks FROM pg_class WHERE oid = 'content_chunks'::regclass`;
 
-/** The engines' brain-wide chunk estimate: BRAIN_CHUNK_ESTIMATE_SQL at most once a minute; a failed read keeps the last value. */
-export function brainChunkEstimateLoader(load: () => Promise<Array<{ chunks: unknown }>>): () => Promise<number | undefined> {
+/**
+ * The engines' brain-wide chunk estimate: BRAIN_CHUNK_ESTIMATE_SQL at most once a minute; a failed read keeps the last
+ * value. The caller passes the read, so a transaction's search reads on its own connection instead of waiting for another.
+ */
+export function brainChunkEstimateLoader(): (load: () => Promise<Array<{ chunks: unknown }>>) => Promise<number | undefined> {
   let cached: { at: number; value: Promise<number | undefined> } | undefined;
-  return () => {
+  return load => {
     if (cached && performance.now() - cached.at <= 60_000) return cached.value;
     const previous = cached?.value ?? Promise.resolve(undefined);
     cached = { at: performance.now(), value: load().then(rows => Number(rows[0]?.chunks ?? -1), () => previous) };
@@ -429,7 +434,9 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
     || (share !== undefined && share < INDEX_WALK_MIN_SCOPE_SHARE);
   const scopeScan = relaxed && share !== undefined && share < SCOPE_SCAN_MAX_SHARE && chunks !== undefined && chunks <= SCOPE_SCAN_MAX_CHUNKS;
   const walk = relaxed && !narrowed && !(scopeScan && chunks! <= SCOPE_SCAN_FIRST_MAX_CHUNKS);
-  const dateFilterMaterialOff = relaxed && !!(opts?.afterDate || opts?.beforeDate) && !opts?.where
+  const dateFilterMaterialOff = relaxed && !!(opts?.afterDate || opts?.beforeDate)
+    && !(opts?.where || opts?.exclude_slugs?.length || opts?.language || opts?.symbolKind || opts?.detail === 'low')
+    && !(share !== undefined && share < INDEX_WALK_MIN_SCOPE_SHARE)
     && (input.brainChunks ?? -1) >= DATE_FILTER_MATERIAL_OFF_MIN_CHUNKS;
   const overfetch = indexWalkOverfetch(share);
   const preMigration = modelParam ? `(${modelParam}::text IS NULL AND NOT EXISTS(SELECT 1 FROM config WHERE key='embedding_migration.state'))` : '';
