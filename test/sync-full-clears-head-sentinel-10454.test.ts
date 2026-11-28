@@ -6,12 +6,12 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { performSync } from '../src/commands/sync.ts';
-import { loadSyncFailures, recordFailures } from '../src/core/sync-failure-ledger.ts';
+import { clearFailures, loadSyncFailures, recordFailures } from '../src/core/sync-failure-ledger.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const git = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
@@ -41,6 +41,27 @@ afterAll(async () => {
 }, 60_000);
 
 describe('full sync and the <head> sentinel (#10454)', () => {
+  test('a --full re-sync that blocks on a file it cannot read keeps the <head> row', async () => {
+    const kept = await withEnv({ GBRAIN_SYNC_FAILURES_DIR: ledger }, async () => {
+      recordFailures('default', [{ path: '<head>', error: 'git history rewritten during sync' }], 'old-commit');
+      writeFileSync(join(repo, 'unreadable.md'), '---\ntype: note\ntitle: Unreadable\n---\n\nBody.\n');
+      git(repo, 'add', 'unreadable.md');
+      git(repo, 'commit', '-q', '-m', 'unreadable');
+      chmodSync(join(repo, 'unreadable.md'), 0o000);
+      try {
+        await performSync(engine, { repoPath: repo, full: true, noPull: true, noEmbed: true }).catch(() => undefined);
+        expect(loadSyncFailures().some(e => e.source_id === 'default' && e.path === 'unreadable.md' && e.state === 'open')).toBe(true);
+        return loadSyncFailures().filter(e => e.source_id === 'default' && e.path === '<head>' && e.state === 'open');
+      } finally {
+        chmodSync(join(repo, 'unreadable.md'), 0o644);
+        git(repo, 'rm', '-q', 'unreadable.md');
+        git(repo, 'commit', '-q', '-m', 'remove unreadable');
+        clearFailures('default', ['unreadable.md']);
+      }
+    });
+    expect(kept.length).toBe(1);
+  }, 60_000);
+
   test('a clean --full re-sync resolves an open <head> row', async () => {
     const open = await withEnv({ GBRAIN_SYNC_FAILURES_DIR: ledger }, async () => {
       recordFailures('default', [{ path: '<head>', error: 'git history rewritten during sync' }], 'old-commit');

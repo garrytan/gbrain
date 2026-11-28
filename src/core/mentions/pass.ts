@@ -430,11 +430,11 @@ async function refreshAliases(engine: BrainEngine, managed: boolean, sourceId: s
  * when every page was read.
  */
 export async function pagesMatchingNames(engine: BrainEngine, sourceIds: string[], added: Gazetteer, allowCrossSource: boolean, deadline: number): Promise<{ ids: number[]; through: number | null }> {
-  const names = [...added.values()].flat().map(e => e.tokens);
-  // ASCII tokens: lower() in SQL agrees with the scanner's NFC+toLowerCase, so LIKE is a superset.
-  // Otherwise every page in scope is scanned in JS.
-  const ascii = names.every(tokens => tokens.every(t => /^[\x20-\x7e]+$/.test(t)));
-  // #10529: every token of a name, in order (the scanner needs them adjacent), so a common longest word alone passes nothing.
+  // ASCII tokens: lower() in SQL agrees with the scanner's NFC+toLowerCase, so LIKE on them is a superset. #10529: a name's
+  // pattern holds every ASCII token of it, in order (the scanner needs them adjacent), so a common longest word alone passes
+  // nothing. A name with no ASCII token scans every page in scope in JS.
+  const names = [...added.values()].flat().map(e => e.tokens.filter(t => /^[\x20-\x7e]+$/.test(t)));
+  const ascii = names.every(tokens => tokens.length > 0);
   const patterns = [...new Set(names.map(tokens => `%${tokens.map(t => t.replace(/[\\%_]/g, m => `\\${m}`)).join('%')}%`))];
   const out: number[] = [];
   let after = 0;
