@@ -12,6 +12,7 @@ import { tryAcquireDbLock, type DbLockHandle } from '../../src/core/db-lock.ts';
 import { assertMigrationLeases, withMigrationLeaseTransaction, type MigrationLeaseAssert } from '../../src/core/embedding-migration-budget.ts';
 import { applyEmbeddingMigration, planEmbeddingMigration, readMigrationState, runSchemaTransition, MIGRATION_STATE_KEY } from '../../src/core/embedding-migration.ts';
 import { DEFAULT_EMBEDDING_MODEL } from '../../src/core/ai/defaults.ts';
+import { normalizeModelId } from '../../src/core/model-id.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 
 const skip = !hasDatabase();
@@ -109,7 +110,7 @@ describe.skipIf(skip)('migration lease transactions (#6587)', () => {
       const config = await engine.executeRaw<{ key: string; value: string }>(`SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions')`);
       const [{ dims }] = await engine.executeRaw<{ dims: number }>(`SELECT atttypmod AS dims FROM pg_attribute
         WHERE attrelid='content_chunks'::regclass AND attname='embedding' AND NOT attisdropped`);
-      const model = config.find(r => r.key === 'embedding_model')?.value ?? DEFAULT_EMBEDDING_MODEL;
+      const model = normalizeModelId(config.find(r => r.key === 'embedding_model')?.value ?? DEFAULT_EMBEDDING_MODEL, 'openai');
       const plan = await planEmbeddingMigration(engine, { to: model, dim: dims, fromModel: model, fromDims: dims });
       const restore = async () => {
         await engine.executeRaw(`DELETE FROM config WHERE key = ANY($1::text[])`, [[MIGRATION_STATE_KEY, 'embedding_model', 'embedding_dimensions']]);
