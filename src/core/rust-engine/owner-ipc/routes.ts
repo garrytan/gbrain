@@ -134,6 +134,14 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   'readEntityCardRows', 'rankEntities', 'listNameVariantCardCandidates', 'readVisibleVariantPages',
   'listVisibleNameVariantCandidates', 'readRetirementHop', 'readEntityAliasRows', 'readRankCoverage', 'readReferrerTargetCounts',
   'listVersionReasonWriters',
+  // served-arg-reads-entity, served-arg-reads-facts, served-arg-reads-search, served-arg-reads-relaxed (served, both routes):
+  // the reads whose scope comes from arguments the client chose: the entity card and identity list, the fact recall and
+  // dedup reads, the exact-phrase rescan, the relational name lookups, open loops, pinned questions and the page-lead
+  // overlay's global purges. Each answers at in-process parity; none is server-guarded yet (test/fixtures/served-member-lists/a1-arg-guards.tsv).
+  'countInboundLinks', 'countUncomparableFacts', 'countWorldFacts', 'findExactBasenameCandidates', 'listCallOffCueFacts',
+  'listCorePageRows', 'listEntityIdentityRows', 'listExactRescanChunks', 'listFactHoldingRefs', 'listFactSourcePages',
+  'listGlobalPurgeWithdrawals', 'listLivePageTitles', 'listNameVariantCandidates', 'listNearestFacts', 'listOpenLoops',
+  'listPageAliasNames', 'listPendingCoreEditNotices', 'listPinnedQuestions',
 ];
 
 /**
@@ -163,6 +171,14 @@ export const OWNER_IPC_REMOTE_DENY: Readonly<Record<string, string>> = {
   ...Object.fromEntries(['readAccessReadLog', 'listAccessReadPageRefs', 'readAccessReadsOfPages', 'tallyAccessReadsOfPages'].map(m => [m, READ_LOG])),
   ...Object.fromEntries(['readDecideState', 'dailyDecideSpend', 'listDecideSpendBySlot', 'listDecideReceiptStats', 'getDecideProposal',
     'listDecideProposals', 'getDecideReviewProposal', 'listDecideCalibrations', 'getDecideCalibration'].map(m => [m, DECIDE])),
+  // Lane L3 slice S4, args-scoped and unscoped reads that carry no privacy argument at all: the server cannot narrow them to what the caller may read.
+  countMentionDueSince: 'counts the pages changed since the last mention count over the whole source, private pages included, with no privacy predicate',
+  countPagesDueForMentions: 'counts every live page due for mention scanning, private pages included, with no privacy predicate',
+  countSourcePages: 'the page count of a source includes the private pages of an allowed source, so it reveals how many exist',
+  findFuzzyEntityCandidates: 'returns the five live pages of a source nearest a title, private ones included, with no privacy argument',
+  getJob: 'returns the whole job row, the private queue owner token included, before the owner fence and the redaction',
+  hasChunkImageVectors: 'an existence test over every chunk of the brain, private pages included, with no privacy argument',
+  listGoogleSourceMembers: 'the Google account of every source and bound member ids across the brain, with no scope',
 };
 
 /**

@@ -1,0 +1,21 @@
+# Served rows whose scope comes from arguments the client chose, with no server guard (lane L3 S4, Q1-B).
+# Per-user access (A1) must not lift while this file has rows; test/rust-served-a1-lock.test.ts enforces it.
+# Keep rows sorted (LC_ALL=C) and unique.
+member	hazard
+countInboundLinks	privacy applies only when the client sends excludePrivate true; the server does not check the flag
+countUncomparableFacts	privacy applies only when the client pool scope carries excludePrivate; the server does not check the scope
+countWorldFacts	privacy applies only when the client sends excludePrivate true; source and entity come from the client
+findExactBasenameCandidates	tells which client-named slugs are live pages, with no page-policy check, so a private slug is confirmed
+listCallOffCueFacts	the fact pool comes from the client scope and (source, entity) pairs; excludePrivate and the source grant are not checked
+listCorePageRows	privacy applies only when the client sends excludePrivate true; the same read without the flag lists every always-load page
+listEntityIdentityRows	allowedSources and excludePrivate narrow the answer only when the client sends them; without them every source is returned
+listExactRescanChunks	the page ids come from the client and privacy applies only when the client sends excludePrivate true
+listFactHoldingRefs	any fact id the client names returns its holding page slug and entity, with no pool or privacy check
+listFactSourcePages	any fact id the client names returns its source page, with no pool or privacy check
+listGlobalPurgeWithdrawals	source and hashes come from the client; private-visibility purge tombstones are returned unless the client sends worldOnly true
+listLivePageTitles	returns the title of any live slug the client names, with no page-policy check
+listNameVariantCandidates	no privacy argument at all; the caller-scoped variant is a separate member, and the all-pages path is reachable on a relaxed brain with no members
+listNearestFacts	the fact pool comes from the client scope and filters; excludePrivate and the source grant are not checked
+listOpenLoops	sourceIds, null meaning every source, come from the client; no privacy predicate and no caller check
+listPageAliasNames	returns the aliases of any slug the client names, with no page-policy check
+listPinnedQuestions	sourceIds and states come from the client; no sourceIds returns the pins of every source, with no caller check
