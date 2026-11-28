@@ -69,6 +69,7 @@ import { servedSession, type ServedHooks, type ServedServerOptions, type ServedS
 import { encodeLengthFrame } from '../served/framing.ts';
 import { IMPORT_CLIENT_FILE } from '../served/client-files.ts';
 import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, SERVED_STORE_KEYS } from '../served/store-returning.ts';
+import { withRemoteCaller } from '../../remote-caller.ts';
 import { remoteMemberPolicy } from '../served/remote-member-policy.ts';
 
 /** Whole operations only a protocol v3 session sends. */
@@ -690,7 +691,10 @@ export async function serveOwnerEngine(
     // The call runs under the caller's access record (re-checked by withCallerAccess) or none, its claim (member-claim.ts, never inherited),
     // exempt from the owner's host-fence refusal (fence-dispatch.ts), and a v3 call inside its session's scope (served/session.ts).
     const scoped = () => withMemberClaim(parseMemberClaim(frame.claim), () => access ? withCallerAccess(access, invoke) : withoutCallerAccess(invoke));
-    call.run = () => withRequestSignal(controller.signal, () => served ? served.wrapRun(scoped) : scoped());
+    // On protocol v2 a frame marked remote (only sent when the owner checks remote callers) runs as a remote caller, so the
+    // member guards of served/remote-member-policy.ts apply as on v3, where served.wrapRun installs the mark.
+    const v2Remote = !served && frame.remote === true;
+    call.run = () => withRequestSignal(controller.signal, () => served ? served.wrapRun(scoped) : v2Remote ? withRemoteCaller(true, scoped) : scoped());
     if (deadlineAt !== undefined) {
       call.deadlineAt = deadlineAt;
       // A request that arrives after its deadline never starts: a fast write would otherwise commit before the timer.

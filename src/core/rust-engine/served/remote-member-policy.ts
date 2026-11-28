@@ -56,6 +56,7 @@ const PAGE_ID_GUARDS: Readonly<Record<string, PageIdGuard>> = {
   readBodyManifestMeta: read('The body manifest read', one),
   readBodyManifestRows: read('The body manifest read', one),
   readGuestMarks: read('The guest marks read', list),
+  readOldestVersionAttribution: read('The first-writer attribution read', one),
 };
 
 /** A remote caller's arguments for a member, narrowed before it runs; a shape it does not recognise passes as sent (the member refuses it). */
@@ -97,8 +98,22 @@ export function remoteMemberPolicy(engine: object, member: string, method: Membe
     const allowed = new Set(refs.filter(r => readable.has(`${r.source_id}\u0000${r.slug}`)).map(r => r.id));
     const outside = (ids as number[]).filter(id => !allowed.has(id)).length;
     if (outside > 0) throw refused(member, guard, ids.length, `${outside} of the ids name no page the caller may read`);
+    if (member === 'readBriefPageVersions') return readableVersions(typed, refs[0]!, await plain(...args));
     return plain(...args);
   };
+}
+
+/**
+ * The page versions read answers a page the caller may read, but a snapshot carries its own privacy: a private draft of
+ * a page made public later must not cross. The rows stop before the first snapshot the caller's own versions read
+ * (getVersions with the caller's privacy) does not list, so the brief's newest-first walk sees only readable history.
+ */
+async function readableVersions(engine: BrainEngine, ref: { source_id: string; slug: string }, rows: unknown): Promise<unknown> {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  const visible = await engine.getVersions(ref.slug, { sourceId: ref.source_id, excludePrivate: true, includeBody: false });
+  const ids = new Set(visible.map(v => Number(v.id)));
+  const firstHidden = rows.findIndex(r => !ids.has(Number((r as { id?: unknown }).id)));
+  return firstHidden === -1 ? rows : rows.slice(0, firstHidden);
 }
 
 /** The one lookup form a remote caller may make of the member table: one member by id (household placement reads the member each stored reader names). */

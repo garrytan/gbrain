@@ -51,7 +51,9 @@ function checked(args: readonly unknown[], claim: MemberClaim): { events: Raw[];
   if (args.length !== 1 || !Array.isArray(events) || events.length < 1 || events.length > MAX_EVENTS) throw refused('event_malformed', `the batch is not 1 to ${MAX_EVENTS} events`);
   const ids = new Set<string>();
   const refs = new Map<string, Ref>();
-  const allowed = claim.allowedSources ? new Set([...claim.allowedSources, claim.sourceId]) : null;
+  // A non-empty allowlist replaces the scalar source (sourceScopeOpts' precedence). With no allowlist the claim's scalar
+  // source may be the 'default' a claim fills in for an unscoped caller, so no source is checked; page readability still is.
+  const allowed = claim.allowedSources && claim.allowedSources.length > 0 ? new Set(claim.allowedSources) : null;
   const note = (source: unknown, slug: unknown): void => {
     if (!isText(source) || !isText(slug)) throw refused('event_malformed', 'a page or link names no source and slug');
     if (allowed && !allowed.has(source)) throw refused('source_out_of_scope', 'a page or link names a source outside the caller\'s sources');
