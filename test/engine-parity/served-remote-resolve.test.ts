@@ -21,14 +21,14 @@
  *  - Seam: none. Pages are seeded with putPage, sealChunks, setPageAliases and addLink; the operations run as production code.
  */
 import { expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { parityArms, type EngineMethod } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { MEMBER_AUTH, remote, remoteView, seedEntityBrain, watchRefusals } from '../helpers/served-remote-brain.ts';
 
 const { parityTest } = parityArms(testBackends());
 
-const SEEDING = ['putPage', 'sealChunks', 'setPageAliases', 'addLink', 'setConfig'];
+const SEEDING: EngineMethod[] = ['putPage', 'sealChunks', 'setPageAliases', 'addLink', 'setConfig'];
 
 parityTest('a remote question that names an entity by a bare name, a title or two pages of one name answers the open pages only', {
   methods: [...SEEDING, 'readPageTitle', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches', 'readSiblingGroupRows', 'readSeedTitleSlugs'],

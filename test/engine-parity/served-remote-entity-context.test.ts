@@ -6,7 +6,7 @@
  *  - Contract: on every arm (PGLite; Postgres with DATABASE_URL; the Rust arm, embedded, multi-user or served) a remote
  *    caller's entity card and context_pack list the pages that refer to an entity, the records among them
  *    (entity.record_types) and the pages that name it only in text, and volunteer_context resolves a name and reports its
- *    own usage, through these typed members: readReferrerGroupRows, readReferrerRecordCandidates, readReferrerRecordPages,
+ *    own usage, through these typed members: readReflexPages (volunteer_context), readReferrerGroupRows, readReferrerRecordCandidates, readReferrerRecordPages,
  *    readTextMentionPages (the entity card), readTrustGeneration (context_pack), readReflexLiveKeys and readVolunteerUsage
  *    (volunteer_context and its stats). The seed holds a private page and a readers-only page with their own markers that
  *    refer to the entity as a record, a link and a text mention; no answer to the remote caller carries a marker.
@@ -18,14 +18,14 @@
  *  - Seam: none. Pages are seeded with putPage, sealChunks, setPageAliases and addLink; the operations run as production code.
  */
 import { expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { parityArms, type EngineMethod } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { remoteView, seedEntityBrain } from '../helpers/served-remote-brain.ts';
 
 const { parityTest } = parityArms(testBackends());
 
-const SEEDING = ['putPage', 'sealChunks', 'setPageAliases', 'addLink', 'setConfig'];
+const SEEDING: EngineMethod[] = ['putPage', 'sealChunks', 'setPageAliases', 'addLink', 'setConfig'];
 
 parityTest('a remote entity card lists the referring records and the text mentions of an entity, never a hidden page', {
   methods: [...SEEDING, 'readReferrerGroupRows', 'readReferrerRecordCandidates', 'readReferrerRecordPages', 'readTextMentionPages'],
