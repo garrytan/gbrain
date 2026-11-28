@@ -144,11 +144,11 @@ scanTextColumns	lifecycle	yes	6	no	yes	yes	serves
 pauseManagedPersistence	lifecycle	yes	1	no	yes	yes	serves
 restoreManagedPersistence	lifecycle	no	0	no	-	-	-
 withManagedPersistencePaused	lifecycle	yes	7	no	yes	yes	serves
-getPage	pages	yes	294	yes	yes	yes	serves
-readPageSnapshot	pages	yes	121	no	yes	yes	serves
-readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
+getPage	pages	yes	295	yes	yes	yes	serves
+readPageSnapshot	pages	yes	124	no	yes	yes	serves
+readPageSnapshotsBatch	pages	yes	9	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1427	yes	yes	yes	serves
+putPage	pages	yes	1428	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -707,7 +707,7 @@ allocateBodyOccurrenceIds	segmented_body	yes	41	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	49	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	18	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	48	no	yes	yes	serves
-readManifest	segmented_body	yes	25	no	yes	yes	serves
+readManifest	segmented_body	yes	26	no	yes	yes	serves
 readSegmentedEmbedPage	segmented_body	yes	3	no	yes	yes	serves
 stageSegmentChunks	segmented_body	yes	18	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	78	no	yes	yes	serves
@@ -735,7 +735,7 @@ listSegmentedRechunkCandidates	segmented_body	yes	1	no	yes	yes	serves
 readSegmentedRechunkPage	segmented_body	yes	1	no	yes	yes	serves
 listOccurrenceChunks	segmented_body	yes	1	no	yes	yes	serves
 readMaterializingRevision	segmented_body	yes	1	no	yes	yes	serves
-setMaterializingRevision	segmented_body	yes	1	no	yes	yes	serves
+setMaterializingRevision	segmented_body	yes	2	no	yes	yes	serves
 restorePageUpdatedAt	segmented_body	yes	1	no	yes	yes	serves
 readSegmentedRewritePage	segmented_body	yes	3	no	yes	yes	serves
 restorePageDeletedAt	segmented_body	yes	2	no	yes	yes	serves
@@ -790,7 +790,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	4	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
 getConfig	config	yes	60	no	yes	yes	serves
-setConfig	config	yes	101	no	yes	yes	serves
+setConfig	config	yes	102	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
 getAllConfig	config	yes	2	no	yes	yes	serves
@@ -1432,7 +1432,7 @@ listExportWithdrawals	cli_reads_export	yes	4	no	yes	yes	serves
 listPurgeTombstones	cli_reads_export	yes	1	no	yes	yes	serves
 readExportPageRows	cli_reads_export	yes	4	no	yes	yes	serves
 normalizeFenceLines	cli_reads_export	yes	5	no	yes	yes	serves
-readSegmentedPageHead	cli_reads_export	yes	9	no	yes	yes	serves
+readSegmentedPageHead	cli_reads_export	yes	10	no	yes	yes	serves
 readBodyManifestRows	cli_reads_export	yes	4	no	yes	yes	serves
 readBodyManifestMeta	cli_reads_export	yes	1	no	yes	yes	serves
 readBodyManifestOutline	cli_reads_export	yes	1	no	yes	yes	serves

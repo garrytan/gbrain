@@ -556,6 +556,7 @@ test/engine-parity/slot-ends-callers.test.ts
 test/engine-parity/slot-ends-refusal.test.ts
 test/engine-parity/slug-normalize.test.ts
 test/engine-parity/slug-spelling-repair-reads.test.ts
+test/engine-parity/snapshot-body-generation.test.ts
 test/engine-parity/soak-counter-writes.test.ts
 test/engine-parity/source-admin-writes.test.ts
 test/engine-parity/source-archive.test.ts

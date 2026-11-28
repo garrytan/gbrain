@@ -1536,10 +1536,25 @@ fn cmp_updated(a: &PageRecord, b: &PageRecord) -> Ordering {
         .then_with(|| a.id.cmp(&b.id))
 }
 
+/// The `bodyGeneration` of a page snapshot: a segmented page's live body generation, which read
+/// pins and restores of the page read (page-state/snapshot.ts). An inline page's snapshot has no
+/// such key, as in PGLite.
+pub(crate) fn add_body_generation(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    fields: &mut Map<String, Value>,
+) -> Result<()> {
+    if let Some((generation, _)) = crate::page_body::segmented_reference(read, page.id)? {
+        fields.insert("bodyGeneration".into(), json!(generation));
+    }
+    Ok(())
+}
+
 impl Store {
     /// `readPageSnapshot(slug, opts)`: `{page, tags, revision, sourceIncarnation, withdrawals}`
     /// (with `globalPurges` and `globalPurgeRows` when the source has a `*` tombstone,
-    /// `page_withdrawals.rs`) or `None` when the page is not visible in the scope.
+    /// `page_withdrawals.rs`, and `bodyGeneration` when the page is segmented) or `None` when the
+    /// page is not visible in the scope.
     pub fn read_page_snapshot(&self, slug: &str, scope: &ReadScope) -> Result<Option<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();
@@ -1564,6 +1579,7 @@ impl Store {
                 &page.slug,
                 scope.exclude_private.is_some(),
             )?);
+            add_body_generation(&*read, &page, fields)?;
         }
         Ok(Some(snapshot))
     }

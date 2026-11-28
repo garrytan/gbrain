@@ -3079,6 +3079,66 @@ mod segment_chunk_tests {
         );
     }
 
+    /// PGLite's `readPageSnapshot` and `readPageSnapshotsBatch` add `bodyGeneration` (the page's
+    /// live body generation) to the snapshot of a segmented page only: a published page and an
+    /// unpublished shell (generation 0) carry it, an inline page has no such key.
+    #[test]
+    fn a_segmented_page_snapshot_carries_its_body_generation_single_and_batched() {
+        let store = crate::test_support::store();
+        published(&store);
+        store
+            .create_segmented_page_shell(
+                "notes/shell",
+                &serde_json::from_value(json!({"type": "note", "title": "Shell"})).unwrap(),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap();
+        store
+            .put_page(
+                "notes/inline",
+                &crate::pages::PageInput {
+                    page_type: "note".into(),
+                    title: "Inline".into(),
+                    compiled_truth: "body".into(),
+                    ..crate::pages::PageInput::default()
+                },
+                &crate::pages::PutPageOptions::default(),
+            )
+            .unwrap();
+        let slugs = ["notes/a", "notes/shell", "notes/inline"];
+        let single: Vec<Option<Value>> = slugs
+            .iter()
+            .map(|slug| {
+                store
+                    .read_page_snapshot(slug, &crate::pages::ReadScope::default())
+                    .unwrap()
+                    .unwrap()
+                    .get("bodyGeneration")
+                    .cloned()
+            })
+            .collect();
+        assert_eq!(single, [Some(json!(1)), Some(json!(0)), None]);
+        let refs: Vec<crate::page_ops::PageRef> = slugs
+            .iter()
+            .map(|slug| crate::page_ops::PageRef {
+                slug: (*slug).into(),
+                source_id: "default".into(),
+            })
+            .collect();
+        let batch = store
+            .read_page_snapshots_batch(&refs, &crate::page_ops::SnapshotBatchOptions::default())
+            .unwrap();
+        let batched: Vec<Option<Value>> = batch["snapshots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|snapshot| snapshot.get("bodyGeneration").cloned())
+            .collect();
+        assert_eq!(batched, single);
+    }
+
     #[test]
     fn a_retention_purge_deletes_the_texts_only_the_purged_page_needed() {
         // PGLite's purgeDeletedPages deletes the purged pages' segment texts in the same

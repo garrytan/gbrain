@@ -37,6 +37,7 @@ import type { SegmentChunkInput } from '../../src/core/page-body/types.ts';
 import { conversationBody } from '../helpers/conversation-page.ts';
 import { needleChat, N14_REDUCED } from '../helpers/needle-chat.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { parityArms } from './harness.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -138,6 +139,47 @@ describe('engine parity: segmented callers', () => {
       const again = receiptView(await runSegmentedRechunk(engine, { slug: 'chats/rechunk' }));
       expect(again.pages).toEqual([]);
       return { sealed, preview, applied, after, again, version: SEGMENTED_CHUNKER_VERSION };
+    });
+
+  parityTest('a get_page window read whose page a re-chunk flipped after the read was authorized answers revision_changed',
+    { methods: ['setConfig', 'getPage', 'readPageSnapshot', 'readSegmentedPageHead', 'setMaterializingRevision'], timeout: 600_000 },
+    async (engine, backend) => {
+      // A re-chunk keeps the knowledge revision (the body did not change) and publishes a new body generation, so only
+      // the generation of the read pin (the get_page snapshot's bodyGeneration) tells the reader that the rows it was
+      // authorized for are gone. The race is forced as test/large-pages/pinned-segmented-reads.test.ts forces it: a
+      // one-shot hook runs the re-chunk before the window read opens the page row; no timing.
+      await engine.setConfig('pages.segmented_storage', 'on');
+      expect((await streamed(engine, backend, 'chats/pinned', needleBody(200_000))).status).toBe('imported');
+      await sealAtOldChunker(engine, 'chats/pinned');
+      const before = (await engine.readPageSnapshot('chats/pinned', { sourceId: 'default' }))!;
+      const states: string[] = [];
+      const head = engine.readSegmentedPageHead;
+      // A transaction's engine may inherit from `engine`, so the hook keeps the caller's `this`.
+      engine.readSegmentedPageHead = (async function (this: BrainEngine, ...args: Parameters<BrainEngine['readSegmentedPageHead']>) {
+        if (!states.length) {
+          states.push('fired');
+          states.push(...(await runSegmentedRechunk(engine, { apply: true, slug: 'chats/pinned' })).pages.map(p => String(p.state)));
+        }
+        return head.apply(this, args);
+      }) as BrainEngine['readSegmentedPageHead'];
+      let out;
+      try {
+        out = await dispatchToolCall(engine, 'get_page', { slug: 'chats/pinned', body: 'window', bytes: { offset: 0, length: 400 } },
+          { remote: false, admissionOrigin: 'interactive', transport: 'stdio', sourceId: 'default' } as never);
+      } finally {
+        engine.readSegmentedPageHead = head;
+      }
+      const answer = JSON.parse((out as { content: Array<{ text: string }> }).content[0]!.text) as Record<string, unknown>;
+      const after = (await engine.readPageSnapshot('chats/pinned', { sourceId: 'default' }))!;
+      const result = {
+        rechunked: states,
+        revisionKept: after.revision === before.revision,
+        generationMoved: Number(after.bodyGeneration) > Number(before.bodyGeneration),
+        code: answer.code ?? null,
+        windowReturned: answer.window !== undefined,
+      };
+      expect(result).toEqual({ rechunked: ['fired', 'rechunked'], revisionKept: true, generationMoved: true, code: 'revision_changed', windowReturned: false });
+      return result;
     });
 
   parityTest('an incremental link derivation stores a row per live occurrence, then reuses every run on a second pass',

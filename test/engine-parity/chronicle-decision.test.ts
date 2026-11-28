@@ -226,11 +226,8 @@ describe('the write-time chronicle decision', () => {
       return out;
     } finally { await disposePersistenceConsumer(engine); }
   });
-  parityTest('a segmented meeting: the decision reads its stored truth lead, so it records a pending row, not too_short', { methods: ['readPageTruthLead', 'readChronicleRow', 'readPageSnapshot', 'setConfig'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('a segmented meeting: the decision reads its stored truth lead, so it records a pending row, not too_short', { methods: ['readPageTruthLead', 'readChronicleRow', 'readPageSnapshot', 'setConfig'], requires: 'raw_sql' }, async (engine) => {
     // Over 1 MiB with pages.segmented_storage on, the page row keeps no compiled_truth: the decision reads truth_lead.
-    // The Rust engine stores it segmented too (`body_storage: 'segmented'`), but its page snapshot carries no
-    // `bodyGeneration` yet (a known gap of the Rust segmented page read, not of the chronicle decision): the Rust arm
-    // pins that gap below, so this case fails the day the snapshot carries the generation and the pin must go.
     const slug = 'meetings/segmented-example';
     const big = `---\ntype: meeting\ntitle: Long sync\ndate: ${today}\n---\n\n` + BODY.repeat(Math.ceil((1024 ** 2 + 4096) / BODY.length));
     await engine.setConfig('pages.segmented_storage', 'on');
@@ -243,8 +240,7 @@ describe('the write-time chronicle decision', () => {
       const row = snap && await engine.readChronicleRow({ sourceId: 'default', pageId: Number(snap.page.id), contentHash: String(snap.page.content_hash),
         extractorVersion: CHRONICLE_EXTRACTOR_VERSION });
       const storage = snap ? Object.getOwnPropertyDescriptor(snap.page, 'body_storage')?.value : null;
-      if (backend === 'rust') expect(snap?.bodyGeneration, 'the Rust page snapshot now carries bodyGeneration: drop this pin').toBeUndefined();
-      else expect(typeof snap?.bodyGeneration).toBe('number');
+      expect(typeof snap?.bodyGeneration).toBe('number');
       const out = { part, row: row && shape(row, String(snap!.page.content_hash)), segmented: storage === 'segmented',
         lead: lead === null ? null : { startsWithBody: lead.startsWith(BODY.slice(0, 60)), longerThanMinimum: lead.length >= 200 } };
       expect(out).toEqual({ part: { ok: true, state: 'committed', status: 'created_or_updated', chronicle_backstop: PENDING }, row: PENDING_ROW(slug),

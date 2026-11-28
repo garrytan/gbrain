@@ -380,7 +380,7 @@ test/engine-parity/segment-pending-stamp.test.ts	3	0
 test/engine-parity/segment-regions.test.ts	1	0
 test/engine-parity/segment-sweep-managed.test.ts	1	0
 test/engine-parity/segmented-body.test.ts	22	0
-test/engine-parity/segmented-callers.test.ts	3	0
+test/engine-parity/segmented-callers.test.ts	4	0
 test/engine-parity/segmented-embedding.test.ts	2	0
 test/engine-parity/segmented-fence-staging.test.ts	1	0
 test/engine-parity/segmented-ledger-reads.test.ts	5	0
@@ -394,6 +394,7 @@ test/engine-parity/slot-ends-callers.test.ts	3	0
 test/engine-parity/slot-ends-refusal.test.ts	1	0
 test/engine-parity/slug-normalize.test.ts	3	10
 test/engine-parity/slug-spelling-repair-reads.test.ts	1	1
+test/engine-parity/snapshot-body-generation.test.ts	3	0
 test/engine-parity/soak-counter-writes.test.ts	2	0
 test/engine-parity/source-admin-writes.test.ts	3	0
 test/engine-parity/source-archive.test.ts	6	0

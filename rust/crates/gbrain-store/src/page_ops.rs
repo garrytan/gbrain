@@ -427,7 +427,8 @@ fn shuffle_seed(seed: Option<f64>, env: &dyn Env) -> u64 {
     }
 }
 
-/// `{ page, tags, revision, sourceIncarnation, withdrawals }` (and the global purge fields), as
+/// `{ page, tags, revision, sourceIncarnation, withdrawals }` (and the global purge fields, and
+/// `bodyGeneration` of a segmented page), as
 /// `Store::read_page_snapshot`.
 fn snapshot_json(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
     let incarnation = read_source(read, &page.source_id)?
@@ -448,6 +449,7 @@ fn snapshot_json(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
             &page.slug,
             false,
         )?);
+        crate::pages::add_body_generation(read, page, fields)?;
     }
     Ok(snapshot)
 }
