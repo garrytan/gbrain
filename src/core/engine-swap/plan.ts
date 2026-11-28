@@ -142,11 +142,15 @@ export async function assertNotManaged(engine: BrainEngine, destination?: Destin
 
 /**
  * What a managed brain loses on a Rust destination today (single-host and multi-user), named in the plan instead of
- * refused. Empty: the one loss it named (RUST_ENGINE.md conflict row 55a, a failing Git effect's raw recovery read) is
- * closed, as recordFailure reads it through the typed persistenceUpkeepStore. A managed plan keeps the empty field;
- * an unmanaged plan does not carry it.
+ * refused. The Rust engine serves managed_persistence in both modes (rust-engine/store-capabilities.ts HELD_FOR_CALLERS and
+ * MULTIUSER_WITHHELD are empty), so each raw read a managed write still runs is reachable and is named here, with its
+ * RUST_ENGINE.md conflict row. An entry leaves this list in the same commit that closes its row, with its pin in
+ * test/engine-swap-managed-storage.test.ts. A managed plan carries the field; an unmanaged plan does not.
  */
-export const MANAGED_RUST_LOSSES: readonly string[] = [];
+export const MANAGED_RUST_LOSSES: readonly string[] = [
+  'Removing a page in managed mode can stop before it commits (RUST_ENGINE.md conflict row 61a): its preparation reads the other pages that claim the same file through raw SQL (persistence/file-claims.ts findLiveFileClaimants, called from persistence/page-prepare.ts), so on a Rust brain the removal refuses raw_sql and nothing changes. PGLite and Postgres commit the removal and push it, or hold it until the push works. Owner: lane LM, due 2026-12-10.',
+  'A managed write on a rooted source that no writer has claimed yet can stop after it claims the source (RUST_ENGINE.md conflict row 64): its preparation checks whether the page is a read-only mirror copy through raw SQL (persistence/mirror-read-only.ts isMirrorOnlyPage), so on a Rust brain the write refuses raw_sql, and the source stays claimed with no write. PGLite and Postgres read the page and finish or refuse the write. Owner: lane LM, due 2026-12-10.',
+];
 
 /** The plan hash binds what a run would act on, never volatile readings (time, free space). */
 function planHash(p: Omit<SwapPlan, 'plan_hash'>, dest: DestinationOptions | undefined): string {

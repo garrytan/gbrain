@@ -28,9 +28,12 @@ because connecting would otherwise initialize a new, empty brain. With a store i
 migrating it and reads whether the brain uses managed storage. The Rust engine holds managed storage on one host and, since lane LM slice 3, on a multi-user store
 (`GBRAIN_RUST_MULTIUSER=1`, where its checkout locks are leases). A managed brain is refused with `engine_swap_refused`
 (reason `managed_storage`) only when the build's Rust engine does not serve managed mode. A managed brain gets its
-plan with a `managed_known_losses` list (one "known loss" line per entry in the text plan). The list is empty today:
-a failing Git effect on a Rust brain retries and parks as on PGLite and Postgres ([RUST_ENGINE.md](../designs/RUST_ENGINE.md)
-conflict row 55a, closed); an unmanaged brain's plan does not carry the field. It reads the worktree
+plan with a `managed_known_losses` list (one "known loss" line per entry in the text plan). It names two losses today
+([RUST_ENGINE.md](../designs/RUST_ENGINE.md) conflict rows 61a and 64): removing a page in managed mode can stop before
+it commits (a raw read in `findLiveFileClaimants`), and a managed write on a rooted source no writer has claimed can stop
+after it claims the source, which then stays claimed with no write (a raw read in `isMirrorOnlyPage`). PGLite and
+Postgres finish both writes. A failing Git effect on a Rust brain retries and parks as on PGLite and Postgres (row 55a,
+closed). An unmanaged brain's plan does not carry the field. It reads the worktree
 refresh journal and the shadow status, and lists. The shadow status is the same document `gbrain engine shadow
 status --json` prints for this brain; with no shadow for it, the verdict is `NOT READY` with reason `no_shadow`:
 
