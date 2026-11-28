@@ -16,6 +16,24 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 const cli = (args: string[]) => runCli(args, { home, cwd: home });
 
 describe('D1 CLI error rendering', () => {
+  // Real CLI exits with stderr piped by runCli: queued writes must not lose
+  // any of the three human diagnostic lines on an immediate usage-error exit.
+  test.each([
+    { args: ['definitely-not-a-command'], code: 'unknown_command', message: 'Unknown command: definitely-not-a-command', fix: 'Run `gbrain --help` for available commands.' },
+    { args: ['lint', '--definitely-not-a-flag'], code: 'unknown_flag', message: "unknown flag --definitely-not-a-flag for 'gbrain lint'", fix: 'gbrain lint --help' },
+    { args: ['get'], code: 'invalid_params', message: "Missing required parameter 'slug' for 'gbrain get'.", fix: 'Usage: gbrain get <slug> (see `gbrain get --help`).' },
+  ])('$code: all three human lines reach piped stderr before exit', async ({ args, code, message, fix }) => {
+    const r = await cli(args);
+    expect(r.exitCode).toBe(2);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toBe([
+      `Error [${code}]: ${message}`,
+      `Fix: ${fix}`,
+      `Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#${code}`,
+      '',
+    ].join('\n'));
+  });
+
   test('unknown command: human lines on stderr, exit 2', async () => {
     const r = await cli(['definitely-not-a-command']);
     expect(r.exitCode).toBe(2);

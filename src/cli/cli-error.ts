@@ -49,6 +49,13 @@ export function cliCommandOf(argv: readonly string[] = process.argv.slice(2)): s
   return argv.find(a => !a.startsWith('-')) ?? '';
 }
 
+// In-process callers keep the stream capture seam. The CLI uses Bun's
+// synchronous console delivery so immediate exit cannot discard the error.
+let humanErrorSink = (text: string): void => { process.stderr.write(text); };
+export function installCliErrorConsoleSink(): void {
+  humanErrorSink = text => { console.error(text.replace(/\n$/, '')); };
+}
+
 /** Render and write `e`; returns the exit code (the caller exits or sets the verdict). */
 export function writeCliError(e: unknown, command: string, opts: CliErrorWriteOpts = {}): number {
   const json = opts.json ?? jsonRequested(opts.argv ?? process.argv.slice(2));
@@ -67,7 +74,7 @@ export function writeCliError(e: unknown, command: string, opts: CliErrorWriteOp
     stderr = [`Error [${env.code}]: ${env.message}`, `Fix: ${env.fix?.command ?? env.suggestion}`,
       ...(env.why ? [`Why: ${env.why}`] : [])].join('\n') + '\n';
   }
-  if (opts.stderr !== false) try { process.stderr.write(stderr ?? ''); } catch { /* stderr gone */ }
+  if (opts.stderr !== false && stderr) try { humanErrorSink(stderr); } catch { /* stderr gone */ }
   return r.exitCode;
 }
 
