@@ -162,6 +162,27 @@ describe('a sealed close', () => {
     });
   }
 
+  test('when removing the seal fails, a line in the invalidation file makes the seal stale: the next owner refuses it', async () => {
+    const dir = tmp();
+    writeSeedRecord(dir, SEED);
+    writeShadowState(dir, STATE);
+    const s = session(dir, { clock: () => 1_000 });
+    expect(await s.ask('watermark', { valid: true, since: 1_500 })).toMatchObject({ valid: true });
+    s.child.handle({ t: 'seal', db_at: 'mark-1' });
+    await s.child.pending();
+    let failed = 0;
+    const spy = spyOn(followStatus, 'writeFollowerFile').mockImplementation(() => { failed++; throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); });
+    try {
+      s.child.handle({ t: 'watermark', valid: false, reason: 'relation_dirty', relation: 'pages' });
+      await s.child.pending(); // the process dies here, its writes failing
+    } finally { spy.mockRestore(); }
+    expect(failed).toBeGreaterThanOrEqual(1); // the injected failure fired
+    expect(readFollowerFile(dir)!.seal).toBeDefined(); // still on disk
+    const later = next(dir);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+    await refused(later, (await s.ask<{ continuity: string }>('state')).continuity);
+  });
+
   test('unconfirmed, the session\'s own full obligation is settled only by a full pass that started after the session', async () => {
     const { dir } = await sealed();
     const s = next(dir);

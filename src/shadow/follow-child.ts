@@ -272,7 +272,7 @@ export class FollowChild {
   private async run(event: FollowEvent): Promise<void> {
     this.syncEpoch();
     if (event.t === 'seal') { this.sealNow(event.db_at ?? null, event.refused); return; }
-    this.seal = null; // anything after a seal (an apply, an invalidation, a reconcile call) voids it
+    this.revokeSeal(); // anything after a seal (an apply, an invalidation, a reconcile call) voids it, on disk first
     if (event.t === 'apply') await this.apply(event);
     else if (event.t === 'watermark') this.invalidate(event.reason, event.relation);
     else if (event.t === 'rpc') await this.rpc(event);
@@ -287,7 +287,12 @@ export class FollowChild {
   private sealNow(dbAt: string | null, refused?: string): void {
     const file = this.file;
     if (!file || !this.o.owner() || this.continuity === null) return;
-    const notSealed = (reason: string): void => { this.seal = null; this.outcome('not_sealed', reason); this.write(true); };
+    const notSealed = (reason: string): void => {
+      const had = this.seal !== null;
+      this.seal = null;
+      this.outcome('not_sealed', reason);
+      if (!this.write(true) && had) this.appendForeign('seal_revoked'); // an earlier seal is still on disk: make it stale
+    };
     if (refused) { notSealed(typeof refused === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(refused) ? refused : 'refused'); return; }
     this.readForeign();
     const size = foreignSize(this.o.dir);
@@ -303,12 +308,24 @@ export class FollowChild {
     this.write(true);
   }
 
+  /**
+   * Removes a seal this session wrote, from disk before anything else happens: a process killed after the next event
+   * must not leave a seal that never saw it. When that write fails the seal is still on disk, so a line in the
+   * invalidation file makes its foreign size stale (the next owner then refuses it).
+   */
+  private revokeSeal(): void {
+    if (!this.seal) return;
+    this.seal = null;
+    this.outcome('not_sealed', 'seal_revoked');
+    if (!this.write(true)) this.appendForeign('seal_revoked');
+  }
+
   /** `relation` makes only that relation dirty; `until` (default now) is the time a pass must start after to settle it. */
   private invalidate(reason: string, relation?: string, until = this.now()): void {
     const w = this.file?.watermark;
     if (!w) return;
     this.changes++;
-    this.seal = null;
+    this.revokeSeal();
     if (!this.o.owner()) { this.noteForeign(reason); return; }
     if (relation) this.dirty.set(relation, Math.max(this.dirty.get(relation) ?? 0, until));
     else this.fullAt = Math.max(this.fullAt ?? 0, until);
@@ -487,16 +504,17 @@ export class FollowChild {
     return { ...file.watermark, confirmed: true };
   }
 
-  private write(force: boolean): void {
+  /** False only when the write was attempted and failed. */
+  private write(force: boolean): boolean {
     const file = this.file;
-    if (!file || !this.o.owner()) return;
+    if (!file || !this.o.owner()) return true;
     const at = this.now();
-    if (!force && at - this.lastWrite < WRITE_EVERY_MS) return;
+    if (!force && at - this.lastWrite < WRITE_EVERY_MS) return true;
     this.lastWrite = at;
     file.updated_at = new Date(at).toISOString();
     if (this.seal) file.seal = { ...this.seal, at: file.updated_at }; else delete file.seal;
     file.queue_depth = this.servingQueued + this.depth;
     file.lag_ms = this.waiting.length ? Math.max(0, at - Math.min(...this.waiting)) : 0;
-    try { writeFollowerFile(this.o.dir, file); } catch { /* a full disk loses the status, never the follower */ }
+    try { writeFollowerFile(this.o.dir, file); return true; } catch { return false; /* a full disk loses the status, never the follower */ }
   }
 }
