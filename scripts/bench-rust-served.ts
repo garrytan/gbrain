@@ -9,6 +9,11 @@
  * p99: the mode's (multi-user embedded minus plain), the wire's (served minus multi-user embedded) and the total
  * (served minus plain).
  *
+ * Every write sends a body the brain it lands on does not hold yet: the multi-user embedded arm and the served arm share
+ * one brain, so each arm's body names the arm, and a check refuses any write whose page equals the last one written to
+ * that slug of that brain (an unchanged-body write costs less, and would hide the write's real cost).
+ *   --only <text>   run only the shapes whose name contains <text> (for example --only putPage)
+ *
  *   bun scripts/bench-rust-served.ts [--samples 1000] [--out /var/tmp/l3/bench-served.json]
  *
  * Needs the Rust addon (`bun run rust:build` writes rust/target/addon/gbrain_engine.<target>.node, or set
@@ -37,6 +42,7 @@ function flag(name: string): string | undefined {
 const samples = Math.min(MAX_SAMPLES, Math.max(10, Math.trunc(Number(flag('samples') ?? 1000))));
 if (!Number.isFinite(samples)) { console.error('--samples must be a number'); process.exit(2); }
 const outPath = flag('out') ?? '/var/tmp/l3/bench-served.json';
+const only = flag('only');
 
 const addonPath = process.env.GBRAIN_TEST_RUST_ENGINE_ADDON
   ?? join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${detectAddonTarget() ?? 'unsupported'}.node`);
@@ -52,19 +58,29 @@ process.env.GBRAIN_RUST_MULTIUSER = '1';
 const pct = (sorted: number[], p: number): number => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))]!;
 const round = (n: number): number => Math.round(n * 1000) / 1000;
 
-interface Shape { name: string; run: (engine: RustEngine, i: number) => Promise<unknown>; samples?: number }
+type Arm = 'plain' | 'embedded' | 'served';
+interface Shape { name: string; run: (engine: RustEngine, i: number, arm: Arm) => Promise<unknown>; samples?: number }
 
-const smallPage = (i: number) => ({ type: 'note', title: `Bench ${i}`, compiled_truth: `Bench page ${i}. ${'The quick brown fox. '.repeat(20)}`, frontmatter: { n: i } });
+const smallPage = (i: number | string) => ({ type: 'note', title: `Bench ${i}`, compiled_truth: `Bench page ${i}. ${'The quick brown fox. '.repeat(20)}`, frontmatter: { n: i } });
+
+/** The last page each slug of each brain got: the plain arm has its own brain, the other two share one. */
+const lastWritten = new Map<string, string>();
+/** Writes `page` to `slug` through `engine`, after checking the brain does not hold that very page already. */
+function freshPut(engine: RustEngine, arm: Arm, slug: string, page: object): Promise<unknown> {
+  const key = `${arm === 'plain' ? 'plain' : 'multiuser'}:${slug}`;
+  const body = JSON.stringify(page);
+  if (lastWritten.get(key) === body) throw new Error(`bench: the ${arm} arm would rewrite ${slug} with the page it already holds`);
+  lastWritten.set(key, body);
+  return engine.putPage(slug, page as never);
+}
 const LARGE_BODY = Array.from({ length: 256 * 1024 / 64 }, (_, i) => `line ${String(i).padStart(6, '0')} ${'x'.repeat(48)}\n`).join('');
 
 const shapes: Shape[] = [
   { name: 'getPage (small read)', run: e => e.getPage('bench/seed-0') },
-  { name: 'putPage (write)', run: (e, i) => e.putPage(`bench/write-${i % 64}`, smallPage(i) as never) },
+  { name: 'putPage (write)', run: (e, i, arm) => freshPut(e, arm, `bench/write-${i % 64}`, smallPage(`${arm}-${i}`)) },
   { name: 'listPages limit 50', run: e => e.listPages({ limit: 50 } as never) },
-  { name: 'putPage ~256 KiB body', run: (e, i) => e.putPage('bench/large', { type: 'note', title: 'Large', compiled_truth: LARGE_BODY, frontmatter: { n: i } } as never) },
+  { name: 'putPage ~256 KiB body', run: (e, i, arm) => freshPut(e, arm, 'bench/large', { type: 'note', title: 'Large', compiled_truth: `${arm} ${i}\n${LARGE_BODY}`, frontmatter: { n: `${arm}-${i}` } }) },
 ];
-
-type Arm = 'plain' | 'embedded' | 'served';
 
 /** Opens a RustEngine on `dir` with multi-user mode off: the switch is unset for the open only. */
 async function openPlain(addon: Awaited<ReturnType<typeof loadRustAddon>>, dir: string): Promise<RustEngine> {
@@ -106,17 +122,17 @@ async function main(): Promise<void> {
     const arms: Array<[Arm, RustEngine]> = [['plain', plain], ['embedded', owner], ['served', client]];
 
     const results: Array<Record<string, unknown>> = [];
-    for (const shape of shapes) {
+    for (const shape of shapes.filter(s => !only || s.name.includes(only))) {
       const n = shape.samples ?? samples;
       // Warm both paths (connection, caches, JIT) before measuring.
-      for (let i = 0; i < 20; i++) for (const [, engine] of arms) await shape.run(engine, i);
+      for (let i = 0; i < 20; i++) for (const [arm, engine] of arms) await shape.run(engine, -1 - i, arm);
       const times: Record<Arm, number[]> = { plain: [], embedded: [], served: [] };
       for (let i = 0; i < n; i++) {
         // Rotate which arm goes first, so none always follows another's cache state.
         for (let k = 0; k < arms.length; k++) {
           const [arm, engine] = arms[(i + k) % arms.length]!;
           const t0 = performance.now();
-          await shape.run(engine, i);
+          await shape.run(engine, i, arm);
           times[arm].push(performance.now() - t0);
         }
       }

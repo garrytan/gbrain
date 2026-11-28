@@ -438,24 +438,30 @@ A client has no store of the brain, so it still turns the mode on with `GBRAIN_R
 Three arms run one call shape in a rotating order: the plain Rust engine (multi-user mode off), the multi-user engine
 that owns the brain (embedded), and a served client of it over loopback TLS. Loopback has no network delay, so the
 served numbers are the protocol's own cost, a floor for a remote client. All times are in milliseconds, as p50 / p99.
+Every write sends a body its brain does not hold yet. The two `putPage` rows come from a rerun with
+`--only putPage --samples 2000` on the same tip and machine.
 
 | Shape | Plain | Multi-user embedded | Served | Loss: served against plain |
 |---|---:|---:|---:|---:|
 | `getPage` (small read) | 0.075 / 0.138 | 0.074 / 0.109 | 0.151 / 0.445 | 0.076 / 0.307 |
-| `putPage` (write) | 4.455 / 5.794 | 4.724 / 6.211 | 3.297 / 6.401 | -1.158 / 0.607 |
+| `putPage` (write) | 4.748 / 6.439 | 5.705 / 7.313 | 6.285 / 7.884 | 1.536 / 1.446 |
 | `listPages` limit 50 | 1.154 / 2.709 | 1.135 / 2.036 | 1.782 / 3.653 | 0.627 / 0.944 |
-| `putPage` ~256 KiB body | 5.207 / 5.626 | 5.774 / 6.344 | 8.031 / 10.036 | 2.823 / 4.410 |
+| `putPage` ~256 KiB body | 5.581 / 6.175 | 6.303 / 7.029 | 8.379 / 10.711 | 2.798 / 4.535 |
 
 Losses against the plain Rust engine:
 
 - `getPage`: 0.076 ms at p50 and 0.307 ms at p99, all from the wire. The mode itself costs nothing measurable.
-- `putPage`: 0.607 ms at p99. Of that, the multi-user mode costs 0.269 ms at p50 and 0.416 ms at p99, and the wire
-  0.19 ms at p99. At p50 the served write was 1.158 ms faster than the plain one. That is not a gain the design
-  explains; it is not counted as one.
+- `putPage`: 1.536 ms at p50 and 1.446 ms at p99. The multi-user mode costs 0.956 / 0.874 ms and the wire
+  0.58 / 0.571 ms.
 - `listPages` limit 50: 0.627 ms at p50 and 0.944 ms at p99, from the wire (0.646 / 1.618 ms over the embedded
   multi-user engine).
-- `putPage` with a 256 KiB body: 2.823 ms at p50 and 4.410 ms at p99. The mode costs 0.566 / 0.718 ms and the wire
-  2.257 / 3.692 ms. This is the largest loss: the body crosses TLS and the length-framed codec once each way.
+- `putPage` with a 256 KiB body: 2.798 ms at p50 and 4.535 ms at p99. The mode costs 0.721 / 0.854 ms and the wire
+  2.076 / 3.682 ms. This is the largest loss: the body crosses TLS and the length-framed codec once each way.
+
+An earlier run of the bench showed the served `putPage` 1.158 ms faster than plain Rust at p50. That was an artifact:
+the multi-user embedded arm and the served arm share one brain, and in 2 of 3 rotations one of them wrote the page and
+body the other had just written, so it measured an unchanged-body write. The bench now gives every write a fresh body
+and refuses one that repeats the page its brain already holds.
 
 ### Lane L3 heads and the integration branch
 
