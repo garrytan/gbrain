@@ -13,7 +13,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { operations } from '../src/core/operations.ts';
-import { advertisedOps, filterOpsForSurface, parseAdvertiseFlag, resolveAdvertisedSurface } from '../src/mcp/surface.ts';
+import { advertisedOps, filterOpsForSurface, paramCallable, parseAdvertiseFlag, resolveAdvertisedSurface } from '../src/mcp/surface.ts';
 import { VERB_NAMES } from '../src/core/verbs.ts';
 import { buildMcpInstructions } from '../src/mcp/instructions.ts';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
@@ -74,6 +74,12 @@ describe('advertised surface (pure)', () => {
     expect(VERBS).not.toContain('correct');
     const verbs = filterOpsForSurface(operations, 'verbs');
     expect(advertisedOps(verbs, 'verbs', 'verbs').map(o => o.name).sort()).toEqual([...VERB_NAMES].sort());
+  });
+
+  test('GST-4058: a starter caller can follow the resume call a stopped correction names as its next step', () => {
+    const correct = operations.find(o => o.name === 'correct')!;
+    expect(paramCallable(correct, 'resume', 'starter')).toBe(true);
+    expect(paramCallable(correct, 'scope', 'starter')).toBe(false);
   });
 
   test('the --advertise flag wins over both config planes', async () => {

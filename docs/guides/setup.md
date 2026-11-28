@@ -123,7 +123,7 @@ table with its `trusted_hash`, otherwise Codex lists it and silently skips it.
 `gbrain setup codex` writes:
 
 - `[mcp_servers.<name>]` with `command` (the hook launcher), `args` (`<launcher> serve …`) and
-  `env` (`GBRAIN_HOME`, `GBRAIN_SOURCE` when set): Codex starts stdio servers in
+  `env` (`GBRAIN_HOME`, `GBRAIN_SOURCE` and `GBRAIN_BRAIN_ID` when set): Codex starts stdio servers in
   the session's directory, so serve starts through the hook launcher too (#8426);
 - one hooks.json group per event, running
   `env GBRAIN_HOOK_LANE=setup … <hook launcher> <launcher> hook session-start|user-prompt --harness codex`
@@ -227,7 +227,13 @@ or revoke it. Unfederating a source does not take it away from these keys either
 `gbrain auth rescope --token <name> --sources <ids>` command that drops it.
 A re-run on another source moves a key setup minted with a list to write there and
 keeps its secret; a key setup did not mint that way, or whose list was changed by hand,
-is skipped with the `gbrain auth rescope` command that moves it.
+is skipped with the `gbrain auth rescope` command that moves it and keeps what it reads.
+The people are labelled on the brain this run opens (`--brain`, `GBRAIN_BRAIN_ID`, else
+the one setup's directory resolves, a `.gbrain-mount` included), and the Claude Code or
+Codex entry pins that brain with `GBRAIN_BRAIN_ID`, so a session started in any other
+directory opens the same brain through MCP. The hooks still read the install's own config,
+and an entry the gbrain plugin owns is not pinned. A later run keeps the pin; an entry that labels nobody
+and names no brain stays unpinned, and its sessions' directory picks the brain.
 Keys minted before this (the default grant) are never changed. When the same run
 adds the `company` source (`--shape company`), setup labels the people first and then
 gives their new keys `company`; `company` itself stays out of default search.

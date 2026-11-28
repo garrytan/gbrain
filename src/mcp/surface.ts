@@ -284,6 +284,7 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
     grammar_diagnostics: 'The line-grammar findings for the page being read; put_page and capture receipts on starter point at it.',
   },
   edit_page: { within: 'Narrows an edit to the byte range a get_page window hands back as edit_target.' },
+  correct: { resume: 'A stopped correction\'s receipt names correct {receipt_id, resume: true} as its next call; it finishes only the uncommitted steps of a receipt this caller made.' },
   put_page: { drop_timeline: 'Confirms a timeline removal the starter schema already allows by omitting the section; put_page\'s own refusal names it.' },
   remember: {
     visibility: 'Already accepted per item in items, which starter lists; the segmented-entity refusal and the connection check pass it.',
