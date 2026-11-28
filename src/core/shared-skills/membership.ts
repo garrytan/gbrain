@@ -16,7 +16,7 @@ import { SHARED_SKILLS_DELIVERY_LIMITS, sharedSkillKey, type DeliveryEvidence, t
 interface BoundPolicy {
   source_ids: string[] | null;
   sources: Record<string, string>;
-  requirements: Record<string, { capabilities: string[]; policy_epoch: unknown }>;
+  requirements: Record<string, { capabilities: string[]; classes?: string[]; audiences?: string[]; policy_epoch: unknown }>;
 }
 interface Member {
   installation_id: string;
@@ -107,16 +107,18 @@ async function bindPolicy(ctx: OperationContext, sourceIds: string[] | null): Pr
     const { policy, epoch } = await readSharedSkillPolicy(ctx.engine, source.id, source.incarnation, published);
     if (!policy.enabled || !policy.allow_follow) continue;
     sources[source.id] = source.incarnation;
-    requirements[`${source.id}/${source.incarnation}`] = { capabilities: [...policy.requirements].sort(), policy_epoch: epoch };
+    requirements[`${source.id}/${source.incarnation}`] = { capabilities: [...policy.requirements].sort(), classes: [...policy.classes].sort(),
+      audiences: [...policy.audiences].sort(), policy_epoch: epoch };
   }
   return { source_ids: sourceIds, sources, requirements };
 }
 
 /**
  * #6797: what an approved join on an active enrollment renews. A source already bound, at the same incarnation, whose
- * current policy asks for no capability the binding lacks takes its current policy epoch and capabilities. A new source,
- * a new capability or a new incarnation keeps the old pin (its skills stay blocked) until the owner approves a new
- * enrollment, so a replayed follow approval (`--refresh-skills`) never grants more than the user approved.
+ * current policy asks for no capability, file class or audience the binding lacks takes its current policy. A new source,
+ * a new capability, class or audience, a new incarnation, or a pin recorded before classes and audiences were pinned keeps
+ * the old pin (its skills stay blocked) until the owner approves a new enrollment, so a replayed follow approval
+ * (`--refresh-skills`) never grants more than the user approved.
  */
 function renewPins(bound: BoundPolicy, current: BoundPolicy, sourceIds: string[] | null): BoundPolicy {
   const sources: Record<string, string> = {};
@@ -128,7 +130,8 @@ function renewPins(bound: BoundPolicy, current: BoundPolicy, sourceIds: string[]
     if (!pinned) continue;
     const now = current.sources[id] === incarnation ? current.requirements[key] : undefined;
     sources[id] = incarnation;
-    requirements[key] = now && now.capabilities.every(capability => pinned.capabilities.includes(capability)) ? now : pinned;
+    const within = (next: string[] | undefined, approved: string[] | undefined) => !!next && !!approved && next.every(value => approved.includes(value));
+    requirements[key] = now && within(now.capabilities, pinned.capabilities) && within(now.classes, pinned.classes) && within(now.audiences, pinned.audiences) ? now : pinned;
   }
   return { source_ids: sourceIds, sources, requirements };
 }

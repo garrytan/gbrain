@@ -205,6 +205,22 @@ test('#6797 an approved join never grants a new capability or a new source incar
   expect(recreated.blocked_skills[0].source_incarnation).toBe(nextIncarnation);
 });
 
+test('#6797 an approved join never renews a widened file class or audience, or a pin without them', async () => {
+  const ctx = await context(), first = await join(ctx);
+  for (const widened of [{ ...policy, classes: ['prose', 'script'] }, { ...policy, audiences: ['readers', 'writers'] }]) {
+    await movePolicy(widened);
+    const refreshed = await join(ctx);
+    expect(refreshed.status).toBe('requirements_changed');
+    expect(refreshed.enrollment_epoch).toBe(first.enrollment_epoch);
+    expect(refreshed.skills).toEqual([]);
+  }
+  await engine.executeRaw("UPDATE shared_skill_members SET follow_policy=jsonb_set(follow_policy,'{requirements}',(SELECT jsonb_object_agg(k, v - 'classes' - 'audiences') FROM jsonb_each(follow_policy->'requirements') AS e(k, v))) WHERE installation_id=$1::uuid", [first.installation_id]);
+  await movePolicy();
+  const legacy = await join(ctx);
+  expect(legacy.status).toBe('requirements_changed');
+  expect(legacy.enrollment_epoch).toBe(first.enrollment_epoch);
+});
+
 test('#6797 refreshing a follow-all enrollment survives a brain that grew past 64 sources', async () => {
   const extra = Array.from({ length: 65 }, (_, i) => `refresh-extra-${i}`);
   const base = await context();
