@@ -554,6 +554,9 @@ pub struct OpenTransaction {
     doomed: Mutex<Option<StoreError>>,
     #[allow(dead_code)] // lane L2 stamps it on the write journal
     origin: Option<WriteOrigin>,
+    /// The primary fence of the store it began on (`primary.rs`): judged again at its commit, and carried by the
+    /// id-sequence write of a refusal or a rollback.
+    fencer: crate::primary::Fencer,
 }
 
 /// A transaction whose handles all went away without a commit or a rollback rolls back the same
@@ -561,7 +564,7 @@ pub struct OpenTransaction {
 impl Drop for OpenTransaction {
     fn drop(&mut self) {
         let state = self.state.get_mut().unwrap_or_else(|e| e.into_inner());
-        let _ = state.roll_back(&self.kv);
+        let _ = state.roll_back(&self.kv, &self.fencer);
         if self.optimistic {
             self.flights.release_all(self.owner);
         }
@@ -624,16 +627,35 @@ fn in_range(key: &[u8], start: &[u8], end: &[u8]) -> bool {
 
 /// Raises every listed id sequence in a write of its own that holds only `raise_counter`
 /// operations, so it never conflicts and never overwrites another writer (optimistic mode).
-fn raise_forward(kv: &Arc<dyn Kv>, counters: BTreeMap<Vec<u8>, u64>) -> Result<()> {
+///
+/// On a store under the primary fence (`primary.rs`) the write carries the fence, and a store that must not write
+/// (its lease is gone) skips it: it writes nothing more, and multi-user mode (which every primary runs in) reserved
+/// each id range on disk before handing an id out, so no id it handed out is handed out again.
+fn raise_forward(
+    kv: &Arc<dyn Kv>,
+    counters: BTreeMap<Vec<u8>, u64>,
+    fencer: &crate::primary::Fencer,
+) -> Result<()> {
     if counters.is_empty() {
         return Ok(());
     }
     let mut write = kv.begin_write()?;
+    match fencer.fence(&*write) {
+        Ok(Some(fence)) => write.set_commit_meta(CommitMeta {
+            fence: Some(Box::new(fence)),
+            ..CommitMeta::default()
+        }),
+        Ok(None) => {}
+        Err(e) if e.code == crate::error::LEASE_LOST => return Ok(()),
+        Err(e) => return Err(e),
+    }
     for (key, value) in counters {
         write.raise_counter(&key, value)?;
     }
-    write.commit()?;
-    Ok(())
+    match write.commit() {
+        Err(e) if e.code == crate::error::LEASE_LOST => Ok(()),
+        other => other.map(|_| ()),
+    }
 }
 
 impl State {
@@ -957,7 +979,7 @@ impl State {
     /// With the commit log on, a serialized rollback also drops its base (it never commits) and
     /// raises the sequences in a write of their own, as an optimistic one does: either way a
     /// rollback's only log record holds counter operations, never data.
-    fn roll_back(&mut self, kv: &Arc<dyn Kv>) -> Result<()> {
+    fn roll_back(&mut self, kv: &Arc<dyn Kv>, fencer: &crate::primary::Fencer) -> Result<()> {
         let Some(mut base) = self.base.take() else {
             return Ok(());
         };
@@ -970,7 +992,7 @@ impl State {
         let counters = self.take_counters();
         if self.optimistic || kv.commit_log_enabled() {
             drop(base);
-            return raise_forward(kv, counters);
+            return raise_forward(kv, counters, fencer);
         }
         if counters.is_empty() {
             return Ok(());
@@ -1159,6 +1181,24 @@ impl KvWrite for StatementWriter<'_> {
         if let Some(layer) = lock(&self.0.state).statement.as_mut() {
             layer.meta.absorb(meta);
         }
+    }
+}
+
+/// A transaction's commit meta with the fence its commit was judged under (`primary.rs`), when it has one.
+fn with_commit_fence(
+    meta: CommitMeta,
+    fence: Option<crate::commit_log::CommitFence>,
+) -> CommitMeta {
+    match fence {
+        Some(fence) => {
+            let mut meta = meta;
+            meta.absorb(CommitMeta {
+                fence: Some(Box::new(fence)),
+                ..CommitMeta::default()
+            });
+            meta
+        }
+        None => meta,
     }
 }
 
@@ -1354,6 +1394,7 @@ impl Store {
             flights: self.flights.clone(),
             doomed: Mutex::new(None),
             origin: options.origin,
+            fencer: self.fencer(),
         });
         Ok(self.bound_to(tx))
     }
@@ -1500,7 +1541,7 @@ impl Store {
         if !tx.optimistic {
             // Only a transaction begun with a deadline (multi-user mode) can refuse here.
             if let Some(error) = tx.refusal() {
-                state.roll_back(&tx.kv)?;
+                state.roll_back(&tx.kv, &tx.fencer)?;
                 drop(state);
                 self.vectors.clear();
                 return Err(error);
@@ -1508,6 +1549,24 @@ impl Store {
             while let Some(layer) = state.savepoints.pop() {
                 state.merge_down(layer)?;
             }
+            // The primary fence is judged again at the commit, inside the base (`primary.rs`), whatever its
+            // statements saw; a refusal keeps nothing of the transaction.
+            let fence = if tx.opened_read_only {
+                None
+            } else {
+                match state
+                    .base()
+                    .and_then(|base| tx.fencer.fence_at_commit(base, false))
+                {
+                    Ok(fence) => fence,
+                    Err(error) => {
+                        state.roll_back(&tx.kv, &tx.fencer)?;
+                        drop(state);
+                        self.vectors.clear();
+                        return Err(error);
+                    }
+                }
+            };
             let base = state.base.take().ok_or_else(closed)?;
             state.root_locks.clear();
             state.counters.clear();
@@ -1519,6 +1578,7 @@ impl Store {
                 return Ok(CommitPosition::end_of(tx.kv.version()?));
             }
             let mut base = base;
+            let meta = with_commit_fence(meta, fence);
             if !meta.is_empty() {
                 base.set_commit_meta(meta);
             }
@@ -1530,7 +1590,7 @@ impl Store {
         // forward, single-flight keys given back last. A failure to write the ids forward is the
         // answer (a store failure, never a conflict to run again).
         let abort = |state: &mut State, error: StoreError| -> Result<CommitPosition> {
-            let cleanup = state.roll_back(&tx.kv);
+            let cleanup = state.roll_back(&tx.kv, &tx.fencer);
             self.vectors.clear();
             tx.release_flights();
             cleanup?;
@@ -1549,11 +1609,23 @@ impl Store {
         if deadline_passed(tx.deadline) {
             return abort(&mut state, transaction_deadline());
         }
+        // The primary fence is judged again at the commit, inside the base (`primary.rs`).
+        let fence = if tx.opened_read_only {
+            None
+        } else {
+            match state
+                .base()
+                .and_then(|base| tx.fencer.fence_at_commit(base, true))
+            {
+                Ok(fence) => fence,
+                Err(error) => return abort(&mut state, error),
+            }
+        };
         let base = state.base.take().ok_or_else(closed)?;
         state.root_locks.clear();
         state.undo.clear();
         let counters = state.take_counters();
-        let meta = std::mem::take(&mut state.meta);
+        let meta = with_commit_fence(std::mem::take(&mut state.meta), fence);
         drop(state);
         let outcome = if tx.opened_read_only {
             // The sequence it read at, not a later commit's.
@@ -1572,7 +1644,9 @@ impl Store {
         // ids are written forward. A store failure may or may not be on disk and stops the
         // pipeline, so nothing more is written then.
         let cleanup = match &outcome {
-            Err(error) if error.code != crate::error::STORE_IO => raise_forward(&tx.kv, counters),
+            Err(error) if error.code != crate::error::STORE_IO => {
+                raise_forward(&tx.kv, counters, &tx.fencer)
+            }
             _ => Ok(()),
         };
         if outcome.is_err() {
@@ -1616,7 +1690,7 @@ impl Store {
         let ended = {
             let mut state = lock(&tx.state);
             let open = state.base.is_some();
-            let result = state.roll_back(&tx.kv);
+            let result = state.roll_back(&tx.kv, &tx.fencer);
             if open {
                 self.vectors.clear();
             }

@@ -106,6 +106,17 @@ pub(crate) fn scan_at_open(kv: &dyn Kv) -> Result<bool> {
     }
 }
 
+/// The scan of an open that must not write (a store opened fail-closed on a primary's brain, `primary.rs`): whether
+/// this process must treat the brain as flagged, judged as `scan_at_open` judges a scan that could not write. Writes
+/// nothing; the next open that can write runs the scan.
+pub(crate) fn scan_without_write(kv: &dyn Kv) -> Result<bool> {
+    let snapshot = kv.snapshot()?;
+    if snapshot.get(&keys::meta(SCAN_DONE))?.is_some() {
+        return Ok(false);
+    }
+    Ok(names_readers(&*snapshot).unwrap_or(true))
+}
+
 fn scan_and_record(kv: &dyn Kv, done: &[u8]) -> Result<()> {
     let mut tx = kv.begin_write()?;
     // Another handle may have run the scan between the read and this write.

@@ -657,23 +657,8 @@ impl Pipeline {
         // Each accepted transaction's commit time, in accept order: each is above the one before.
         let mut times: Vec<i64> = Vec::new();
         for req in batch {
-            // A commit written under the primary lease (`primary.rs`) is accepted only while its
-            // commit time is inside the lease: judged on the time it would get, before it is accepted.
             let time = clock.as_ref().map(|c| c.time_for(times.last().copied()));
-            if let Some(fence) = &req.meta.fence {
-                let admitted = match time {
-                    Some(time) => fence.admit(time),
-                    None => Err(StoreError::new(
-                        STORE_CORRUPT,
-                        "a fenced commit needs the commit clock",
-                    )),
-                };
-                if let Err(e) = admitted {
-                    let _ = req.reply.send(Err(e));
-                    continue;
-                }
-            }
-            match self.accept(&req, next, &mut resolved, &mut latest) {
+            match self.accept(&req, next, &mut resolved, &mut latest, time) {
                 Ok(keys) => {
                     touched.extend(keys);
                     if let (Some(clock), Some(time)) = (&clock, time) {
@@ -804,6 +789,7 @@ impl Pipeline {
         next: u64,
         resolved: &mut BTreeMap<Vec<u8>, Option<Vec<u8>>>,
         latest: &mut Option<Box<dyn KvRead + Send>>,
+        time: Option<i64>,
     ) -> Result<Vec<Vec<u8>>> {
         if let Some(key) = self.index.first_conflict(req.snapshot, &req.reads) {
             return Err(conflict(&key));
@@ -828,6 +814,20 @@ impl Pipeline {
                 }
             };
             staged.push((key.clone(), value));
+        }
+        // A commit written under the primary lease (`primary.rs`) is accepted only while its commit time is inside
+        // the lease: judged after the conflict checks (a write that raced a renewal runs again and reads the new
+        // lease end) and before anything of it is staged, on the time it would get.
+        if let Some(fence) = &req.meta.fence {
+            match time {
+                Some(time) => fence.admit(time)?,
+                None => {
+                    return Err(StoreError::new(
+                        STORE_CORRUPT,
+                        "a fenced commit needs the commit clock",
+                    ));
+                }
+            }
         }
         for (key, value) in staged {
             self.index.last_write.insert(key.clone(), next);

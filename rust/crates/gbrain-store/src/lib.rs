@@ -613,6 +613,11 @@ impl Store {
         };
         let snapshot = kv.snapshot()?;
         let stored: Option<StoredFormat> = get_json(&*snapshot, &keys::meta("format"))?;
+        // A writable open with the log on, on records that hold a primary lease, starts fail-closed
+        // (`primary.rs`): decided here, before this open writes anything, and it then writes nothing.
+        let fail_closed = !read_only
+            && multiuser.commit_log
+            && primary::state_at_open(&*snapshot)? != primary::PrimaryState::NeverArmed;
         drop(snapshot);
         // A log brain opened for writing with the mode or the log off is refused here, before this
         // open changes anything about the adapter: a store already open on it keeps its clock.
@@ -657,6 +662,9 @@ impl Store {
                     log_enabled = true;
                 }
                 let stored = if log.base_format < FORMAT_VERSION {
+                    if fail_closed {
+                        return Err(primary::not_served_open("upgrade the store format"));
+                    }
                     upgrade_format(&*kv)?
                 } else {
                     stored
@@ -672,6 +680,9 @@ impl Store {
                     ));
                 }
                 let stored = if stored.format_version < FORMAT_VERSION {
+                    if fail_closed {
+                        return Err(primary::not_served_open("upgrade the store format"));
+                    }
                     upgrade_format(&*kv)?
                 } else {
                     stored
@@ -702,16 +713,31 @@ impl Store {
         // Multi-user mode on a brain without a log yet: switch it to the log now, before the
         // open-time upkeep below, so that upkeep is logged too.
         let stored = if multiuser.commit_log && !read_only && !log_enabled {
+            if fail_closed {
+                return Err(primary::not_served_open(
+                    "switch the brain to the commit log",
+                ));
+            }
             let stored = activate_log(&*kv, stored, &options, mode)?;
             kv.enable_commit_log(log_settings())?;
             stored
         } else {
             stored
         };
-        // Sweep records kept before their source index existed get it.
-        page_body::purge_record::backfill_source_index(&*kv)?;
-        let index = keyword::open_index(&*kv)?;
-        let flag_assumed = !created && access_flag::scan_at_open(&*kv)?;
+        // Sweep records kept before their source index existed get it. A fail-closed open leaves this upkeep
+        // to `serve_as_primary` (`Store::finish_open_upkeep`), refusing only an index of a newer layout now; until
+        // then its writes are refused and keyword reads use no index that is not complete.
+        let (needs_build, flag_assumed) = if fail_closed {
+            keyword::check_index_state(&*kv.snapshot()?)?;
+            (false, access_flag::scan_without_write(&*kv)?)
+        } else {
+            page_body::purge_record::backfill_source_index(&*kv)?;
+            let index = keyword::open_index(&*kv)?;
+            (
+                index.needs_build,
+                !created && access_flag::scan_at_open(&*kv)?,
+            )
+        };
         // The schema version is the config the TypeScript migrations keep; a brain that has none
         // (it never was seeded) reports 0.
         let schema_version = config::read_config(&*kv.snapshot()?, "version")?
@@ -719,14 +745,14 @@ impl Store {
             .unwrap_or(0);
         // A multi-user brain with no commit time yet (just created or just turned on) commits one now, so the records it
         // was seeded with stay below the floor of every later open; a read-only open writes nothing.
-        if multiuser_on && !read_only && kv.last_commit_time()?.is_none() {
+        if multiuser_on && !read_only && !fail_closed && kv.last_commit_time()?.is_none() {
             kv.begin_write()?.commit()?;
         }
         let commit_log_on = kv.commit_log_enabled();
         // A logged brain whose records hold a primary lease starts fail-closed (`primary.rs`); any
         // other store is never armed and reads nothing more.
-        let primary_state = if commit_log_on && !read_only {
-            primary::state_at_open(&*kv.snapshot()?)?
+        let primary_state = if fail_closed {
+            primary::PrimaryState::Lost(primary::PRIMARY_NOT_SERVED)
         } else {
             primary::PrimaryState::NeverArmed
         };
@@ -757,7 +783,7 @@ impl Store {
             primary: Arc::new(primary::PrimarySlot::new(primary_state)),
         })
         .inspect(|store| {
-            if index.needs_build && store.runs_builder {
+            if needs_build && store.runs_builder {
                 store.start_keyword_index_builder();
             }
         })
@@ -784,6 +810,14 @@ impl Store {
             multiuser: self.multiuser,
             primary: self.primary.clone(),
         }
+    }
+
+    /// The open-time upkeep a fail-closed open leaves (`open_kv_in`), run by `serve_as_primary` before the fence is
+    /// armed: the sweep-record index backfill and the keyword index repair. Returns whether the keyword index build
+    /// should run. On a store that ran it at open, each step reads one record and writes nothing.
+    fn finish_open_upkeep(&self) -> Result<bool> {
+        page_body::purge_record::backfill_source_index(&*self.kv)?;
+        Ok(keyword::open_index(&*self.kv)?.needs_build)
     }
 
     /// Starts the background build unless one is running on this store.
@@ -956,12 +990,9 @@ impl Store {
             let trust = stamp_trust()?;
             let meta = self.meta_scope(&trust);
             let _trust = crate::write_trust::stamp_context::open(trust);
-            let token = self.primary_fence()?;
+            let fencer = self.fencer();
             return tx.statement(|w| {
-                let fence = match &token {
-                    Some(token) => Some(self.primary_commit_fence(&*w, token)?),
-                    None => None,
-                };
+                let fence = fencer.fence(&*w)?;
                 let value = write_chain(w, &mut f)?;
                 if let Some(meta) = with_fence(meta.meta(), fence) {
                     w.set_commit_meta(meta);
@@ -969,7 +1000,8 @@ impl Store {
                 Ok(value)
             });
         }
-        let token = self.primary_fence()?;
+        // The primary fence is judged again in every run: a state or lease change before a retry is seen.
+        let fencer = self.fencer();
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
         let mut attempt = 0u32;
         // One absolute deadline for every run (multi-user mode only; `None` waits as before).
@@ -987,10 +1019,7 @@ impl Store {
                 let trust = stamp_trust()?;
                 let meta = self.meta_scope(&trust);
                 let _trust = crate::write_trust::stamp_context::open(trust);
-                let fence = match &token {
-                    Some(token) => self.primary_commit_fence(&*tx, token).map(Some),
-                    None => Ok(None),
-                };
+                let fence = fencer.fence(&*tx);
                 match fence.and_then(|fence| write_chain(&mut *tx, &mut f).map(|v| (v, fence))) {
                     Ok((value, fence)) => {
                         if let Some(meta) = with_fence(meta.meta(), fence) {
@@ -1164,7 +1193,7 @@ fn with_fence(
     match (meta, fence) {
         (meta, None) => meta,
         (meta, Some(fence)) => Some(commit_log::CommitMeta {
-            fence: Some(fence),
+            fence: Some(Box::new(fence)),
             ..meta.unwrap_or_default()
         }),
     }

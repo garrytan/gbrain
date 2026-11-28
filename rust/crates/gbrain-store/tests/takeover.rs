@@ -14,6 +14,7 @@ use gbrain_store::follower::{
 use gbrain_store::kv::Kv;
 use gbrain_store::leases::{lost_reason, read_lease_record};
 use gbrain_store::occ_kv::OccKv;
+use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::primary::PRIMARY_NOT_SERVED;
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::snapshot::SnapshotOp;
@@ -92,14 +93,11 @@ fn follower_of(primary: &Store, root: &Path, name: &str) -> Follower {
     f
 }
 
+/// Every key and value of a record store.
+type Records = Vec<(Vec<u8>, Vec<u8>)>;
+
 /// Every key, the sequence and the lineage of a follower: what a refused promotion must leave as it was.
-fn state_of(
-    f: &Follower,
-) -> (
-    Vec<(Vec<u8>, Vec<u8>)>,
-    u64,
-    Vec<gbrain_store::commit_log::Timeline>,
-) {
+fn state_of(f: &Follower) -> (Records, u64, Vec<gbrain_store::commit_log::Timeline>) {
     let read = f.records().snapshot().unwrap();
     let mut keys = Vec::new();
     read.scan(&[1], &[0xFF; 64], false, &mut |k, v| {
@@ -607,15 +605,20 @@ fn a_promotion_cut_after_its_timeline_recovers_by_opening_the_brain() {
 
 // --- The primary's write fence (`primary.rs`) -------------------------------------------------------------------------
 
-/// A store on an explicit record adapter (single-writer `RedbKv` or optimistic `OccKv`), on `clock`.
-fn adapter_store(path: &Path, optimistic: bool, clock: &Arc<HandClock>) -> Store {
+/// An explicit record adapter (single-writer `RedbKv` or optimistic `OccKv`) on `path`.
+fn adapter_kv(path: &Path, optimistic: bool) -> Arc<dyn Kv> {
     let base = RedbKv::open_path(&path.join("records.redb")).unwrap();
-    let kv: Arc<dyn Kv> = if optimistic {
+    if optimistic {
         Arc::new(OccKv::new(base).unwrap())
     } else {
         Arc::new(base)
-    };
-    let store = Store::open_kv(kv, clock.clone(), mu(optimistic)).unwrap();
+    }
+}
+
+/// A store on an explicit record adapter (single-writer `RedbKv` or optimistic `OccKv`), on `clock`.
+fn adapter_store(path: &Path, optimistic: bool, clock: &Arc<HandClock>) -> Store {
+    let store =
+        Store::open_kv(adapter_kv(path, optimistic), clock.clone(), mu(optimistic)).unwrap();
     assert_eq!(
         store.occ_stats().is_some(),
         optimistic,
@@ -805,6 +808,352 @@ fn a_reopened_primary_refuses_writes_until_it_serves() {
         let store = adapter_store(plain.path(), optimistic, &clock);
         store.set_config("k", "1").unwrap();
         assert_eq!(store.primary_token(), None);
+    }
+}
+
+/// Every key of the records, and the newest commit time: what a refused write and a fail-closed open must leave as
+/// they were (with the log position, `sequence_of`).
+fn image_of(kv: &dyn Kv) -> (Records, Option<i64>) {
+    let read = kv.snapshot().unwrap();
+    let mut keys = Vec::new();
+    read.scan(&[0], &[0xFF; 64], false, &mut |k, v| {
+        keys.push((k.to_vec(), v.to_vec()));
+        true
+    })
+    .unwrap();
+    (keys, kv.last_commit_time().unwrap())
+}
+
+/// `adapter_store` with its record adapter.
+fn adapter_pair(path: &Path, optimistic: bool, clock: &Arc<HandClock>) -> (Arc<dyn Kv>, Store) {
+    let kv = adapter_kv(path, optimistic);
+    let store = Store::open_kv(kv.clone(), clock.clone(), mu(optimistic)).unwrap();
+    (kv, store)
+}
+
+fn put_page(store: &Store, slug: &str) -> gbrain_store::Result<()> {
+    let input: PageInput = serde_json::from_value(serde_json::json!({
+        "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": {}
+    }))
+    .unwrap();
+    let opts: PutPageOptions =
+        serde_json::from_value(serde_json::json!({"sourceId": "default"})).unwrap();
+    store.put_page(slug, &input, &opts).map(|_| ())
+}
+
+/// Review finding 1 (fail-first on d30e72662a): an optimistic transaction begun before the store served wrote its
+/// statements unfenced, and its commit was not checked again, so it committed after the lease's end. The commit now
+/// reads the lease again: its snapshot predates the lease, so it conflicts, and run again it is refused as expired.
+#[test]
+fn a_transaction_begun_before_the_store_served_is_fenced_at_its_commit() {
+    let dir = TempDir::new("primary-tx-before-serve");
+    let clock = HandClock::new();
+    let (kv, store) = adapter_pair(dir.path(), true, &clock);
+    let tx = store
+        .begin_with(TxnOptions {
+            mode: TxnMode::Optimistic,
+            ..TxnOptions::default()
+        })
+        .unwrap();
+    tx.store().set_config("early", "1").unwrap();
+    store
+        .serve_as_primary(&origin("p"), 5_000)
+        .unwrap()
+        .unwrap();
+    let before = (sequence_of(&store), image_of(&*kv));
+    clock.set(clock.now_micros() + 5_000_001);
+    let e = tx.commit().unwrap_err();
+    assert_eq!(e.code, gbrain_store::error::WRITE_CONFLICT, "{e}");
+    let again = store.set_config("early", "1").unwrap_err();
+    assert_eq!(lost_reason(&again).as_deref(), Some("expired"), "{again}");
+    assert_eq!((sequence_of(&store), image_of(&*kv)), before);
+    assert_eq!(store.get_config("early").unwrap(), None);
+}
+
+/// One machine's clock that runs `hook` once, at its first read after `arm`: a callback that re-enters the store
+/// layer on the same thread in the middle of a write.
+struct HookClock {
+    at: AtomicI64,
+    hook: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Env for HookClock {
+    fn now_micros(&self) -> i64 {
+        let hook = self.hook.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook();
+        }
+        self.at.load(Ordering::SeqCst)
+    }
+    fn new_uuid(&self) -> String {
+        SystemEnv.new_uuid()
+    }
+}
+
+/// Review finding 2 (fail-first on d30e72662a): the lease writes of `serve_as_primary` passed the fence through a
+/// thread-wide switch, so any other fail-closed store written on that thread meanwhile (here from the clock the lease
+/// write reads) wrote unfenced. The switch is gone: the other store is still refused and writes nothing.
+#[test]
+fn a_write_on_another_store_while_one_serves_is_still_fenced() {
+    for optimistic in MODES {
+        let dir = TempDir::new("primary-two-stores");
+        for sub in ["a", "b"] {
+            std::fs::create_dir_all(dir.path().join(sub)).unwrap();
+        }
+        let clock = HandClock::new();
+        let old = adapter_store(&dir.path().join("a"), optimistic, &clock);
+        old.serve_as_primary(&origin("a"), 60_000).unwrap().unwrap();
+        drop(old);
+        let (kv, fenced) = adapter_pair(&dir.path().join("a"), optimistic, &clock);
+        let fenced = Arc::new(fenced);
+        let before = (sequence_of(&fenced), image_of(&*kv));
+        let hook_clock = Arc::new(HookClock {
+            at: AtomicI64::new(SystemEnv.now_micros()),
+            hook: std::sync::Mutex::new(None),
+        });
+        let other = Store::open_kv(
+            adapter_kv(&dir.path().join("b"), optimistic),
+            hook_clock.clone(),
+            mu(optimistic),
+        )
+        .unwrap();
+        let seen: Arc<std::sync::Mutex<Option<gbrain_store::Result<()>>>> = Arc::default();
+        {
+            let fenced = fenced.clone();
+            let seen = seen.clone();
+            *hook_clock.hook.lock().unwrap() = Some(Box::new(move || {
+                *seen.lock().unwrap() = Some(fenced.set_config("inside-serve", "1"));
+            }));
+        }
+        other
+            .serve_as_primary(&origin("b"), 60_000)
+            .unwrap()
+            .unwrap();
+        let seen = seen
+            .lock()
+            .unwrap()
+            .take()
+            .expect("the hook ran inside the serve");
+        let e = seen.unwrap_err();
+        assert_eq!(
+            lost_reason(&e).as_deref(),
+            Some(PRIMARY_NOT_SERVED),
+            "{optimistic}: {e}"
+        );
+        assert_eq!(
+            (sequence_of(&fenced), image_of(&*kv)),
+            before,
+            "{optimistic}"
+        );
+        other.set_config("served", "1").unwrap();
+    }
+}
+
+/// Review finding 3 (fail-first on d30e72662a): a transaction refused by the fence, or rolled back after the lease's
+/// end, then wrote its id sequences forward in an unfenced commit of their own. Now that write carries the fence and
+/// is skipped when the store must not write: the records, the log position and the commit time are as they were.
+#[test]
+fn a_refused_or_rolled_back_transaction_writes_nothing_after_the_lease_end() {
+    for optimistic in MODES {
+        let modes: &[TxnMode] = if optimistic {
+            &[TxnMode::Serialized, TxnMode::Optimistic]
+        } else {
+            &[TxnMode::Serialized]
+        };
+        for mode in modes {
+            for commit in [true, false] {
+                let dir = TempDir::new("primary-counters");
+                let clock = HandClock::new();
+                let (kv, store) = adapter_pair(dir.path(), optimistic, &clock);
+                store
+                    .serve_as_primary(&origin("p"), 5_000)
+                    .unwrap()
+                    .unwrap();
+                put_page(&store, "notes/first").unwrap();
+                let tx = store
+                    .begin_with(TxnOptions {
+                        mode: *mode,
+                        ..TxnOptions::default()
+                    })
+                    .unwrap();
+                // A page write takes ids from the brain's sequences.
+                put_page(tx.store(), "notes/late").unwrap();
+                let before = (sequence_of(&store), image_of(&*kv));
+                clock.set(clock.now_micros() + 5_000_001);
+                let what = format!("{optimistic} {mode:?} commit={commit}");
+                if commit {
+                    let e = tx.commit().unwrap_err();
+                    assert_eq!(lost_reason(&e).as_deref(), Some("expired"), "{what}: {e}");
+                } else {
+                    tx.rollback().unwrap();
+                }
+                assert_eq!(
+                    (sequence_of(&store), image_of(&*kv)),
+                    before,
+                    "{what}: something committed after the lease's end"
+                );
+            }
+        }
+    }
+}
+
+/// Review finding 1, rollback side, while the lease holds: a rolled-back transaction still writes its sequences
+/// forward, under the fence.
+#[test]
+fn a_rollback_while_the_lease_holds_writes_its_sequences_forward() {
+    for optimistic in MODES {
+        let dir = TempDir::new("primary-rollback-held");
+        let clock = HandClock::new();
+        let store = adapter_store(dir.path(), optimistic, &clock);
+        store
+            .serve_as_primary(&origin("p"), 60_000)
+            .unwrap()
+            .unwrap();
+        let tx = store.begin_with(TxnOptions::default()).unwrap();
+        put_page(tx.store(), "notes/rolled").unwrap();
+        let before = sequence_of(&store);
+        tx.rollback().unwrap();
+        assert!(
+            sequence_of(&store) > before,
+            "{optimistic}: the sequences were not written forward"
+        );
+        put_page(&store, "notes/after").unwrap();
+    }
+}
+
+/// Review finding 4 (fail-first on d30e72662a): a store reopened on a primary's brain ran its open-time upkeep (the
+/// sweep-record index backfill, the access flag scan) before it knew it was fail-closed, so the open itself
+/// committed. Now that open writes nothing; serving runs the upkeep. An open that would upgrade the format is refused.
+#[test]
+fn a_reopened_primary_writes_nothing_at_open_and_finishes_its_upkeep_when_it_serves() {
+    let backfill = gbrain_store::keys::meta("derivation_purge_source_index");
+    let scan = gbrain_store::keys::meta("access_flag_scan");
+    for optimistic in MODES {
+        let dir = TempDir::new("primary-reopen-upkeep");
+        let clock = HandClock::new();
+        let kv = adapter_kv(dir.path(), optimistic);
+        let store = Store::open_kv(kv.clone(), clock.clone(), mu(optimistic)).unwrap();
+        store
+            .serve_as_primary(&origin("p"), 5_000)
+            .unwrap()
+            .unwrap();
+        // The upkeep markers go, so the next open has upkeep to do.
+        let mut w = kv.begin_write().unwrap();
+        w.delete(&backfill).unwrap();
+        w.delete(&scan).unwrap();
+        w.commit().unwrap();
+        drop(store);
+        drop(kv);
+        let kv = adapter_kv(dir.path(), optimistic);
+        let reopened = (kv.version().unwrap(), image_of(&*kv));
+        let store = Store::open_kv(kv.clone(), clock.clone(), mu(optimistic)).unwrap();
+        assert_eq!(
+            (kv.version().unwrap(), image_of(&*kv)),
+            reopened,
+            "{optimistic}: a fail-closed open committed"
+        );
+        assert_eq!(kv.snapshot().unwrap().get(&backfill).unwrap(), None);
+        clock.set(clock.now_micros() + 5_000_001);
+        store
+            .serve_as_primary(&origin("p"), 5_000)
+            .unwrap()
+            .unwrap();
+        assert!(
+            kv.snapshot().unwrap().get(&backfill).unwrap().is_some(),
+            "{optimistic}: serving did not finish the backfill"
+        );
+        store.set_config("k", "1").unwrap();
+        drop(store);
+        // An open that would upgrade the format is refused, writing nothing.
+        let mut w = kv.begin_write().unwrap();
+        let mut format: serde_json::Value =
+            serde_json::from_slice(&w.get(&gbrain_store::keys::meta("format")).unwrap().unwrap())
+                .unwrap();
+        format["log"]["base_format"] = (gbrain_store::format::FORMAT_VERSION - 1).into();
+        w.put(
+            &gbrain_store::keys::meta("format"),
+            &serde_json::to_vec(&format).unwrap(),
+        )
+        .unwrap();
+        w.commit().unwrap();
+        let before = kv.version().unwrap();
+        let Err(e) = Store::open_kv(kv.clone(), clock.clone(), mu(optimistic)) else {
+            panic!("{optimistic}: an open that must upgrade the format was not refused");
+        };
+        assert_eq!(
+            lost_reason(&e).as_deref(),
+            Some(PRIMARY_NOT_SERVED),
+            "{optimistic}: {e}"
+        );
+        assert_eq!(kv.version().unwrap(), before, "{optimistic}");
+    }
+}
+
+/// Review finding 5 (fail-first on d30e72662a): the optimistic pipeline judged a commit's lease end before its
+/// conflict checks, so a write that raced a renewal was refused as expired on the old lease end. The conflict check
+/// runs first: the write conflicts (and a caller runs it again under the renewed lease).
+#[test]
+fn a_write_that_raced_a_renewal_conflicts_and_is_not_refused_as_expired() {
+    let dir = TempDir::new("primary-renew-race");
+    let clock = HandClock::new();
+    let store = adapter_store(dir.path(), true, &clock);
+    store
+        .serve_as_primary(&origin("p"), 5_000)
+        .unwrap()
+        .unwrap();
+    let tx = store
+        .begin_with(TxnOptions {
+            mode: TxnMode::Optimistic,
+            ..TxnOptions::default()
+        })
+        .unwrap();
+    tx.store().set_config("raced", "1").unwrap();
+    store.renew_primary(60_000).unwrap();
+    clock.set(clock.now_micros() + 5_000_001);
+    let e = tx.commit().unwrap_err();
+    assert_eq!(e.code, gbrain_store::error::WRITE_CONFLICT, "{e}");
+    // Run again, it reads the renewed lease and commits.
+    store.set_config("raced", "1").unwrap();
+}
+
+/// Review finding 6 (fail-first on d30e72662a): a fail-closed open started the keyword index build, which died on
+/// its first refused write and was never started again, so the index stayed incomplete. The build now starts when
+/// the store serves.
+#[test]
+fn a_reopened_primary_builds_its_keyword_index_once_it_serves() {
+    for optimistic in MODES {
+        let dir = TempDir::new("primary-builder");
+        let clock = HandClock::new();
+        let kv = adapter_kv(dir.path(), optimistic);
+        let store = Store::open_kv(kv.clone(), clock.clone(), mu(optimistic)).unwrap();
+        store
+            .serve_as_primary(&origin("p"), 5_000)
+            .unwrap()
+            .unwrap();
+        put_page(&store, "notes/indexed").unwrap();
+        store.keyword_index_rebuild().unwrap();
+        assert!(!store.keyword_index_state().unwrap().unwrap().complete);
+        drop(store);
+        let options = OpenOptions {
+            keyword_index_builder: true,
+            ..mu(optimistic)
+        };
+        let store = Store::open_kv(kv.clone(), clock.clone(), options).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!store.keyword_index_state().unwrap().unwrap().complete);
+        clock.set(clock.now_micros() + 5_000_001);
+        store
+            .serve_as_primary(&origin("p"), 60_000)
+            .unwrap()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !store.keyword_index_state().unwrap().unwrap().complete {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{optimistic}: the keyword index never completed after the store served"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
 }
 

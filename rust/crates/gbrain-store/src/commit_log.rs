@@ -126,8 +126,9 @@ pub struct CommitMeta {
     /// The persistence request ids the commit carries, in the order they were noted.
     pub write_ids: Vec<String>,
     /// The primary lease the commit was written under (`primary.rs`): the record file accepts the
-    /// commit only while its commit time is before the lease's end. Not written to the record.
-    pub fence: Option<CommitFence>,
+    /// commit only while its commit time is before the lease's end. Not written to the record. Boxed:
+    /// it is rare, and the pipeline's queued request stays small.
+    pub fence: Option<Box<CommitFence>>,
 }
 
 /// The primary lease a commit was written under, as the writing transaction read it.

@@ -794,7 +794,43 @@ impl Follower {
             from: cursor,
         });
         let position = CommitPosition::new(cursor.sequence.saturating_add(1), 0);
-        self.apply_locked(&mut guard, &brain_id, &lineage, &[(position, record)])?;
-        Ok(id)
+        let Err(e) = self.apply_locked(&mut guard, &brain_id, &lineage, &[(position, record)])
+        else {
+            return Ok(id);
+        };
+        // The write failed, but a failed commit may still be on disk. A refusal before the write (a check of the
+        // records) is the plain error; a store failure (`store_io`) may have committed what the process can no longer
+        // read back, and a file that shows the new timeline did commit: both are partial.
+        match self.load_state() {
+            Ok(state)
+                if state
+                    .as_ref()
+                    .is_some_and(|s| s.meta().lineage.last().is_some_and(|t| t.id == id)) =>
+            {
+                *guard = state;
+                Err(refused(
+                    PROMOTION_PARTIAL,
+                    format!(
+                        "the new timeline {id} is on disk although its write reported: {e}; open the brain with Store::open_dir"
+                    ),
+                ))
+            }
+            Ok(state) if e.code != crate::error::STORE_IO => {
+                *guard = state;
+                Err(e)
+            }
+            Ok(_) => Err(refused(
+                PROMOTION_PARTIAL,
+                format!(
+                    "the write of the new timeline {id} failed in the store ({e}) and may be on disk: open the follower again to see whether its lineage ends in {id}"
+                ),
+            )),
+            Err(read) => Err(refused(
+                PROMOTION_PARTIAL,
+                format!(
+                    "the write of the new timeline {id} reported: {e}, and the follower could not be read again ({read}): open the follower again to see whether its lineage ends in {id}"
+                ),
+            )),
+        }
     }
 }

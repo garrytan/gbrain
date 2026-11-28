@@ -73,8 +73,8 @@ pub use filters::{AfterKey, DateBound, KeywordOptions};
 pub(crate) use filters::{DateWindow, frontmatter_holds, parse_trust_floor};
 pub(crate) use index::read_state as read_index_state;
 pub(crate) use index_build::{
-    Builder, build_batch, open_index, reset as reset_index, seed_complete as seed_complete_index,
-    verify as verify_index,
+    Builder, build_batch, check_state as check_index_state, open_index, reset as reset_index,
+    seed_complete as seed_complete_index, verify as verify_index,
 };
 pub use index_build::{KeywordIndexReport, KeywordIndexState};
 pub(crate) use index_writer::IndexingWriter;

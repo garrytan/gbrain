@@ -177,10 +177,21 @@ A primary serves under the lease `primary` (lane L5's leases, `takeover::PRIMARY
 takes it and arms the store's write fence (`primary.rs`), `renew_primary` renews it and `release_primary` hands it over.
 While armed, every write of the store, its bound transactions and its builder reads the lease inside its own write
 transaction, and the record file accepts the commit only while its commit time is before the lease's end
-(`commit_log::CommitFence`, checked in the pipeline's batch write and the single-writer commit). So a primary whose
+(`commit_log::CommitFence`, checked in the pipeline's batch write after its conflict checks, and in the single-writer
+commit). A transaction's commit reads the lease again inside the commit, whatever its statements saw; an optimistic
+one whose snapshot predates the lease it would commit under conflicts and runs again. The id-sequence write of a
+refused or rolled-back transaction carries the fence, and is skipped when the store must not write. So a primary whose
 lease lapsed, was released or was taken over is refused `lease_lost` at commit and writes nothing. A store opened on
-records that hold a primary lease refuses writes (`lease_lost`, reason `primary_not_served`) until it serves; a store
-whose records never held one is never fenced.
+records that hold a primary lease refuses writes (`lease_lost`, reason `primary_not_served`) until it serves, and its
+open writes nothing: the open-time upkeep (sweep-record index backfill, keyword index repair and build) runs in
+`serve_as_primary` after it takes the lease, and an open that would upgrade the format or switch the brain to the log
+is refused with the same reason. A store whose records never held one is never fenced.
+
+Open cases of the write fence: the upkeep `serve_as_primary` finishes writes derived records unfenced, right after
+it takes the lease; a fail-closed open leaves the access flag scan unstored (it judges the flag from a read, as an
+open that cannot write does); a brain that holds a primary lease and needs a format upgrade opens only read-only; and
+on the single-writer record adapter, which keeps no durable id reservation, ids handed to a transaction the fence
+refused can be handed out again after the store serves again (as across a promotion).
 
 The lease record replicates with the data, and a promotion judges it on the promoting machine's clock:
 
@@ -207,6 +218,9 @@ upkeep are logged and replay; journal origin on and off; the accept hook. `tests
 `logged_*` crash and fsync-fault sweeps that replay the recovered log against the recovered records, beside the
 existing acknowledged/in-doubt check, and a crash at every I/O call of one group commit. `tests/takeover.rs`: the
 promotion fence (live, lapsed, attested with margin 0 and the default margin, hand-over), the primary's write fence on
-both record adapters and every write kind (lapse, commit after the lease's end, release, reopen), invalid inputs,
-`promotion_partial` recovery, stale-primary lineage, and the no-product-path guards. `tests/follower.rs`: a crash at
-every I/O call of a promotion's durable step.
+both record adapters and every write kind (lapse, commit after the lease's end, release, reopen), a transaction begun
+before the store served, a second store written while one serves, refused and rolled-back transactions that write
+nothing after the lease's end, a reopen that writes nothing and finishes its upkeep and keyword build when it serves,
+a write that raced a renewal, invalid inputs, `promotion_partial` recovery, stale-primary lineage, and the
+no-product-path guards. `tests/follower.rs`: a crash at every I/O call of a promotion's durable step, where a
+promotion on disk that returned an error names it `promotion_partial`.

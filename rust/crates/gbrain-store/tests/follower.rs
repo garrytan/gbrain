@@ -9,7 +9,7 @@ mod common;
 use common::TempDir;
 use gbrain_sim::{CrashMode, FaultPlan, SimDisk, SimFile};
 use gbrain_store::commit_log::CommitPosition;
-use gbrain_store::follower::{Follower, OldPrimaryStopped, SNAPSHOT_REQUIRED};
+use gbrain_store::follower::{Follower, OldPrimaryStopped, PROMOTION_PARTIAL, SNAPSHOT_REQUIRED};
 use gbrain_store::journal::PageMutation;
 use gbrain_store::kv::Kv;
 use gbrain_store::redb_kv::{RedbKv, RedbReadOnlyKv, read_commit_time};
@@ -953,7 +953,9 @@ impl Env for FixedEnv {
 
 /// A crash at every I/O call of a promotion's durable step (`Follower::start_timeline`: the new timeline and its
 /// promotion note in one redb transaction): after the reboot the follower is exactly as it was, or exactly promoted
-/// (the new timeline with its note); never one without the other. From either it then finishes the promotion.
+/// (the new timeline with its note); never one without the other. From either it then finishes the promotion. A
+/// promotion that returned an error but is on disk after the reboot named it `promotion_partial` (review finding 7,
+/// fail-first on d30e72662a, which returned the plain I/O error).
 #[test]
 fn a_crash_at_every_io_of_a_promotion_leaves_the_follower_as_it_was_or_promoted() {
     let modes = [
@@ -993,8 +995,8 @@ fn a_crash_at_every_io_of_a_promotion_leaves_the_follower_as_it_was_or_promoted(
                 crash_at_op: Some(k + 1),
                 crash_mode: modes[(k as usize) % modes.len()],
             });
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _ = f.start_timeline(&env, 0, HOST, Some(&stopped));
+            let returned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                f.start_timeline(&env, 0, HOST, Some(&stopped))
             }));
             disk.crash_now();
             drop(f);
@@ -1017,7 +1019,16 @@ fn a_crash_at_every_io_of_a_promotion_leaves_the_follower_as_it_was_or_promoted(
                 "as_it_was"
             } else if image == promoted {
                 assert_eq!(f.lineage().last().unwrap().id, id);
-                "promoted"
+                match &returned {
+                    Ok(Err(e)) => {
+                        assert!(
+                            e.message.starts_with(PROMOTION_PARTIAL),
+                            "crash at I/O {k}: a promotion on disk returned {e}, not {PROMOTION_PARTIAL}"
+                        );
+                        "promoted_partial"
+                    }
+                    _ => "promoted",
+                }
             } else {
                 panic!("crash at I/O {k}: the follower is neither as it was nor promoted");
             };
@@ -1027,6 +1038,10 @@ fn a_crash_at_every_io_of_a_promotion_leaves_the_follower_as_it_was_or_promoted(
             "concurrent {concurrent}: {} crash points: {outcomes:?}",
             end - start + 1
         );
-        assert!(outcomes.contains_key("as_it_was") && outcomes.contains_key("promoted"));
+        assert!(outcomes.contains_key("as_it_was"));
+        assert!(
+            outcomes.contains_key("promoted") || outcomes.contains_key("promoted_partial"),
+            "{outcomes:?}"
+        );
     }
 }
