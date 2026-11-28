@@ -19,7 +19,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { REMOTE_WHOLE_OPERATIONS, REMOTE_WHOLE_PARAM_FORMS, remoteOperationContext, remoteWholeOperationForm } from '../src/core/rust-engine/served/remote-whole-ops.ts';
+import { REMOTE_WHOLE_OPERATIONS, REMOTE_WHOLE_PARAM_FORMS, claimedGuestChannels, remoteOperationContext, remoteWholeOperationForm } from '../src/core/rust-engine/served/remote-whole-ops.ts';
 import { operationsByName } from '../src/core/operations.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -82,6 +82,18 @@ describe('a guest note\'s attribution on a remote whole operation', () => {
     expect(remoteOperationContext('put_page', putPage, { sourceId: 'guests', guestChannels: channels }, grant).guestChannels).toEqual(channels);
     expect(remoteOperationContext('put_page', putPage, { guestChannels: { requestMeta: meta } }, null).guestChannels).toEqual({ requestMeta: meta });
     expect(remoteOperationContext('put_page', putPage, { sourceId: 'guests' }, grant).guestChannels).toBeUndefined();
+  });
+
+  test('the client sends the header and _meta.guest alone: no other _meta key, and nothing when the call carries neither', () => {
+    const sent = (guestChannels: unknown) => claimedGuestChannels({ guestChannels } as never);
+    expect({
+      both: sent({ header, requestMeta: { ...meta, progressToken: 1 } }),
+      metaOnly: sent({ requestMeta: meta }),
+      otherMetaOnly: sent({ requestMeta: { progressToken: 1 } }),
+      undefinedGuest: sent({ requestMeta: { guest: undefined } }),
+      none: sent(undefined),
+    }).toEqual({ both: { header, requestMeta: meta }, metaOnly: { requestMeta: meta }, otherMetaOnly: undefined,
+      undefinedGuest: { requestMeta: { guest: null } }, none: undefined });
   });
 
   test('any other shape is refused before the operation runs: another key, another _meta key, a header that is not text', () => {

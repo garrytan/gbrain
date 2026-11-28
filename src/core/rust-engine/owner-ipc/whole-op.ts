@@ -211,17 +211,21 @@ export async function forwardOwnerOperation(ctx: OperationContext, name: string,
 
 /**
  * A remote caller's whole operation from a served client of a multi-user brain server (served/remote-whole-ops.ts): sent
- * as `runOperation` with the remote mark, the plain context keys and the caller's grant without its token (a narrowing
- * claim); the server runs the operation's own handler with ctx.remote true. A handoff is sent again, as a local one is.
+ * as `runOperation` with the remote mark, the plain context keys, a guest note's attribution and the caller's grant
+ * without its token (a narrowing claim); the server runs the operation's own handler with ctx.remote true. A handoff is
+ * sent again, as a local one is.
  */
 export async function forwardRemoteWholeOperation(ctx: OperationContext, name: string, params: Record<string, unknown>, resends = 0): Promise<{ result: unknown }> {
-  const { REMOTE_CONTEXT_KEYS, claimedAuth } = await import('../served/remote-whole-ops.ts');
+  const { REMOTE_CONTEXT_KEYS, claimedAuth, claimedGuestChannels } = await import('../served/remote-whole-ops.ts');
   const { servedConnectionOf } = await import('../served/store-returning.ts');
   const connection = (ownerConnectionFor(ctx.engine) ?? servedConnectionOf(ctx.engine)) as OwnerConnection | undefined;
   if (!connection) throw ownerIpcRefusal(name, 'this process has no connection to the brain server');
   const context: Record<string, unknown> = {};
   const record = ctx as unknown as Record<string, unknown>;
   for (const key of REMOTE_CONTEXT_KEYS) if (record[key] !== undefined) context[key] = record[key];
+  // A guest note's attribution, reduced to the header and _meta.guest (the server refuses any other shape).
+  const guest = claimedGuestChannels(ctx);
+  if (guest) context.guestChannels = guest;
   const { withRemoteCaller } = await import('../../remote-caller.ts');
   const answer = await withRemoteCaller(true, () => connection.request('fn', OWNER_RUN_OPERATION, [name, params, context, { auth: claimedAuth(ctx) }]) as Promise<ForwardedOperationResult>)
     .catch(async (error: unknown): Promise<ForwardedOperationResult | { rerun: true }> => {

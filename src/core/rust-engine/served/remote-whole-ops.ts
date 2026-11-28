@@ -17,11 +17,14 @@
  *    (B3): it can only take scopes away, and the server checks the operation's scope against it again.
  *  - The client strips the bearer token from the grant it sends.
  *  - One operation crosses in one parameter form only (REMOTE_WHOLE_PARAM_FORMS): request_tools, as a surface persist.
+ *  - A guest note's attribution crosses as the X-Gbrain-Guest header and _meta.guest only (claimedGuestChannels); the
+ *    server runs the same guest admission on it (listed writer, label syntax, frontmatter, readers), from its own store.
  * Fencing and replay: the owner's persistence journal and claim fences, unchanged; a journaled operation reuses the wire
  * request id (served/session.ts), so a retry after a restart is answered by the journal's own receipt, never a second write.
  */
 import { opError, type Operation, type OperationContext } from '../../ops/contract.ts';
 import type { McpSurface } from '../../../mcp/surface.ts';
+import type { GuestChannels } from '../../guests/admission.ts';
 import { operationScopesAllowed } from '../../scope.ts';
 import { ownerIpcRefusal } from '../owner-ipc/routes.ts';
 import { OWNER_RUN_OPERATION } from '../owner-ipc/forwarded-names.ts';
@@ -108,6 +111,39 @@ export function claimedAuth(ctx: OperationContext): Record<string, unknown> | nu
  */
 export const REMOTE_CONTEXT_KEYS = ['sourceId', 'admissionOrigin', 'localFederatedSourceIds', 'agentLabel', 'transport', 'takesHoldersAllowList', 'surfaceCeiling'] as const;
 
+/**
+ * A guest note's attribution channels (guests/admission.ts GuestChannels), reduced to what guest admission reads: the
+ * X-Gbrain-Guest header and the `guest` key of request-level _meta. No other _meta key crosses. Undefined when the call
+ * carries neither. The brain server runs the same parseGuestAttribution on it, so a malformed label refuses there as
+ * it does in process.
+ */
+export function claimedGuestChannels(ctx: OperationContext): GuestChannels | undefined {
+  const channels = ctx.guestChannels;
+  const out: GuestChannels = {};
+  if (typeof channels?.header === 'string') out.header = channels.header;
+  const meta = channels?.requestMeta;
+  if (meta && typeof meta === 'object' && !Array.isArray(meta) && Object.hasOwn(meta, 'guest')) {
+    // An own `guest` key that holds undefined does not survive the wire; null refuses the same way (not an object).
+    const guest = (meta as { guest?: unknown }).guest;
+    out.requestMeta = { guest: guest === undefined ? null : guest };
+  }
+  return out.header === undefined && out.requestMeta === undefined ? undefined : out;
+}
+
+/** The attribution a remote whole operation carries: only the reduced shape claimedGuestChannels sends, or nothing. */
+function guestChannelsOf(name: string, context: unknown): { guestChannels?: GuestChannels } {
+  const channels = (context as Record<string, unknown> | null)?.guestChannels;
+  if (channels === undefined) return {};
+  const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  const meta = plain(channels) ? channels.requestMeta : undefined;
+  if (!plain(channels) || Object.keys(channels).some(key => key !== 'header' && key !== 'requestMeta')
+    || (channels.header !== undefined && typeof channels.header !== 'string')
+    || (meta !== undefined && !(plain(meta) && Object.keys(meta).length === 1 && Object.hasOwn(meta, 'guest')))) {
+    throw ownerIpcRefusal(name, 'its guest attribution is not the X-Gbrain-Guest header and _meta.guest alone');
+  }
+  return { guestChannels: channels as GuestChannels };
+}
+
 /** The surface names a claimed `surfaceCeiling` may hold (mcp/surface.ts McpSurface). */
 const SURFACE_CEILINGS: ReadonlySet<string> = new Set(['verbs', 'starter', 'full'] satisfies McpSurface[]);
 
@@ -130,8 +166,9 @@ export async function finishRemoteWholeOperation(name: string, ctx: OperationCon
 
 /**
  * The context a remote whole operation runs with on the brain server: `auth` from the caller's grant (a narrowing claim
- * of the owner's floor; served/session.ts admits no other principal), the plain context keys, and nothing else. Refuses
- * an operation off the closed list, a claim that is not a grant, and a grant whose scopes do not allow the operation.
+ * of the owner's floor; served/session.ts admits no other principal), the plain context keys, a guest note's attribution
+ * channels, and nothing else. Refuses an operation off the closed list, a claim that is not a grant, a grant whose scopes
+ * do not allow the operation, and guest attribution in any shape but the header and _meta.guest.
  */
 export function remoteOperationContext(name: string, op: Operation, context: unknown, claim: unknown): Record<string, unknown> {
   if (!remoteWholeOperation(name)) throw ownerIpcRefusal(name, 'a remote caller\'s whole operation is not run by the brain owner');
@@ -141,7 +178,8 @@ export function remoteOperationContext(name: string, op: Operation, context: unk
   }
   const auth = (claim as { auth?: unknown } | null)?.auth;
   // A remote caller with no grant (an MCP stdio client of the owner's own process) runs with none, as in process.
-  if (auth === null || auth === undefined) return contextKeys(context);
+  const guest = guestChannelsOf(name, context);
+  if (auth === null || auth === undefined) return { ...contextKeys(context), ...guest };
   if (typeof auth !== 'object' || Array.isArray(auth) || !Array.isArray((auth as { scopes?: unknown }).scopes)
     || !(auth as { scopes: unknown[] }).scopes.every(s => typeof s === 'string')) {
     throw ownerIpcRefusal(name, 'its caller grant is not an object with a scope list');
@@ -151,7 +189,7 @@ export function remoteOperationContext(name: string, op: Operation, context: unk
     throw opError('permission_denied', `${name} needs the ${op.scope ?? 'read'} scope, which the caller's grant does not hold, so nothing ran.`,
       'Use a credential whose grant holds the scope the operation needs.', { reason: 'scope_missing', detail: `member=${name} via=served ran=false written=nothing` });
   }
-  return { ...contextKeys(context), auth };
+  return { ...contextKeys(context), ...guest, auth };
 }
 
 /** The plain context keys of a remote whole operation (REMOTE_CONTEXT_KEYS), nothing else. */
