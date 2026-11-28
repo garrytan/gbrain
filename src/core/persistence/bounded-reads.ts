@@ -101,6 +101,7 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'readPersistenceBrainId', 'readLocalWriterRow', 'readLedgerSource', 'isFolderRestricted', 'listSourceLocalPaths', 'getChunkReuseRows', 'getPageSealState',
   'readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceState', 'readAdmissionSource', 'listLinkEndpointPages', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots',
+  'isSharedSkillPackMember', 'readPageFileAliases', 'readPageTombstoneSourcePath',
   'readSourceMembership', 'getWorktreeBinding', 'readLiveMember', 'readCredentialMemberId', 'readAccessTokenAttest', 'readOauthClientAttest', 'readLinkedMember', 'readFolderAccess',
   'listGuestSourceIds', 'hasGuestSourceRow', 'readDatabaseClock', 'listStoredTimelineRowsOrdered', 'matchTakeRows',
   'listFactWithdrawalDates', 'listCorePageRows', 'lockRegisteredSourceIds',

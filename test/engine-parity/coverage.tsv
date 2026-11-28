@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2518/2550
+# covered: 2522/2554
 # lifecycle: 21/22
 # pages: 141/142
 # search: 8/8
@@ -79,7 +79,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 22/22
 # wanted_links: 2/2
-# write_misc: 131/146
+# write_misc: 135/150
 # repair_bookkeeping: 59/59
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -154,7 +154,7 @@ findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
 deletePages	pages	yes	10	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
-softDeletePage	pages	yes	355	yes	yes	yes	serves
+softDeletePage	pages	yes	356	yes	yes	yes	serves
 softDeletePages	pages	yes	8	yes	yes	yes	serves
 restorePage	pages	yes	22	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	12	no	yes	yes	serves
@@ -1018,7 +1018,7 @@ moveTwinPageChildren	persistence_journal	yes	4	no	yes	yes	serves
 moveTwinFacts	persistence_journal	yes	3	no	yes	yes	serves
 recordRenameAlias	persistence_journal	yes	3	no	yes	yes	serves
 movePageVersions	persistence_journal	yes	1	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	149	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	151	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	3	no	yes	yes	serves
 readTopologyChangeDigest	persistence_journal	yes	2	no	yes	yes	serves
 listTopologyRecoveries	persistence_journal	yes	5	no	yes	yes	serves
@@ -2049,11 +2049,15 @@ lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
 replaceWantedLinkRows	wanted_links	yes	9	no	yes	yes	serves
 listMarkdownPageSlugs	write_misc	yes	1	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	5	no	yes	yes	serves
-readSourceState	write_misc	yes	19	no	yes	yes	serves
+readSourceState	write_misc	yes	20	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	2	no	yes	yes	serves
-sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
-listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	31	no	yes	yes	serves
+sharedSkillPackTablePresent	write_misc	yes	2	no	yes	yes	serves
+listSharedSkillPackRoots	write_misc	yes	3	no	yes	yes	serves
+hasSharedSkillPack	write_misc	yes	1	no	yes	yes	serves
+isSharedSkillPackMember	write_misc	yes	2	no	yes	yes	serves
+readPageFileAliases	write_misc	yes	2	no	yes	yes	serves
+readPageTombstoneSourcePath	write_misc	yes	1	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	32	no	yes	yes	serves
 listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listHostRepositoryRoots	write_misc	yes	1	no	yes	yes	serves
 listPendingGitEffectPaths	write_misc	no	0	no	-	-	-

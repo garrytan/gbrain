@@ -195,6 +195,9 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
     // generation ledger scrub (the page purge's last raw reads)
     'listTopologyRecoveries', 'readOpCheckpointRecords', 'readOwnerHostBinding', 'readPageDatabaseOnlyReason', 'readWorktreeAdmission',
     'scrubGenerationPageRows',
+    // the knowledge guard's reads on a brain with a shared skillpack (shared-skills/knowledge-guard.ts): the tombstone's path, its
+    // pack membership and the page's file aliases, typed members the Rust store serves since lane 2b doctor-raw-rust
+    'readPageTombstoneSourcePath', 'isSharedSkillPackMember', 'readPageFileAliases',
   ),
   ...GUARDED_SITES,
 ];

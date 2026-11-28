@@ -162,6 +162,38 @@ export function listSharedSkillPackRoots(exec: LegacyUnscopedRead, hostId: strin
       LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid`, [hostId]);
 }
 
+/** Whether source incarnation `incarnation` of `sourceId` holds a shared skillpack row (ghost-pages.ts, #6910). */
+export async function hasSharedSkillPack(exec: LegacyUnscopedRead, sourceId: string, incarnation: string): Promise<boolean> {
+  const rows = await exec.executeRaw('SELECT 1 FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [sourceId, incarnation]);
+  return rows.length > 0;
+}
+
+/**
+ * #6910 (shared-skills/knowledge-guard.ts sharedPackMember): whether one of `paths` (source-relative, `/`-separated) is a
+ * file of a live skill head's current revision of the source incarnation, or lies under a live skill's `skills/<name>/`.
+ */
+export async function isSharedSkillPackMember(exec: LegacyUnscopedRead, sourceId: string, incarnation: string, paths: string[]): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ member: boolean }>(`SELECT EXISTS (SELECT 1 FROM shared_skill_heads h
+      JOIN shared_skill_revisions r ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
+      WHERE h.source_id=$1 AND h.source_incarnation=$2::uuid AND NOT h.deleted AND (
+        EXISTS (SELECT 1 FROM jsonb_array_elements(r.files) f WHERE f->>'path' = ANY($3::text[]))
+        OR EXISTS (SELECT 1 FROM unnest($3::text[]) p WHERE starts_with(p, 'skills/' || h.name || '/')))) AS member`, [sourceId, incarnation, paths]);
+  return row?.member === true;
+}
+
+/** The recorded file aliases of page `slug` of `sourceId`, soft-deleted or live (the knowledge guard's screen, #6910). */
+export function readPageFileAliases(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<Array<{ source_path: string | null; source_uri: string | null }>> {
+  return exec.executeRaw<{ source_path: string | null; source_uri: string | null }>(
+    'SELECT source_path,source_uri FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
+}
+
+/** Page `slug` of `sourceId` when it is a tombstone (soft-deleted), with its recorded source path; null otherwise (#7345). */
+export async function readPageTombstoneSourcePath(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<{ source_path: string | null } | null> {
+  const [row] = await exec.executeRaw<{ source_path: string | null }>(
+    'SELECT source_path FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NOT NULL', [sourceId, slug]);
+  return row ?? null;
+}
+
 /** A source's #5182 per-host Git-durability opt-in: null until an operator records one. */
 export type GitDurabilitySetting = 'enabled' | 'disabled' | null;
 

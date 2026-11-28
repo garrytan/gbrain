@@ -1774,6 +1774,10 @@ export const DOMAIN_OF: Record<string, string> = {
   'readPageTitlesById': OOS.callerRawSql, 'readTextMentionPages': OOS.callerRawSql,
   // the page-write reads and upkeep that belong to no other domain
   'readSourceState': OOS.writeMisc,
+  'hasSharedSkillPack': OOS.writeMisc,
+  'isSharedSkillPackMember': OOS.writeMisc,
+  'readPageFileAliases': OOS.writeMisc,
+  'readPageTombstoneSourcePath': OOS.writeMisc,
   'readOpCheckpointKeys': OOS.writeMisc,
   'writeOpCheckpointKeys': OOS.writeMisc,
   'readOpCheckpointRecords': OOS.callerRawSql,

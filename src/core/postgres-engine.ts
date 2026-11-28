@@ -2928,6 +2928,10 @@ export class PostgresEngine implements BrainEngine {
   readAdmissionSource(sourceId: string) { return this.writeMiscRead(exec => writeMiscImpl.readAdmissionSource(exec, sourceId)); }
   sharedSkillPackTablePresent() { return this.writeMiscRead(exec => writeMiscImpl.sharedSkillPackTablePresent(exec)); }
   listSharedSkillPackRoots(hostId: string) { return this.writeMiscRead(exec => writeMiscImpl.listSharedSkillPackRoots(exec, hostId)); }
+  hasSharedSkillPack(sourceId: string, incarnation: string) { return this.writeMiscRead(exec => writeMiscImpl.hasSharedSkillPack(exec, sourceId, incarnation)); }
+  isSharedSkillPackMember(sourceId: string, incarnation: string, paths: string[]) { return this.writeMiscRead(exec => writeMiscImpl.isSharedSkillPackMember(exec, sourceId, incarnation, paths)); }
+  readPageFileAliases(sourceId: string, slug: string) { return this.writeMiscRead(exec => writeMiscImpl.readPageFileAliases(exec, sourceId, slug)); }
+  readPageTombstoneSourcePath(sourceId: string, slug: string) { return this.writeMiscRead(exec => writeMiscImpl.readPageTombstoneSourcePath(exec, sourceId, slug)); }
   getWorktreeBinding(sourceId: string, hostId: string | null) { return this.writeMiscRead(exec => writeMiscImpl.getWorktreeBinding(exec, sourceId, hostId)); }
   listHostTopologyRows(hostId: string) { return this.writeMiscRead(exec => writeMiscImpl.listHostTopologyRows(exec, hostId)); }
   listHostRepositoryRoots(hostId: string) { return this.writeMiscRead(exec => writeMiscImpl.listHostRepositoryRoots(exec, hostId)); }

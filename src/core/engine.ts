@@ -1665,12 +1665,17 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readDatabaseClock(): Promise<string>;
   /**
    * Page-write reads and upkeep that belong to no other domain (SQL and contracts in engine-sql/write-misc.ts). A Rust
-   * brain keeps no shared skillpacks, chronicle state, access members or memory proposals, so it answers those empty.
+   * brain keeps no chronicle state, access members or memory proposals, so it answers those empty.
    */
   readSourceState(sourceId: string, opts?: SourceStateOptions): Promise<SourceStateRow | null>;
   readAdmissionSource(sourceId: string): Promise<AdmissionSourceRow | null>;
   sharedSkillPackTablePresent(): Promise<boolean>;
   listSharedSkillPackRoots(hostId: string): Promise<SharedSkillPackRoot[]>;
+  /** The shared skillpack screen's reads (knowledge-guard.ts, ghost-pages.ts; SQL in engine-sql/write-misc.ts). */
+  hasSharedSkillPack(sourceId: string, incarnation: string): Promise<boolean>;
+  isSharedSkillPackMember(sourceId: string, incarnation: string, paths: string[]): Promise<boolean>;
+  readPageFileAliases(sourceId: string, slug: string): Promise<Array<{ source_path: string | null; source_uri: string | null }>>;
+  readPageTombstoneSourcePath(sourceId: string, slug: string): Promise<{ source_path: string | null } | null>;
   /** The source's writer binding with host `hostId`'s paths (null host columns for a null or unbound host); null when unbound. */
   getWorktreeBinding(sourceId: string, hostId: string | null): Promise<WorktreeBinding | null>;
   /** Every worktree host `hostId` binds, with its owner, epoch, state and topology generation, in no set order (the topology lock's local read). */

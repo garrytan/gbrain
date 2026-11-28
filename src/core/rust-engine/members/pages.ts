@@ -279,6 +279,10 @@ export const PAGES_MEMBERS = {
   attachSourcePath: 'sources',
   sharedSkillPackTablePresent: 'sources',
   listSharedSkillPackRoots: 'sources',
+  hasSharedSkillPack: 'sources',
+  isSharedSkillPackMember: 'sources',
+  readPageFileAliases: 'pages',
+  readPageTombstoneSourcePath: 'pages',
   // A resumable op's checkpoint (op-checkpoint.ts): the parent and path rows are persistence_journal's.
   readOpCheckpointKeys: 'persistence_journal',
   writeOpCheckpointKeys: 'persistence_journal',

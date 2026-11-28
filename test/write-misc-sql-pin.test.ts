@@ -25,6 +25,7 @@ function recordingEngine() {
 const SRC = 'src-a';
 const HOST = '5f1c1d0e-8f64-4d6c-9d52-3f2d1c0b9a11';
 const REQ = '0b6f2c3e-1d4a-4e5b-8c7d-9e0f1a2b3c4d';
+const INC = '7a3e9c21-4b5d-4f60-8a71-2c3d4e5f6a7b';
 
 type Pin = { name: string; call: (e: PostgresEngine) => Promise<unknown>; text: string[]; params: unknown[] };
 
@@ -38,6 +39,10 @@ const PINS: Pin[] = [
   { name: 'readHealthMemoClock', call: e => e.readHealthMemoClock(), text: ['FROM persistence_brain WHERE singleton = 1', 'last_value FROM page_generation_clock_seq'], params: [] },
   { name: 'listSynopsisSourceIds', call: e => e.listSynopsisSourceIds(), text: ["SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id"], params: [] },
   { name: 'listSharedSkillPackRoots', call: e => e.listSharedSkillPackRoots(HOST), text: ['FROM shared_skill_packs p JOIN sources s ON s.id=p.source_id AND s.incarnation=p.source_incarnation', 'h.host_id=$1::uuid'], params: [HOST] },
+  { name: 'hasSharedSkillPack', call: e => e.hasSharedSkillPack(SRC, INC), text: ['SELECT 1 FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid'], params: [SRC, INC] },
+  { name: 'isSharedSkillPackMember', call: e => e.isSharedSkillPackMember(SRC, INC, ['skills/a/SKILL.md']), text: ['SELECT EXISTS (SELECT 1 FROM shared_skill_heads h', "EXISTS (SELECT 1 FROM jsonb_array_elements(r.files) f WHERE f->>'path' = ANY($3::text[]))", "starts_with(p, 'skills/' || h.name || '/')"], params: [SRC, INC, ['skills/a/SKILL.md']] },
+  { name: 'readPageFileAliases', call: e => e.readPageFileAliases(SRC, 'notes/a'), text: ['SELECT source_path,source_uri FROM pages WHERE source_id=$1 AND slug=$2'], params: [SRC, 'notes/a'] },
+  { name: 'readPageTombstoneSourcePath', call: e => e.readPageTombstoneSourcePath(SRC, 'notes/a'), text: ['SELECT source_path FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NOT NULL'], params: [SRC, 'notes/a'] },
   { name: 'getWorktreeBinding', call: e => e.getWorktreeBinding(SRC, HOST), text: ['FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id', 'h.host_id=$2::uuid WHERE s.source_id=$1'], params: [SRC, HOST] },
   { name: 'hasExtractedEvents', call: e => e.hasExtractedEvents(SRC, 7), text: ["SELECT 1 FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND state='extracted' AND cardinality(event_hashes) > 0 LIMIT 1"], params: [SRC, 7] },
   { name: 'listActiveAccessMembers', call: e => e.listActiveAccessMembers(), text: ['SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id'], params: [] },

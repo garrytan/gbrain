@@ -20,6 +20,7 @@ import type { ScopeSourceLock } from '../../engine-sql/access-credentials.ts';
 import type { DrainHolderProgressRow } from '../../engine-sql/persistence-journal.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import type { StoreBrain } from '../store.ts';
 import { uuidText } from '../store-codec.ts';
 import { OWNER_MEMBER_KEY } from '../../search/private-visibility.ts';
 import type { GuestSourceLookupRow } from '../../engine.ts';
@@ -71,14 +72,69 @@ export const attachSourcePath: StoreMember<[sourceId: string, localPath: string,
   await storeCall({ member: 'attachSourcePath', sourceId }, () => brain.attachSourcePath(sourceId, localPath, opts?.name ?? null, opts?.federated ?? null));
 };
 
-/**
- * The store answers as a current schema with no shared skillpacks does: the table exists (the store is never on a
- * schema from before shared skills) and holds no pack, so listSharedSkillPackRoots returns nothing.
- */
+/** The store is never on a schema from before shared skills, so the shared_skill_packs table is always present. */
 export const sharedSkillPackTablePresent: StoreMember<[], boolean> = async () => true;
 
-/** The store keeps no shared skillpacks (see sharedSkillPackTablePresent), so no pack has roots, bound worktree or not. */
-export const listSharedSkillPackRoots: StoreMember<[hostId: string], SharedSkillPackRoot[]> = async () => [];
+/** Every head of a pack: the store takes the limit as an i64, and a JS number past 2^31 reaches it as a float. */
+const HEAD_SCAN_LIMIT = 2_147_483_647;
+
+/** The store's pack row of one source incarnation (gbrain-store `shared_skill_publication`, one pack per incarnation), or null. */
+const packOf = (brain: StoreBrain, member: string, sourceId: string, incarnation: string) =>
+  storeCall({ member, sourceId }, () => brain.readSharedSkillPack({ sourceId, incarnation })) as Promise<{ pack_id: string } | null>;
+
+/**
+ * Each source's pack at the source's current incarnation (the statement joins sources on it), archived sources included
+ * as the statement reads them, in source id order (the statement sets none). The roots come from the source's binding
+ * as host `hostId` sees it: `relative_path` when the binding is of the pack's incarnation, and the host's `local_path`
+ * when the host also has a row; null otherwise, as the statement's LEFT JOINs leave them.
+ */
+export const listSharedSkillPackRoots: StoreMember<[hostId: string], SharedSkillPackRoot[]> = async (brain, hostId) => {
+  const sources = await storeCall({ member: 'listSharedSkillPackRoots' }, () => brain.listDoctorSources()) as Array<{ id: string; local_path: string | null; incarnation: string }>;
+  const roots: SharedSkillPackRoot[] = [];
+  for (const s of [...sources].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
+    if (!await packOf(brain, 'listSharedSkillPackRoots', s.id, s.incarnation)) continue;
+    const binding: WorktreeBinding | null = await storeCall({ member: 'listSharedSkillPackRoots', sourceId: s.id }, () => brain.getWorktreeBinding(s.id, hostId));
+    const bound = binding !== null && binding.source_incarnation === s.incarnation;
+    roots.push({ source_id: s.id, source_incarnation: s.incarnation, source_root: s.local_path,
+      worktree_root: bound ? binding.local_path : null, relative_path: bound ? binding.relative_path : null });
+  }
+  return roots;
+};
+
+/** Whether the store keeps a pack row for the source incarnation. */
+export const hasSharedSkillPack: StoreMember<[sourceId: string, incarnation: string], boolean> = async (brain, sourceId, incarnation) =>
+  (await packOf(brain, 'hasSharedSkillPack', sourceId, incarnation)) !== null;
+
+/**
+ * The statement reads the live heads of the source incarnation and their current revisions' files. The store keeps
+ * heads under the incarnation's one pack (publication refuses a second pack id), so it reads that pack's heads; with
+ * no pack row there is no head to read.
+ */
+export const isSharedSkillPackMember: StoreMember<[sourceId: string, incarnation: string, paths: string[]], boolean> = async (brain, sourceId, incarnation, paths) => {
+  const member = { member: 'isSharedSkillPackMember', sourceId };
+  const pack = await packOf(brain, 'isSharedSkillPackMember', sourceId, incarnation);
+  if (!pack) return false;
+  const heads = await storeCall(member, () => brain.listSharedSkillHeadKeys({ sourceId, incarnation, packId: pack.pack_id, limit: HEAD_SCAN_LIMIT, names: [] })) as Array<{ name: string; deleted: boolean }>;
+  const names = heads.filter(h => !h.deleted).map(h => h.name);
+  if (!names.length) return false;
+  if (paths.some(p => names.some(name => p.startsWith(`skills/${name}/`)))) return true;
+  const revisions = await storeCall(member, () => brain.readSharedSkillHeadRevisions({ sourceId, incarnation, packId: pack.pack_id, limit: HEAD_SCAN_LIMIT, names })) as Array<{ files: unknown }>;
+  return revisions.some(r => Array.isArray(r.files) && r.files.some(f => typeof f === 'object' && f !== null && paths.includes((f as { path?: unknown }).path as string)));
+};
+
+/** The page's recorded file origin, soft-deleted or live (gbrain-store `readPageFileOrigin`): one row, as (source_id, slug) is unique. */
+export const readPageFileAliases: StoreMember<[sourceId: string, slug: string], Array<{ source_path: string | null; source_uri: string | null }>> = async (brain, sourceId, slug) => {
+  const origin = await storeCall({ member: 'readPageFileAliases', sourceId }, () => brain.readPageFileOrigin({ sourceId, slug, includeDeleted: true })) as { source_path: string | null; source_uri: string | null } | null;
+  return origin ? [{ source_path: origin.source_path, source_uri: origin.source_uri }] : [];
+};
+
+/** A tombstone is a page with no live row: the any-row read answers it, the live read rules out a live page. */
+export const readPageTombstoneSourcePath: StoreMember<[sourceId: string, slug: string], { source_path: string | null } | null> = async (brain, sourceId, slug) => {
+  const member = { member: 'readPageTombstoneSourcePath', sourceId };
+  if (await storeCall(member, () => brain.readPageFileOrigin({ sourceId, slug, includeDeleted: false }))) return null;
+  const any = await storeCall(member, () => brain.readPageFileOrigin({ sourceId, slug, includeDeleted: true })) as { source_path: string | null } | null;
+  return any ? { source_path: any.source_path } : null;
+};
 
 /**
  * The source's binding as host `hostId` sees it, from the binding records an unmanaged claim keeps

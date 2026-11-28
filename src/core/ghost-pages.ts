@@ -211,10 +211,9 @@ async function confirm(engine: BrainEngine, context: Extract<SourceContext, { ok
 /** #6910: a ghost on a reserved skillpack path that is a member of the source's adopted shared skillpack. */
 async function sharedPackMemberGhost(engine: BrainEngine, owner: GhostOwner, ghost: GhostPage): Promise<boolean> {
   if (!isReservedSkillBundlePath(ghost.path) && !isReservedSkillBundlePath(ghost.slug)) return false;
-  // A Rust brain keeps no shared skillpacks, so it answers false here and never reaches the adoption read.
   if (!await engine.sharedSkillPackTablePresent()) return false;
-  const adopted = await engine.executeRaw('SELECT 1 FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [ghost.source_id, owner.source_incarnation]);
-  return adopted.length > 0 && sharedPackMember(engine, ghost.source_id, owner.source_incarnation, [ghost.path, `${ghost.slug}.md`]);
+  return await engine.hasSharedSkillPack(ghost.source_id, owner.source_incarnation)
+    && sharedPackMember(engine, ghost.source_id, owner.source_incarnation, [ghost.path, `${ghost.slug}.md`]);
 }
 
 /**

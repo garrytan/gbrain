@@ -18,7 +18,8 @@ export const GHOST_RETIREMENT_INTENT = 'managed_maintenance_retire_ghost_page';
 
 type PackRoot = SharedSkillPackRoot;
 /** The typed engine reads of the screen (engine-sql/write-misc.ts); a SqlEngine here is always a whole engine or a view of one. */
-type GuardEngine = Pick<BrainEngine, 'sharedSkillPackTablePresent' | 'listSharedSkillPackRoots' | 'readSourceState'>;
+type GuardEngine = Pick<BrainEngine, 'sharedSkillPackTablePresent' | 'listSharedSkillPackRoots' | 'readSourceState' | 'isSharedSkillPackMember'
+  | 'readPageFileAliases' | 'readPageTombstoneSourcePath'>;
 const guardEngine = (engine: SqlEngine) => engine as unknown as GuardEngine;
 
 function reserved(path: string): boolean {
@@ -38,12 +39,7 @@ function reject(): never {
 export async function sharedPackMember(engine: SqlEngine, sourceId: string, sourceIncarnation: string, paths: string[]): Promise<boolean> {
   const normalized = paths.map(path => path.split(sep).join('/'));
   if (normalized.some(path => path.toLowerCase() === 'skillpack.json')) return true;
-  const [row] = await engine.executeRaw<{ member: boolean }>(`SELECT EXISTS (SELECT 1 FROM shared_skill_heads h
-      JOIN shared_skill_revisions r ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
-      WHERE h.source_id=$1 AND h.source_incarnation=$2::uuid AND NOT h.deleted AND (
-        EXISTS (SELECT 1 FROM jsonb_array_elements(r.files) f WHERE f->>'path' = ANY($3::text[]))
-        OR EXISTS (SELECT 1 FROM unnest($3::text[]) p WHERE starts_with(p, 'skills/' || h.name || '/')))) AS member`, [sourceId, sourceIncarnation, normalized]);
-  return row?.member === true;
+  return guardEngine(engine).isSharedSkillPackMember(sourceId, sourceIncarnation, normalized);
 }
 
 /**
@@ -64,8 +60,7 @@ async function retiresNonMemberGhost(engine: SqlEngine, row: KnowledgePublicatio
  */
 async function purgesNonMemberTombstone(engine: SqlEngine, row: KnowledgePublicationTarget, preparedFile?: KnowledgePublicationFile): Promise<boolean> {
   if (row.operation !== 'delete_page' || row.intent?.purge !== true || row.intent.retention !== true || (preparedFile && preparedFile.expectedBeforeHash !== null)) return false;
-  const [tombstone] = await engine.executeRaw<{ source_path: string | null }>(
-    'SELECT source_path FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NOT NULL', [row.source_id, row.slug]);
+  const tombstone = await guardEngine(engine).readPageTombstoneSourcePath(row.source_id, row.slug);
   if (!tombstone) return false;
   return !(await sharedPackMember(engine, row.source_id, row.source_incarnation, [...(tombstone.source_path ? [tombstone.source_path] : []), `${row.slug}.md`]));
 }
@@ -118,8 +113,7 @@ export async function assertKnowledgePublicationAllowed(
   const sourceRoots = [...new Set([...(source?.local_path ? [source.local_path] : []), ...(preparedFile ? [preparedFile.root] : []),
     ...(ownPack?.worktree_root !== null && ownPack?.worktree_root !== undefined && ownPack.relative_path !== null
       ? [resolve(ownPack.worktree_root, ownPack.relative_path)] : [])])];
-  const aliases = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
-    'SELECT source_path,source_uri FROM pages WHERE source_id=$1 AND slug=$2', [row.source_id, row.slug]);
+  const aliases = await guardEngine(engine).readPageFileAliases(row.source_id, row.slug);
   for (const root of sourceRoots) {
     paths.push(resolve(root, `${row.slug}.md`));
     for (const alias of aliases) {

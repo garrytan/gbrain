@@ -553,6 +553,7 @@ test/engine-parity/segmented-rewrite.test.ts
 test/engine-parity/session-state-cap.test.ts
 test/engine-parity/session-state.test.ts
 test/engine-parity/shared-skill-members.test.ts
+test/engine-parity/skill-pack-roots.test.ts
 test/engine-parity/slot-ends-callers.test.ts
 test/engine-parity/slot-ends-refusal.test.ts
 test/engine-parity/slug-normalize.test.ts

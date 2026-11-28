@@ -3176,6 +3176,10 @@ export class PGLiteEngine implements BrainEngine {
   readAdmissionSource(sourceId: string) { return writeMiscImpl.readAdmissionSource(this.writeMiscReads, sourceId); }
   sharedSkillPackTablePresent() { return writeMiscImpl.sharedSkillPackTablePresent(this.writeMiscReads); }
   listSharedSkillPackRoots(hostId: string) { return writeMiscImpl.listSharedSkillPackRoots(this.writeMiscReads, hostId); }
+  hasSharedSkillPack(sourceId: string, incarnation: string) { return writeMiscImpl.hasSharedSkillPack(this.writeMiscReads, sourceId, incarnation); }
+  isSharedSkillPackMember(sourceId: string, incarnation: string, paths: string[]) { return writeMiscImpl.isSharedSkillPackMember(this.writeMiscReads, sourceId, incarnation, paths); }
+  readPageFileAliases(sourceId: string, slug: string) { return writeMiscImpl.readPageFileAliases(this.writeMiscReads, sourceId, slug); }
+  readPageTombstoneSourcePath(sourceId: string, slug: string) { return writeMiscImpl.readPageTombstoneSourcePath(this.writeMiscReads, sourceId, slug); }
   getWorktreeBinding(sourceId: string, hostId: string | null) { return writeMiscImpl.getWorktreeBinding(this.writeMiscReads, sourceId, hostId); }
   listHostTopologyRows(hostId: string) { return writeMiscImpl.listHostTopologyRows(this.writeMiscReads, hostId); }
   listHostRepositoryRoots(hostId: string) { return writeMiscImpl.listHostRepositoryRoots(this.writeMiscReads, hostId); }
