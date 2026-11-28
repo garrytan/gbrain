@@ -1123,13 +1123,7 @@ export async function getVersions<B extends boolean = true>(
       SELECT ${columns}, ${PAGE_VERSION_SEGMENTED_COLUMNS}, ${trustedSql(replacedBecauseSql('pv', opts?.excludePrivate === true))} AS replaced_because,
         ${trustedSql(VERSION_VALID_TIME_COLUMNS)} FROM page_versions pv
       JOIN pages p ON p.id = pv.page_id
-      WHERE (p.slug = ${slug} OR (
-          -- An old slug that only a rename or merge alias names reads the surviving page's history, as get_page
-          -- resolves it; a page that holds the slug itself keeps it (exact outranks alias).
-          NOT EXISTS (SELECT 1 FROM pages exact_page WHERE exact_page.slug = ${slug} AND exact_page.source_id = p.source_id)
-          AND EXISTS (SELECT 1 FROM slug_aliases a WHERE a.alias_slug = ${slug} AND a.source_id = p.source_id AND a.canonical_slug = p.slug
-            AND EXISTS (SELECT 1 FROM sources alias_source WHERE alias_source.id = a.source_id AND NOT alias_source.archived))))
-        ${scope}
+      WHERE p.slug = ${slug} ${scope}
         ${privacy} AND ${trustedSql(rederiveHiddenSql('pages', 'p'))}
       ORDER BY pv.snapshot_at DESC, pv.id DESC
       ${limit}
