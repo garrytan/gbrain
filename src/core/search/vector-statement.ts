@@ -18,7 +18,7 @@
  * short one means the index ran dry); `eligible_pool` counts the fresh ones
  * and is what `hasMore` compares against its guarded count.
  *
- * `indexWalkSql` (relaxed variant only) runs first. Even with freshness out
+ * `indexWalkSql` (relaxed variant only) normally runs first. Even with freshness out
  * of the CTE, the joined statement's plan sits on a cost knife edge: TOASTed
  * vectors make a sequential scan look cheap, the HNSW estimate grows with
  * `hnsw.ef_search` (the window), and the private-page rule's correlated
@@ -53,7 +53,8 @@
  * (1.1 s for a 40k-chunk scope at 50k pages, 9-22 s for a 74k-chunk one). It is complete by construction, where a filtered HNSW scan of
  * a mid-share scope returned a fraction of the true neighbours, and it costs
  * a few microseconds per scope chunk. Up to SCOPE_SCAN_FIRST_MAX_CHUNKS it
- * replaces the walk; above that the walk runs first (fast when the scope's
+ * runs before the walk, which remains a fallback if the scan times out or
+ * returns a full but underfilled window; above that the walk runs first (fast when the scope's
  * chunks spread through the space) and the scan answers when the walk comes
  * back short, as it does for a scope clustered away from the query. Callers
  * accept the scan when it fills the limit or its window is short (the scope
@@ -103,8 +104,10 @@ export interface VectorSearchStatement {
   indexWalkSql?: string;
   /** Raw rows the walk orders per window slot: INDEX_WALK_OVERFETCH, scaled by 1/share for a source scope. */
   indexWalkOverfetch: number;
-  /** Exact scan over a small source scope's chunks (relaxed variant), same parameters as `sql`; runs after the walk when both exist. */
+  /** Exact scan over a small source scope's chunks (relaxed variant), same parameters as `sql`. */
   scopeScanSql?: string;
+  /** Prefer the exact small-scope scan, retaining the walk if it times out or comes back short. */
+  scopeScanFirst?: boolean;
 }
 
 /**
@@ -394,7 +397,8 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
   const narrowed = !!(opts?.type || opts?.types?.length || opts?.where || opts?.afterDate || opts?.beforeDate)
     || (share !== undefined && share < INDEX_WALK_MIN_SCOPE_SHARE);
   const scopeScan = relaxed && share !== undefined && share < SCOPE_SCAN_MAX_SHARE && chunks !== undefined && chunks <= SCOPE_SCAN_MAX_CHUNKS;
-  const walk = relaxed && !narrowed && !(scopeScan && chunks! <= SCOPE_SCAN_FIRST_MAX_CHUNKS);
+  const walk = relaxed && !narrowed;
+  const scopeScanFirst = scopeScan && chunks! <= SCOPE_SCAN_FIRST_MAX_CHUNKS;
   const overfetch = indexWalkOverfetch(share);
   const preMigration = modelParam ? `(${modelParam}::text IS NULL AND NOT EXISTS(SELECT 1 FROM config WHERE key='embedding_migration.state'))` : '';
   const hashCurrent = `(cc.embedded_text_hash=md5(cc.chunk_text) OR cc.embedded_text_hash IS NULL)`;
@@ -558,5 +562,6 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
     indexWalkOverfetch: overfetch,
     ...(walk ? { indexWalkSql: statement(indexWalkCandidates, true) } : {}),
     ...(scopeScan ? { scopeScanSql: statement(scopeScanCandidates, true) } : {}),
+    ...(scopeScanFirst ? { scopeScanFirst: true } : {}),
   };
 }

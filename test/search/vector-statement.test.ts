@@ -209,7 +209,8 @@ describe('source scope strategy: walk overfetch, walk skip and scope scan', () =
   test('a scope of at most SCOPE_SCAN_FIRST_MAX_CHUNKS runs the scope scan instead of the walk', () => {
     const small = build({ sourceId: 'small' }, 'postgres', 0.2, SCOPE_SCAN_FIRST_MAX_CHUNKS);
     expect(small.scopeScanSql).toBeDefined();
-    expect(small.indexWalkSql).toBeUndefined();
+    expect(small.scopeScanFirst).toBe(true);
+    expect(small.indexWalkSql).toBeDefined(); // retained for a failed scan
     const narrowed = build({ sourceId: 'small', type: 'note' }, 'postgres', 0.01, 500);
     expect(narrowed.scopeScanSql).toBeDefined();
     unchanged(small, build({ sourceId: 'small' }));
@@ -307,8 +308,9 @@ describe('source scope strategy: walk overfetch, walk skip and scope scan', () =
     expect(counted.chunks!).toBeLessThanOrEqual(SCOPE_SCAN_MAX_CHUNKS);
     const scanFirst = buildVectorSearchStatement({ dialect: 'postgres', embedding: new Float32Array([1, 0, 0]), limit: 10, offset: 0, opts: { embeddingColumn: indexedColumn, sourceId: 'sessions' }, scope: { share: 0.25, chunks: SCOPE_SCAN_FIRST_MAX_CHUNKS } });
     const walkFirst = buildVectorSearchStatement({ dialect: 'postgres', embedding: new Float32Array([1, 0, 0]), limit: 10, offset: 0, opts: { embeddingColumn: indexedColumn, sourceId: 'sessions' }, scope: counted });
-    expect([!!scanFirst.indexWalkSql, !!scanFirst.scopeScanSql]).toEqual([false, true]);
+    expect([!!scanFirst.indexWalkSql, !!scanFirst.scopeScanSql, !!scanFirst.scopeScanFirst]).toEqual([true, true, true]);
     expect([!!walkFirst.indexWalkSql, !!walkFirst.scopeScanSql]).toEqual([true, true]);
+    expect(walkFirst.scopeScanFirst).toBeUndefined();
     expect(walkFirst.scopeScanSql).toBe(scanFirst.scopeScanSql!);
   });
 

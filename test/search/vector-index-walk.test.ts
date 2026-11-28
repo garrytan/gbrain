@@ -244,7 +244,8 @@ describe('vector index walk (PGLite)', () => {
     const scope = sourceScope(stats, opts)!;
     const stmt = buildVectorSearchStatement({ dialect: 'pglite', embedding: vec(7), limit: 10, offset: 0, opts, scope });
     expect(stmt.scopeScanSql).toBeDefined();
-    expect(stmt.indexWalkSql).toBeUndefined();
+    expect(stmt.scopeScanFirst).toBe(true);
+    expect(stmt.indexWalkSql).toBeDefined();
     const kinds: string[] = [];
     const original = vectorPool.searchIndexWalk;
     const spy = spyOn(vectorPool, 'searchIndexWalk').mockImplementation((s, limit, run) => original(s, limit, attempt => {
@@ -257,6 +258,36 @@ describe('vector index walk (PGLite)', () => {
       expect(hits.map(hit => hit.slug)).toEqual(shape(await exactRows(stmt.sql, [...stmt.params])).map(row => String(row[0])));
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  test('#9531: a cancelled scope scan tries the walk before the joined pool, with safe fallback settings', async () => {
+    const opts: SearchOpts = { limit: 10, embeddingColumn: column, sourceId: 'side', excludePrivate: true };
+    const original = vectorPool.searchIndexWalk;
+    const originalSettings = vectorSettings.withVectorSettings;
+    const settingsSeen: Array<Record<string, string>> = [];
+    const kinds: string[] = [];
+    const settings = spyOn(vectorSettings, 'withVectorSettings').mockImplementation((...args) => {
+      settingsSeen.push(vectorSettings.vectorScanSettings(args[1], args[2], args[3], args[5], args[6], args[7], args[8]));
+      return originalSettings(...args);
+    });
+    const spy = spyOn(vectorPool, 'searchIndexWalk').mockImplementation((stmt, limit, run) => original(stmt, limit, async attempt => {
+      kinds.push(attempt.scopeScan ? 'scan' : 'walk');
+      if (attempt.scopeScan) throw Object.assign(new Error('query canceled'), { code: '57014' });
+      return run(attempt);
+    }));
+    try {
+      const hits = await engine.searchVector(vec(7), opts);
+      expect(kinds).toEqual(['scan', 'walk']);
+      expect(hits).toHaveLength(10);
+      expect(hits.every(hit => hit.source_id === 'side')).toBe(true);
+      // The tiny fixture may exhaust the walk. If so, the joined pool must
+      // keep its materialization fence rather than returning to the bad plan.
+      expect(settingsSeen[0]).toMatchObject({ enable_sort: 'off' });
+      for (const applied of settingsSeen.slice(1)) expect(applied.enable_material).toBe('off');
+    } finally {
+      spy.mockRestore();
+      settings.mockRestore();
     }
   });
 
