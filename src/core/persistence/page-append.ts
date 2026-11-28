@@ -299,6 +299,12 @@ export interface SegmentedSpliceRequest {
   replacements(page: SplicePage): Promise<{ replacements: BodyReplacement[]; appendTo?: 'truth' | 'timeline'; outcome?: Record<string, unknown> } | null>;
   /** Restage the whole body (appendProbe). */
   full?: boolean;
+  /**
+   * #10589: the page's new Markdown file from the frontmatter the write stamps, for a splice whose file its caller already
+   * renders (a facts fence edit, which writes the file its whole-body path would); otherwise the stored regions with the
+   * replacements applied.
+   */
+  file?: (frontmatter: Record<string, unknown>) => string;
 }
 
 /**
@@ -336,7 +342,7 @@ export async function prepareSegmentedSpliceMutation(engine: BrainEngine, row: W
     ['body', stripManagedFenceRows(built.replacements.map(r => Buffer.from(r.bytes).toString('utf8')).join('\n'))], ['frontmatter', frontmatterText(frontmatter)]],
     gateInput(gateTrust, row.id), gateConfig), { sourceId: row.source_id, sourceUri: gateTrust.origin?.source_uri ?? null }) : null;
   if (gate?.verdict === 'flag' && !isQuarantined(frontmatter)) frontmatter[CONTENT_FLAG_KEY] = buildContentFlagMarker('instruction_like', writeGateDetail(gate));
-  const content = row.worktree_id ? await splicedPageFile(engine, stored, frontmatter, built.replacements, built.appendTo) : undefined;
+  const content = !row.worktree_id ? undefined : request.file ? request.file(frontmatter) : await splicedPageFile(engine, stored, frontmatter, built.replacements, built.appendTo);
   if (content === null) return null;
   const quarantined = isQuarantined(frontmatter);
   const splice = await spliceSegmentedBody(engine, { sourceId: row.source_id, slug: row.slug, page, frontmatter, tags: stored.tags, replacements: built.replacements,

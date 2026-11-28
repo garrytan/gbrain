@@ -36,7 +36,11 @@ import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, factsFenceSection, fenceCellReadBac
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage, pageBodyOverCeilingError } from '../page-body/page-shape.ts';
 import { materializedPage, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
-import { preparePageMutation } from '../persistence/page-prepare.ts';
+import { preparePageMutation, snapshotLedger } from '../persistence/page-prepare.ts';
+import { ledgerApplies } from '../page-body/segment-ledger.ts';
+import { preserveWithdrawnFenceRows } from './withdrawal.ts';
+import { prepareSegmentedSpliceMutation } from '../persistence/page-append.ts';
+import type { BodyReplacement, SplicePage } from '../page-body/splice.ts';
 import { refuseRuleFactTarget } from '../rules/admission.ts';
 import type { CompanionPage, PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
@@ -56,6 +60,38 @@ import { rewriteVersionBodies } from './purge.ts';
 import { carriesClaimSql, claimNeedles } from './purge-verify.ts';
 import { withdrawnFact } from './withdrawal-overlay.ts';
 import { pruneHoldingPageVersions } from '../page-state/versions.ts';
+
+/**
+ * @internal The forced probe of the segmented remember cost test (test/large-pages/remember-cost.test.ts): every fence
+ * append to a segmented page takes the whole-body path, as before #10589.
+ */
+export const fenceAppendProbe = { wholeBody: false };
+
+/**
+ * #10589: the stored-byte replacements that turn each region of a segmented page from its stored text (read back whole)
+ * into its new text, each pair given as [before, after]: one per region that changed, keeping the bytes the two share
+ * at each end. Null when the stored text is not the generation the splice reads (the page moved: the whole-body path refuses it at its revision check).
+ */
+function regionReplacements(page: SplicePage, generation: number | undefined, truth: readonly [string, string],
+  timeline: readonly [string, string]): BodyReplacement[] | null {
+  if (generation !== page.generation) return null;
+  const out: BodyReplacement[] = [];
+  const continuation = (b: Buffer, at: number) => at < b.length && (b[at]! & 0xc0) === 0x80;
+  for (const [from, to, start, bytes] of [[...truth, 0, page.truthBytes], [...timeline, page.truthBytes, page.bodyBytes - page.truthBytes]] as const) {
+    const a = Buffer.from(from, 'utf8'), b = Buffer.from(to, 'utf8');
+    if (a.length !== bytes) return null;
+    if (a.equals(b)) continue;
+    const shared = Math.min(a.length, b.length);
+    let head = 0;
+    while (head < shared && a[head] === b[head]) head++;
+    while (head > 0 && (continuation(a, head) || continuation(b, head))) head--;
+    let tail = 0;
+    while (tail < shared - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+    while (tail > 0 && (continuation(a, a.length - tail) || continuation(b, b.length - tail))) tail--;
+    out.push({ start: start + head, end: start + a.length - tail, bytes: b.subarray(head, b.length - tail) });
+  }
+  return out;
+}
 
 export type FenceFactAppendInput = {
   /** The facts row to publish; `row_num` and `source_markdown_slug` are the helper's. kind and visibility default as insertFacts does. */
@@ -188,7 +224,25 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   const content = serializePageToMarkdown({ ...base, ...next }, snapshot?.tags ?? []);
   // The canonical parser/chunker and durable filesystem publication; the CAS binds this render to the snapshot.
   // #5575 ENG-1: the new row has no facts row yet; its chunks are cut at the append's tier.
-  const prepared = await withPendingFenceRows({ ...page, rowNums: [rowNum], tier: input.pendingTier },
+  const pending = { ...page, rowNums: [rowNum], tier: input.pendingTier };
+  // #10589: a segmented page publishes the edit as a splice of the segments it touches. The whole-body path re-reads,
+  // re-segments, re-hashes and restages the page, so on a page holding a fence over a segment a save outran its
+  // preparation budget and was lost; it remains for a splice that declines. The spliced regions are the ones that path
+  // stores: rows the ledger withdraws are kept struck and purged rows dropped, as its import does.
+  const spliced = snapshot && isSegmentedPage(snapshot.page) && !fenceAppendProbe.wholeBody ? await withPendingFenceRows(pending, async () => {
+    const stored = !ledgerApplies(snapshotLedger(snapshot)) ? next : {
+      compiled_truth: (await preserveWithdrawnFenceRows(engine, row.source_id, next.compiled_truth, row.slug)).trim(),
+      timeline: (await preserveWithdrawnFenceRows(engine, row.source_id, next.timeline, row.slug)).trim() };
+    return prepareSegmentedSpliceMutation(engine, row, snapshot, {
+      replacements: async live => {
+        const replacements = regionReplacements(live, snapshot.bodyGeneration, [base.compiled_truth, stored.compiled_truth],
+          [base.timeline ?? '', stored.timeline]);
+        return replacements?.length ? { replacements } : null;
+      },
+      file: frontmatter => serializePageToMarkdown({ ...base, ...stored, frontmatter } as Page, snapshot.tags),
+    });
+  }) : null;
+  const prepared = spliced ?? await withPendingFenceRows(pending,
     () => preparePageMutation(engine, { ...row, ...(snapshot && rememberAcceptsPageCreatedSince(row, snapshot) ? { page_id: snapshot.page.id } : {}),
       intent: { ...row.intent, content, ...(snapshot ? { expected_revision: snapshot.revision } : {}), force: false } }, config, undefined, signal, { unprojected: true }));
   if (prepared.observedRevision !== (snapshot?.revision ?? null)) {

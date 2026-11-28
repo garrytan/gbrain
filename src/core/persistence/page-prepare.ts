@@ -63,7 +63,7 @@ import { pipelined } from '../page-state/transactions.ts';
 import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
 import { segmentedRevertRefusal } from '../page-state/versions.ts';
 import { bodyUnread, fenceBody, isSegmentedPage, pageBodySegmentedError, withoutBody } from '../page-body/page-shape.ts';
-import { fileBodyDigests, overlaidFileBodyDigests, storedBodyDigests, type ByteSource, type FileReading, type RegionDigests } from '../page-body/body-digests.ts';
+import { fileBodyDigests, overlaidFileBodyDigests, rawFileBodyDigests, storedBodyDigests, type ByteSource, type FileReading, type RegionDigests } from '../page-body/body-digests.ts';
 import { ledgerApplies, type BodyLedger } from '../page-body/segment-ledger.ts';
 import { inferredHeadPrefix } from '../page-body/streamed-import.ts';
 import { fenceTooLargeError } from '../page-body/read-range.ts';
@@ -432,23 +432,32 @@ export function snapshotLedger(snapshot: PageSnapshot): BodyLedger {
 async function segmentedFileMatches(engine: BrainEngine, slug: string, bytes: ByteSource, snapshot: PageSnapshot,
   sourcePath: () => Promise<string>, activePack?: ParseOpts['activePack'], between?: () => Promise<void>): Promise<boolean> {
   const ledger = snapshotLedger(snapshot);
-  let stored: RegionDigests | undefined;
+  let stored: RegionDigests | undefined, storedRaw: RegionDigests | undefined;
   const matches = async (reading: FileReading, inferred: boolean) => {
     const file = fileBodyDigests(bytes, reading, slug, { activePack });
     await between?.();
     if (file.kind !== 'ok') return file.reason;
+    const same = (fileDigests: RegionDigests, storedDigests: RegionDigests) => {
+      const parsed = { ...file.parsed, compiled_truth: fileDigests.truth, timeline: fileDigests.timeline };
+      const type = importedFileType(parsed, snapshot.page, inferred);
+      return digest(canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type }, parsed.tags))
+        === digest(canonical({ ...withoutBody(snapshot.page), frontmatter: withoutSafetyAssessments(snapshot.page.frontmatter ?? {}), compiled_truth: storedDigests.truth, timeline: storedDigests.timeline }, snapshot.tags));
+    };
+    if (!file.factsFence || !ledgerApplies(ledger)) {
+      stored ??= await storedBodyDigests(engine, Number(snapshot.page.id), ledger, between);
+      return same(file.digests, stored);
+    }
+    // #10589: the overlay is a function of the text and the ledger, so a file holding the stored bytes matches without
+    // it. Overlaying both copies sends each whole facts fence to the database twice, on every write to the page.
+    storedRaw ??= await storedBodyDigests(engine, Number(snapshot.page.id), { withdrawals: [] }, between);
+    if (same(await rawFileBodyDigests(bytes, reading, file.regions, between), storedRaw)) return true;
     // A facts fence under a ledger that applies is compared overlaid, one complete fence block at a time; a fence longer
     // than FENCE_MAX_BYTES refuses, as the stored side's trusted read does.
-    const fileDigests = file.factsFence && ledgerApplies(ledger)
-      ? await overlaidFileBodyDigests(bytes, reading, file.regions, async text => (await overlayCanonicalBodies(engine.executeRaw.bind(engine), text, '',
-        ledger.withdrawals, { sourceId: snapshot.page.source_id, marker: ledger.globalPurges })).compiled_truth,
-      fence => fenceTooLargeError(slug, snapshot.page.source_id, fence), between)
-      : file.digests;
-    const parsed = { ...file.parsed, compiled_truth: fileDigests.truth, timeline: fileDigests.timeline };
-    const type = importedFileType(parsed, snapshot.page, inferred);
+    const fileDigests = await overlaidFileBodyDigests(bytes, reading, file.regions, async text => (await overlayCanonicalBodies(engine.executeRaw.bind(engine), text, '',
+      ledger.withdrawals, { sourceId: snapshot.page.source_id, marker: ledger.globalPurges })).compiled_truth,
+    fence => fenceTooLargeError(slug, snapshot.page.source_id, fence), between);
     stored ??= await storedBodyDigests(engine, Number(snapshot.page.id), ledger, between);
-    return digest(canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type }, parsed.tags))
-      === digest(canonical({ ...withoutBody(snapshot.page), frontmatter: withoutSafetyAssessments(snapshot.page.frontmatter ?? {}), compiled_truth: stored.truth, timeline: stored.timeline }, snapshot.tags));
+    return same(fileDigests, stored);
   };
   const raw = await matches({ prefix: new Uint8Array(0), skip: 0 }, false);
   if (raw === true) return true;
