@@ -138,6 +138,10 @@ never a pass. With no shadow running, every criterion is `missing`.
 
    Named loss: on a Rust brain a write whose process died after it claimed the write and before it committed holds later writes to sources with no owner for its publication lease (365 s by default), because abandoned claims are released at once on PGLite only and dead owners are detected on Postgres only; meanwhile each put ends write_pending (exit 10), and the first write after the lease ends replays the dead write, then the queued ones. Nothing is lost.
 
+   Named loss: aged put receipts are not compacted on a Rust brain until the typed member lands; the receipt cleanup pass refuses up front (engine_capability_missing) and the rest of the write upkeep still runs, so receipts stay at their full size past the retention window.
+
+   Named loss: embedding vectors on a Rust brain install only into a plain float vector column, and only at the width the store already keeps; half-precision columns and vectors of another width are refused (engine_capability_missing) instead of stored, so such a page stays unembedded.
+
    Named loss: on any brain, preparing the links of one written page reads the whole sources table to find that page's source (fetchSource), one read per page, sized by the number of sources; on Postgres that read also runs outside the write's preparation deadline. A lookup by source id is a lane E follow-up due Wed Dec 9.
 
    Named loss: on a Rust brain, every page read (get_page) checks for sync holds by reading the state of every source, one after another, and every sync-hold record in the brain before it keeps the ones for that page, so one read costs one store call per source plus one scan of all hold records. A hold lookup keyed by page is a lane E follow-up due Wed Dec 9.
