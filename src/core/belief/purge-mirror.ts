@@ -8,7 +8,10 @@
  * the source and its incarnation, the scope, the fingerprints and content
  * hashes, the page lifetimes and the purge_epoch it commits; never claim text.
  * The mirror is a superset of committed purges: a purge that rolled back may
- * leave an intent line with no committed line.
+ * leave an intent line with no committed line. A purge transaction that runs
+ * again (a write conflict, a serialization retry) writes one intent line per
+ * run, each under its own `request`: the runs that did not commit are covered
+ * by the committed run's line when everything but `request` matches.
  *
  * A restore (PGLite: `restorePgliteBackup`; Postgres: `replayPurgesFromDatabase`,
  * the `gbrain beliefs replay-purges` step) replays every committed purge newer
@@ -18,7 +21,7 @@
  * replay records `complete` (a restored row held the text and the carrying-field
  * pass ran), `partial` (no restored row matched: tombstones and key-level
  * redaction only) or `unverified` (an intent line with no committed line, not
- * replayed). `coverage.restored` carries the outcome, or `purge_replay:
+ * replayed, unless a committed line of the same request and target covers it). `coverage.restored` carries the outcome, or `purge_replay:
  * 'unavailable'` when no mirror could be read.
  */
 import { randomUUID } from 'node:crypto';
@@ -267,6 +270,17 @@ async function replayDraft(tx: BrainEngine, intent: PurgeMirrorIntent, lifetimes
     subjectKey: known?.subject_key ?? factKey(slugRef(intent.source_incarnation, f.subject), f.fact_hash, f.visibility) };
 }
 
+/**
+ * Everything an intent line names but its `request` and time: the request_id, source, incarnation, scope, epoch and
+ * targets. A run of a purge transaction that did not commit has the same key as the run that did. Its line is covered
+ * by the committed one: replaying the committed line (or finding its tombstones in the archive) applies exactly the
+ * tombstones and removals the uncommitted line names, so skipping it can never bring content back.
+ */
+const purgeTargetKey = (intent: PurgeMirrorIntent): string => {
+  const { request: _request, recorded_at: _recorded, ...target } = intent;
+  return JSON.stringify(Object.keys(target).sort().map(k => [k, target[k as keyof typeof target]]));
+};
+
 export interface PurgeReplayResult { state: PurgeReplayState; replays: ReplayRecord[]; ledger?: 'absent' }
 
 /**
@@ -290,10 +304,12 @@ export async function replayPurgesInRestore(tx: BrainEngine, input: { lines: Pur
     const seen = new Set<string>();
     const newer = input.lines.filter((l): l is PurgeMirrorIntent => l.kind === 'intent' && (input.allTimes || l.recorded_at > input.archivedAt)
       && sources.some(s => s.id === l.source_id && s.incarnation === l.source_incarnation));
+    const covering = new Set(newer.filter(l => committed.has(l.request)).map(purgeTargetKey));
     const pending: Array<{ intent: PurgeMirrorIntent; replay: boolean }> = [];
     for (const intent of newer) {
       if (seen.has(intent.request)) continue;
       seen.add(intent.request);
+      if (!committed.has(intent.request) && covering.has(purgeTargetKey(intent)) && replayFault !== 'replay_uncommitted') continue;
       const [archived] = await tx.executeRaw<{ present: boolean }>(`SELECT (EXISTS (SELECT 1 FROM fact_purges WHERE request_id = $1::uuid)
         OR EXISTS (SELECT 1 FROM take_purges WHERE request_id = $1::uuid) OR EXISTS (SELECT 1 FROM page_purges WHERE request_id = $1::uuid)) AS present`, [intent.request]);
       if (archived?.present === true) continue;
