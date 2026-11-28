@@ -6,7 +6,7 @@ import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { InvalidClientError, InvalidGrantError, InvalidRequestError, InvalidTargetError, ServerError, TooManyRequestsError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { SqlQuery } from './sql-query.ts';
 import type { BrainEngine } from './engine.ts';
-import { lacksRawSql } from './engine-capabilities.ts';
+import type { EngineCapabilities } from './engine-capabilities.ts';
 import { normalizeOauthClientRow } from './engine-sql/oauth-clients.ts';
 import { normalizeOauthCodeRow, oauthPgArray, type OauthTokenInsert } from './engine-sql/access-credentials.ts';
 import { generateToken, hashToken } from './utils.ts';
@@ -161,6 +161,19 @@ function openPair(token: string, sealed: unknown): SealedPair | null {
 
 /** Global ceiling on the in-memory pending store; a full store rejects new requests rather than evicting live ones. */
 const MAX_PENDING_TOTAL = 1000;
+
+/**
+ * Whether the store behind `handle` keeps refresh-token families (#9364): the `oauth_refresh_families` capability. A
+ * handle with no capability set (a PGLite or Postgres transaction) is a SQL store, which keeps them once v338 has run.
+ * A store without them (the Rust store, RUST_ENGINE.md row OA-1) could not sign out the rest of a sign-in when a refresh
+ * token is replayed, so it fails closed: a code exchange issues no refresh token (the response has no refresh_token key;
+ * the access token keeps its lifetime, and the app signs in again when it expires), and a refresh grant is refused.
+ */
+function keepsRefreshFamilies(handle: object | undefined): boolean {
+  const caps = (handle as { capabilities?: EngineCapabilities } | undefined)?.capabilities;
+  return !caps || caps.has('oauth_refresh_families');
+}
+
 /**
  * Per-client ceiling on requests still awaiting a decision. Without it a handful of callers could fill
  * the global store on behalf of one self-registered client; with it, no single client_id can consume
@@ -193,11 +206,12 @@ export class OAuthGrants {
 
   /**
    * v338 adds refresh families; a schema without it keeps plain single-use rotation. Only a positive answer is cached.
-   * A store with no raw SQL (the Rust engine, `tx` its handle) has no `oauth_refresh_rotations` table: it keeps that plain rotation.
+   * A store without the `oauth_refresh_families` capability (the Rust engine, `tx` its handle) has no `oauth_refresh_rotations`
+   * table; it issues no refresh token at all (`keepsRefreshFamilies`, row OA-1).
    */
   private async hasRefreshFamilies(sql: SqlQuery, tx?: BrainEngine): Promise<boolean> {
     if (this.familiesReady) return true;
-    if (tx && lacksRawSql(tx)) return false;
+    if (!keepsRefreshFamilies(tx)) return false;
     const [row] = await sql`SELECT to_regclass('oauth_refresh_rotations') IS NOT NULL AS ready`;
     return this.familiesReady = row?.ready === true;
   }
@@ -371,7 +385,7 @@ export class OAuthGrants {
       if (tx) await tx.deleteOauthCode(hashToken(code), clientId);
       else await sql`DELETE FROM oauth_codes WHERE code_hash = ${hashToken(code)} AND client_id = ${clientId}`;
       const family = await this.hasRefreshFamilies(sql, tx) ? generateToken('') : undefined;
-      return this.issue(sql, tx, client, scopes, target, true, 'authorization_code', family);
+      return this.issue(sql, tx, client, scopes, target, keepsRefreshFamilies(tx), 'authorization_code', family);
     });
   }
 
@@ -379,6 +393,8 @@ export class OAuthGrants {
     const requestedResource = this.canonicalResource(resource);
     const outcome = await this.locked(clientId, async (sql, client, tx) => {
       this.assertCredentialPolicy(client, secretHash);
+      // A store without refresh families issues no refresh token (row OA-1); one already in it is refused, never rotated.
+      if (!keepsRefreshFamilies(tx)) throw new InvalidGrantError('Refresh tokens are not accepted on this brain\'s engine; sign in again.');
       const families = await this.hasRefreshFamilies(sql, tx);
       const row: Record<string, unknown> | undefined = tx ? asRow(await tx.readOauthRefreshTokenForUpdate(hashToken(token), clientId))
         : (await sql`SELECT * FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND token_type = 'refresh' AND client_id = ${clientId} FOR UPDATE`)[0];
@@ -515,7 +531,7 @@ export class OAuthGrants {
    * on a lock and can never deadlock one of them.
    */
   async sweepExpiredRotations(): Promise<number> {
-    if (this.options.engine && lacksRawSql(this.options.engine)) return 0;
+    if (!keepsRefreshFamilies(this.options.engine)) return 0;
     if (!await this.hasRefreshFamilies(this.options.sql)) return 0;
     await this.options.sql`UPDATE oauth_refresh_rotations SET sealed_pair = NULL WHERE token_hash IN (SELECT token_hash FROM oauth_refresh_rotations
       WHERE sealed_pair IS NOT NULL AND rotated_at_ms <= ${this.now() - REFRESH_REUSE_GRACE_MS} FOR UPDATE SKIP LOCKED)`;

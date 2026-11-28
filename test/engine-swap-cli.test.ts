@@ -106,7 +106,8 @@ describe('engine swap --plan', () => {
     expect(json.way_back.losses.not_carried_tables).toContain('page_versions');
     expect(json.way_back.known_limits.length).toBe(3);
     expect(r.stdout).toContain('Named loss for remote callers: A remote read by the brain owner on a Rust brain refuses by name');
-    expect(json.way_back.remote_limits.length).toBe(1);
+    expect(r.stdout).toContain('Named loss for remote callers: On Rust, OAuth apps must sign in again each time their access token expires, until refresh-token family revoke ships on Rust.');
+    expect(json.way_back.remote_limits.length).toBe(2);
   });
 
   test('the human plan names the verdict, every criterion, the policy, the capability report and the write pause, and no value', async () => {

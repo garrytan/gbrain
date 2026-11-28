@@ -69,6 +69,13 @@ export const ENGINE_CAPABILITIES = [
   'session_state',
   /** Guest-source records (`guest_sources`: writers and trust ceiling, the record `guests init` writes). The Rust store keeps none yet (row 32m-3). */
   'guest_sources',
+  /**
+   * OAuth refresh-token families (#9364, `oauth_refresh_rotations`): a replayed refresh token signs out the rest of its
+   * sign-in. Without it the token endpoint issues no refresh token and refuses the refresh grant
+   * (oauth-grants.ts `keepsRefreshFamilies`). The Rust store keeps
+   * none yet (row OA-1).
+   */
+  'oauth_refresh_families',
 ] as const;
 
 export type Capability = (typeof ENGINE_CAPABILITIES)[number];

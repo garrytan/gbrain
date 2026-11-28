@@ -1,0 +1,14 @@
+{
+  "pglite/oc-confidential/authorization_code": "{\"access_token\":\"gbrain_at_<masked>\",\"token_type\":\"bearer\",\"expires_in\":3600,\"scope\":\"read\",\"refresh_token\":\"gbrain_rt_<masked>\"}",
+  "pglite/oc-confidential/refresh_token": "{\"access_token\":\"gbrain_at_<masked>\",\"token_type\":\"bearer\",\"expires_in\":3600,\"scope\":\"read\",\"refresh_token\":\"gbrain_rt_<masked>\"}",
+  "pglite/oc-dcr/authorization_code": "{\"access_token\":\"gbrain_at_<masked>\",\"token_type\":\"bearer\",\"expires_in\":3600,\"scope\":\"read write\",\"refresh_token\":\"gbrain_rt_<masked>\"}",
+  "pglite/oc-dcr/refresh_token": "{\"access_token\":\"gbrain_at_<masked>\",\"token_type\":\"bearer\",\"expires_in\":3600,\"scope\":\"read write\",\"refresh_token\":\"gbrain_rt_<masked>\"}",
+  "pglite/oc-public/authorization_code": "{\"access_token\":\"gbrain_at_<masked>\",\"token_type\":\"bearer\",\"expires_in\":3600,\"scope\":\"read\",\"refresh_token\":\"gbrain_rt_<masked>\"}",
+  "pglite/oc-public/refresh_token": "{\"access_token\":\"gbrain_at_<masked>\",\"token_type\":\"bearer\",\"expires_in\":3600,\"scope\":\"read\",\"refresh_token\":\"gbrain_rt_<masked>\"}",
+  "postgres/oc-confidential/authorization_code": "{\"access_token\":\"gbrain_at_<masked>\",\"token_type\":\"bearer\",\"expires_in\":3600,\"scope\":\"read\",\"refresh_token\":\"gbrain_rt_<masked>\"}",
+  "postgres/oc-confidential/refresh_token": "{\"access_token\":\"gbrain_at_<masked>\",\"token_type\":\"bearer\",\"expires_in\":3600,\"scope\":\"read\",\"refresh_token\":\"gbrain_rt_<masked>\"}",
+  "postgres/oc-dcr/authorization_code": "{\"access_token\":\"gbrain_at_<masked>\",\"token_type\":\"bearer\",\"expires_in\":3600,\"scope\":\"read write\",\"refresh_token\":\"gbrain_rt_<masked>\"}",
+  "postgres/oc-dcr/refresh_token": "{\"access_token\":\"gbrain_at_<masked>\",\"token_type\":\"bearer\",\"expires_in\":3600,\"scope\":\"read write\",\"refresh_token\":\"gbrain_rt_<masked>\"}",
+  "postgres/oc-public/authorization_code": "{\"access_token\":\"gbrain_at_<masked>\",\"token_type\":\"bearer\",\"expires_in\":3600,\"scope\":\"read\",\"refresh_token\":\"gbrain_rt_<masked>\"}",
+  "postgres/oc-public/refresh_token": "{\"access_token\":\"gbrain_at_<masked>\",\"token_type\":\"bearer\",\"expires_in\":3600,\"scope\":\"read\",\"refresh_token\":\"gbrain_rt_<masked>\"}"
+}

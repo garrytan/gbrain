@@ -248,7 +248,7 @@ test/engine-parity/notifier-resident.test.ts	4	0
 test/engine-parity/notifier.test.ts	4	0
 test/engine-parity/oauth-clients.test.ts	19	1
 test/engine-parity/oauth-dcr.test.ts	3	0
-test/engine-parity/oauth-http.test.ts	2	0
+test/engine-parity/oauth-http.test.ts	3	0
 test/engine-parity/oauth-lifecycle.test.ts	4	0
 test/engine-parity/oauth-revocation.test.ts	4	0
 test/engine-parity/ontology-propose.test.ts	5	0

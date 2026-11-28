@@ -453,6 +453,8 @@ access-control member served, rule edits included); `gbrain engine swap --to rus
 Remote callers use the brain: an active access token, an OAuth client or remote MCP. The Rust engine does not check a
 bearer token yet, so every remote caller would be refused after the swap. Not retried until a release serves it. The
 refusal gives counts only, never a token name or hash.
+For a brain with an OAuth client, the refusal also stays until the Rust engine keeps refresh-token families: on Rust,
+OAuth apps must sign in again each time their access token expires, until refresh-token family revoke ships on Rust.
 
 <a id="brain_in_use"></a>
 ### `brain_in_use`

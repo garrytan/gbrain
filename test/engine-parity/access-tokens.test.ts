@@ -545,7 +545,7 @@ describe('engine parity: access_tokens members', () => {
   const failure = async (run: () => Promise<unknown>) => { try { await run(); return null; } catch (e) { return `${(e as Error).constructor.name}: ${(e as Error).message}`; } };
 
   parityTest('an authorization code is issued, exchanged for tokens once, and a second exchange is refused (OAuthGrants over the engine transaction)',
-    { methods: ['insertOauthClient', 'readOauthClient', 'readOauthClientForUpdate', 'insertOauthCode', 'readOauthCodeChallenge', 'readOauthCodeForUpdate', 'deleteOauthCode', 'issueOauthTokens', 'readOauthAccessTokenRows'] }, async (engine) => {
+    { methods: ['insertOauthClient', 'readOauthClient', 'readOauthClientForUpdate', 'insertOauthCode', 'readOauthCodeChallenge', 'readOauthCodeForUpdate', 'deleteOauthCode', 'issueOauthTokens', 'readOauthAccessTokenRows'] }, async (engine, backend) => {
       await engine.insertOauthClient({ client_id: 'oc-code', client_name: 'Client oc-code', scope: 'read', grant_types: ['authorization_code', 'refresh_token'],
         redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none', client_id_issued_at: 1_700_000_000 });
       const grants = grantsFor(engine);
@@ -561,7 +561,9 @@ describe('engine parity: access_tokens members', () => {
       out.wrongRedirect = await failure(() => grants.exchangeCode('oc-code', code, VERIFIER, 'https://client.example/other'));
       out.wrongVerifier = await failure(() => grants.exchangeCode('oc-code', code, 'w'.repeat(43), REDIRECT));
       const tokens = await grants.exchangeCode('oc-code', code, VERIFIER, REDIRECT);
-      out.tokens = { type: tokens.token_type, expiresIn: tokens.expires_in, scope: tokens.scope, refresh: /^gbrain_rt_/.test(tokens.refresh_token ?? '') };
+      out.tokens = { type: tokens.token_type, expiresIn: tokens.expires_in, scope: tokens.scope };
+      // Checked per backend, not compared: a store without refresh families (Rust, RUST_ENGINE.md row OA-1) issues no refresh token.
+      if (backend === 'rust' ? 'refresh_token' in tokens : !/^gbrain_rt_/.test(tokens.refresh_token ?? '')) throw new Error(`refresh token on ${backend}: ${'refresh_token' in tokens}`);
       const rows = await engine.readOauthAccessTokenRows(hashToken(tokens.access_token), 0);
       out.accessRow = rows.map(r => ({ client_id: r.client_id, scopes: r.scopes, token_type: r.token_type }));
       out.second = await failure(() => grants.exchangeCode('oc-code', code, VERIFIER, REDIRECT));
