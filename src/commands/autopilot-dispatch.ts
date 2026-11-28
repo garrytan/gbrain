@@ -745,7 +745,8 @@ export async function submitAutoDrains(
   // large connector backlog cannot starve a git source's atoms (or the reverse).
   const byKind: Record<AutoDrainKind, SourceRow[]> = { checkout: [], connector: [] };
   for (const src of await loadAllSources(engine)) {
-    byKind[isConnectorSourceKind(parseSourceConfig(src.config).kind) ? 'connector' : 'checkout'].push(src);
+    // A source with no local_path (the transcript archive) is database-backed: it drains like a connector, without repoPath.
+    byKind[isConnectorSourceKind(parseSourceConfig(src.config).kind) || !src.local_path ? 'connector' : 'checkout'].push(src);
   }
   const pointer: AutoDrainKind = (await engine.getConfig(AUTO_DRAIN_NEXT_KIND_KEY)) === 'connector' ? 'connector' : 'checkout';
   let next = pointer;
