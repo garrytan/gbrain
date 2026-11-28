@@ -85,8 +85,8 @@ async function withOwner<T>(budgetMs: number, hook: (point: FaultPoint, detail: 
  * A slow owner: the first publication stalls past the whole budget, every later one takes `latencyMs` to prepare.
  * `fail` names a thread whose page write is refused.
  */
-function slowOwner(engine: BrainEngine, latencyMs: number, fail?: string) {
-  let stalled = false;
+function slowOwner(engine: BrainEngine, latencyMs: number, fail?: string, stallFirst = true) {
+  let stalled = !stallFirst;
   return async (point: FaultPoint, detail: FaultDetail) => {
     if (point !== 'consumer:preparing') return;
     // The refusal lands after the walk banked the batch that holds it, so the staged save already lists the write.
@@ -128,13 +128,21 @@ async function pageStates(engine: BrainEngine, id: string) {
 test('#9681: a managed backfill that outlives the wait budget persists its floor as batches commit', async () => withEnv(env, async () => {
   for (const engine of engines) {
     const { f, cfg } = await seedFrozenFloor(engine);
+    const floor = (await gmailState(engine, f.id))?.gmail_backfill_floor_ms;
     const sweep = gmail(cfg.account, { fetchMs: 120 });
     await withOwner(BUDGET_MS, slowOwner(engine, 20), () => runGoogleSync(engine, f.id, cfg, options, sweep.fetcher));
-    expect(sweep.fetched.length).toBe(75);
-    // Every page published, including those admitted before this run moved its own cursor.
+    // #9011: Gmail stops at the first pending publication rather than deriving obligations from queued renders.
+    expect(sweep.fetched.length).toBeGreaterThan(0);
+    expect(sweep.fetched.length).toBeLessThan(25);
     await settleConnectorWrites(engine, f.id);
     await disposePersistenceConsumer(engine);
-    expect((await gmailState(engine, f.id))?.gmail_backfill_floor_ms ?? 0).toBeLessThanOrEqual(OLD[49].ms);
+    // A carried retry may already have committed; its one-page batch can advance, but not the pending next thread.
+    const durableFloor = (await gmailState(engine, f.id))?.gmail_backfill_floor_ms ?? 0;
+    expect(durableFloor).toBeLessThanOrEqual(floor!);
+    expect(durableFloor).toBe(OLD[25].ms);
+    const next = gmail(cfg.account);
+    expect((await runGoogleSync(engine, f.id, cfg, options, next.fetcher)).status).not.toBe('partial');
+    expect((await gmailState(engine, f.id))?.gmail_backfill_done).toBe(true);
   }
 }), 240_000);
 
@@ -142,7 +150,7 @@ test('#9681: a page write that fails mid-walk pins the floor above its batch; ea
   for (const engine of engines) {
     const { f, cfg } = await seedFrozenFloor(engine);
     const sweep = gmail(cfg.account, { fetchMs: 120 });
-    await withOwner(BUDGET_MS, slowOwner(engine, 20, OLD[74].tid), () => runGoogleSync(engine, f.id, cfg, options, sweep.fetcher)).catch(() => undefined);
+    await withOwner(BUDGET_MS, slowOwner(engine, 20, OLD[74].tid, false), () => runGoogleSync(engine, f.id, cfg, options, sweep.fetcher)).catch(() => undefined);
     const states = await pageStates(engine, f.id);
     expect(states.filter(row => row.slug.includes(OLD[74].tid)).map(row => row.state)).toEqual(['failed']);
     // No cursor save covering the failed write was even submitted (the publication's own receipt check is the backstop).
@@ -163,7 +171,7 @@ test('#9681: a walk killed mid-batch keeps only durable batches behind the floor
       if (tid === OLD[74].tid) await committed(engine, f.id, OLD.slice(25, 50));
       if (tid === OLD[85].tid) controller.abort();
     } });
-    await withOwner(BUDGET_MS, slowOwner(engine, 20), () => runGoogleSync(engine, f.id, cfg, { ...options, signal: controller.signal }, sweep.fetcher)).catch(() => undefined);
+    await withOwner(BUDGET_MS, slowOwner(engine, 20, undefined, false), () => runGoogleSync(engine, f.id, cfg, { ...options, signal: controller.signal }, sweep.fetcher)).catch(() => undefined);
     await settleConnectorWrites(engine, f.id);
     await disposePersistenceConsumer(engine);
     const floor = (await gmailState(engine, f.id))?.gmail_backfill_floor_ms ?? 0;
@@ -236,22 +244,30 @@ test('#9681: a brain stuck with a frozen floor and a retained publication recove
     const cfg = parseGoogleSourceConfig(config, f.dir);
     const controller = new AbortController();
     const first = gmail(cfg.account, { onThread: (_tid, n) => { if (n >= 27) controller.abort(); } });
-    connectorWaitBudget.ms = CONNECTOR_WAIT_BUDGET_MS;
+    connectorWaitBudget.ms = BUDGET_MS;
     installFaultHook(async (point, detail) => {
-      if (point === 'publication:prepared' && (await slugOf(engine, detail)).includes(OLD[25].tid)) await sleep(7_000);
+      if (point === 'publication:prepared' && (await slugOf(engine, detail)).includes(OLD[25].tid)) {
+        // #9011 now waits before fetching the next thread; interrupt at the retained publication itself.
+        controller.abort();
+        await sleep(7_000);
+      }
     });
-    await runGoogleSync(engine, f.id, cfg, { ...options, signal: controller.signal }, first.fetcher).catch(() => undefined);
-    installFaultHook(undefined);
+    try {
+      await runGoogleSync(engine, f.id, cfg, { ...options, signal: controller.signal }, first.fetcher).catch(() => undefined);
+    } finally {
+      installFaultHook(undefined);
+      connectorWaitBudget.ms = CONNECTOR_WAIT_BUDGET_MS;
+    }
     const retained = await engine.executeRaw<{ slug: string }>('SELECT slug FROM persistence_requests WHERE source_id=$1 AND recovery IS NOT NULL', [f.id]);
     expect(retained.map(row => row.slug.includes(OLD[25].tid))).toEqual([true]);
     expect(await gmailState(engine, f.id)).toMatchObject({ gmail_backfill_done: false, gmail_backfill_floor_ms: OLD[24].ms });
 
-    // The next syncs run against the same slow owner, with no manual step between them. A run's last cursor save may
-    // still be publishing when it ends; it commits on its own, so every run moves the floor until the backfill is done.
+    // The next syncs keep per-publication latency, without another artificial over-budget first write.
+    // The interrupted receipt recovers automatically and each durable batch may move the floor.
     let floor = OLD[24].ms;
     for (let runs = 0; runs < 6 && !(await gmailState(engine, f.id))?.gmail_backfill_done; runs++) {
       const sweep = gmail(cfg.account, { fetchMs: 60 });
-      const result = await withOwner(BUDGET_MS, slowOwner(engine, 100), () => runGoogleSync(engine, f.id, cfg, options, sweep.fetcher));
+      const result = await withOwner(BUDGET_MS, slowOwner(engine, 100, undefined, false), () => runGoogleSync(engine, f.id, cfg, options, sweep.fetcher));
       expect(result.status === 'synced' || result.reason === 'writer_pending').toBe(true);
       await settleConnectorWrites(engine, f.id);
       const state = await gmailState(engine, f.id);

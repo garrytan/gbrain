@@ -188,7 +188,8 @@ export async function importRendered(
     'SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [deps.sourceId, slug]);
   if (labels && isPrivatePage(labels)) markdown = withPrivateVisibility(markdown);
   if (deps.managed) {
-    const result = await deps.managed.importMarkdown(relPath, markdown);
+    // Only Gmail derives obligations and checkpoint-held quotes from its render. Other services keep pipelined admission.
+    const result = await deps.managed.importMarkdown(relPath, markdown, { requireCommitted: typeof identity.thread_id === 'string' });
     if (result.purged) return null;
     if (result.status === 'imported') {
       summary.pagesAffected.push(result.slug);
