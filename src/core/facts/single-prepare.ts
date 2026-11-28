@@ -102,7 +102,8 @@ async function memberPageWithdrawal(engine: BrainEngine, sourceId: string, input
  */
 export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean; remote?: boolean } = {}): Promise<OperationError> {
   // A caller that cannot read private pages gets the same plain refusal for every withdrawal (see assertFactNotWithdrawn).
-  if (opts.excludePrivate === true) return withdrawnRefusal(undefined);
+  // A remote caller gets no detail, even where an operator relaxed remote page privacy (excludePrivate off).
+  if (opts.excludePrivate === true || opts.remote === true) return withdrawnRefusal(undefined);
   const met = await engine.readClaimWithdrawal({
     sourceId, visibility: input.visibility, fact: input.fact, entitySlug: input.entity_slug,
     ownPage: ownedPageWithdrawalSubject(input.page_slug), excludePrivate: false,

@@ -370,7 +370,8 @@ export class OAuthGrants {
       const scopes = this.currentScopes(client, row.scopes as string[]);
       if (tx) await tx.deleteOauthCode(hashToken(code), clientId);
       else await sql`DELETE FROM oauth_codes WHERE code_hash = ${hashToken(code)} AND client_id = ${clientId}`;
-      return this.issue(sql, tx, client, scopes, target, true, 'authorization_code');
+      const family = await this.hasRefreshFamilies(sql, tx) ? generateToken('') : undefined;
+      return this.issue(sql, tx, client, scopes, target, true, 'authorization_code', family);
     });
   }
 

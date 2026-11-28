@@ -758,8 +758,8 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
   // ─── T3: TypeError MUST propagate (not swallowed by predicate-gated catch) ─
 
   test('non-resolver-user errors propagate uncaught (T3)', async () => {
-    // Monkey-patch the typed listAllSources read to throw a synthetic TypeError
-    // on the assertSourceExists lookup. The typed-error catch in runDream only
+    // Monkey-patch executeRaw to throw a synthetic TypeError on the
+    // assertSourceExists SELECT. The typed-error catch in runDream only
     // matches resolver-user-error message shapes; a TypeError thrown
     // from any source-resolution path must bubble up with its original
     // stack trace (proving real programmer bugs are NOT hidden behind
@@ -767,22 +767,23 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     // is shared file-wide; a leaked patch breaks every later test's
     // resetPgliteState.
     await seedSource('gamma');
-    const original = (engine as any).listAllSources;
+    const original = (engine as any).executeRaw;
     let restored = false;
     try {
-      // assertSourceExists reads the active sources through the typed
-      // listAllSources member (no request snapshot is open for a CLI dream),
-      // and with --source it is the first source read runDream makes. Throw a
-      // TypeError there; every other engine read keeps working so the test
-      // exercises ONLY the resolution-path failure.
-      (engine as any).listAllSources = async function() {
-        throw new TypeError('synthetic-test-bug');
+      // Throw a TypeError on the source-lookup SELECT that assertSourceExists runs.
+      // Other executeRaw calls (used by engine internals during cycle) keep
+      // working so the test exercises ONLY the resolution-path failure.
+      (engine as any).executeRaw = async function(this: PGLiteEngine, sql: string, params?: unknown[]) {
+        if (typeof sql === 'string' && /FROM\s+sources\s+WHERE\s+id\s*=/i.test(sql)) {
+          throw new TypeError('synthetic-test-bug');
+        }
+        return original.call(this, sql, params);
       };
       await expect(
         runDream(engine, ['--dir', repo, '--source', 'gamma', '--phase', 'lint', '--json'])
       ).rejects.toThrow(/synthetic-test-bug/);
     } finally {
-      (engine as any).listAllSources = original;
+      (engine as any).executeRaw = original;
       restored = true;
     }
     expect(restored).toBe(true);

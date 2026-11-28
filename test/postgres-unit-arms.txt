@@ -988,6 +988,7 @@ test/notifier-retry-unwatched-gst2515.test.ts
 test/notifier-sync-disabled-gst2515.test.ts
 test/ns-read-move-parity.test.ts
 test/oauth-refresh-grace-9364.test.ts
+test/oauth-sweep-rotations-engine.test.ts
 test/on-commit-embedding.serial.test.ts
 test/onboarding-ops.test.ts
 test/oneshot-consumer-direct-route.test.ts

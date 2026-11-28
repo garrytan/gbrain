@@ -1155,9 +1155,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
   async sweepExpiredTokens(): Promise<number> {
     const now = Math.floor(Date.now() / 1000);
-    // With an engine, the sweep runs through the engine member (engine-sql/access-credentials.ts OAUTH_SWEEP_SQL, the same
-    // two statements), so a store with no raw SQL (the Rust engine) sweeps too.
-    if (this.engine) return this.engine.deleteExpiredOauthCredentials(now);
+    // With an engine, the sweep runs through the engine member (engine-sql/access-credentials.ts OAUTH_SWEEP_SQL), so a store
+    // with no raw SQL (the Rust engine) sweeps too; the rotation sweep (#10485) follows on both paths (0 with no raw SQL).
+    if (this.engine) return (await this.engine.deleteExpiredOauthCredentials(now)) + await this.grants.sweepExpiredRotations();
     // F6 hardening: postgres.js and PGLite expose deleted-row count on
     // different shapes; `(result as any).count` returned 0 on at least one
     // engine even when rows were deleted, and codes were never counted at

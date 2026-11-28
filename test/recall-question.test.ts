@@ -429,7 +429,7 @@ for (const kind of testBackends()) {
       }
     });
 
-    test('#10225: on an engine without raw SQL (Rust), a plain query keeps the newest-facts read instead of refusing', async () => {
+    test('#10225: on an engine without raw SQL (Rust), a plain query ranks facts through typed members, as on every engine (sync 21: master kept the newest read here)', async () => {
       const sqlless = new Proxy(engine, {
         get(target, prop, receiver) {
           if (prop === 'capabilities') return new Set([...target.capabilities].filter(c => c !== 'raw_sql'));
@@ -439,7 +439,8 @@ for (const kind of testBackends()) {
         },
       }) as unknown as BrainEngine;
       const r = await recall({ ...local(), engine: sqlless }, { query: COFFEE });
-      expect(r.facts_order).toBe('newest');
+      // executeRaw and transaction throw above, so a ranked answer proves the ranking reads only typed members.
+      expect(r.facts_order).toBe('relevance');
       expect(r.facts.length).toBeGreaterThan(0);
     });
   });

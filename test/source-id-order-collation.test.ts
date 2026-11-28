@@ -28,6 +28,10 @@ const EXEMPT: Record<string, string> = {
     'sorts the union output column id, which the first branch already selects as `id COLLATE "C"`.',
   'src/core/engine-sql/sources.ts|ORDER BY id LIMIT 2':
     'readSoleSourceId only checks that exactly one row exists; the order picks nothing (ruling C keeps its SQL).',
+  // Master d02e67de11 (#10372): listActiveSourceConfigs keeps master's text, `SELECT id, config, archived FROM sources
+  // WHERE archived = false ORDER BY id`; the key covers the statement and its doc comment quoting it.
+  'src/core/engine-sql/sources.ts|ORDER BY id':
+    'listActiveSourceConfigs sends master\'s statement byte for byte (`SELECT id, config, archived FROM sources WHERE archived = false ORDER BY id`); its one caller, source-resolver.ts liveSourceRows, re-sorts the rows with sortSourcesById.',
   'src/core/engine-sql/git-gap-census.ts|ORDER BY 1':
     'column 1 is a hold code, not a source id.',
   'src/core/sync-attempt.ts|ORDER BY created_at DESC, id DESC LIMIT':

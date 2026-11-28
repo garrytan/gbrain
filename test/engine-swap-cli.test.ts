@@ -328,7 +328,9 @@ describe('the swap report names each write type criterion 5 does not compare', (
       // The trunk's chronicle ledger row (upsertChronicleRow, src/shadow/write-map.ts) is a non-pilot write counted on the other line.
       'chronicle_page_state',
       // The guest-source record, guest marks and trust allow rules (src/shadow/write-map.ts) are non-pilot writes counted on the other line.
-      'guest_sources', 'guest_marks', 'trust_allow_rules']);
+      'guest_sources', 'guest_marks', 'trust_allow_rules',
+      // remove_link's manual transition cleanup (removeManualLinkTransitions, src/shadow/write-map.ts) writes link_transitions only, counted on the other line.
+      'link_transitions']);
     const stray = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(writeFamily)
       .filter(f => !named.has(f) && !other.has(f) && !/^(pages|links):[A-Za-z]+$/.test(f));
     expect(stray).toEqual([]);
@@ -341,7 +343,9 @@ describe('the swap report names each write type criterion 5 does not compare', (
 describe('A1: the swap check waits a bounded 60 s for a moment when every sample is settled', () => {
   const BUSY = 'brain busy: no 60 s lull with all samples settled; retry when idle';
   const doc = (unresolved: number) => ({
-    write_comparisons: { state: unresolved ? 'capability_missing' : 'measured', sample_rate: 1, comparable: 5000, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, ...(unresolved ? { unresolved_replays: unresolved } : {}) },
+    write_comparisons: { state: unresolved ? 'capability_missing' : 'measured', sample_rate: 1, comparable: 5000, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, ...(unresolved ? { unresolved_replays: unresolved } : {}),
+      // The write bar's call history (write-bar.ts), which criterion 5 needs on the trunk (06a7470ab9); empty, so the bar is its floor.
+      qualifying_writes: { by_day: {}, first_seen: null } },
   }) as unknown as ShadowStatus;
   /** A clock the fake sleep advances: the wait costs no real time. */
   function clockRig() { let t = 1_000_000; const sleeps: number[] = []; return { sleeps, clock: () => t, sleep: async (ms: number) => { sleeps.push(ms); t += ms; } }; }

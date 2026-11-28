@@ -240,11 +240,13 @@ const PINS: Pin[] = [
     text: `SELECT gbrain_fact_fingerprint(c) AS fp FROM unnest($1::text[]) WITH ORDINALITY AS t(c, n) ORDER BY n`,
   },
   {
+    // Master e821edba7f (#10495) dates an undated fact by created_at: ACTIVE_CLAIMS selects COALESCE(valid_from, created_at) AS at,
+    // claimBucketSql buckets on it, and PAIR_JOIN orders pairs by at. Text rendered from master's claim-conflicts.ts.
     from: 'src/core/facts/claim-conflicts.ts:103 findClaimConflicts',
     member: 'listClaimConflictPairs',
     runs: [{ run: e => e.listClaimConflictPairs('s1', ['audit:a', 'audit:b'], 3), params: ['s1', ['audit:a', 'audit:b'], 3] }],
     text: `WITH f AS (
-  SELECT id, entity_slug, visibility, claim_metric, claim_value, claim_unit, claim_period, valid_from, source_markdown_slug, (CASE WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('annual', 'annually', 'yearly') THEN to_char((facts.valid_from AT TIME ZONE 'UTC'), 'YYYY') WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('quarterly') THEN to_char((facts.valid_from AT TIME ZONE 'UTC'), 'YYYY-"Q"Q') WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('monthly') THEN to_char((facts.valid_from AT TIME ZONE 'UTC'), 'YYYY-MM') WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('weekly') THEN to_char((facts.valid_from AT TIME ZONE 'UTC'), 'IYYY-"W"IW') ELSE to_char((facts.valid_from AT TIME ZONE 'UTC'), 'YYYY-MM-DD') END) AS bucket
+  SELECT id, entity_slug, visibility, claim_metric, claim_value, claim_unit, claim_period, COALESCE(valid_from, created_at) AS at, source_markdown_slug, (CASE WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('annual', 'annually', 'yearly') THEN to_char((COALESCE(facts.valid_from, facts.created_at) AT TIME ZONE 'UTC'), 'YYYY') WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('quarterly') THEN to_char((COALESCE(facts.valid_from, facts.created_at) AT TIME ZONE 'UTC'), 'YYYY-"Q"Q') WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('monthly') THEN to_char((COALESCE(facts.valid_from, facts.created_at) AT TIME ZONE 'UTC'), 'YYYY-MM') WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('weekly') THEN to_char((COALESCE(facts.valid_from, facts.created_at) AT TIME ZONE 'UTC'), 'IYYY-"W"IW') ELSE to_char((COALESCE(facts.valid_from, facts.created_at) AT TIME ZONE 'UTC'), 'YYYY-MM-DD') END) AS bucket
     FROM facts
    WHERE source_id = $1 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())
      AND entity_slug IS NOT NULL AND claim_metric IS NOT NULL AND claim_value IS NOT NULL AND source <> ALL($2::text[]))
@@ -254,7 +256,7 @@ FROM f n JOIN f o
    AND o.claim_unit IS NOT DISTINCT FROM n.claim_unit AND o.claim_period IS NOT DISTINCT FROM n.claim_period
    AND o.bucket = n.bucket AND o.claim_value <> n.claim_value
    AND (NOT ((starts_with(COALESCE(n.source_markdown_slug, ''), 'memory/members/') OR COALESCE(n.source_markdown_slug, '') = 'memory/scope') OR (starts_with(COALESCE(o.source_markdown_slug, ''), 'memory/members/') OR COALESCE(o.source_markdown_slug, '') = 'memory/scope')) OR o.source_markdown_slug = n.source_markdown_slug)
-   AND (o.valid_from < n.valid_from OR (o.valid_from = n.valid_from AND o.id < n.id))
+   AND (o.at < n.at OR (o.at = n.at AND o.id < n.id))
  WHERE NOT EXISTS (SELECT 1 FROM decide_proposals p WHERE p.source_id = $1
          AND LEAST(p.new_fact_id, p.old_fact_id) = LEAST(n.id, o.id) AND GREATEST(p.new_fact_id, p.old_fact_id) = GREATEST(n.id, o.id))
    AND NOT EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.action = 'supersede_fact'
@@ -264,11 +266,13 @@ FROM f n JOIN f o
  LIMIT $3`,
   },
   {
+    // Master e821edba7f (#10495) dates an undated fact by created_at: ACTIVE_CLAIMS selects COALESCE(valid_from, created_at) AS at,
+    // claimBucketSql buckets on it, and PAIR_JOIN orders pairs by at. Text rendered from master's claim-conflicts.ts.
     from: 'src/core/facts/claim-conflicts.ts:112 findClaimConflicts',
     member: 'countClaimConflictPairs',
     runs: [{ run: e => e.countClaimConflictPairs('s1', ['audit:a', 'audit:b']), params: ['s1', ['audit:a', 'audit:b']] }],
     text: `WITH f AS (
-  SELECT id, entity_slug, visibility, claim_metric, claim_value, claim_unit, claim_period, valid_from, source_markdown_slug, (CASE WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('annual', 'annually', 'yearly') THEN to_char((facts.valid_from AT TIME ZONE 'UTC'), 'YYYY') WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('quarterly') THEN to_char((facts.valid_from AT TIME ZONE 'UTC'), 'YYYY-"Q"Q') WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('monthly') THEN to_char((facts.valid_from AT TIME ZONE 'UTC'), 'YYYY-MM') WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('weekly') THEN to_char((facts.valid_from AT TIME ZONE 'UTC'), 'IYYY-"W"IW') ELSE to_char((facts.valid_from AT TIME ZONE 'UTC'), 'YYYY-MM-DD') END) AS bucket
+  SELECT id, entity_slug, visibility, claim_metric, claim_value, claim_unit, claim_period, COALESCE(valid_from, created_at) AS at, source_markdown_slug, (CASE WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('annual', 'annually', 'yearly') THEN to_char((COALESCE(facts.valid_from, facts.created_at) AT TIME ZONE 'UTC'), 'YYYY') WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('quarterly') THEN to_char((COALESCE(facts.valid_from, facts.created_at) AT TIME ZONE 'UTC'), 'YYYY-"Q"Q') WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('monthly') THEN to_char((COALESCE(facts.valid_from, facts.created_at) AT TIME ZONE 'UTC'), 'YYYY-MM') WHEN lower(btrim(COALESCE(facts.claim_period, ''))) IN ('weekly') THEN to_char((COALESCE(facts.valid_from, facts.created_at) AT TIME ZONE 'UTC'), 'IYYY-"W"IW') ELSE to_char((COALESCE(facts.valid_from, facts.created_at) AT TIME ZONE 'UTC'), 'YYYY-MM-DD') END) AS bucket
     FROM facts
    WHERE source_id = $1 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())
      AND entity_slug IS NOT NULL AND claim_metric IS NOT NULL AND claim_value IS NOT NULL AND source <> ALL($2::text[]))
@@ -278,7 +282,7 @@ FROM f n JOIN f o
    AND o.claim_unit IS NOT DISTINCT FROM n.claim_unit AND o.claim_period IS NOT DISTINCT FROM n.claim_period
    AND o.bucket = n.bucket AND o.claim_value <> n.claim_value
    AND (NOT ((starts_with(COALESCE(n.source_markdown_slug, ''), 'memory/members/') OR COALESCE(n.source_markdown_slug, '') = 'memory/scope') OR (starts_with(COALESCE(o.source_markdown_slug, ''), 'memory/members/') OR COALESCE(o.source_markdown_slug, '') = 'memory/scope')) OR o.source_markdown_slug = n.source_markdown_slug)
-   AND (o.valid_from < n.valid_from OR (o.valid_from = n.valid_from AND o.id < n.id))
+   AND (o.at < n.at OR (o.at = n.at AND o.id < n.id))
  WHERE NOT EXISTS (SELECT 1 FROM decide_proposals p WHERE p.source_id = $1
          AND LEAST(p.new_fact_id, p.old_fact_id) = LEAST(n.id, o.id) AND GREATEST(p.new_fact_id, p.old_fact_id) = GREATEST(n.id, o.id))
    AND NOT EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = 'pending' AND tp.action = 'supersede_fact'
