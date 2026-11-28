@@ -64,6 +64,11 @@ const CASES: Case[] = [
   { member: 'readSourceRow', table: 'sources', call: (e) => e.readSourceRow('default') },
   { member: 'listActiveSourceConfigs', table: 'sources', call: (e) => e.listActiveSourceConfigs() },
   { member: 'listSourceRecords', table: 'sources', call: (e) => e.listSourceRecords() },
+  // The generations check (fence holds), open_shared_pages (brainServes) and edge_validity (stale relationships), each a statement the doctor bounded through executeRaw on master.
+  { member: 'listFenceHoldRows', table: 'derived_generations', call: (e) => e.listFenceHoldRows(['default'], ['fact_fence']) },
+  { member: 'readFenceHoldFiles', table: 'pages', call: (e) => e.readFenceHoldFiles(['default'], ['people/probe']) },
+  { member: 'listActiveAccessMembers', table: 'access_members', call: (e) => e.listActiveAccessMembers() },
+  { member: 'staleLinkRelationshipKeys', table: 'links', call: (e) => e.staleLinkRelationshipKeys(10) },
 ];
 
 test('the bounded typed reads are exactly the members a doctor check reaches', () => {
@@ -123,7 +128,7 @@ for (const kind of testBackends()) {
       // The two bounds, asserted apart: under the doctor's deadline each Part A source read must reach the engine's read path
       // with the statement timeout (the scope's deadline, which the engine turns into a server statement_timeout) AND the abort
       // signal (which discards the connection at the deadline), as master's executeRaw call received both.
-      const PART_A_MEMBERS = CASES.filter((c) => ['listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'readSourceRow', 'listActiveSourceConfigs', 'listSourceRecords'].includes(c.member));
+      const PART_A_MEMBERS = CASES.filter((c) => ['listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'readSourceRow', 'listActiveSourceConfigs', 'listSourceRecords', 'listFenceHoldRows', 'readFenceHoldFiles', 'listActiveAccessMembers', 'staleLinkRelationshipKeys'].includes(c.member));
       for (const { member, call } of PART_A_MEMBERS) {
         test(`${member} reaches the engine with the doctor's statement timeout`, async () => {
           const seen: Array<{ deadlineAt: number | undefined }> = [];

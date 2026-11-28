@@ -55,6 +55,11 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   readSourceRow: (e) => e.readSourceRow('default'),
   listActiveSourceConfigs: (e) => e.listActiveSourceConfigs(),
   listSourceRecords: (e) => e.listSourceRecords(),
+  // The generations (fence holds), open_shared_pages (access members) and edge_validity (stale relationships) reads.
+  listFenceHoldRows: (e) => e.listFenceHoldRows(['default'], ['fact_fence']),
+  readFenceHoldFiles: (e) => e.readFenceHoldFiles(['default'], ['people/probe']),
+  listActiveAccessMembers: (e) => e.listActiveAccessMembers(),
+  staleLinkRelationshipKeys: (e) => e.staleLinkRelationshipKeys(10),
 };
 
 test('every bounded typed read has a stall case', () => {
@@ -64,7 +69,7 @@ test('every bounded typed read has a stall case', () => {
 for (const [member, call] of Object.entries(CALLS)) {
   test(`${member} stalled on its connection under the doctor deadline ends by the deadline and gives back its connection and gauge slot`, async () => {
     const counts = { discards: 0, releases: 0 };
-    const fake = makeFakeSql(stmt => (/decide_|decision_receipts|minion_jobs|belief_events|fact_withdrawals|timeline_entries|worktree|notifier|FROM sources|FROM pages/i.test(stmt.text) ? never() : undefined));
+    const fake = makeFakeSql(stmt => (/decide_|decision_receipts|minion_jobs|belief_events|fact_withdrawals|timeline_entries|worktree|notifier|FROM sources|FROM pages|derived_generations|access_members|FROM links/i.test(stmt.text) ? never() : undefined));
     const reserve = fake.sql.reserve;
     fake.sql.reserve = async () => {
       const r = await reserve();

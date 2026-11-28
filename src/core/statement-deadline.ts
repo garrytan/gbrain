@@ -122,7 +122,9 @@ const DOCTOR_PATH_TYPED_READS: readonly string[] = [
 export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations',
   'countSegmentedTimelinePages', 'listCoveredSources', 'listExportWithdrawals', 'listPrivateQueueHealth', 'listQueueWedgeCounts', 'listStuckActiveJobsByName', 'listWaitingByQueue', 'hasNotifierCoverage', 'readExportWithdrawalLedgerBytes', 'readMaxTimelineEntryId', 'readOldestWaitingAge', 'readQueueDivergence', 'readQueueHealthSignals', 'readWedgeSignals', 'storedTimelineRowsByPageIds', 'getWorktreeBinding',
   // Part A: the source reads source resolution makes inside a doctor check, each a statement the doctor bounded through executeRaw on master.
-  'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'readSourceRow', 'listActiveSourceConfigs', 'listSourceRecords']);
+  'listLocalPathSources', 'listSourceRoutingRows', 'countDefaultSourceSplit', 'readSourceRow', 'listActiveSourceConfigs', 'listSourceRecords',
+  // The fence-hold reads (doctor generations), the access-member list (brainServes: open_shared_pages) and the stale-relationship read (edge_validity), each a statement the doctor bounded through executeRaw on master.
+  'listFenceHoldRows', 'readFenceHoldFiles', 'listActiveAccessMembers', 'staleLinkRelationshipKeys']);
 /** The write-journal reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`), the liveness round trip (engine-sql/health.ts `pingStore`) and the doctor reads (engine-sql/doctor-*.ts), which also replaced bounded statements. */
 const DOCTOR_BOUNDED_READS: ReadonlySet<string> = new Set([
   ...JOURNAL_TYPED_READS, 'getWorktreeBinding', 'pingStore', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_SEARCH_MEMBERS, ...DOCTOR_ACC_MEMBERS, ...DOCTOR_JOIN_MEMBERS,
