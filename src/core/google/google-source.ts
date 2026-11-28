@@ -397,6 +397,9 @@ const MIN_WINDOW_MS = 60_000;
 const ABORT_PROOF_MS = 15_000;
 /** How many proof listings a managed walk spends trying to bank before its first batch ends (#10473). */
 const EARLY_BANK_TRIES = 3;
+/** The backfill floor's carry of already-fetched threads: its size cap, and how many new ones a save waits for. */
+const CARRY_MAX = 5000;
+const CARRY_SAVE_EVERY = 50;
 
 /**
  * Drain `[lowerMs, state[floorKey])` newest→oldest, committing the floor per
@@ -431,6 +434,26 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
   let bankedFirst = false;
   let earlyBankTries = 0;
   let limited = false;
+  // A second holding more threads than one sweep can fetch never settles in one sweep, and `settled` starts empty each
+  // sweep. The backfill floor therefore carries the threads fetched below it (at most CARRY_MAX) to the next sweep.
+  const carryOn = floorKey === 'gmail_backfill_floor_ms';
+  const stored = carryOn ? state.gmail_backfill_floor_carry : undefined;
+  const carryValid = !!stored && stored.floor === floorMs && !!stored.v && typeof stored.v === 'object';
+  if (stored && !carryValid) delete state.gmail_backfill_floor_carry;
+  const carry = { floor: floorMs, v: carryValid ? { ...stored!.v } : {} as Record<string, string> };
+  let carryCount = Object.keys(carry.v).length;
+  let carryDirty = 0;
+  const carrySave = async (): Promise<void> => {
+    if (!carryOn || carryDirty < CARRY_SAVE_EVERY || signal?.aborted) return;
+    state.gmail_backfill_floor_carry = { floor: carry.floor, v: { ...carry.v } };
+    carryDirty = 0;
+    await saveGoogleState(deps, state);
+  };
+  const carryReset = (): void => {
+    if (!carryOn) return;
+    delete state.gmail_backfill_floor_carry;
+    carry.floor = floorMs; carry.v = {}; carryCount = 0; carryDirty = 0;
+  };
   while (floorMs > lowerMs) {
     if (signal?.aborted) return 'aborted';
     const afterMs = Math.max(lowerMs, floorMs - spanMs);
@@ -462,6 +485,7 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
         if (!below?.complete) return false;
         if (!below.ids.every(m => settled.has(m.threadId))) continue;
         state[floorKey] = floorMs = atMs;
+        carryReset();
         await saveGoogleState(deps, state);
         return true;
       }
@@ -473,9 +497,12 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
       let landedOldest = floorMs;
       for (const tid of threadIds.slice(i, i + BACKFILL_BATCH_THREADS)) {
         if (signal?.aborted) break;
-        const outcome = await attemptThread(g, tid, versions.get(tid) ?? null);
+        const version = versions.get(tid) ?? null;
+        if (carryOn && carry.floor === floorMs && version && carry.v[tid] === version && !g.holds.isHeld(tid)) { settled.add(tid); deps.tick(`thread ${tid} carried`); continue; }
+        const outcome = await attemptThread(g, tid, version);
         if (outcome.kind === 'landed') {
           settled.add(tid);
+          if (carryOn && version && carry.floor === floorMs && carryCount < CARRY_MAX && carry.v[tid] !== version) { carry.v[tid] = version; carryCount++; carryDirty++; }
           if (outcome.newestMs > 0 && outcome.newestMs < batchOldest) batchOldest = outcome.newestMs;
           // #10473: a managed sweep cannot write once its deadline aborts it, so it banks as soon as a proof holds after a
           // thread lands (as the delta drain banks its first thread); a sweep cut off inside its first batch still moves the floor.
@@ -490,6 +517,7 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
           if (outcome.kind === 'rate_limited') { limited = true; break; }
         } else settled.add(tid);
       }
+      await carrySave();
       if (deps.managed && signal?.aborted) break;
       // #10473: a batch cut short by a failure or a rate limit still banks the threads that landed ahead of it, so the
       // next sweep resumes at the failed thread instead of re-walking the whole batch.
@@ -500,6 +528,7 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
     if (signal?.aborted) return 'aborted';
     if (batchFailed) return 'failed';
     state[floorKey] = floorMs = afterMs;
+    carryReset();
     await saveGoogleState(deps, state);
     if (listing.ids.length < WINDOW_LIST_PAGES * 25) spanMs *= 2;
   }

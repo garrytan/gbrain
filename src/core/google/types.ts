@@ -108,6 +108,11 @@ export interface GoogleSourceState {
    * where it stopped instead of restarting (outside-voice F7a).
    */
   gmail_backfill_floor_ms: number | null;
+  /**
+   * Threads a sweep already fetched below `floor`, keyed by thread id → newest listed message id, so a later sweep at the
+   * same floor counts them settled without fetching again. Dropped whenever the floor moves.
+   */
+  gmail_backfill_floor_carry?: { floor: number; v: Record<string, string> };
   gmail_backfill_done: boolean;
   /**
    * #5438 (adopted from #5581): lower bound (epoch ms) the completed backfill
