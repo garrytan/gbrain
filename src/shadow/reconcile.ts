@@ -221,7 +221,11 @@ export class Reconciler {
         const seedId = readSeedRecord(this.o.dir)?.seed_id ?? null;
         const epochId = readEpoch(this.o.dir)?.epoch_id ?? null;
         const prior = resume && continuity ? readProgress(this.o.dir) : null;
-        if (prior && prior.continuity === continuity && prior.seed_id === seedId && prior.epoch_id === epochId) {
+        // A resume point whose pass is already in the log is left over from a finished pass whose removal failed: that
+        // pass is never continued (it would be counted again with no new scan), and an unreadable log refuses it too.
+        let finished = true;
+        if (prior) { try { finished = readPasses(this.o.dir).some((p) => p.id === prior.id); } catch { finished = true; } } // silent-read-ok: an unreadable pass log refuses the resume (a fresh scan)
+        if (prior && !finished && prior.continuity === continuity && prior.seed_id === seedId && prior.epoch_id === epochId) {
           // The same pass, continued: its start (what its restore settles), its counts and where it stopped.
           Object.assign(rec, { id: prior.id, started_at: prior.started_at, repaired_rows: prior.repaired_rows, repaired_by_relation: { ...prior.repaired_by_relation }, follower_misses: prior.follower_misses });
           passStart = prior.pass_start; validAtStart = prior.valid_at_start; verified = prior.verified;

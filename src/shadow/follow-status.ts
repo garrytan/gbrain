@@ -139,8 +139,10 @@ export function writeFollowerFile(dir: string, file: FollowerFile): void {
   renameSync(tmp, followerPath(dir));
 }
 
+/** Appends a pass record once: a record whose pass id is already in the log is not appended again (one scan, one count). */
 export function appendPass(dir: string, pass: PassRecord): void {
   mkdirSync(join(dir, 'reconcile'), { recursive: true, mode: 0o700 });
+  if (readPasses(dir).some((p) => p.id === pass.id)) return;
   const epoch_id = pass.epoch_id ?? readEpoch(dir)?.epoch_id;
   appendFileSync(passesPath(dir), JSON.stringify(epoch_id ? { ...pass, epoch_id } : pass) + '\n', { mode: 0o600 });
 }
